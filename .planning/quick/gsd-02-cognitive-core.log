@@ -1,0 +1,28 @@
+## gsd-02-cognitive-core.log
+Started: 2026-07-22T16:58:15Z
+PLAN: .planning/phases/02-cognitive-core/PLAN.md
+Mode: Strict TDD
+
+### 2026-07-22T16:58:15Z — PLAN read complete
+- Foundation models understood (IncomingTurn, Comprehension, Plan, EvaluationProfile 7D, Decision approve|escalate)
+- Purity gate: cognitive must not import diana.llm / infrastructure / sqlalchemy / aiogram / telegram / behavior / learning / application
+- Starting Task 1: ports + FakeLLM + DeepSeek (tests first)
+
+2026-07-22T16:58:29Z
+### 2026-07-22T16:58:29Z — Task 1 START: ports + FakeLLM + DeepSeek (tests first)
+### 2026-07-22T17:00:14Z — Task 1 PASS: 16 tests (llm + purity)
+### 2026-07-22T17:00:14Z — Task 2 START: planner/decider/registry/retrievers/context_builder (tests first)
+### 2026-07-22T17:01:38Z — Task 2 PASS: planner/decider/registry/retrievers/context_builder
+### 2026-07-22T17:01:38Z — Task 3 START: analyst/generator/evaluator (tests first)
+### 2026-07-22T17:02:24Z — Task 3 PASS: analyst/generator/evaluator
+### 2026-07-22T17:02:24Z — Task 4 START: CognitiveDirector + integration tests
+### 2026-07-22T17:02:37Z — Task 4 PASS: full suite 122 tests
+### 2026-07-22T17:02:37Z — Architecture golds PASS
+
+### 2026-07-22T17:03:45Z — SUMMARY written
+### 2026-07-22T17:03:45Z — Self-Check: PASSED
+- [x] All PLAN tasks completed
+- [x] Tests of PLAN run: pytest tests/unit -q → 122 passed
+- [x] 0 regressions attributable (foundation golds green)
+- [x] Project conventions respected (English, ports+DI, purity)
+### 2026-07-22T17:03:45Z — ITEM 2 COMPLETE
