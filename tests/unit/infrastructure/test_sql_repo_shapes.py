@@ -1,0 +1,97 @@
+"""SQL repo pure mappers / shapes without live Postgres."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from uuid import uuid4
+
+from diana.infrastructure.db.repositories.history import rows_to_recent_messages
+from diana.infrastructure.db.repositories.vips import vip_is_allowed, vip_orm_to_record
+
+
+def test_vip_orm_to_record_mapper() -> None:
+    vip_id = uuid4()
+    paused = datetime(2026, 6, 1, tzinfo=UTC)
+    orm = SimpleNamespace(
+        id=vip_id,
+        telegram_user_id=12345,
+        display_name="Bob",
+        is_active=True,
+        paused_until=paused,
+    )
+    rec = vip_orm_to_record(orm)  # type: ignore[arg-type]
+    assert rec.id == vip_id
+    assert rec.telegram_user_id == 12345
+    assert rec.display_name == "Bob"
+    assert rec.is_active is True
+    assert rec.paused_until == paused
+
+
+def test_vip_is_allowed_respects_pause() -> None:
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    rec = vip_orm_to_record(
+        SimpleNamespace(
+            id=uuid4(),
+            telegram_user_id=1,
+            display_name=None,
+            is_active=True,
+            paused_until=now + timedelta(hours=1),
+        )  # type: ignore[arg-type]
+    )
+    assert vip_is_allowed(rec, now=now) is False
+    assert vip_is_allowed(rec, now=now + timedelta(hours=2)) is True
+
+
+def test_vip_inactive_not_allowed() -> None:
+    rec = vip_orm_to_record(
+        SimpleNamespace(
+            id=uuid4(),
+            telegram_user_id=1,
+            display_name=None,
+            is_active=False,
+            paused_until=None,
+        )  # type: ignore[arg-type]
+    )
+    assert vip_is_allowed(rec) is False
+
+
+def test_history_get_recent_desc_then_chronological() -> None:
+    t0 = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+    t1 = datetime(2026, 1, 1, 11, 0, tzinfo=UTC)
+    t2 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    # Simulate SQL ORDER BY timestamp DESC
+    rows_desc = [
+        SimpleNamespace(
+            role="vip", text="c", telegram_message_id=3, timestamp=t2
+        ),
+        SimpleNamespace(
+            role="bot", text="b", telegram_message_id=2, timestamp=t1
+        ),
+        SimpleNamespace(
+            role="vip", text="a", telegram_message_id=1, timestamp=t0
+        ),
+    ]
+    out = rows_to_recent_messages(rows_desc, limit=3)  # type: ignore[arg-type]
+    assert [m["text"] for m in out] == ["a", "b", "c"]
+    limited = rows_to_recent_messages(rows_desc, limit=2)  # type: ignore[arg-type]
+    assert [m["text"] for m in limited] == ["b", "c"]
+
+
+def test_infrastructure_has_no_aiogram_imports() -> None:
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3] / "src" / "diana" / "infrastructure"
+    violations: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "aiogram" or alias.name.startswith("aiogram."):
+                        violations.append(f"{path.name}: {alias.name}")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module == "aiogram" or node.module.startswith("aiogram."):
+                    violations.append(f"{path.name}: {node.module}")
+    assert violations == []

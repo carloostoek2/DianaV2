@@ -1,0 +1,99 @@
+"""Offline F1 schema contract freezes (no Postgres required)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from diana.infrastructure.db.models import (
+    Base,
+    EscalationEvent,
+    MessageHistory,
+    PendingApproval,
+    PendingDelivery,
+    PipelineTrace,
+    SystemConfig,
+    Turn,
+    Vip,
+)
+
+F1_TABLES = frozenset(
+    {
+        "vips",
+        "message_history",
+        "turns",
+        "pipeline_traces",
+        "pending_deliveries",
+        "pending_approvals",
+        "escalation_events",
+        "system_config",
+    }
+)
+
+SEED_KEYS = frozenset(
+    {
+        "global_mode",
+        "forbidden_keywords",
+        "eval_thresholds",
+        "trace_ttl_days",
+    }
+)
+
+
+def test_orm_exposes_exactly_eight_f1_tables() -> None:
+    assert set(Base.metadata.tables.keys()) == F1_TABLES
+    assert len(Base.metadata.tables) == 8
+
+
+def test_pipeline_traces_turn_id_fk_targets_turns() -> None:
+    col = PipelineTrace.__table__.c.turn_id
+    fks = list(col.foreign_keys)
+    assert len(fks) == 1
+    assert fks[0].column.table.name == "turns"
+    assert fks[0].column.name == "id"
+
+
+def test_turn_scoped_tables_have_turn_id_fk() -> None:
+    for model in (PendingDelivery, PendingApproval, EscalationEvent, PipelineTrace):
+        col = model.__table__.c.turn_id
+        assert any(fk.column.table.name == "turns" for fk in col.foreign_keys), model.__tablename__
+
+
+def test_unique_constraints_on_vip_telegram_and_pending_approval_turn() -> None:
+    assert Vip.__table__.c.telegram_user_id.unique is True
+    assert PendingApproval.__table__.c.turn_id.unique is True
+
+
+def test_escalation_notificado_is_non_null_bool() -> None:
+    col = EscalationEvent.__table__.c.notificado
+    assert col.nullable is False
+    assert str(col.server_default.arg) == "false" or "false" in str(col.server_default.arg)
+
+
+def test_status_server_defaults() -> None:
+    assert "pending" in str(PendingDelivery.__table__.c.status.server_default.arg)
+    assert "waiting" in str(PendingApproval.__table__.c.status.server_default.arg)
+
+
+def test_desc_indexes_present_in_orm_metadata() -> None:
+    """ORM indexes must encode DESC expressions (match migration intent)."""
+    def index_exprs(table_name: str, index_name: str) -> str:
+        table = Base.metadata.tables[table_name]
+        idx = table.indexes
+        match = next(i for i in idx if i.name == index_name)
+        return " ".join(str(el) for el in match.expressions).upper()
+
+    assert "DESC" in index_exprs("message_history", "ix_message_history_chat_id_timestamp")
+    assert "DESC" in index_exprs("turns", "ix_turns_chat_id_created_at")
+    assert "DESC" in index_exprs("pipeline_traces", "ix_pipeline_traces_vip_id_created_at")
+
+
+def test_migration_seed_keys_allowlist() -> None:
+    migration = Path(__file__).resolve().parents[3] / "alembic" / "versions" / "001_f1_foundation.py"
+    text = migration.read_text(encoding="utf-8")
+    for key in SEED_KEYS:
+        assert f"'{key}'" in text
+    # Seed must not INSERT owner id (comment may mention it as intentionally omitted).
+    assert "('owner_telegram_id'" not in text
+    assert '"owner_telegram_id"' not in text
+    assert "ON CONFLICT (key) DO NOTHING" in text
+    assert "nullable=False" in text  # notificado alignment among others
