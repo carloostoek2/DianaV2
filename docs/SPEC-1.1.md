@@ -1,13 +1,3 @@
-¡Perfecto! Vamos a construir ese SPEC 1.5 Híbrido Final. He tomado la estructura incremental y la máquina de estados de SPEC-2 (para que el MVP sea ejecutable hoy), y le he injertado toda la profundidad técnica, los modelos de datos completos, los ADRs y la visión de futuro de SPEC-1.
-
-El resultado es un documento único que no especula, sino que planifica por capas: tienes las tablas de Fase 3 diseñadas desde el día 1 (para evitar migrations rotas), pero el código de Fase 1 solo toca su lote. He marcado cada sección con [FASE 1] , [FASE 2] o [FASE 3] para que no haya dudas.
-
-Aquí tienes tu SPEC v1.5 — Híbrido Integrado.
-
----
-
-SPEC.md — Diseño e Implementación (v1.5 Híbrido)
-
 Diana Business Bot / Sistema de Automatización de Chats VIP
 
 Campo Valor
