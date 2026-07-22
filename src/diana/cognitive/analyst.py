@@ -29,4 +29,7 @@ class Analyst:
         result = await self._llm.generate_structured(messages, Comprehension)
         if not isinstance(result, Comprehension):
             result = Comprehension.model_validate(result.model_dump())
+        if result.raw_llm_output is None:
+            raw = result.model_dump(mode="json", exclude={"raw_llm_output"})
+            result = result.model_copy(update={"raw_llm_output": raw})
         return result

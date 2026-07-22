@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from copy import deepcopy
 from typing import Any
 
 from pydantic import BaseModel
@@ -40,7 +41,7 @@ class FakeLLM:
             (
                 "generate",
                 {
-                    "messages": messages,
+                    "messages": deepcopy(list(messages)),
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                 },
@@ -60,7 +61,7 @@ class FakeLLM:
             (
                 "generate_structured",
                 {
-                    "messages": messages,
+                    "messages": deepcopy(list(messages)),
                     "schema": schema,
                     **kwargs,
                 },
@@ -71,7 +72,6 @@ class FakeLLM:
         item = self._structured.popleft()
         if isinstance(item, BaseModel):
             if not isinstance(item, schema):
-                # Allow exact model instances of the requested schema only.
                 raise TypeError(
                     f"FakeLLM structured item type {type(item).__name__} "
                     f"does not match schema {schema.__name__}"

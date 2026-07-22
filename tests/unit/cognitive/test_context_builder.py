@@ -83,3 +83,21 @@ def test_comprehension_summary_present() -> None:
     c = _comprehension()
     prompt = builder.build(_turn("x"), c, knowledge={}, persona="P")
     assert c.intent in prompt or "greet" in prompt
+
+
+def test_empty_list_and_dict_knowledge_omitted() -> None:
+    builder = ContextBuilder()
+    knowledge = {
+        "knowledge.history": [],
+        "knowledge.context": {},
+        "knowledge.memory": None,
+    }
+    prompt = builder.build(
+        _turn("hello"),
+        _comprehension(),
+        knowledge=knowledge,
+        persona="Persona",
+    )
+    assert "knowledge.history" not in prompt
+    assert "knowledge.context" not in prompt
+    assert "knowledge.memory" not in prompt

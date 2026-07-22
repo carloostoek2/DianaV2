@@ -1,10 +1,14 @@
-"""Deterministic capability Planner — pure function, no model calls."""
+"""Deterministic capability Planner — pure function, no model calls.
+
+Note: ``knowledge.profile`` is registered in the default registry as an F2 hook
+but is not requested by Planner (no ``needs_profile`` on Comprehension in F1).
+"""
 
 from __future__ import annotations
 
 from diana.cognitive.models import Comprehension, Plan
 
-# Stable capability order (MVP §5.6).
+# Stable capability order (MVP §5.6). Profile intentionally absent in F1.
 _NEED_TO_CAPABILITY: tuple[tuple[str, str], ...] = (
     ("needs_history", "knowledge.history"),
     ("needs_context", "knowledge.context"),

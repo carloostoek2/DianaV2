@@ -26,3 +26,5 @@ Mode: Strict TDD
 - [x] 0 regressions attributable (foundation golds green)
 - [x] Project conventions respected (English, ports+DI, purity)
 ### 2026-07-22T17:03:45Z — ITEM 2 COMPLETE
+### 2026-07-22T17:10:19Z — Fix round hardener 73113e69 START
+### 2026-07-22T17:10:59Z — Implementing hardener fixes (eval bounds, fences, trace JSON, empty draft, FAILED, llm_base_url)

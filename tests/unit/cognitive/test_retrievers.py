@@ -119,11 +119,30 @@ async def test_stubs_return_none() -> None:
         assert result is None
 
 
-def test_examples_stub_source_has_no_memory_imports() -> None:
-    import inspect
+def test_examples_stub_has_no_memory_imports_ast() -> None:
+    """AST gate: examples retriever must not import memory modules or tables."""
+    import ast
+    from pathlib import Path
 
-    from diana.cognitive.retrievers import examples as examples_mod
-
-    source = inspect.getsource(examples_mod)
-    assert "memory" not in source.lower() or "Memory" not in source
-    assert "memories" not in source
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "diana"
+        / "cognitive"
+        / "retrievers"
+        / "examples.py"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    forbidden_substrings = ("memory", "memories", "Memory")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                for bad in forbidden_substrings:
+                    assert bad not in alias.name, alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for bad in forbidden_substrings:
+                assert bad not in module, module
+            for alias in node.names:
+                for bad in forbidden_substrings:
+                    assert bad not in alias.name, alias.name

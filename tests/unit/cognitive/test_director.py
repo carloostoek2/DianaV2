@@ -185,14 +185,18 @@ async def test_tac04_trace_contains_all_seven_keys() -> None:
         "comprehension",
         "plan",
         "retrieved",
-        "prompt",
-        "generated",
+        "prompt_text",
+        "generated_text",
         "evaluation",
         "decision",
     }
     decision = trace.get(turn.turn_id, "decision")
-    assert isinstance(decision, Decision)
-    assert decision.draft_text == "draft"
+    assert isinstance(decision, dict)
+    assert decision["draft_text"] == "draft"
+    assert decision["action"] in ("approve", "escalate")
+    # JSON-ready snapshots — not live Pydantic instances
+    assert not isinstance(trace.get(turn.turn_id, "comprehension"), Comprehension)
+    assert isinstance(trace.get(turn.turn_id, "comprehension"), dict)
 
 
 @pytest.mark.asyncio
@@ -224,7 +228,7 @@ async def test_registry_isolation_history_uses_turn_chat_id() -> None:
     )
     # Plan only requested history+context by default needs
     plan = trace.get(turn.turn_id, "plan")
-    assert plan.capabilities == ["knowledge.history", "knowledge.context"]
+    assert plan["capabilities"] == ["knowledge.history", "knowledge.context"]
 
 
 @pytest.mark.asyncio
@@ -260,6 +264,35 @@ async def test_persona_appears_in_traced_prompt() -> None:
     director, trace, _ = make_director(llm, persona="PERSONA-MARKER-ABC")
     turn = _turn(text="vip-text-here")
     await director.handle_turn(turn)
-    prompt = trace.get(turn.turn_id, "prompt")
+    prompt = trace.get(turn.turn_id, "prompt_text")
     assert "PERSONA-MARKER-ABC" in prompt
     assert "vip-text-here" in prompt
+
+
+@pytest.mark.asyncio
+async def test_empty_draft_escalates() -> None:
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(risk="bajo"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["   "],
+    )
+    director, _, _ = make_director(llm)
+    decision = await director.handle_turn(_turn())
+    assert decision.action == "escalate"
+    assert decision.reason == "empty_draft"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_exception_marks_failed_status() -> None:
+    llm = FakeLLM(
+        structured_responses=[],  # Analyst fails empty queue
+        text_responses=[],
+    )
+    sink = InMemoryTurnStatusSink()
+    director, _, _ = make_director(llm, status_sink=sink)
+    turn = _turn()
+    with pytest.raises(RuntimeError):
+        await director.handle_turn(turn)
+    assert sink.transitions[-1] == (turn.turn_id, TurnStatus.FAILED.value)

@@ -68,3 +68,12 @@ async def test_analyze_uses_only_generate_structured() -> None:
     await Analyst(llm).analyze(_turn())
     methods = [c[0] for c in llm.calls]
     assert methods == ["generate_structured"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_attaches_raw_llm_output() -> None:
+    expected = _valid_comprehension(intent="ask")
+    llm = FakeLLM(structured_responses=[expected])
+    result = await Analyst(llm).analyze(_turn())
+    assert result.raw_llm_output is not None
+    assert result.raw_llm_output["intent"] == "ask"

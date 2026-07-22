@@ -17,15 +17,39 @@ from diana.cognitive.models import Comprehension, IncomingTurn, TurnStatus
 # Public alias: handle_turn argument is IncomingTurn (no ORM-shaped type).
 TurnContext = IncomingTurn
 
+# Keys align with pipeline_traces column names where applicable:
+# prompt_text / generated_text match SQL columns; others are JSONB columns.
 TRACE_KEYS = (
     "comprehension",
     "plan",
     "retrieved",
-    "prompt",
-    "generated",
+    "prompt_text",
+    "generated_text",
     "evaluation",
     "decision",
 )
+
+# Map TRACE_KEYS → pipeline_traces ORM column names (identity except already aligned).
+TRACE_KEY_TO_COLUMN: dict[str, str] = {
+    "comprehension": "comprehension",
+    "plan": "plan",
+    "retrieved": "retrieved",
+    "prompt_text": "prompt_text",
+    "generated_text": "generated_text",
+    "evaluation": "evaluation",
+    "decision": "decision",
+}
+
+
+def to_jsonable(value: Any) -> Any:
+    """Convert Pydantic models / nested structures to JSON-ready snapshots."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {str(k): to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_jsonable(v) for v in value]
+    return value
 
 
 @runtime_checkable
@@ -70,7 +94,11 @@ class MessageHistoryPort(Protocol):
 
 @runtime_checkable
 class TraceStore(Protocol):
-    """Records cognitive pipeline artifacts for a turn."""
+    """Records cognitive pipeline artifacts for a turn.
+
+    Implementations SHOULD accept JSON-ready values. Director stores
+    ``model_dump(mode=\"json\")`` snapshots (not live Pydantic instances).
+    """
 
     async def store(self, turn_id: UUID, key: str, value: Any) -> None: ...
 
@@ -83,14 +111,15 @@ class TurnStatusSink(Protocol):
 
 
 class InMemoryTraceStore:
-    """Dict-backed TraceStore for unit tests."""
+    """Dict-backed TraceStore for unit tests (stores JSON-ready values as given)."""
 
     def __init__(self) -> None:
         self.data: dict[UUID, dict[str, Any]] = {}
 
     async def store(self, turn_id: UUID, key: str, value: Any) -> None:
         bucket = self.data.setdefault(turn_id, {})
-        bucket[key] = value
+        # Defensive copy so later mutations do not alias into the bucket.
+        bucket[key] = to_jsonable(value)
 
     def get(self, turn_id: UUID, key: str) -> Any | None:
         return self.data.get(turn_id, {}).get(key)
@@ -137,6 +166,7 @@ class InMemoryTurnStatusSink:
 
 __all__ = [
     "TRACE_KEYS",
+    "TRACE_KEY_TO_COLUMN",
     "InMemoryMessageHistory",
     "InMemoryTraceStore",
     "InMemoryTurnStatusSink",
@@ -147,4 +177,5 @@ __all__ = [
     "TraceStore",
     "TurnContext",
     "TurnStatusSink",
+    "to_jsonable",
 ]

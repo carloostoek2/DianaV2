@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated, get_args, get_origin
+
 import pytest
 from pydantic import ValidationError
 
@@ -33,6 +35,14 @@ FORBIDDEN_AGGREGATION_HELPERS = frozenset(
 )
 
 
+def _is_float_unit_annotation(annotation: object) -> bool:
+    if annotation is float:
+        return True
+    if get_origin(annotation) is Annotated:
+        return get_args(annotation)[0] is float
+    return False
+
+
 def _full_profile_kwargs() -> dict[str, float]:
     return {name: 0.8 for name in CANONICAL_DIMS}
 
@@ -41,7 +51,7 @@ def test_evaluation_profile_field_names_are_exactly_seven_canonical() -> None:
     float_fields = {
         name
         for name, info in EvaluationProfile.model_fields.items()
-        if info.annotation is float
+        if _is_float_unit_annotation(info.annotation)
     }
     assert float_fields == CANONICAL_DIMS
     assert len(float_fields) == 7
@@ -75,4 +85,12 @@ def test_evaluation_profile_float_dims_are_all_required() -> None:
     for name in CANONICAL_DIMS:
         info = EvaluationProfile.model_fields[name]
         assert info.is_required() is True, f"{name} must be required"
-        assert info.annotation is float
+        assert _is_float_unit_annotation(info.annotation)
+
+
+@pytest.mark.parametrize("bad", [5.0, -0.1, 1.01, float("nan"), float("inf"), float("-inf")])
+def test_evaluation_profile_rejects_out_of_range_and_non_finite(bad: float) -> None:
+    base = _full_profile_kwargs()
+    base["safety"] = bad
+    with pytest.raises(ValidationError):
+        EvaluationProfile(**base)

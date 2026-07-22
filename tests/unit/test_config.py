@@ -154,6 +154,29 @@ def test_settings_rejects_non_asyncpg_database_url(
         Settings()
 
 
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://api.deepseek.com",
+        "file:///tmp/x",
+        "https://169.254.169.254/latest/meta-data",
+        "https://127.0.0.1/v1",
+        "https://10.0.0.8/",
+    ],
+)
+def test_settings_rejects_unsafe_llm_base_url(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_url: str,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("LLM_BASE_URL", bad_url)
+    with pytest.raises(ValidationError):
+        Settings()
+
+
 def test_settings_rejects_non_supervised_global_mode(
     clear_settings_env: None,
     monkeypatch: pytest.MonkeyPatch,

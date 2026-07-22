@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+
+_METADATA_HOSTS = frozenset(
+    {
+        "metadata.google.internal",
+        "metadata",
+        "169.254.169.254",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -46,3 +56,31 @@ class Settings(BaseSettings):
         if not url.startswith("postgresql+asyncpg://"):
             raise ValueError("database_url must start with postgresql+asyncpg://")
         return value
+
+    @field_validator("llm_base_url", mode="after")
+    @classmethod
+    def require_safe_https_llm_base_url(cls, value: str) -> str:
+        url = value.strip()
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            raise ValueError("llm_base_url must use https scheme")
+        host = (parsed.hostname or "").lower()
+        if not host:
+            raise ValueError("llm_base_url must include a hostname")
+        if host in _METADATA_HOSTS:
+            raise ValueError("llm_base_url host is not allowed (metadata endpoint)")
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            ip = None
+        if ip is not None and (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+        ):
+            raise ValueError(
+                "llm_base_url must not target private or link-local addresses"
+            )
+        return url.rstrip("/")

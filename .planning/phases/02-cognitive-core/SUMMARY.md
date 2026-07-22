@@ -110,16 +110,31 @@ None material.
 ## Self-Check: PASSED
 
 - [x] All PLAN tasks completed
-- [x] PLAN tests run (`pytest tests/unit -q` → 122 passed)
+- [x] PLAN tests run (`pytest tests/unit -q` → **144 passed** after hardener fix round)
 - [x] 0 regressions attributable (foundation golds green)
 - [x] Project conventions respected (English artifacts, ports+DI, no forbidden imports)
+
+## Hardener fix round (73113e69)
+
+| Fix | Detail |
+|-----|--------|
+| Eval bounds | `EvaluationProfile` dims finite + [0,1] |
+| DeepSeek fences | Strip markdown fences before `json.loads` |
+| Trace JSON | `to_jsonable` / `model_dump`; keys `prompt_text`/`generated_text` |
+| Empty draft | escalate `empty_draft` |
+| Pipeline errors | status → FAILED; partial `retrieved` stored |
+| llm_base_url | https only; no private/metadata hosts |
+| raw_llm_output | attached by DeepSeek + Analyst/Evaluator |
+| ContextBuilder | omit empty list/dict |
+
+Deferred to item 3 (wontfix): composition factory, dual history snapshot under concurrent writers, cancel/supersede, system_config threshold load.
 
 ## Test count
 
 | Suite | Count |
 |-------|-------|
-| Full `tests/unit` | **122 passed** |
-| New (approx. vs foundation ~58) | **~64 new** |
+| Full `tests/unit` | **144 passed** |
+| New (approx. vs foundation ~58) | **~86 new** |
 
 ## Handoff to item 3
 

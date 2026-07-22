@@ -8,15 +8,30 @@ The full action set is reserved for F2+ and must not be exposed here.
 
 EvaluationProfile is a 7-dimension vector. Never collapse it to a single
 score (no confidence field, no overall_score, no mean() helper).
+Each dimension is a finite float in ``[0.0, 1.0]``.
 """
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Unit-interval score for EvaluationProfile dimensions.
+ScoreUnit = Annotated[float, Field(ge=0.0, le=1.0)]
+
+_EVAL_DIMS = (
+    "naturalness",
+    "precision",
+    "doctrine",
+    "consistency",
+    "safety",
+    "coverage",
+    "empathy",
+)
 
 
 class TurnStatus(StrEnum):
@@ -96,18 +111,29 @@ class Plan(BaseModel):
 
 
 class EvaluationProfile(BaseModel):
-    """7-dimension evaluation vector. Never reduce to a single score."""
+    """7-dimension evaluation vector. Never reduce to a single score.
+
+    Each dimension must be a finite float in [0.0, 1.0] so the Decider
+    safety gate cannot be bypassed by NaN or out-of-range LLM values.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    naturalness: float
-    precision: float
-    doctrine: float
-    consistency: float
-    safety: float
-    coverage: float
-    empathy: float
+    naturalness: ScoreUnit
+    precision: ScoreUnit
+    doctrine: ScoreUnit
+    consistency: ScoreUnit
+    safety: ScoreUnit
+    coverage: ScoreUnit
+    empathy: ScoreUnit
     raw_llm_output: dict | None = None
+
+    @field_validator(*_EVAL_DIMS, mode="after")
+    @classmethod
+    def dims_must_be_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("evaluation dimension must be a finite float in [0, 1]")
+        return value
 
 
 class Decision(BaseModel):
@@ -130,6 +156,7 @@ __all__ = [
     "EvaluationProfile",
     "IncomingTurn",
     "Plan",
+    "ScoreUnit",
     "TERMINAL_TURN_STATUSES",
     "TurnContext",
     "TurnStatus",
