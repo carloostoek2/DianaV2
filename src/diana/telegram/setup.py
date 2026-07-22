@@ -37,6 +37,26 @@ class TelegramWiring:
     dispatcher: Dispatcher
     middleware_order: tuple[str, ...]
     correct_sessions: CorrectSessionStore
+    forbidden_middleware: ForbiddenKeywordsMiddleware
+    registered_middlewares: list[Any]
+
+
+def middleware_class_names(middlewares: list[Any]) -> tuple[str, ...]:
+    """Extract class names from registered middleware instances."""
+    return tuple(type(m).__name__ for m in middlewares)
+
+
+def extract_observer_middleware_names(observer: Any) -> tuple[str, ...]:
+    """Read live MiddlewareManager registration order (first = outermost)."""
+    manager = getattr(observer, "middleware", None)
+    if manager is None:
+        return ()
+    chain = getattr(manager, "_middlewares", None) or []
+    names: list[str] = []
+    for item in chain:
+        mw = item[0] if isinstance(item, tuple) else item
+        names.append(type(mw).__name__)
+    return tuple(names)
 
 
 def build_dispatcher(
@@ -56,21 +76,22 @@ def build_dispatcher(
     dp = Dispatcher()
     sessions = correct_sessions or CorrectSessionStore()
 
-    # Outer middleware order for updates (last registered = outermost in aiogram).
-    # We register on business_message / message / callback routers consistently via
-    # a root update outer stack using message + business_message + callback_query.
+    # first registered = outermost (aiogram wraps with reversed()).
+    # F1 execution order: Logging → BC → Owner → Forbidden → Auth → handler.
+    forbidden_mw = ForbiddenKeywordsMiddleware(
+        keywords=forbidden_keywords,
+        coordinator=coordinator,
+        escalations=escalations,
+        notifier=notifier,
+        vips=vips,
+    )
     middlewares: list[Any] = [
         LoggingMiddleware(),
         BusinessConnectionMiddleware(),
         OwnerDetectionMiddleware(
             owner_telegram_id=owner_telegram_id, behavior=behavior
         ),
-        ForbiddenKeywordsMiddleware(
-            keywords=forbidden_keywords,
-            coordinator=coordinator,
-            escalations=escalations,
-            notifier=notifier,
-        ),
+        forbidden_mw,
         AuthMiddleware(vips=vips),
     ]
 
@@ -97,6 +118,8 @@ def build_dispatcher(
         dispatcher=dp,
         middleware_order=F1_MIDDLEWARE_ORDER,
         correct_sessions=sessions,
+        forbidden_middleware=forbidden_mw,
+        registered_middlewares=list(middlewares),
     )
 
 
@@ -108,5 +131,7 @@ def registered_middleware_names() -> tuple[str, ...]:
 __all__ = [
     "TelegramWiring",
     "build_dispatcher",
+    "extract_observer_middleware_names",
+    "middleware_class_names",
     "registered_middleware_names",
 ]

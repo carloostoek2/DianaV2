@@ -237,37 +237,10 @@ async def load_forbidden_keywords(app: AppContainer) -> list[str]:
     kws = await store.get_forbidden_keywords()
     app.forbidden_keywords.clear()
     app.forbidden_keywords.extend(kws)
-    _update_forbidden_middleware_keywords(app.dispatcher, kws)
+    # Explicit setter — no Dispatcher graph walk.
+    app.wiring.forbidden_middleware.set_keywords(kws)
     logger.info("forbidden_keywords_loaded", extra={"count": len(kws)})
     return kws
-
-
-def _update_forbidden_middleware_keywords(dp: Dispatcher, keywords: list[str]) -> None:
-    """Patch ForbiddenKeywordsMiddleware keyword lists in place on the dispatcher."""
-    from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
-
-    def _walk(obj: object, seen: set[int]) -> None:
-        oid = id(obj)
-        if oid in seen:
-            return
-        seen.add(oid)
-        if isinstance(obj, ForbiddenKeywordsMiddleware):
-            obj._keywords = list(keywords)  # noqa: SLF001
-            return
-        if isinstance(obj, (list, tuple, set)):
-            for item in obj:
-                _walk(item, seen)
-            return
-        if isinstance(obj, dict):
-            for item in obj.values():
-                _walk(item, seen)
-            return
-        d = getattr(obj, "__dict__", None)
-        if isinstance(d, dict):
-            for item in d.values():
-                _walk(item, seen)
-
-    _walk(dp, set())
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:

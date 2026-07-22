@@ -149,3 +149,136 @@ async def test_escalate_callback_no_deliver(graph: dict) -> None:
     assert g["actuator"].send_count() == 0
     stored = await g["turns"].get(turn.id)
     assert stored is not None and stored.status == "escalated"
+
+
+@pytest.mark.asyncio
+async def test_correct_callback_starts_session_no_deliver(graph: dict) -> None:
+    """Correct button only opens FSM; deliver happens later via handle_correct."""
+    g = graph
+    turn = await _queue_draft(g)
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+    )
+    assert status == "awaiting_correct"
+    assert g["sessions"].get(OWNER) == turn.id
+    assert g["actuator"].send_count() == 0
+    # waiting approval still open until free-text correct
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None and appr.status == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_correct_callback_non_owner_forbidden(graph: dict) -> None:
+    g = graph
+    turn = await _queue_draft(g)
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OTHER,
+    )
+    assert status == "forbidden"
+    assert g["sessions"].get(OTHER) is None
+    assert g["sessions"].get(OWNER) is None
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_approve_after_supersede_returns_stale(graph: dict) -> None:
+    g = graph
+    turn = await _queue_draft(g)
+    await g["coordinator"].begin_turn(chat_id=42)  # supersede
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("approve", turn.id),
+        actor_id=OWNER,
+    )
+    assert status == "stale"
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_correct_free_text_delivers(graph: dict) -> None:
+    from diana.telegram.handlers.admin import handle_admin_text
+    from diana.application.memory import InMemoryVipStore
+
+    g = graph
+    turn = await _queue_draft(g, draft="original")
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+    )
+    assert status == "awaiting_correct"
+    result = await handle_admin_text(
+        text="corrected with encuentro word ok",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+    )
+    assert result == "corrected"
+    assert g["actuator"].send_count() >= 1
+    assert g["actuator"].calls[-1]["text"] == "corrected with encuentro word ok"
+    assert g["sessions"].get(OWNER) is None
+
+
+@pytest.mark.asyncio
+async def test_correct_free_text_after_supersede_stale(graph: dict) -> None:
+    from diana.telegram.handlers.admin import handle_admin_text
+    from diana.application.memory import InMemoryVipStore
+
+    g = graph
+    turn = await _queue_draft(g)
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+    )
+    assert g["sessions"].get(OWNER) == turn.id
+    await g["coordinator"].begin_turn(chat_id=42)  # supersede cancels approval
+    g["sessions"].cancel_turn(turn.id)  # supersede invalidates correct FSM
+    # Session cleared by cancel_turn; if still set, domain still no-ops honestly.
+    g["sessions"].start(OWNER, turn.id)
+    result = await handle_admin_text(
+        text="too late",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+    )
+    assert result == "stale"
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_correct_session_timeout(graph: dict) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    clock_box = {"t": now}
+
+    def clock() -> datetime:
+        return clock_box["t"]
+
+    sessions = CorrectSessionStore(ttl=timedelta(minutes=15), clock=clock)
+    g = graph
+    g["sessions"] = sessions
+    turn = await _queue_draft(g)
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=sessions,
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+    )
+    assert sessions.get(OWNER) == turn.id
+    clock_box["t"] = now + timedelta(minutes=16)
+    assert sessions.get(OWNER) is None

@@ -1,4 +1,4 @@
-"""AuthMiddleware — VIP allowlist gate."""
+"""AuthMiddleware — VIP allowlist gate + drop non-owner private spam."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ logger = logging.getLogger("diana.telegram")
 
 
 class AuthMiddleware(BaseMiddleware):
-    """Drop non-allowlist VIP business traffic; inject vip_id when allowed."""
+    """Gate business VIP allowlist; drop non-owner private messages."""
 
     def __init__(self, *, vips: VipStore) -> None:
         self._vips = vips
@@ -26,18 +26,25 @@ class AuthMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        # Owner private path already marked — skip allowlist for non-business.
-        if data.get("is_owner") and not data.get("business_connection_id"):
-            return await handler(event, data)
-
         if not isinstance(event, Message):
+            # Callbacks etc. — owner check happens in handlers via actor_id.
             return await handler(event, data)
 
-        # Only gate business messages (VIP path).
         bc = data.get("business_connection_id") or event.business_connection_id
+
+        # Private (non-business) messages: only owner admin path continues.
         if not bc:
-            # Non-business messages (admin private) pass through without vip_id.
-            return await handler(event, data)
+            if data.get("is_owner"):
+                return await handler(event, data)
+            logger.info(
+                "auth_drop_private_non_owner",
+                extra={
+                    "telegram_user_id": getattr(
+                        getattr(event, "from_user", None), "id", None
+                    )
+                },
+            )
+            return None
 
         user = event.from_user
         if user is None:

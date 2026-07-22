@@ -38,7 +38,10 @@ async def async_main() -> None:
             "re_notified": report.re_notified_approvals,
         },
     )
-    await app.dispatcher.start_polling(app.bot)
+    await app.dispatcher.start_polling(
+        app.bot,
+        allowed_updates=["message", "business_message", "callback_query"],
+    )
 
 
 def main() -> None:

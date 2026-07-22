@@ -102,7 +102,8 @@ async def test_owner_escalate_cancels_waiting_and_escalates_turn(
         _incoming(turn.id), _decision(draft="draft"), turn.id
     )
     await g["coordinator"].transition(turn.id, "pending_approval")
-    await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    applied = await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    assert applied is True
     appr = await g["approvals"].get_by_turn(turn.id)
     assert appr is not None
     assert appr.status == "cancelled"
@@ -133,7 +134,8 @@ async def test_owner_escalate_terminal_is_noop(admin_graph: dict) -> None:
     g = admin_graph
     turn = await g["coordinator"].begin_turn(chat_id=42)
     await g["coordinator"].transition(turn.id, "escalated")
-    await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    applied = await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    assert applied is False
     stored = await g["turns"].get(turn.id)
     assert stored is not None and stored.status == "escalated"
     assert g["actuator"].send_count() == 0

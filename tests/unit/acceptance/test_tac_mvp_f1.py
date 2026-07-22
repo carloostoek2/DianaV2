@@ -281,10 +281,57 @@ async def test_auth_non_vip_never_reaches_orchestrator() -> None:
 
 
 def test_f1_middleware_order_acceptance() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from diana.application.memory import (
+        FakeOwnerNotifier,
+        InMemoryEscalationStore,
+        InMemoryPendingApprovalStore,
+        InMemoryPendingDeliveryStore,
+        InMemoryTurnStore,
+        InMemoryVipStore,
+    )
+    from diana.application.turn_coordinator import TurnCoordinator
+    from diana.behavior.engine import BehaviorEngine
+    from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
+    from diana.telegram.setup import (
+        build_dispatcher,
+        extract_observer_middleware_names,
+    )
+
     names = registered_middleware_names()
     assert "Freeze" not in "".join(names)
     assert names[0] == "LoggingMiddleware"
     assert names[-1] == "AuthMiddleware"
+
+    deliveries = InMemoryPendingDeliveryStore()
+    behavior = BehaviorEngine(
+        FakeTelegramActuator(),
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    wiring = build_dispatcher(
+        orchestrator=MagicMock(handle_vip_message=AsyncMock()),
+        admin=MagicMock(
+            handle_approve=AsyncMock(),
+            handle_correct=AsyncMock(),
+            handle_owner_escalate=AsyncMock(return_value=True),
+            is_pending_approval=AsyncMock(return_value=True),
+            _assert_owner=MagicMock(),
+        ),
+        coordinator=TurnCoordinator(
+            InMemoryTurnStore(), InMemoryPendingApprovalStore(), behavior
+        ),
+        escalations=InMemoryEscalationStore(),
+        notifier=FakeOwnerNotifier(),
+        behavior=behavior,
+        vips=InMemoryVipStore(),
+        owner_telegram_id=OWNER,
+        forbidden_keywords=[],
+    )
+    live = extract_observer_middleware_names(wiring.dispatcher.business_message)
+    assert live == names
 
 
 @pytest.mark.asyncio

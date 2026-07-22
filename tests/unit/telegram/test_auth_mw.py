@@ -55,3 +55,39 @@ async def test_deactivated_vip_dropped() -> None:
     result = await mw(handler, _biz_msg(333), {"business_connection_id": "bc-1"})
     assert result is None
     handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_owner_private_dm_dropped() -> None:
+    vips = InMemoryVipStore()
+    mw = AuthMiddleware(vips=vips)
+    event = Message(
+        message_id=2,
+        date=0,
+        chat=Chat(id=111, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="X"),
+        text="spam keyword encuentro",
+        business_connection_id=None,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    result = await mw(handler, event, {})
+    assert result is None
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_private_passes() -> None:
+    vips = InMemoryVipStore()
+    mw = AuthMiddleware(vips=vips)
+    event = Message(
+        message_id=3,
+        date=0,
+        chat=Chat(id=999001, type="private"),
+        from_user=User(id=999001, is_bot=False, first_name="Owner"),
+        text="/start",
+        business_connection_id=None,
+    )
+    handler = AsyncMock(return_value="admin")
+    result = await mw(handler, event, {"is_owner": True})
+    assert result == "admin"
+    handler.assert_awaited_once()

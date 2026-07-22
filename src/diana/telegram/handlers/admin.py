@@ -29,7 +29,7 @@ async def handle_admin_text(
     admin: AdminService,
     correct_sessions: CorrectSessionStore,
 ) -> str:
-    """Pure admin text dispatcher for unit tests. Returns status token."""
+    """Pure admin text dispatcher for unit tests. Returns honest status token."""
     if actor_id is None or actor_id != owner_telegram_id:
         return "ignored_non_owner"
 
@@ -41,16 +41,26 @@ async def handle_admin_text(
     pending_turn = correct_sessions.get(actor_id)
     if pending_turn is not None and not stripped.startswith("/"):
         try:
-            await admin.handle_correct(
+            result = await admin.handle_correct(
                 pending_turn, stripped, actor_id=actor_id
             )
         except OwnerAuthError:
+            correct_sessions.cancel(actor_id)
             return "forbidden"
         except ValueError:
+            # Keep session so owner can re-send non-empty text.
             return "invalid_correct"
-        finally:
-            correct_sessions.cancel(actor_id)
-        return "corrected"
+
+        # Clear session after a completed domain attempt (success or no-op).
+        correct_sessions.cancel(actor_id)
+        if result is None:
+            correct_sessions.cancel_turn(pending_turn)
+            return "stale"
+        if result.success:
+            return "corrected"
+        if result.cancelled:
+            return "stale"
+        return "deliver_failed"
 
     if stripped in {"/start", "/menu"}:
         return "menu"
@@ -152,6 +162,12 @@ def build_admin_router(
             await message.answer("Corrected text delivered")
         elif status == "invalid_correct":
             await message.answer("Corrected text must be non-empty")
+        elif status == "stale":
+            await message.answer(
+                "Turn already handled or superseded — nothing delivered"
+            )
+        elif status == "deliver_failed":
+            await message.answer("Delivery failed — try again from the draft buttons")
 
     return router
 

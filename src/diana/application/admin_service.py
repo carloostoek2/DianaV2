@@ -176,20 +176,31 @@ class AdminService:
             turn_id, corrected_text=corrected_text.strip()
         )
 
+    async def is_pending_approval(self, turn_id: UUID) -> bool:
+        """True when turn is non-terminal and has a waiting approval."""
+        turn = await self._turns.get(turn_id)
+        if turn is None or _is_terminal(turn.status):
+            return False
+        approval = await self._approvals.get_by_turn(turn_id)
+        return approval is not None and approval.status == "waiting"
+
     async def handle_owner_escalate(
         self,
         turn_id: UUID,
         *,
         actor_id: int | None = None,
-    ) -> None:
-        """Owner discard/escalate: cancel waiting approval; never deliver."""
+    ) -> bool:
+        """Owner discard/escalate: cancel waiting approval; never deliver.
+
+        Returns True when the turn was transitioned to escalated; False on no-op.
+        """
         self._assert_owner(actor_id)
         turn = await self._turns.get(turn_id)
         if turn is None:
             logger.info(
                 "owner_escalate_missing_turn", extra={"turn_id": str(turn_id)}
             )
-            return
+            return False
         chat_id = turn.chat_id
 
         async with self._coordinator.chat_scope(chat_id):
@@ -202,7 +213,7 @@ class AdminService:
                         "status": None if turn is None else turn.status,
                     },
                 )
-                return
+                return False
 
             approval = await self._approvals.get_by_turn(turn_id)
             if approval is not None and approval.status in {"waiting", "claimed"}:
@@ -218,6 +229,7 @@ class AdminService:
             "owner_escalate",
             extra={"turn_id": str(turn_id), "chat_id": chat_id},
         )
+        return True
 
     async def _resolve_and_deliver(
         self,
