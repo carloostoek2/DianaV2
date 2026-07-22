@@ -88,12 +88,30 @@ composition root, safe startup recovery.
 - MVP-08 purity trio
 - Middleware order F1
 
+## Hardener fix round `26941e4f` (post SUMMARY)
+
+Commit: `fix(telegram): hardener round — forbidden scope, honest UX, FSM`
+
+| Fix | Detail |
+|-----|--------|
+| Forbidden scope | Business-only (`business_connection_id` required); owner private correct OK |
+| vip_id | VipStore resolve by `from_user.id` before Auth |
+| Honest UX | approve/correct/escalate map domain no-ops → `stale` / `deliver_failed` |
+| Correct FSM | 15m TTL + `cancel_turn` supersede |
+| MW order tests | Live `build_dispatcher` MiddlewareManager chain |
+| Auth private | Drop non-owner private DMs |
+| Polling | `allowed_updates=[message, business_message, callback_query]` |
+| Keywords boot | `set_keywords` via wiring (no Dispatcher walk) |
+
+**Unit gate after hardener:** **297 passed**
+
 ## Self-Check: PASSED
 
 - [x] Todas las tareas completadas
 - [x] Tests del PLAN corridos
-- [x] 0 regresiones atribuibles (209 baseline ⊂ 287)
+- [x] 0 regresiones atribuibles (209 baseline ⊂ 297)
 - [x] Convenciones del proyecto respetadas (English code, purity, F1 scope)
+- [x] Hardener MUST FIX applied
 
 ## Out of scope (confirmed not implemented)
 
