@@ -28,3 +28,7 @@ Mode: Strict TDD
 ### 2026-07-22T17:03:45Z — ITEM 2 COMPLETE
 ### 2026-07-22T17:10:19Z — Fix round hardener 73113e69 START
 ### 2026-07-22T17:10:59Z — Implementing hardener fixes (eval bounds, fences, trace JSON, empty draft, FAILED, llm_base_url)
+### 2026-07-22T17:14:40Z — Hardener 73113e69 fix round COMPLETE: 144 unit tests passed
+### 2026-07-22T17:18:12Z — Fix remaining test specialist opens START
+### 2026-07-22T17:19:08Z — Test specialist residual opens FIXED (TAC-04 shapes, stub isolation, director freeze, context/decider)
+### 2026-07-22T17:19:08Z — pytest tests/unit: 150 passed

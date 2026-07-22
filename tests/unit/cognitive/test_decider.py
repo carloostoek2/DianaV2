@@ -92,6 +92,30 @@ def test_mode_supervised_only_no_send() -> None:
     assert d.action != "send"
 
 
+@pytest.mark.parametrize(
+    "mode",
+    ["supervised", "autonomous", "unknown", "", "send"],
+)
+def test_mode_never_produces_send_action(mode: str) -> None:
+    """F1 matrix only approve|escalate — mode cannot unlock send."""
+    approve = Decider().decide(
+        _profile(safety=0.9),
+        _comprehension(risk="bajo"),
+        mode=mode,
+    )
+    escalate = Decider().decide(
+        _profile(safety=0.1),
+        _comprehension(risk="alto"),
+        mode=mode,
+    )
+    assert approve.action == "approve"
+    assert escalate.action == "escalate"
+    assert approve.action != "send"
+    assert escalate.action != "send"
+    assert approve.action in ("approve", "escalate")
+    assert escalate.action in ("approve", "escalate")
+
+
 def test_decider_source_has_no_mean_or_llm() -> None:
     from diana.cognitive import decider as decider_mod
 

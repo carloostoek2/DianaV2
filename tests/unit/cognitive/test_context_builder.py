@@ -71,18 +71,20 @@ def test_non_null_knowledge_sections_included() -> None:
         knowledge=knowledge,
         persona="Voice",
     )
-    assert "knowledge.history" in prompt or "history" in prompt.lower()
+    assert "## Knowledge: knowledge.history" in prompt
     assert "prior" in prompt
-    assert "message_count" in prompt or "1" in prompt
+    assert '"message_count": 1' in prompt
+    assert "## Knowledge: knowledge.context" in prompt
     # null memory must not appear as a heading
-    assert "knowledge.memory" not in prompt
+    assert "## Knowledge: knowledge.memory" not in prompt
 
 
 def test_comprehension_summary_present() -> None:
     builder = ContextBuilder()
     c = _comprehension()
     prompt = builder.build(_turn("x"), c, knowledge={}, persona="P")
-    assert c.intent in prompt or "greet" in prompt
+    assert "intent: greet" in prompt
+    assert f"intent: {c.intent}" in prompt
 
 
 def test_empty_list_and_dict_knowledge_omitted() -> None:

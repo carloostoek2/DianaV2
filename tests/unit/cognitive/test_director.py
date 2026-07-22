@@ -169,6 +169,24 @@ async def test_tac01_llm_calls_only_analyst_generator_evaluator() -> None:
     assert len(llm.calls) == 3
 
 
+_EVAL_DIMS = (
+    "naturalness",
+    "precision",
+    "doctrine",
+    "consistency",
+    "safety",
+    "coverage",
+    "empathy",
+)
+
+_STUB_CAPS = (
+    "knowledge.memory",
+    "knowledge.policy",
+    "knowledge.examples",
+    "knowledge.schedule",
+)
+
+
 @pytest.mark.asyncio
 async def test_tac04_trace_contains_all_seven_keys() -> None:
     llm = FakeLLM(
@@ -190,13 +208,44 @@ async def test_tac04_trace_contains_all_seven_keys() -> None:
         "evaluation",
         "decision",
     }
+
+    comprehension = trace.get(turn.turn_id, "comprehension")
+    assert not isinstance(comprehension, Comprehension)
+    assert isinstance(comprehension, dict)
+    assert comprehension["intent"] == "chat"
+    assert comprehension["risk"] in ("bajo", "medio", "alto")
+
+    plan = trace.get(turn.turn_id, "plan")
+    assert isinstance(plan, dict)
+    assert isinstance(plan["capabilities"], list)
+    assert plan["capabilities"] == ["knowledge.history", "knowledge.context"]
+
+    retrieved = trace.get(turn.turn_id, "retrieved")
+    assert isinstance(retrieved, dict)
+    assert set(retrieved.keys()) == set(plan["capabilities"])
+
+    prompt_text = trace.get(turn.turn_id, "prompt_text")
+    assert isinstance(prompt_text, str)
+    assert prompt_text.strip()
+    assert "hola Diana" in prompt_text
+
+    generated_text = trace.get(turn.turn_id, "generated_text")
+    assert isinstance(generated_text, str)
+    assert generated_text == "draft"
+
+    evaluation = trace.get(turn.turn_id, "evaluation")
+    assert isinstance(evaluation, dict)
+    for dim in _EVAL_DIMS:
+        assert dim in evaluation
+        assert isinstance(evaluation[dim], (int, float))
+        assert 0.0 <= float(evaluation[dim]) <= 1.0
+
     decision = trace.get(turn.turn_id, "decision")
     assert isinstance(decision, dict)
     assert decision["draft_text"] == "draft"
     assert decision["action"] in ("approve", "escalate")
-    # JSON-ready snapshots — not live Pydantic instances
-    assert not isinstance(trace.get(turn.turn_id, "comprehension"), Comprehension)
-    assert isinstance(trace.get(turn.turn_id, "comprehension"), dict)
+    assert decision["reason"]
+    assert isinstance(decision["evaluation"], dict)
 
 
 @pytest.mark.asyncio
@@ -209,7 +258,14 @@ async def test_registry_isolation_history_uses_turn_chat_id() -> None:
     )
     llm = FakeLLM(
         structured_responses=[
-            _comprehension(needs_history=True, needs_context=True),
+            _comprehension(
+                needs_history=True,
+                needs_context=True,
+                needs_memory=True,
+                needs_policy=True,
+                needs_examples=True,
+                needs_schedule=True,
+            ),
             _profile(),
         ],
         text_responses=["draft"],
@@ -219,16 +275,50 @@ async def test_registry_isolation_history_uses_turn_chat_id() -> None:
     await director.handle_turn(turn)
 
     retrieved = trace.get(turn.turn_id, "retrieved")
-    assert retrieved is not None
-    assert "knowledge.history" in retrieved
+    assert isinstance(retrieved, dict)
     assert retrieved["knowledge.history"] == [{"role": "vip", "text": "from-42"}]
-    # Stubs are None
-    assert retrieved.get("knowledge.memory") is None or "knowledge.memory" not in (
-        retrieved if isinstance(retrieved, dict) else {}
-    )
-    # Plan only requested history+context by default needs
+    assert isinstance(retrieved["knowledge.context"], dict)
+    assert retrieved["knowledge.context"]["message_count"] == 1
+    # All planned stub caps must be present and None (not vacuous omission).
+    for cap in _STUB_CAPS:
+        assert cap in retrieved
+        assert retrieved[cap] is None
     plan = trace.get(turn.turn_id, "plan")
-    assert plan["capabilities"] == ["knowledge.history", "knowledge.context"]
+    assert plan["capabilities"] == [
+        "knowledge.history",
+        "knowledge.context",
+        "knowledge.memory",
+        "knowledge.policy",
+        "knowledge.examples",
+        "knowledge.schedule",
+    ]
+
+
+def test_director_source_has_no_llm_control_flow() -> None:
+    """TAC-01 defense-in-depth: Director must not call structured LLM or import llm."""
+    import ast
+    import inspect
+
+    from diana.cognitive import director as director_mod
+
+    source = inspect.getsource(director_mod)
+    assert "generate_structured" not in source
+    assert "LLMProvider" not in source
+    assert "diana.llm" not in source
+    assert "mean(" not in source
+    assert "overall_score" not in source
+
+    tree = ast.parse(source)
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add(alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    assert not any(
+        mod == "diana.llm" or mod.startswith("diana.llm.") for mod in imported
+    )
 
 
 @pytest.mark.asyncio
