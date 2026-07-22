@@ -1,0 +1,33 @@
+## gsd-03-application-behavior.log
+Started: 2026-07-22T17:26:33Z
+PLAN: .planning/phases/03-application-behavior/PLAN.md
+Mode: Strict TDD
+
+### 2026-07-22T17:26:33Z — PLAN read complete
+- L1–L12 locked: mint turn_id before handle_turn; never auto-send on approve; supersede cascade; Behavior no LLM; Learning post-turn TRACE only
+- Packages application/behavior/learning do not exist yet
+- Baseline unit suite target: ≥150 + new tests
+- Starting Task 1: ports, in-memory stores, purity gates (tests first)
+
+
+### 2026-07-22T17:27:03Z — Task 1 START: ports, fakes, purity (tests first)
+
+### 2026-07-22T17:28:56Z — Task 1 PASS: ports/fakes/purity (12 tests)
+### 2026-07-22T17:28:56Z — Task 2 START: TurnCoordinator (tests first)
+
+### 2026-07-22T17:29:26Z — Task 2 PASS: TurnCoordinator (8 tests)
+### 2026-07-22T17:29:26Z — Task 3 START: BehaviorEngine (tests first)
+
+### 2026-07-22T17:31:32Z — Task 3 PASS: BehaviorEngine (10 behavior tests)
+### 2026-07-22T17:31:32Z — Task 4 START: Admin + Orchestrator + Learning + recovery
+
+### 2026-07-22T17:32:51Z — Task 4 PASS: Admin/Orchestrator/Learning/recovery
+### 2026-07-22T17:32:51Z — Full unit suite: 198 passed (150 baseline + 48 new)
+### 2026-07-22T17:32:51Z — SUMMARY written
+
+## Self-Check: PASSED
+- [x] All PLAN tasks completed
+- [x] Tests of PLAN run: pytest tests/unit -q → 198 passed
+- [x] 0 regressions attributable (cognitive purity green)
+- [x] Project conventions respected (English, ports+DI, Behavior no LLM, Learning post-turn)
+### 2026-07-22T17:32:51Z — ITEM 3 COMPLETE
