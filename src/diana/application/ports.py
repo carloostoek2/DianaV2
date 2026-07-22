@@ -105,6 +105,41 @@ class VipInboundMessage(BaseModel):
     vip_id: UUID | None = None
 
 
+class VipRecord(BaseModel):
+    """VIP allowlist row shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    telegram_user_id: int
+    display_name: str | None = None
+    is_active: bool = True
+    paused_until: datetime | None = None
+
+
+@runtime_checkable
+class VipStore(Protocol):
+    """VIP allowlist store used by Auth middleware and admin commands."""
+
+    async def get_by_telegram_user_id(
+        self, telegram_user_id: int
+    ) -> VipRecord | None: ...
+
+    async def is_allowed(
+        self, telegram_user_id: int, *, now: datetime | None = None
+    ) -> bool:
+        """True iff VIP exists, is_active, and not paused (paused_until is None or < now)."""
+        ...
+
+    async def add(
+        self, telegram_user_id: int, *, display_name: str | None = None
+    ) -> VipRecord: ...
+
+    async def deactivate(self, telegram_user_id: int) -> bool:
+        """Soft-remove: set is_active=False. Returns False if unknown."""
+        ...
+
+
 @runtime_checkable
 class OwnerNotifierPort(Protocol):
     """Notify the owner via DM. Never accepts aiogram types."""
@@ -247,4 +282,6 @@ __all__ = [
     "TurnRecord",
     "TurnStore",
     "VipInboundMessage",
+    "VipRecord",
+    "VipStore",
 ]

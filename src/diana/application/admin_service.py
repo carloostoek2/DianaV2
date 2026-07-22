@@ -176,6 +176,49 @@ class AdminService:
             turn_id, corrected_text=corrected_text.strip()
         )
 
+    async def handle_owner_escalate(
+        self,
+        turn_id: UUID,
+        *,
+        actor_id: int | None = None,
+    ) -> None:
+        """Owner discard/escalate: cancel waiting approval; never deliver."""
+        self._assert_owner(actor_id)
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            logger.info(
+                "owner_escalate_missing_turn", extra={"turn_id": str(turn_id)}
+            )
+            return
+        chat_id = turn.chat_id
+
+        async with self._coordinator.chat_scope(chat_id):
+            turn = await self._turns.get(turn_id)
+            if turn is None or _is_terminal(turn.status):
+                logger.info(
+                    "owner_escalate_terminal_noop",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "status": None if turn is None else turn.status,
+                    },
+                )
+                return
+
+            approval = await self._approvals.get_by_turn(turn_id)
+            if approval is not None and approval.status in {"waiting", "claimed"}:
+                await self._approvals.mark_status(turn_id, "cancelled")
+
+            await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
+
+        await self._notifier.notify_info(
+            f"Turn {turn_id} escalated/discarded by owner",
+            chat_id=chat_id,
+        )
+        logger.info(
+            "owner_escalate",
+            extra={"turn_id": str(turn_id), "chat_id": chat_id},
+        )
+
     async def _resolve_and_deliver(
         self,
         turn_id: UUID,

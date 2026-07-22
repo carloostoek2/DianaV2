@@ -4,20 +4,22 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from diana.application.ports import (
     ApprovalRecord,
     DeliveryRecord,
     TurnRecord,
+    VipRecord,
 )
 from diana.cognitive.models import TERMINAL_TURN_STATUSES, TurnStatus, parse_turn_status
 from diana.cognitive.ports import to_jsonable
 
 # Approval statuses that supersede must cancel.
 _OPEN_APPROVAL_STATUSES = frozenset({"waiting", "claimed"})
+OPEN_APPROVAL_STATUSES = _OPEN_APPROVAL_STATUSES
 
-# Delivery status machine (monotonic / cancel-safe).
+# Delivery status machine (monotonic / cancel-safe). Public alias for SQL adapters.
 _DELIVERY_TRANSITIONS: dict[str, frozenset[str]] = {
     "pending": frozenset({"delivering", "cancelled", "expired"}),
     "delivering": frozenset({"done", "cancelled", "expired", "error"}),
@@ -26,6 +28,7 @@ _DELIVERY_TRANSITIONS: dict[str, frozenset[str]] = {
     "expired": frozenset(),
     "error": frozenset(),
 }
+DELIVERY_TRANSITIONS = _DELIVERY_TRANSITIONS
 
 
 def _is_terminal(status: str) -> bool:
@@ -297,7 +300,73 @@ class FakeOwnerNotifier:
         self.infos.append((text, chat_id))
 
 
+class InMemoryVipStore:
+    """Dict-backed VipStore for unit tests and Auth middleware fakes."""
+
+    def __init__(self) -> None:
+        self._by_tg: dict[int, VipRecord] = {}
+
+    async def get_by_telegram_user_id(
+        self, telegram_user_id: int
+    ) -> VipRecord | None:
+        rec = self._by_tg.get(telegram_user_id)
+        return rec.model_copy(deep=True) if rec else None
+
+    async def is_allowed(
+        self, telegram_user_id: int, *, now: datetime | None = None
+    ) -> bool:
+        rec = self._by_tg.get(telegram_user_id)
+        if rec is None or not rec.is_active:
+            return False
+        if rec.paused_until is None:
+            return True
+        clock = now or datetime.now(UTC)
+        paused = rec.paused_until
+        if paused.tzinfo is None and clock.tzinfo is not None:
+            paused = paused.replace(tzinfo=clock.tzinfo)
+        return paused < clock
+
+    async def add(
+        self, telegram_user_id: int, *, display_name: str | None = None
+    ) -> VipRecord:
+        existing = self._by_tg.get(telegram_user_id)
+        if existing is not None:
+            updated = existing.model_copy(
+                update={"is_active": True, "display_name": display_name or existing.display_name}
+            )
+            self._by_tg[telegram_user_id] = updated
+            return updated.model_copy(deep=True)
+        rec = VipRecord(
+            id=uuid4(),
+            telegram_user_id=telegram_user_id,
+            display_name=display_name,
+            is_active=True,
+        )
+        self._by_tg[telegram_user_id] = rec
+        return rec.model_copy(deep=True)
+
+    async def deactivate(self, telegram_user_id: int) -> bool:
+        rec = self._by_tg.get(telegram_user_id)
+        if rec is None:
+            return False
+        self._by_tg[telegram_user_id] = rec.model_copy(update={"is_active": False})
+        return True
+
+    def set_paused_until(
+        self, telegram_user_id: int, paused_until: datetime | None
+    ) -> None:
+        """Test helper: set pause window without a separate port method."""
+        rec = self._by_tg.get(telegram_user_id)
+        if rec is None:
+            raise KeyError(f"vip not found: {telegram_user_id}")
+        self._by_tg[telegram_user_id] = rec.model_copy(
+            update={"paused_until": paused_until}
+        )
+
+
 __all__ = [
+    "DELIVERY_TRANSITIONS",
+    "OPEN_APPROVAL_STATUSES",
     "FakeOwnerNotifier",
     "InMemoryEscalationStore",
     "InMemoryMessageHistoryWriter",
@@ -305,4 +374,5 @@ __all__ = [
     "InMemoryPendingDeliveryStore",
     "InMemoryTraceReaderWriter",
     "InMemoryTurnStore",
+    "InMemoryVipStore",
 ]
