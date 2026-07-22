@@ -1,13 +1,12 @@
-# DianaV2 — Fase 1 Cognitive Core + Foundation
+# DianaV2 — Fase 1 (supervised VIP chat automation)
 
-Installable `src/diana` package with env-driven Settings, F1 PostgreSQL schema
-(8 tables), pure Pydantic cognitive domain models, and the **supervised
-cognitive decision pipeline** (Director → Analyst → Planner → Registry →
-ContextBuilder → Generator → Evaluator → Decider) plus abstract `LLMProvider`
-(DeepSeek httpx client + `FakeLLM` for unit tests).
+Installable `src/diana` package: env-driven Settings, F1 PostgreSQL schema
+(8 tables), pure cognitive decision pipeline, application shell (orchestrator +
+admin approval gate), Behavior Engine, Learning post-turn check, and **Telegram
+I/O** (aiogram 3 long-polling) with SQL repository adapters.
 
-This slice does **not** implement Telegram handlers, Behavior Engine, Admin,
-TurnOrchestrator, or Learning (items 3–4).
+F1 is **supervised only**: VIP path never auto-sends; deliver only after owner
+approve/correct. No Freeze / Staging / gray zone / autonomous `send`.
 
 ## Requirements
 
@@ -36,23 +35,38 @@ Required:
 
 **Never commit real tokens or owner IDs.**
 
+## Run (long-polling)
+
+```bash
+export DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/diana
+alembic upgrade head
+python -m diana.main
+# or: python -c "from diana.main import main; main()"
+```
+
+On startup the process:
+1. Loads `forbidden_keywords` from `system_config`
+2. Runs **safe recovery**: expires mid-flight `delivering` + recoverable pending
+   (re-notify owner; **never** silent VIP re-send / auto-approve)
+3. Starts aiogram long-polling
+
 ## Tests
 
 ```bash
-# Full unit suite (no Postgres, no network)
-pytest tests/unit -q
+# Full unit suite (no Postgres, no live Telegram)
+.venv/bin/pytest tests/unit -q
 
-# Cognitive pipeline + LLM doubles only
-pytest tests/unit/cognitive tests/unit/llm -q
+# Purity gates
+.venv/bin/pytest tests/unit/cognitive/test_import_purity.py \
+  tests/unit/application/test_application_import_purity.py \
+  tests/unit/behavior/test_behavior_import_purity.py -q
 ```
 
-Unit tests freeze F1 contracts (`EvaluationProfile` 7D, `Decision` approve|escalate,
-Settings, import purity) and exercise the Director with **FakeLLM** (scripted
-responses, call log). DeepSeek provider tests use `httpx.MockTransport` only —
-never live API calls. Postgres is not required for the unit suite.
+Unit tests freeze F1 contracts and use FakeLLM / FakeTelegramActuator / MagicMock
+Bot only — never live API or Telegram. Postgres is not required for the unit suite.
 
-Cognitive components receive `LLMProvider` via constructor DI; they never import
-`diana.llm` (architecture purity gate).
+Layer purity: `cognitive` / `application` / `behavior` / `learning` must not import
+`aiogram`. Telegram adapters live under `diana.telegram`.
 
 ## Migrations
 
