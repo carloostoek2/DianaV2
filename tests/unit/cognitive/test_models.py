@@ -1,0 +1,224 @@
+"""Unit tests for F1 cognitive domain models."""
+
+from __future__ import annotations
+
+from typing import get_args
+from uuid import uuid4
+
+import pytest
+from pydantic import ValidationError
+
+
+def _profile(**overrides: float):
+    from diana.cognitive.models import EvaluationProfile
+
+    data = {
+        "naturalness": 0.9,
+        "precision": 0.8,
+        "doctrine": 0.85,
+        "consistency": 0.9,
+        "safety": 0.95,
+        "coverage": 0.7,
+        "empathy": 0.8,
+    }
+    data.update(overrides)
+    return EvaluationProfile(**data)
+
+
+_CANONICAL_DIMS = (
+    "naturalness",
+    "precision",
+    "doctrine",
+    "consistency",
+    "safety",
+    "coverage",
+    "empathy",
+)
+
+
+@pytest.mark.parametrize("missing_dim", _CANONICAL_DIMS)
+def test_evaluation_profile_requires_all_seven_dims(missing_dim: str) -> None:
+    """Missing any of the 7 canonical dimensions must fail validation."""
+    from diana.cognitive.models import EvaluationProfile
+
+    data = {dim: 0.8 for dim in _CANONICAL_DIMS}
+    del data[missing_dim]
+    with pytest.raises(ValidationError):
+        EvaluationProfile(**data)
+
+
+def test_evaluation_profile_constructs_with_seven_dims() -> None:
+    profile = _profile()
+    assert profile.naturalness == 0.9
+    assert profile.empathy == 0.8
+    assert profile.raw_llm_output is None
+
+
+def test_decision_approve_and_escalate_ok() -> None:
+    from diana.cognitive.models import Decision
+
+    profile = _profile()
+    approve = Decision(action="approve", reason="ok", evaluation=profile)
+    escalate = Decision(
+        action="escalate",
+        reason="safety",
+        evaluation=profile,
+        draft_text="maybe",
+    )
+    assert approve.action == "approve"
+    assert escalate.action == "escalate"
+    assert escalate.draft_text == "maybe"
+
+
+def test_decision_action_literal_is_exactly_approve_escalate() -> None:
+    from diana.cognitive.models import Decision
+
+    assert get_args(Decision.model_fields["action"].annotation) == ("approve", "escalate")
+
+
+def test_decision_requires_evaluation() -> None:
+    from diana.cognitive.models import Decision
+
+    with pytest.raises(ValidationError):
+        Decision(action="approve", reason="ok")  # type: ignore[call-arg]
+
+
+def test_decision_requires_action_and_reason() -> None:
+    from diana.cognitive.models import Decision
+
+    profile = _profile()
+    with pytest.raises(ValidationError):
+        Decision(reason="ok", evaluation=profile)  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        Decision(action="approve", evaluation=profile)  # type: ignore[call-arg]
+
+    for name in ("action", "reason", "evaluation"):
+        assert Decision.model_fields[name].is_required() is True
+
+
+@pytest.mark.parametrize("bad_action", ["send", "regenerate", "consult_doctrine", "wait"])
+def test_decision_rejects_non_f1_actions(bad_action: str) -> None:
+    from diana.cognitive.models import Decision
+
+    with pytest.raises(ValidationError):
+        Decision(action=bad_action, reason="nope", evaluation=_profile())
+
+
+def test_decision_rejects_extra_score_on_nested_evaluation() -> None:
+    from diana.cognitive.models import Decision
+
+    with pytest.raises(ValidationError):
+        Decision.model_validate(
+            {
+                "action": "approve",
+                "reason": "ok",
+                "evaluation": {
+                    "naturalness": 0.9,
+                    "precision": 0.8,
+                    "doctrine": 0.85,
+                    "consistency": 0.9,
+                    "safety": 0.95,
+                    "coverage": 0.7,
+                    "empathy": 0.8,
+                    "confidence": 0.99,
+                },
+            }
+        )
+
+
+def test_comprehension_rejects_invalid_urgency_and_risk() -> None:
+    from diana.cognitive.models import Comprehension
+
+    with pytest.raises(ValidationError):
+        Comprehension(
+            intent="x",
+            topics=[],
+            emotion="neutral",
+            urgency="urgent",  # invalid
+            risk="bajo",
+        )
+    with pytest.raises(ValidationError):
+        Comprehension(
+            intent="x",
+            topics=[],
+            emotion="neutral",
+            urgency="baja",
+            risk="critical",  # invalid
+        )
+
+
+def test_comprehension_valid_literals() -> None:
+    from diana.cognitive.models import Comprehension
+
+    c = Comprehension(
+        intent="greet",
+        topics=["hello"],
+        emotion="friendly",
+        urgency="media",
+        risk="medio",
+    )
+    assert c.needs_history is True
+    assert c.needs_memory is False
+
+
+def test_plan_capabilities_ok() -> None:
+    from diana.cognitive.models import Plan
+
+    plan = Plan(capabilities=["knowledge.history"])
+    assert plan.capabilities == ["knowledge.history"]
+
+
+def test_turn_status_terminal_and_non_terminal_set() -> None:
+    from diana.cognitive.models import TERMINAL_TURN_STATUSES, TurnStatus
+
+    terminal = {
+        TurnStatus.SUPERSEDED,
+        TurnStatus.DELIVERED,
+        TurnStatus.FAILED,
+        TurnStatus.ESCALATED,
+    }
+    assert TERMINAL_TURN_STATUSES == terminal
+    assert TurnStatus.PENDING_APPROVAL not in TERMINAL_TURN_STATUSES
+    assert TurnStatus.PENDING_APPROVAL.value == "pending_approval"
+
+    expected_values = {
+        "received",
+        "analyzing",
+        "planning",
+        "retrieving",
+        "building_context",
+        "generating",
+        "evaluating",
+        "deciding",
+        "pending_approval",
+        "escalated",
+        "superseded",
+        "delivered",
+        "failed",
+    }
+    assert {s.value for s in TurnStatus} == expected_values
+
+
+def test_parse_turn_status_roundtrip_and_reject() -> None:
+    from diana.cognitive.models import TurnStatus, parse_turn_status
+
+    assert parse_turn_status("pending_approval") is TurnStatus.PENDING_APPROVAL
+    with pytest.raises(ValueError, match="invalid turn status"):
+        parse_turn_status("pending-approval")
+
+
+def test_incoming_turn_constructs_and_requires_fields() -> None:
+    from diana.cognitive.models import IncomingTurn
+
+    tid = uuid4()
+    turn = IncomingTurn(turn_id=tid, chat_id=1, text="hola")
+    assert turn.vip_id is None
+    assert turn.telegram_message_id is None
+    assert turn.business_connection_id is None
+
+    with pytest.raises(ValidationError):
+        IncomingTurn(chat_id=1, text="hola")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        IncomingTurn(turn_id=tid, text="hola")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        IncomingTurn(turn_id=tid, chat_id=1)  # type: ignore[call-arg]
