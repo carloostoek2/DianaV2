@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,9 +22,25 @@ from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
-from diana.cognitive.models import Decision, EvaluationProfile, IncomingTurn
+from diana.cognitive.analyst import Analyst
+from diana.cognitive.context_builder import ContextBuilder
+from diana.cognitive.decider import Decider
+from diana.cognitive.director import CognitiveDirector
+from diana.cognitive.evaluator import Evaluator
+from diana.cognitive.generator import Generator
+from diana.cognitive.models import (
+    Comprehension,
+    Decision,
+    EvaluationProfile,
+    IncomingTurn,
+)
+from diana.cognitive.planner import Planner
 from diana.cognitive.ports import TRACE_KEYS
+from diana.cognitive.registry import build_default_registry
 from diana.learning.post_turn import LearningService
+from diana.llm.fake import FakeLLM
+
+OWNER_ID = 999001
 
 
 def _eval() -> EvaluationProfile:
@@ -50,6 +67,22 @@ class FakeDirector:
         return self._decision
 
 
+class SlowDirector:
+    """Director that blocks until released — for concurrency tests."""
+
+    def __init__(self, decision: Decision, *, delay: float = 0.15) -> None:
+        self._decision = decision
+        self.delay = delay
+        self.started = asyncio.Event()
+        self.calls: list[IncomingTurn] = []
+
+    async def handle_turn(self, turn: IncomingTurn) -> Decision:
+        self.calls.append(turn)
+        self.started.set()
+        await asyncio.sleep(self.delay)
+        return self._decision
+
+
 class RecordingLearning:
     def __init__(self, inner: LearningService | None = None) -> None:
         self.calls: list[UUID] = []
@@ -63,7 +96,7 @@ class RecordingLearning:
 
 
 def _build(
-    director: FakeDirector,
+    director: object,
     *,
     learning: RecordingLearning | None = None,
 ) -> dict:
@@ -90,11 +123,12 @@ def _build(
         behavior=behavior,
         traces=traces,
         turns=turns,
+        owner_telegram_id=OWNER_ID,
     )
     learn = learning or RecordingLearning(LearningService(traces))
     orch = TurnOrchestrator(
         coordinator=coordinator,
-        director=director,
+        director=director,  # type: ignore[arg-type]
         admin=admin,
         learning=learn,
         history=history,
@@ -182,6 +216,21 @@ async def test_r4_learning_called_once_after_branch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_learning_on_escalate_path() -> None:
+    decision = Decision(
+        action="escalate",
+        reason="risk",
+        evaluation=_eval(),
+        draft_text="",
+    )
+    g = _build(FakeDirector(decision))
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    assert g["learning"].calls == [turn_id]
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "escalated"
+
+
+@pytest.mark.asyncio
 async def test_r5_approve_after_supersede_no_deliver() -> None:
     decision = Decision(
         action="approve",
@@ -192,7 +241,7 @@ async def test_r5_approve_after_supersede_no_deliver() -> None:
     g = _build(FakeDirector(decision))
     a = await g["orch"].handle_vip_message(_vip(text="A"))
     await g["orch"].handle_vip_message(_vip(text="B"))
-    result = await g["admin"].handle_approve(a)
+    result = await g["admin"].handle_approve(a, actor_id=OWNER_ID)
     assert result is None
     assert g["actuator"].send_count() == 0
 
@@ -218,14 +267,26 @@ async def test_director_exception_marks_failed_and_reraises() -> None:
     g = _build(FakeDirector(RuntimeError("llm down")))
     with pytest.raises(RuntimeError, match="llm down"):
         await g["orch"].handle_vip_message(_vip())
-    # last non-terminal should not remain; failed is terminal
     non_term = await g["turns"].list_non_terminal(100)
-    # failed turn is terminal so non_term empty or only if begin failed mid-way
-    assert all(t.status != "received" for t in non_term)
-    # find the turn that was created
-    # mark_failed should have run
+    assert non_term == []
+    # Exactly one turn and it is failed with error text
+    # (scan via a second begin would supersede — load by director call)
+    # Director never returned; turn was minted before fail.
     assert g["actuator"].send_count() == 0
-    assert g["learning"].calls == []  # Learning NOT on hard fail
+    assert g["learning"].calls == []
+    # Reconstruct: only failed terminal exists for chat — probe by creating nothing
+    # and checking list_non_terminal already empty; also try get via coordinator
+    # history of transitions is not stored; use internal store scan:
+    failed_ids = [
+        t.id
+        for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await g["turns"].get(failed_ids[0])
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error == "llm down"
 
 
 @pytest.mark.asyncio
@@ -268,9 +329,16 @@ async def test_missing_business_connection_id_fails_turn() -> None:
     )
     g = _build(FakeDirector(decision))
     with pytest.raises(ValueError, match="business_connection_id"):
-        await g["orch"].handle_vip_message(
-            _vip(business_connection_id=None)
-        )
+        await g["orch"].handle_vip_message(_vip(business_connection_id=None))
+    non_term = await g["turns"].list_non_terminal(100)
+    assert non_term == []
+    failed_ids = [
+        t
+        for t in g["turns"]._turns.values()  # noqa: SLF001
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    assert failed_ids[0].status == "failed"
 
 
 @pytest.mark.asyncio
@@ -281,12 +349,305 @@ async def test_owner_approve_after_orchestrator_delivers() -> None:
         evaluation=_eval(),
         draft_text="final draft",
     )
-    traces = InMemoryTraceReaderWriter()
     g = _build(FakeDirector(decision))
-    # seed traces so learning complete path also works if used
     turn_id = await g["orch"].handle_vip_message(_vip())
     g["traces"].seed_keys(turn_id, TRACE_KEYS)
-    result = await g["admin"].handle_approve(turn_id)
+    result = await g["admin"].handle_approve(turn_id, actor_id=OWNER_ID)
     assert result is not None and result.success
     assert g["actuator"].send_count() == 1
     assert g["actuator"].calls[-1]["text"] == "final draft"
+    # mark-as-read when telegram_message_id present
+    assert any(c["op"] == "read_business_message" for c in g["actuator"].calls)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_vip_messages_one_non_terminal_no_zombie() -> None:
+    """Full chat lock + terminal latch: concurrent VIP msgs never revive old turn."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    slow = SlowDirector(decision, delay=0.1)
+    g = _build(slow)
+
+    task_a = asyncio.create_task(
+        g["orch"].handle_vip_message(_vip(text="msg A", telegram_message_id=1))
+    )
+    await slow.started.wait()
+    task_b = asyncio.create_task(
+        g["orch"].handle_vip_message(_vip(text="msg B", telegram_message_id=2))
+    )
+    a_id, b_id = await asyncio.gather(task_a, task_b)
+
+    non_term = await g["turns"].list_non_terminal(100)
+    assert len(non_term) == 1
+    # Older turn must not be pending_approval if superseded
+    for tid in (a_id, b_id):
+        rec = await g["turns"].get(tid)
+        assert rec is not None
+        if rec.status == "superseded":
+            assert rec.superseded_by is not None
+            # cannot have waiting approval on superseded
+            appr = await g["approvals"].get_by_turn(tid)
+            if appr is not None:
+                assert appr.status != "waiting"
+        elif rec.status == "pending_approval":
+            assert non_term[0].id == tid
+
+    # Approving the superseded turn never sends
+    for tid in (a_id, b_id):
+        rec = await g["turns"].get(tid)
+        if rec is not None and rec.status == "superseded":
+            result = await g["admin"].handle_approve(tid, actor_id=OWNER_ID)
+            assert result is None
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_post_director_aborts_if_already_terminal() -> None:
+    """Defense-in-depth: if turn is terminal after Director, no new approval."""
+
+    class TerminalizingDirector:
+        def __init__(self, coordinator: TurnCoordinator, decision: Decision) -> None:
+            self._coordinator = coordinator
+            self._decision = decision
+            self.calls: list[IncomingTurn] = []
+
+        async def handle_turn(self, turn: IncomingTurn) -> Decision:
+            self.calls.append(turn)
+            # Force terminal without going through begin_turn (simulates race).
+            await self._coordinator.transition(turn.turn_id, "superseded")
+            return self._decision
+
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="stale",
+    )
+    # Build graph without director first
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    history = InMemoryMessageHistoryWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    director = TerminalizingDirector(coordinator, decision)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    learn = RecordingLearning()
+    orch = TurnOrchestrator(
+        coordinator=coordinator,
+        director=director,  # type: ignore[arg-type]
+        admin=admin,
+        learning=learn,
+        history=history,
+    )
+    turn_id = await orch.handle_vip_message(_vip())
+    stored = await turns.get(turn_id)
+    assert stored is not None
+    assert stored.status == "superseded"
+    assert await approvals.get_by_turn(turn_id) is None
+    assert learn.calls == [turn_id]
+    assert actuator.send_count() == 0
+
+
+def _comprehension(**overrides) -> Comprehension:
+    data = {
+        "intent": "chat",
+        "topics": ["general"],
+        "emotion": "neutral",
+        "urgency": "baja",
+        "risk": "bajo",
+        "needs_history": True,
+        "needs_context": True,
+        "needs_memory": False,
+        "needs_policy": False,
+        "needs_examples": False,
+        "needs_schedule": False,
+    }
+    data.update(overrides)
+    return Comprehension(**data)
+
+
+def _profile(**overrides: float) -> EvaluationProfile:
+    data = {
+        "naturalness": 0.9,
+        "precision": 0.8,
+        "doctrine": 0.85,
+        "consistency": 0.9,
+        "safety": 0.95,
+        "coverage": 0.7,
+        "empathy": 0.8,
+    }
+    data.update(overrides)
+    return EvaluationProfile(**data)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_happy_path_real_director_fake_llm() -> None:
+    """End-to-end application shell: real CognitiveDirector + FakeLLM + fakes."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    history = InMemoryMessageHistoryWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(risk="medio"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Real pipeline draft"],
+    )
+    director = CognitiveDirector(
+        analyst=Analyst(llm),
+        planner=Planner(),
+        registry=build_default_registry(history),
+        context_builder=ContextBuilder(),
+        generator=Generator(llm),
+        evaluator=Evaluator(llm),
+        decider=Decider(),
+        trace=traces,
+        persona="You are Diana.",
+        status_sink=coordinator,
+    )
+    learning = LearningService(traces)
+    orch = TurnOrchestrator(
+        coordinator=coordinator,
+        director=director,
+        admin=admin,
+        learning=learning,
+        history=history,
+    )
+
+    turn_id = await orch.handle_vip_message(_vip(text="hola del VIP"))
+
+    assert actuator.send_count() == 0
+    assert len(notifier.drafts) == 1
+    assert notifier.drafts[0].draft_text == "Real pipeline draft"
+
+    stored = await turns.get(turn_id)
+    assert stored is not None
+    assert stored.status == "pending_approval"
+
+    report = await learning.run_post_turn(turn_id)
+    assert report.complete is True
+    assert report.missing == []
+    assert await traces.get_trace_keys(turn_id) == set(TRACE_KEYS)
+
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+
+    recent = await history.get_recent(100)
+    assert recent[-1]["role"] == "vip"
+    assert recent[-1]["text"] == "hola del VIP"
+
+    result = await admin.handle_approve(turn_id, actor_id=OWNER_ID)
+    assert result is not None and result.success is True
+    assert actuator.send_count() == 1
+    assert actuator.calls[-1]["text"] == "Real pipeline draft"
+    delivered = await turns.get(turn_id)
+    assert delivered is not None and delivered.status == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_r2_supersede_invokes_behavior_cancel_pending() -> None:
+    """Supersede cascade must call BehaviorEngine.cancel_pending (R2/TAC-07)."""
+
+    class CountingBehavior(BehaviorEngine):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.cancel_calls: list[tuple[int, str]] = []
+
+        async def cancel_pending(
+            self, chat_id: int, reason: str = "new_message"
+        ) -> None:
+            self.cancel_calls.append((chat_id, reason))
+            await super().cancel_pending(chat_id, reason)
+
+    decision = Decision(
+        action="approve",
+        reason="good",
+        evaluation=_eval(),
+        draft_text="draft A",
+    )
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    history = InMemoryMessageHistoryWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    behavior = CountingBehavior(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    learn = RecordingLearning(LearningService(traces))
+    orch = TurnOrchestrator(
+        coordinator=coordinator,
+        director=FakeDirector(decision),
+        admin=admin,
+        learning=learn,
+        history=history,
+    )
+    await orch.handle_vip_message(_vip(text="msg A"))
+    assert behavior.cancel_calls == []
+    await orch.handle_vip_message(_vip(text="msg B"))
+    assert behavior.cancel_calls == [(100, "new_message")]

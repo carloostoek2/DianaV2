@@ -101,8 +101,12 @@ async def test_delivery_store_insert_cancel_list() -> None:
     assert len(await store.list_pending()) == 1
     n = await store.cancel_for_chat(9)
     assert n == 1
-    await store.update_status(rec.id, "cancelled")
+    # cancelled is sticky — cannot re-write or promote to done
+    assert await store.update_status(rec.id, "cancelled") is False
+    assert await store.update_status(rec.id, "done") is False
     assert (await store.list_pending()) == []
+    stuck = await store.get(rec.id)
+    assert stuck is not None and stuck.status == "cancelled"
 
 
 @pytest.mark.asyncio

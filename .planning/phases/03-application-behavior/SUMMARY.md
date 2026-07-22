@@ -3,7 +3,7 @@
 **Phase:** 03-application-behavior  
 **Date:** 2026-07-22  
 **Mode:** Strict TDD  
-**Status:** COMPLETE
+**Status:** COMPLETE (+ hardener fix round ddd81931)
 
 ## Objective
 
@@ -62,35 +62,49 @@ Materialize the application shell around the pure cognitive core: turn lifecycle
 | SQL repository adapters | Deferred (PLAN optional; unit gate uses fakes only) |
 | `owner_message_id` patch after notify | Notify returns id; store update left soft (not required by golds) |
 
+## Hardener fix round (ddd81931)
+
+| Fix | Implementation |
+|-----|----------------|
+| Zombie pipeline | Full `chat_scope` lock for VIP path + terminal latch + post-Director abort |
+| Approve TOCTOU / double-send | `claim_waiting` CAS under lock; re-check terminal after deliver |
+| cancelled → done | Delivery status machine; `update_status` returns bool |
+| Owner authZ | `owner_telegram_id` + `OwnerAuthError` on approve/correct |
+| Mark-as-read | `trigger_message_id` → `DeliveryContext.telegram_message_id` |
+| Recovery `delivering` | Always expire mid-flight rows on classify |
+| owner_message_id | Persisted via `set_owner_message_id` |
+
 ## Verifications run
 
 ```bash
 .venv/bin/pytest tests/unit -q
-# 198 passed
+# 209 passed (after hardener fix round)
 
 .venv/bin/pytest tests/unit/application tests/unit/behavior tests/unit/learning -q
-# 48 passed
+# 59 passed
 
 .venv/bin/pytest tests/unit/cognitive/test_import_purity.py tests/unit/behavior/test_behavior_import_purity.py -q
 # green
 ```
 
-- Baseline regression: 150 prior unit tests still green  
-- New item-3 tests: **48**  
-- Total: **198 passed**
+- Baseline regression: prior unit tests still green  
+- Item-3 package tests: **59**  
+- Total: **209 passed**
 
 ## Out of scope (item 4)
 
 - aiogram handlers / middlewares / `main` polling  
 - Restart Task rehydration scheduler (helpers ready)  
 - Staging / gray zone / autonomous send / F2 tables  
+- Isolated delivery worker task (cancel-aware current_task kept for F1)
 
 ## Self-Check: PASSED
 
 - [x] All PLAN tasks completed  
-- [x] PLAN tests run (`pytest tests/unit -q` → **198 passed**)  
+- [x] PLAN tests run (`pytest tests/unit -q` → **209 passed** after fix round)  
 - [x] 0 regressions attributable (cognitive purity + suite green)  
-- [x] Project conventions respected (English, ports+DI, no aiogram in application/behavior)
+- [x] Project conventions respected (English, ports+DI, no aiogram in application/behavior)  
+- [x] Hardener critical races fixed (zombie, double-approve, cancel CAS, authZ)
 
 ## Next
 

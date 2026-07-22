@@ -9,7 +9,13 @@ from uuid import UUID
 from diana.application.admin_service import AdminService
 from diana.application.ports import MessageHistoryWriter, VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
-from diana.cognitive.models import Decision, IncomingTurn, TurnStatus
+from diana.cognitive.models import (
+    TERMINAL_TURN_STATUSES,
+    Decision,
+    IncomingTurn,
+    TurnStatus,
+    parse_turn_status,
+)
 
 logger = logging.getLogger("diana.application")
 
@@ -22,10 +28,19 @@ class LearningPort(Protocol):
     async def run_post_turn(self, turn_id: UUID) -> object: ...
 
 
+def _is_terminal(status: str) -> bool:
+    try:
+        return parse_turn_status(status) in TERMINAL_TURN_STATUSES
+    except ValueError:
+        return False
+
+
 class TurnOrchestrator:
     """Application entry for VIP business messages.
 
     Mints ``turn_id`` before Director. Never calls Behavior.deliver on approve.
+    Holds the per-chat lock for the full use-case so a mid-pipeline supersede
+    cannot interleave (zombie-pipeline guard). Terminal latch still applies.
     """
 
     def __init__(
@@ -45,11 +60,16 @@ class TurnOrchestrator:
 
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
+        chat_id = incoming.chat_id
+        async with self._coordinator.chat_scope(chat_id):
+            return await self._handle_vip_message_locked(incoming)
+
+    async def _handle_vip_message_locked(
+        self, incoming: VipInboundMessage
+    ) -> UUID:
         bc = incoming.business_connection_id
         if bc is None or not str(bc).strip():
-            # Fail closed before creating an unusable approval/delivery path.
-            # Still create + fail the turn so lifecycle is reconstructable.
-            record = await self._coordinator.begin_turn(
+            record = await self._coordinator.begin_turn_unlocked(
                 chat_id=incoming.chat_id,
                 trigger_message_id=incoming.telegram_message_id,
                 vip_id=incoming.vip_id,
@@ -59,7 +79,7 @@ class TurnOrchestrator:
             )
             raise ValueError("business_connection_id is required")
 
-        record = await self._coordinator.begin_turn(
+        record = await self._coordinator.begin_turn_unlocked(
             chat_id=incoming.chat_id,
             trigger_message_id=incoming.telegram_message_id,
             vip_id=incoming.vip_id,
@@ -85,12 +105,27 @@ class TurnOrchestrator:
         try:
             decision = await self._director.handle_turn(turn_ctx)
         except Exception as exc:
+            # Terminal latch: no-ops if already superseded while Director ran
+            # (should not happen under full chat_scope; still safe).
             await self._coordinator.mark_failed(turn_id, error=str(exc))
             logger.exception(
                 "director_failed",
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
             )
             raise
+
+        # Post-Director liveness check (defense in depth vs zombie pipeline).
+        live = await self._coordinator.get_turn(turn_id)
+        if live is None or _is_terminal(live.status):
+            logger.info(
+                "orchestrator_aborted_terminal",
+                extra={
+                    "turn_id": str(turn_id),
+                    "status": None if live is None else live.status,
+                },
+            )
+            await self._learning.run_post_turn(turn_id)
+            return turn_id
 
         if decision.action == "approve":
             await self._coordinator.transition(

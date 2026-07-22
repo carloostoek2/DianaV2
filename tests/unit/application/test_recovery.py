@@ -71,14 +71,37 @@ async def test_cancelled_and_done_ignored() -> None:
     store = InMemoryPendingDeliveryStore()
     now = datetime.now(UTC)
     for status in ("cancelled", "done", "expired"):
-        rec = _delivery(status=status, scheduled_at=now - timedelta(hours=5))
+        rec = _delivery(status="pending", scheduled_at=now - timedelta(hours=5))
         await store.insert_pending(rec)
-        await store.update_status(rec.id, status)
+        # Force terminal via allowed edges where possible
+        if status == "cancelled":
+            await store.update_status(rec.id, "cancelled")
+        elif status == "done":
+            await store.update_status(rec.id, "delivering")
+            await store.update_status(rec.id, "done")
+        else:
+            await store.update_status(rec.id, "expired")
     plan = await classify_pending_deliveries(
         store, now=now, stale_after=timedelta(hours=1)
     )
     assert plan.recoverable == []
     assert plan.to_expire == []
+
+
+@pytest.mark.asyncio
+async def test_delivering_rows_expired_on_recovery() -> None:
+    store = InMemoryPendingDeliveryStore()
+    now = datetime.now(UTC)
+    rec = _delivery(scheduled_at=now - timedelta(seconds=5))
+    await store.insert_pending(rec)
+    assert await store.update_status(rec.id, "delivering") is True
+    plan = await classify_pending_deliveries(
+        store, now=now, stale_after=timedelta(hours=1)
+    )
+    assert plan.recoverable == []
+    assert any(d.id == rec.id for d in plan.to_expire)
+    updated = await store.get(rec.id)
+    assert updated is not None and updated.status == "expired"
 
 
 @pytest.mark.asyncio

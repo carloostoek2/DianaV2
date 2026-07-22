@@ -35,24 +35,36 @@ async def classify_pending_deliveries(
     now: datetime,
     stale_after: timedelta,
 ) -> RecoveryPlan:
-    """Classify ``pending`` rows as recoverable (fresh) or expire (stale).
+    """Classify active delivery rows for restart.
 
-    Side effect: stale rows are marked ``expired`` so item 4 does not
-    double-schedule them. Done/cancelled/expired rows are ignored.
+    Rules (F1 supervised, safe):
+    - ``delivering`` → always expire (crash mid-flight; never re-send without re-approval)
+    - ``pending`` older than ``stale_after`` → expire
+    - ``pending`` fresh → recoverable DTO for item 4 to reschedule (still no auto-send
+      without an owner approval path — item 4 must not invent approve)
+    - done / cancelled / expired → ignored
     """
-    pending = await store.list_pending()
+    active = await store.list_active()
     recoverable: list[DeliveryRecord] = []
     to_expire: list[DeliveryRecord] = []
     threshold = now - stale_after
 
-    for row in pending:
+    for row in active:
         scheduled = row.scheduled_at
-        # Normalize naive datetimes as UTC-comparable if needed
         if scheduled.tzinfo is None and now.tzinfo is not None:
             scheduled = scheduled.replace(tzinfo=now.tzinfo)
+
+        # Mid-flight delivering is never auto-resumed in F1.
+        if row.status == "delivering":
+            applied = await store.update_status(row.id, "expired")
+            if applied:
+                to_expire.append(row.model_copy(update={"status": "expired"}))
+            continue
+
         if scheduled < threshold:
-            await store.update_status(row.id, "expired")
-            to_expire.append(row.model_copy(update={"status": "expired"}))
+            applied = await store.update_status(row.id, "expired")
+            if applied:
+                to_expire.append(row.model_copy(update={"status": "expired"}))
         else:
             recoverable.append(row)
 

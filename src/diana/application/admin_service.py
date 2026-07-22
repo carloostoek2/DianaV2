@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 from uuid import UUID, uuid4
 
 from diana.application.ports import (
     ApprovalRecord,
+    BehaviorDeliverer,
     DeliveryResultWriter,
     DraftNotification,
     EscalationNotification,
@@ -16,7 +18,6 @@ from diana.application.ports import (
     TurnStore,
 )
 from diana.application.turn_coordinator import TurnCoordinator
-from diana.behavior.engine import BehaviorEngine
 from diana.behavior.ports import DeliveryContext, DeliveryResult
 from diana.cognitive.models import (
     TERMINAL_TURN_STATUSES,
@@ -29,6 +30,10 @@ from diana.cognitive.models import (
 logger = logging.getLogger("diana.application")
 
 
+class OwnerAuthError(PermissionError):
+    """Raised when a non-owner actor attempts an owner-only admin action."""
+
+
 def _eval_summary(decision: Decision) -> str:
     """Display-only summary string; never fed back into Decider."""
     e = decision.evaluation
@@ -37,6 +42,13 @@ def _eval_summary(decision: Decision) -> str:
         f"doc={e.doctrine:.2f} con={e.consistency:.2f} "
         f"saf={e.safety:.2f} cov={e.coverage:.2f} emp={e.empathy:.2f}"
     )
+
+
+def _is_terminal(status: str) -> bool:
+    try:
+        return parse_turn_status(status) in TERMINAL_TURN_STATUSES
+    except ValueError:
+        return False
 
 
 class AdminService:
@@ -49,9 +61,10 @@ class AdminService:
         approvals: PendingApprovalStore,
         escalations: EscalationStore,
         coordinator: TurnCoordinator,
-        behavior: BehaviorEngine,
+        behavior: BehaviorDeliverer,
         traces: DeliveryResultWriter,
         turns: TurnStore,
+        owner_telegram_id: int,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -60,6 +73,13 @@ class AdminService:
         self._behavior = behavior
         self._traces = traces
         self._turns = turns
+        self._owner_telegram_id = owner_telegram_id
+
+    def _assert_owner(self, actor_id: int | None) -> None:
+        if actor_id is None or actor_id != self._owner_telegram_id:
+            raise OwnerAuthError(
+                f"actor_id {actor_id!r} is not the configured owner"
+            )
 
     async def send_draft_for_approval(
         self,
@@ -81,6 +101,7 @@ class AdminService:
             vip_id=turn.vip_id,
             cognitive_summary=decision.reason,
             evaluation=decision.evaluation.model_dump(mode="json"),
+            trigger_message_id=turn.telegram_message_id,
         )
         await self._approvals.create_waiting(record)
         owner_mid = await self._notifier.notify_draft(
@@ -100,13 +121,7 @@ class AdminService:
             )
         )
         if owner_mid is not None:
-            # Best-effort: store owner message id on the approval record if present
-            existing = await self._approvals.get_by_turn(turn_id)
-            if existing is not None:
-                # re-create via mark is enough for tests; keep owner_message_id on model
-                # by replacing record fields through a second create is forbidden (unique).
-                # Update in-memory store if it supports mutation — patch via private if needed.
-                pass
+            await self._approvals.set_owner_message_id(turn_id, owner_mid)
         logger.info(
             "draft_for_approval",
             extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
@@ -144,7 +159,7 @@ class AdminService:
         *,
         actor_id: int | None = None,
     ) -> DeliveryResult | None:
-        _ = actor_id
+        self._assert_owner(actor_id)
         return await self._resolve_and_deliver(turn_id, corrected_text=None)
 
     async def handle_correct(
@@ -154,9 +169,11 @@ class AdminService:
         *,
         actor_id: int | None = None,
     ) -> DeliveryResult | None:
-        _ = actor_id
+        self._assert_owner(actor_id)
+        if not (corrected_text or "").strip():
+            raise ValueError("corrected_text must be non-empty")
         return await self._resolve_and_deliver(
-            turn_id, corrected_text=corrected_text
+            turn_id, corrected_text=corrected_text.strip()
         )
 
     async def _resolve_and_deliver(
@@ -169,47 +186,99 @@ class AdminService:
         if turn is None:
             logger.info("admin_resolve_missing_turn", extra={"turn_id": str(turn_id)})
             return None
-        try:
-            status = parse_turn_status(turn.status)
-        except ValueError:
-            status = None
-        if status is not None and status in TERMINAL_TURN_STATUSES:
-            logger.info(
-                "admin_resolve_terminal_noop",
-                extra={"turn_id": str(turn_id), "status": turn.status},
-            )
-            return None
+        chat_id = turn.chat_id
 
-        approval = await self._approvals.get_by_turn(turn_id)
-        if approval is None or approval.status != "waiting":
-            logger.info(
-                "admin_resolve_no_waiting_approval",
-                extra={"turn_id": str(turn_id)},
-            )
-            return None
+        claimed: ApprovalRecord | None = None
+        text: str = ""
+        decision_dump: dict[str, Any] | None = None
+        trigger_message_id: int | None = None
 
-        text = corrected_text if corrected_text is not None else approval.draft_text
+        # Claim under chat lock so only one owner resolve wins (BUG-003).
+        async with self._coordinator.chat_scope(chat_id):
+            turn = await self._turns.get(turn_id)
+            if turn is None or _is_terminal(turn.status):
+                logger.info(
+                    "admin_resolve_terminal_noop",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "status": None if turn is None else turn.status,
+                    },
+                )
+                return None
+
+            claimed = await self._approvals.claim_waiting(turn_id)
+            if claimed is None:
+                logger.info(
+                    "admin_resolve_claim_lost",
+                    extra={"turn_id": str(turn_id)},
+                )
+                return None
+
+            text = (
+                corrected_text
+                if corrected_text is not None
+                else claimed.draft_text
+            )
+            decision_dump = claimed.evaluation
+            trigger_message_id = (
+                claimed.trigger_message_id or turn.trigger_message_id
+            )
+
         ctx = DeliveryContext(
-            chat_id=approval.chat_id,
-            business_connection_id=approval.business_connection_id,
-            vip_id=approval.vip_id,
+            chat_id=claimed.chat_id,
+            business_connection_id=claimed.business_connection_id,
+            vip_id=claimed.vip_id,
+            telegram_message_id=trigger_message_id,
         )
-        result = await self._behavior.deliver([text], ctx, turn_id)
-        if result.success:
-            approval_status = (
-                "corrected" if corrected_text is not None else "approved"
-            )
-            await self._approvals.mark_status(turn_id, approval_status)
-            await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
-            await self._traces.set_delivery_result(
-                turn_id, result.to_trace_dict()
-            )
-            logger.info(
-                "admin_delivered",
-                extra={
-                    "turn_id": str(turn_id),
-                    "chat_id": approval.chat_id,
-                    "mode": approval_status,
-                },
-            )
+        # Deliver outside the chat lock so cancel_pending can interrupt mid-flight.
+        result = await self._behavior.deliver(
+            [text],
+            ctx,
+            turn_id,
+            decision=decision_dump,
+        )
+
+        async with self._coordinator.chat_scope(chat_id):
+            turn_after = await self._turns.get(turn_id)
+            if turn_after is None or _is_terminal(turn_after.status):
+                # Superseded or otherwise terminal mid-flight — do not revive.
+                await self._approvals.mark_status(turn_id, "cancelled")
+                logger.info(
+                    "admin_resolve_aborted_terminal_after_deliver",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "status": None if turn_after is None else turn_after.status,
+                        "deliver_success": result.success,
+                    },
+                )
+                return None if not result.cancelled else result
+
+            if result.success:
+                approval_status = (
+                    "corrected" if corrected_text is not None else "approved"
+                )
+                await self._approvals.mark_status(turn_id, approval_status)
+                await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
+                await self._traces.set_delivery_result(
+                    turn_id, result.to_trace_dict()
+                )
+                logger.info(
+                    "admin_delivered",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": claimed.chat_id,
+                        "mode": approval_status,
+                    },
+                )
+            else:
+                # Deliver failed/cancelled while turn still live — release claim.
+                await self._approvals.mark_status(turn_id, "waiting")
+                logger.info(
+                    "admin_deliver_failed_reopened",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "error": result.error,
+                        "cancelled": result.cancelled,
+                    },
+                )
         return result

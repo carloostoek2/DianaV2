@@ -100,11 +100,37 @@ async def test_cancel_pending_during_delay_no_send() -> None:
     await asyncio.sleep(0.05)
     await engine.cancel_pending(10)
     result = await task
-    assert result.cancelled is True or result.success is False
+    assert result.cancelled is True
+    assert result.success is False
     assert actuator.send_count() == 0
     rows = await store.list_all()
     assert rows
     assert all(r.status == "cancelled" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_status_not_overwritten_by_done() -> None:
+    store = InMemoryPendingDeliveryStore()
+    from datetime import UTC, datetime
+
+    from diana.application.ports import DeliveryRecord
+
+    rec = DeliveryRecord(
+        id=uuid4(),
+        chat_id=1,
+        business_connection_id="bc",
+        texts=["x"],
+        decision={},
+        scheduled_at=datetime.now(UTC),
+        status="pending",
+        turn_id=uuid4(),
+    )
+    await store.insert_pending(rec)
+    assert await store.update_status(rec.id, "delivering") is True
+    assert await store.update_status(rec.id, "cancelled") is True
+    assert await store.update_status(rec.id, "done") is False
+    got = await store.get(rec.id)
+    assert got is not None and got.status == "cancelled"
 
 
 @pytest.mark.asyncio

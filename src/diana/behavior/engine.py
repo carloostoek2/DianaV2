@@ -78,13 +78,17 @@ class BehaviorEngine:
         )
         await self._deliveries.insert_pending(record)
 
-        # Track the currently executing task (caller may wrap; we use current).
+        # Register before any await so cancel_pending can interrupt immediately.
         current = asyncio.current_task()
         if current is not None:
             await self._timers.register(ctx.chat_id, turn_id, current)
 
         try:
-            await self._deliveries.update_status(delivery_id, "delivering")
+            if not await self._deliveries.update_status(delivery_id, "delivering"):
+                return DeliveryResult(
+                    success=False, cancelled=True, error="cancelled_before_start"
+                )
+
             initial = self._delay.initial_delay_seconds()
             await self._clock.sleep(initial)
 
@@ -113,7 +117,22 @@ class BehaviorEngine:
                 )
                 message_ids.append(mid)
 
-            await self._deliveries.update_status(delivery_id, "done")
+            # Never overwrite cancelled/expired with done (CAS).
+            applied = await self._deliveries.update_status(delivery_id, "done")
+            if not applied:
+                logger.info(
+                    "delivery_done_rejected",
+                    extra={"turn_id": str(turn_id), "chat_id": ctx.chat_id},
+                )
+                return DeliveryResult(
+                    success=False,
+                    cancelled=True,
+                    message_ids=message_ids,
+                    actual_delay_seconds=initial,
+                    typing_duration_seconds=typing_secs,
+                    error="status_rejected",
+                )
+
             logger.info(
                 "delivery_done",
                 extra={"turn_id": str(turn_id), "chat_id": ctx.chat_id},
@@ -125,14 +144,14 @@ class BehaviorEngine:
                 typing_duration_seconds=typing_secs,
             )
         except asyncio.CancelledError:
-            await self._safe_mark_cancelled(delivery_id)
+            await self._safe_mark(delivery_id, "cancelled")
             logger.info(
                 "delivery_cancelled",
                 extra={"turn_id": str(turn_id), "chat_id": ctx.chat_id},
             )
             return DeliveryResult(success=False, cancelled=True, error="cancelled")
         except Exception as exc:  # noqa: BLE001 — surface as delivery failure
-            await self._safe_mark_cancelled(delivery_id, status="cancelled")
+            await self._safe_mark(delivery_id, "error")
             return DeliveryResult(success=False, error=str(exc))
 
     async def cancel_pending(
@@ -142,7 +161,6 @@ class BehaviorEngine:
 
         Idempotent: safe to call when nothing is pending.
         """
-        _ = reason
         await self._timers.cancel_chat(chat_id)
         n = await self._deliveries.cancel_for_chat(chat_id)
         logger.info(
@@ -150,9 +168,7 @@ class BehaviorEngine:
             extra={"chat_id": chat_id, "rows_cancelled": n, "reason": reason},
         )
 
-    async def _safe_mark_cancelled(
-        self, delivery_id: UUID, *, status: str = "cancelled"
-    ) -> None:
+    async def _safe_mark(self, delivery_id: UUID, status: str) -> None:
         try:
             await self._deliveries.update_status(delivery_id, status)
         except KeyError:

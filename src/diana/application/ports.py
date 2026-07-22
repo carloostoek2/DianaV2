@@ -24,7 +24,14 @@ class TurnRecord(BaseModel):
 
 
 class ApprovalRecord(BaseModel):
-    """pending_approvals row shape."""
+    """pending_approvals row shape.
+
+    Status values used in F1:
+    - waiting: owner has not acted
+    - claimed: atomic claim before deliver (CAS winner)
+    - approved / corrected: resolved after successful deliver
+    - cancelled / expired: terminal non-deliver
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -38,6 +45,7 @@ class ApprovalRecord(BaseModel):
     cognitive_summary: str | None = None
     evaluation: dict[str, Any] | None = None
     owner_message_id: int | None = None
+    trigger_message_id: int | None = None
 
 
 class DeliveryRecord(BaseModel):
@@ -134,6 +142,12 @@ class PendingApprovalStore(Protocol):
 
     async def mark_status(self, turn_id: UUID, status: str) -> None: ...
 
+    async def claim_waiting(self, turn_id: UUID) -> ApprovalRecord | None:
+        """CAS: waiting → claimed. Returns claimed record or None if lost race."""
+        ...
+
+    async def set_owner_message_id(self, turn_id: UUID, message_id: int) -> None: ...
+
     async def cancel_waiting_for_chat(self, chat_id: int) -> int: ...
 
     async def list_waiting(self) -> list[ApprovalRecord]: ...
@@ -143,11 +157,19 @@ class PendingApprovalStore(Protocol):
 class PendingDeliveryStore(Protocol):
     async def insert_pending(self, record: DeliveryRecord) -> DeliveryRecord: ...
 
-    async def update_status(self, delivery_id: UUID, status: str, **meta: Any) -> None: ...
+    async def update_status(
+        self, delivery_id: UUID, status: str, **meta: Any
+    ) -> bool:
+        """Conditional status update. Returns False if transition is forbidden."""
+        ...
 
     async def cancel_for_chat(self, chat_id: int) -> int: ...
 
     async def list_pending(self) -> list[DeliveryRecord]: ...
+
+    async def list_active(self) -> list[DeliveryRecord]:
+        """Rows in pending or delivering (for recovery)."""
+        ...
 
     async def get(self, delivery_id: UUID) -> DeliveryRecord | None: ...
 
@@ -190,14 +212,28 @@ class TraceReader(Protocol):
 
 @runtime_checkable
 class BehaviorCanceller(Protocol):
-    """Minimal cancel surface for TurnCoordinator (avoids circular imports)."""
+    """Minimal cancel surface for TurnCoordinator (avoids circular import)."""
 
     async def cancel_pending(self, chat_id: int, reason: str = "new_message") -> None: ...
+
+
+@runtime_checkable
+class BehaviorDeliverer(Protocol):
+    """Deliver gate used by Admin (decoupled from concrete BehaviorEngine)."""
+
+    async def deliver(
+        self,
+        texts: list[str],
+        ctx: Any,
+        turn_id: UUID,
+        decision: Any | None = None,
+    ) -> Any: ...
 
 
 __all__ = [
     "ApprovalRecord",
     "BehaviorCanceller",
+    "BehaviorDeliverer",
     "DeliveryRecord",
     "DeliveryResultWriter",
     "DraftNotification",

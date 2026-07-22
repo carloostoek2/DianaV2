@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 from diana.application.ports import (
@@ -12,7 +14,7 @@ from diana.application.ports import (
     TurnRecord,
     TurnStore,
 )
-from diana.cognitive.models import TurnStatus
+from diana.cognitive.models import TERMINAL_TURN_STATUSES, TurnStatus, parse_turn_status
 
 logger = logging.getLogger("diana.application")
 
@@ -47,6 +49,13 @@ class TurnCoordinator:
         self._behavior = behavior
         self._locks = locks or ChatLockProvider()
 
+    @asynccontextmanager
+    async def chat_scope(self, chat_id: int) -> AsyncIterator[None]:
+        """Hold the per-chat lock for a full VIP/admin critical section."""
+        lock = await self._locks.lock_for(chat_id)
+        async with lock:
+            yield
+
     async def begin_turn(
         self,
         *,
@@ -56,49 +65,68 @@ class TurnCoordinator:
         turn_id: UUID | None = None,
     ) -> TurnRecord:
         """Create a new received turn after superseding any live turn for chat_id."""
-        lock = await self._locks.lock_for(chat_id)
-        async with lock:
-            new_id = turn_id or uuid4()
-            prior = await self._turns.list_non_terminal(chat_id)
-            for old in prior:
-                await self._turns.transition(
-                    old.id,
-                    TurnStatus.SUPERSEDED.value,
-                    superseded_by=new_id,
-                )
-                logger.info(
-                    "turn_superseded",
-                    extra={
-                        "turn_id": str(old.id),
-                        "chat_id": chat_id,
-                        "superseded_by": str(new_id),
-                    },
-                )
-            if prior:
-                await self._behavior.cancel_pending(chat_id, "new_message")
-                cancelled = await self._approvals.cancel_waiting_for_chat(chat_id)
-                logger.info(
-                    "supersede_cascade",
-                    extra={
-                        "chat_id": chat_id,
-                        "approvals_cancelled": cancelled,
-                        "prior_count": len(prior),
-                    },
-                )
-
-            record = TurnRecord(
-                id=new_id,
+        async with self.chat_scope(chat_id):
+            return await self.begin_turn_unlocked(
                 chat_id=chat_id,
-                status=TurnStatus.RECEIVED.value,
-                vip_id=vip_id,
                 trigger_message_id=trigger_message_id,
+                vip_id=vip_id,
+                turn_id=turn_id,
             )
-            created = await self._turns.create(record)
+
+    async def get_turn(self, turn_id: UUID) -> TurnRecord | None:
+        """Load a durable turn row."""
+        return await self._turns.get(turn_id)
+
+    async def begin_turn_unlocked(
+        self,
+        *,
+        chat_id: int,
+        trigger_message_id: int | None = None,
+        vip_id: UUID | None = None,
+        turn_id: UUID | None = None,
+    ) -> TurnRecord:
+        """``begin_turn`` body; caller must already hold ``chat_scope(chat_id)``."""
+        new_id = turn_id or uuid4()
+        prior = await self._turns.list_non_terminal(chat_id)
+        for old in prior:
+            await self._turns.transition(
+                old.id,
+                TurnStatus.SUPERSEDED.value,
+                superseded_by=new_id,
+            )
             logger.info(
-                "turn_begun",
-                extra={"turn_id": str(created.id), "chat_id": chat_id},
+                "turn_superseded",
+                extra={
+                    "turn_id": str(old.id),
+                    "chat_id": chat_id,
+                    "superseded_by": str(new_id),
+                },
             )
-            return created
+        if prior:
+            await self._behavior.cancel_pending(chat_id, "new_message")
+            cancelled = await self._approvals.cancel_waiting_for_chat(chat_id)
+            logger.info(
+                "supersede_cascade",
+                extra={
+                    "chat_id": chat_id,
+                    "approvals_cancelled": cancelled,
+                    "prior_count": len(prior),
+                },
+            )
+
+        record = TurnRecord(
+            id=new_id,
+            chat_id=chat_id,
+            status=TurnStatus.RECEIVED.value,
+            vip_id=vip_id,
+            trigger_message_id=trigger_message_id,
+        )
+        created = await self._turns.create(record)
+        logger.info(
+            "turn_begun",
+            extra={"turn_id": str(created.id), "chat_id": chat_id},
+        )
+        return created
 
     async def transition(
         self,
@@ -126,3 +154,9 @@ class TurnCoordinator:
     ) -> None:
         """TurnStatusSink adapter for CognitiveDirector injection."""
         await self.transition(turn_id, status)
+
+    def is_terminal_status(self, status: str) -> bool:
+        try:
+            return parse_turn_status(status) in TERMINAL_TURN_STATUSES
+        except ValueError:
+            return False

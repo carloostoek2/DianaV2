@@ -14,6 +14,19 @@ from diana.application.ports import (
 from diana.cognitive.models import TERMINAL_TURN_STATUSES, TurnStatus, parse_turn_status
 from diana.cognitive.ports import to_jsonable
 
+# Approval statuses that supersede must cancel.
+_OPEN_APPROVAL_STATUSES = frozenset({"waiting", "claimed"})
+
+# Delivery status machine (monotonic / cancel-safe).
+_DELIVERY_TRANSITIONS: dict[str, frozenset[str]] = {
+    "pending": frozenset({"delivering", "cancelled", "expired"}),
+    "delivering": frozenset({"done", "cancelled", "expired", "error"}),
+    "done": frozenset(),
+    "cancelled": frozenset(),
+    "expired": frozenset(),
+    "error": frozenset(),
+}
+
 
 def _is_terminal(status: str) -> bool:
     try:
@@ -23,7 +36,7 @@ def _is_terminal(status: str) -> bool:
 
 
 class InMemoryTurnStore:
-    """Dict-backed TurnStore."""
+    """Dict-backed TurnStore with terminal status latch."""
 
     def __init__(self) -> None:
         self._turns: dict[UUID, TurnRecord] = {}
@@ -54,8 +67,14 @@ class InMemoryTurnStore:
         rec = self._turns.get(turn_id)
         if rec is None:
             raise KeyError(f"turn not found: {turn_id}")
+        new_status = status.value if isinstance(status, TurnStatus) else str(status)
+
+        # Terminal latch: never leave a terminal status (zombie-pipeline guard).
+        if _is_terminal(rec.status) and rec.status != new_status:
+            return rec.model_copy(deep=True)
+
         data = rec.model_dump()
-        data["status"] = status.value if isinstance(status, TurnStatus) else str(status)
+        data["status"] = new_status
         if superseded_by is not None:
             data["superseded_by"] = superseded_by
         if error is not None:
@@ -66,7 +85,7 @@ class InMemoryTurnStore:
 
 
 class InMemoryPendingApprovalStore:
-    """Dict-backed PendingApprovalStore keyed by turn_id."""
+    """Dict-backed PendingApprovalStore keyed by turn_id (CAS claim supported)."""
 
     def __init__(self) -> None:
         self._by_turn: dict[UUID, ApprovalRecord] = {}
@@ -90,10 +109,24 @@ class InMemoryPendingApprovalStore:
             raise KeyError(f"approval not found for turn: {turn_id}")
         self._by_turn[turn_id] = rec.model_copy(update={"status": status})
 
+    async def claim_waiting(self, turn_id: UUID) -> ApprovalRecord | None:
+        rec = self._by_turn.get(turn_id)
+        if rec is None or rec.status != "waiting":
+            return None
+        updated = rec.model_copy(update={"status": "claimed"})
+        self._by_turn[turn_id] = updated
+        return updated.model_copy(deep=True)
+
+    async def set_owner_message_id(self, turn_id: UUID, message_id: int) -> None:
+        rec = self._by_turn.get(turn_id)
+        if rec is None:
+            raise KeyError(f"approval not found for turn: {turn_id}")
+        self._by_turn[turn_id] = rec.model_copy(update={"owner_message_id": message_id})
+
     async def cancel_waiting_for_chat(self, chat_id: int) -> int:
         count = 0
         for turn_id, rec in list(self._by_turn.items()):
-            if rec.chat_id == chat_id and rec.status == "waiting":
+            if rec.chat_id == chat_id and rec.status in _OPEN_APPROVAL_STATUSES:
                 self._by_turn[turn_id] = rec.model_copy(update={"status": "cancelled"})
                 count += 1
         return count
@@ -107,7 +140,7 @@ class InMemoryPendingApprovalStore:
 
 
 class InMemoryPendingDeliveryStore:
-    """Dict-backed PendingDeliveryStore."""
+    """Dict-backed PendingDeliveryStore with monotonic status transitions."""
 
     def __init__(self) -> None:
         self._items: dict[UUID, DeliveryRecord] = {}
@@ -119,21 +152,25 @@ class InMemoryPendingDeliveryStore:
 
     async def update_status(
         self, delivery_id: UUID, status: str, **meta: Any
-    ) -> None:
+    ) -> bool:
         rec = self._items.get(delivery_id)
         if rec is None:
             raise KeyError(f"delivery not found: {delivery_id}")
-        updates: dict[str, Any] = {"status": status}
-        # meta reserved for future fields; ignore unknown keys on the record
         _ = meta
-        self._items[delivery_id] = rec.model_copy(update=updates)
+        allowed = _DELIVERY_TRANSITIONS.get(rec.status, frozenset())
+        if status not in allowed:
+            return False
+        self._items[delivery_id] = rec.model_copy(update={"status": status})
+        return True
 
     async def cancel_for_chat(self, chat_id: int) -> int:
         count = 0
         for did, rec in list(self._items.items()):
             if rec.chat_id == chat_id and rec.status in {"pending", "delivering"}:
-                self._items[did] = rec.model_copy(update={"status": "cancelled"})
-                count += 1
+                # Use transition table so cancelled is sticky.
+                if "cancelled" in _DELIVERY_TRANSITIONS.get(rec.status, frozenset()):
+                    self._items[did] = rec.model_copy(update={"status": "cancelled"})
+                    count += 1
         return count
 
     async def list_pending(self) -> list[DeliveryRecord]:
@@ -141,6 +178,13 @@ class InMemoryPendingDeliveryStore:
             r.model_copy(deep=True)
             for r in self._items.values()
             if r.status == "pending"
+        ]
+
+    async def list_active(self) -> list[DeliveryRecord]:
+        return [
+            r.model_copy(deep=True)
+            for r in self._items.values()
+            if r.status in {"pending", "delivering"}
         ]
 
     async def get(self, delivery_id: UUID) -> DeliveryRecord | None:

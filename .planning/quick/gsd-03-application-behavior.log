@@ -31,3 +31,22 @@ Mode: Strict TDD
 - [x] 0 regressions attributable (cognitive purity green)
 - [x] Project conventions respected (English, ports+DI, Behavior no LLM, Learning post-turn)
 ### 2026-07-22T17:32:51Z — ITEM 3 COMPLETE
+
+### 2026-07-22T17:41:08Z — Fix round hardener ddd81931 START
+- BUG zombie pipeline / terminal latch
+- BUG approve TOCTOU + double-approve CAS
+- AuthZ owner-only
+- mark-as-read telegram_message_id
+- recovery delivering
+- delivery status CAS cancelled↛done
+
+### 2026-07-22T17:46:24Z — Fix round ddd81931 COMPLETE: 209 unit tests passed
+
+## Self-Check (fix round): PASSED
+- [x] Zombie pipeline + terminal latch
+- [x] Approve CAS / double-approve
+- [x] Owner authZ
+- [x] mark-as-read
+- [x] recovery delivering
+- [x] cancelled↛done
+- [x] pytest tests/unit → 209 passed
