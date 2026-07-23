@@ -183,7 +183,9 @@ def build_app(
         decider=Decider(),
         trace=traces,
         persona=DEFAULT_PERSONA,
-        status_sink=coordinator.transition_sink,
+        # TurnStatusSink protocol: object with .transition(...).
+        # Must inject the coordinator itself, not the unbound method.
+        status_sink=coordinator,
     )
     learning = LearningService(traces)
     orchestrator = TurnOrchestrator(
