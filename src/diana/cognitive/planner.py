@@ -30,6 +30,7 @@ class Planner:
     def plan(self, comprehension: Comprehension) -> Plan:
         capabilities: list[str] = []
         for attr, cap in _NEED_TO_CAPABILITY:
-            if getattr(comprehension, attr, False):
+            # Bare access: map/attr drift must fail loud (needs_* required post-analyst).
+            if getattr(comprehension, attr):
                 capabilities.append(cap)
         return Plan(capabilities=capabilities)

@@ -5,25 +5,11 @@ from __future__ import annotations
 import pytest
 
 from diana.cognitive.models import Comprehension
-from diana.cognitive.planner import Planner
+from diana.cognitive.planner import Planner, _NEED_TO_CAPABILITY
 
-_NEED_FLAGS = (
-    "needs_history",
-    "needs_context",
-    "needs_memory",
-    "needs_policy",
-    "needs_examples",
-    "needs_schedule",
-)
-
-_FLAG_TO_CAP = {
-    "needs_history": "knowledge.history",
-    "needs_context": "knowledge.context",
-    "needs_memory": "knowledge.memory",
-    "needs_policy": "knowledge.policy",
-    "needs_examples": "knowledge.examples",
-    "needs_schedule": "knowledge.schedule",
-}
+_NEED_FLAGS = tuple(attr for attr, _ in _NEED_TO_CAPABILITY)
+_FLAG_TO_CAP = dict(_NEED_TO_CAPABILITY)
+_STABLE_CAPS = [cap for _, cap in _NEED_TO_CAPABILITY]
 
 
 def _comprehension(**overrides) -> Comprehension:
@@ -44,30 +30,18 @@ def _comprehension(**overrides) -> Comprehension:
     return Comprehension(**data)
 
 
+def _all_needs(value: bool) -> dict[str, bool]:
+    return {flag: value for flag in _NEED_FLAGS}
+
+
 def test_planner_maps_default_needs_to_history_and_context() -> None:
     plan = Planner().plan(_comprehension())
     assert plan.capabilities == ["knowledge.history", "knowledge.context"]
 
 
 def test_planner_includes_all_needs_in_stable_order() -> None:
-    plan = Planner().plan(
-        _comprehension(
-            needs_history=True,
-            needs_context=True,
-            needs_memory=True,
-            needs_policy=True,
-            needs_examples=True,
-            needs_schedule=True,
-        )
-    )
-    assert plan.capabilities == [
-        "knowledge.history",
-        "knowledge.context",
-        "knowledge.memory",
-        "knowledge.policy",
-        "knowledge.examples",
-        "knowledge.schedule",
-    ]
+    plan = Planner().plan(_comprehension(**_all_needs(True)))
+    assert plan.capabilities == _STABLE_CAPS
 
 
 def test_planner_omits_history_when_needs_history_false() -> None:
@@ -85,31 +59,30 @@ def test_planner_omits_history_when_needs_history_false() -> None:
 
 def test_planner_returns_empty_when_all_needs_false() -> None:
     """C.3/C.4: empty plan is legal when all needs_* are false."""
-    plan = Planner().plan(
-        _comprehension(
-            needs_history=False,
-            needs_context=False,
-            needs_memory=False,
-            needs_policy=False,
-            needs_examples=False,
-            needs_schedule=False,
-        )
-    )
+    plan = Planner().plan(_comprehension(**_all_needs(False)))
     assert plan.capabilities == []
 
 
 @pytest.mark.parametrize("false_flag", _NEED_FLAGS)
 def test_planner_never_requests_cap_when_need_false(false_flag: str) -> None:
-    """C.3: each capability is present iff its needs_* flag is true."""
-    flags = {flag: True for flag in _NEED_FLAGS}
+    """C.3: exact ordered list = full map minus the false flag (no extras/dupes)."""
+    flags = _all_needs(True)
     flags[false_flag] = False
     plan = Planner().plan(_comprehension(**flags))
-    absent_cap = _FLAG_TO_CAP[false_flag]
-    assert absent_cap not in plan.capabilities
-    for flag, cap in _FLAG_TO_CAP.items():
-        if flag == false_flag:
-            continue
-        assert cap in plan.capabilities
+    expected = [cap for attr, cap in _NEED_TO_CAPABILITY if attr != false_flag]
+    assert plan.capabilities == expected
+    assert len(plan.capabilities) == len(_NEED_FLAGS) - 1
+
+
+@pytest.mark.parametrize("true_flag,expected_cap", list(_NEED_TO_CAPABILITY))
+def test_planner_single_true_flag_maps_to_single_cap(
+    true_flag: str, expected_cap: str
+) -> None:
+    """C.2/C.3: one needs_* true → exact single-element capabilities list."""
+    flags = _all_needs(False)
+    flags[true_flag] = True
+    plan = Planner().plan(_comprehension(**flags))
+    assert plan.capabilities == [expected_cap]
 
 
 def test_planner_determinism_same_comprehension_same_plan() -> None:
@@ -130,7 +103,7 @@ def test_planner_determinism_same_comprehension_same_plan() -> None:
 
 
 def test_planner_c4_example_set() -> None:
-    """C.4 set equality; list order follows stable _NEED_TO_CAPABILITY map."""
+    """C.4 set equality (contract example is a set) + stable list order (L5)."""
     plan = Planner().plan(
         _comprehension(
             needs_history=True,
@@ -148,6 +121,7 @@ def test_planner_c4_example_set() -> None:
         "knowledge.examples",
         "knowledge.schedule",
     ]
+    # Set assert documents C.4 set-equality; list assert locks L5 order.
     assert set(plan.capabilities) == set(expected_stable)
     assert plan.capabilities == expected_stable
     assert "knowledge.policy" not in plan.capabilities

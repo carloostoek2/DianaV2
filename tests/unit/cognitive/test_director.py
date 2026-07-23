@@ -296,6 +296,49 @@ async def test_director_plan_omits_history_when_needs_history_false() -> None:
 
 
 @pytest.mark.asyncio
+async def test_director_empty_plan_when_all_needs_false() -> None:
+    """Anexo C.3 blast: all needs_* false → empty plan/retrieved; pipeline completes."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(
+                needs_history=False,
+                needs_context=False,
+                needs_memory=False,
+                needs_policy=False,
+                needs_examples=False,
+                needs_schedule=False,
+            ),
+            _profile(),
+        ],
+        text_responses=["draft with empty knowledge plan"],
+    )
+    director, trace, _ = make_director(llm)
+    turn = _turn()
+    decision = await director.handle_turn(turn)
+
+    assert isinstance(decision, Decision)
+    assert decision.action in ("approve", "escalate")
+    assert decision.draft_text == "draft with empty knowledge plan"
+
+    plan = trace.get(turn.turn_id, "plan")
+    assert isinstance(plan, dict)
+    assert plan["capabilities"] == []
+
+    retrieved = trace.get(turn.turn_id, "retrieved")
+    assert isinstance(retrieved, dict)
+    assert retrieved == {}
+    assert set(retrieved.keys()) == set(plan["capabilities"])
+
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+    assert len(llm.calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_registry_isolation_history_uses_turn_chat_id() -> None:
     history = InMemoryMessageHistory(
         {
