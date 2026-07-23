@@ -12,6 +12,9 @@
 - [context-builder-contract](impact-analyzer/context-builder-contract.md) — 2026-07-23 — Align ContextBuilder to docs/contratos_restantes.md Anexo D (D.4 order current-turn last; BuiltContext dual return; contexto_excede_limite)
 - [generator-contract](impact-analyzer/generator-contract.md) — 2026-07-23 — Align Generator to docs/contratos_restantes.md Anexo E (E.4 empty retry→failed; remove empty_draft escalate; typed generador_salida_vacia)
 - [decider-contract](impact-analyzer/decider-contract.md) — 2026-07-23 — Align Decider to docs/contratos_restantes.md Anexo F (F1 approve\|escalate only; regenerate residual; safety+risk matrix; optional mode_restriction + thresholds wiring)
+- [turn-coordinator-contract](impact-analyzer/turn-coordinator-contract.md) — 2026-07-23 — Align TurnCoordinator to docs/contratos_restantes.md Anexo G (G.2/G.3.1 owner discard gap; G.4 in-process OK; G.5 lock timeout residual)
+- [registry-retrievers-contract](impact-analyzer/registry-retrievers-contract.md) — 2026-07-23 — Align Registry+Retrievers to docs/contratos_restantes.md Anexo H (Context H.3 fields; History empty []; schedule half-register; stubs null; no cross-retriever)
+- [behavior-engine-contract](impact-analyzer/behavior-engine-contract.md) — 2026-07-23 — Align BehaviorEngine to docs/contratos_restantes.md Anexo I (I.3 sequence OK; I.4 pre-send supersede + bounded retries missing; mode enum; I.5 fail surface)
 
 ## Arch Enforcer
 
@@ -25,6 +28,9 @@
 - [context-builder-contract](arch-enforcer/context-builder-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; D.4 order + dual BuiltContext + contexto_excede_limite notify
 - [generator-contract](arch-enforcer/generator-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; E.4 empty fail closed + no empty_draft escalate + purity
 - [decider-contract](arch-enforcer/decider-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; F1 approve|escalate only; matrix safety→risk→approve; mode_restriction audit; purity
+- [turn-coordinator-contract](arch-enforcer/turn-coordinator-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; G.2/G.3 matrix + owner MW supersede + G.5 lock timeout; no cognitive/alembic
+- [registry-retrievers-contract](arch-enforcer/registry-retrievers-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; H.1–H.4 bare resultado + schedule half-register + no cross-retriever; D.5 intact
+- [behavior-engine-contract](arch-enforcer/behavior-engine-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; I.4 pre-send + no cognitive import + I.5 Admin fail path; fake_delivery record-only
 
 ## Test Guardian
 
@@ -38,6 +44,9 @@
 - [context-builder-contract](test-guardian/context-builder-contract.md) — 2026-07-23 — **suite protege adecuadamente**, D.4 order + dual BuiltContext + size-fail notify locked, 0 mocks prohibidos; full unit 388 → paso 6
 - [generator-contract](test-guardian/generator-contract.md) — 2026-07-23 — **suite protege adecuadamente**, E.4 empty retry + typed fail notify + no empty_draft, 0 mocks prohibidos; tightened E.1 prompt assert; full unit 396 → paso 6
 - [decider-contract](test-guardian/decider-contract.md) — 2026-07-23 — **suite protege adecuadamente**, residual naturalness→approve + mode_restriction + F1 action lock + matrix order, 0 mocks prohibidos; primary 21+10+4+1+11 → paso 6
+- [turn-coordinator-contract](test-guardian/turn-coordinator-contract.md) — 2026-07-23 — **suite protege adecuadamente**, G.3 matrix + owner supersede + G.5 timeout + concurrency, 0 mocks prohibidos; 17 coordinator + 5 owner MW + 70 related / 414 full unit → paso 6
+- [registry-retrievers-contract](test-guardian/registry-retrievers-contract.md) — 2026-07-23 — **suite protege adecuadamente**, H.1–H.4 bare resultado + schedule half-register + Context H.3 + empty history [] + H.4 AST gates, 0 mocks prohibidos; primary 81 / wiring 26 / full unit 425 → paso 6
+- [behavior-engine-contract](test-guardian/behavior-engine-contract.md) — 2026-07-23 — **suite protege adecuadamente**, I.4 pre-send+retries + fake_delivery + I.5 Admin fail, 0 mocks prohibidos; behavior 23 / full unit 443 / TAC 8 → paso 6
 
 ## Documentador
 
@@ -46,3 +55,4 @@
 - [analyst-contract](documentador/analyst-contract.md) — 2026-07-23 — Pool analyst-contract-update closed: 1 item, effort 4, 2 review rounds, 0 open; primary 150; decisions in `.planning/quick/analyst-contract/decisions.md`
 - [evaluator-contract](documentador/evaluator-contract.md) — 2026-07-23 — Pool evaluator-contract closed: 1 item, effort 4, 2 review rounds (r1: 5 open fixed, r2: 0), full unit 355; decisions in `.planning/quick/evaluator-contract/decisions.md`
 - [remaining-contracts-cognitive](documentador/remaining-contracts-cognitive.md) — 2026-07-23 — Pool remaining-contracts-cognitive (1/2) closed: 4 items Anexos C–F (planner, context-builder, generator, decider F1-safe); 0 critical arch; final reviews 0 open; handoff Pool 2 = G–I
+- [remaining-contracts-app](documentador/remaining-contracts-app.md) — 2026-07-23 — Pool remaining-contracts-app (2/2) closed: 3 items Anexos G–I (turn-coordinator, registry-retrievers, behavior-engine); 0 critical arch; HARD CLEAN all; full unit 443; **C–I complete across both pools**

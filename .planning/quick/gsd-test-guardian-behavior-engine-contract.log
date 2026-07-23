@@ -1,0 +1,13 @@
+# gsd-test-guardian-behavior-engine-contract.log
+# Test-Guardian session for behavior-engine-contract (Anexo I)
+
+2026-07-23 | START | test-guardian behavior-engine-contract
+2026-07-23 | READ | PLAN.md, SUMMARY, decisions.md, impact-analyzer, arch-enforcer reports
+2026-07-23 | FOCUS | I.4 pre-send supersede, I.4 retries, fake_delivery, I.5 admin
+2026-07-23 | MOCK_AUDIT | inventory: 0 @patch/MagicMock in behavior+admin; monkeypatch env only in test_config
+2026-07-23 | RERUN | primary suites (behavior, admin, config, purity, recovery, CAS, full unit, TAC)
+2026-07-23 | STATIC | all PLAN nodeids present; engine I.4/I.5/fake/retries assert real store+actuator
+2026-07-23 | EVIDENCE | executor Task4 GREEN: behavior 23 + full unit 443 + TAC 8; arch PASS 0 critical
+2026-07-23 | MOCK | 0 prohibidos — FakeTelegram/Flaky/Clock/Delay/SequenceReader/InMemory only
+2026-07-23 | VERDICT | suite protege adecuadamente → step-6
+2026-07-23 | REPORT | .grok/agent-memory/test-guardian/behavior-engine-contract.md

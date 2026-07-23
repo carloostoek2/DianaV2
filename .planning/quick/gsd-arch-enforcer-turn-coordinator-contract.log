@@ -1,0 +1,23 @@
+# Arch Enforcer Log: turn-coordinator-contract
+Started: 2026-07-23
+Item: Align TurnCoordinator to Anexo G (G.1–G.5) — coordinate matrix + owner MW supersede + G.5 lock timeout
+Agent: arch-enforcer
+Commits: 87165ed, 37b996a, d504231
+
+## Timeline
+- Log opened before / concurrent with reads
+- Read PLAN.md, SUMMARY.md, decisions.md, gsd-turn-coordinator-contract.log
+- Read impact-analyzer/turn-coordinator-contract.md + AGENTS.md (§3–4, §5.4, §6.5)
+- Audited production:
+  - turn_coordinator.py (CoordinateResult, coordinate/unlocked, _supersede_nonterminal, G.5 chat_scope, VIP wrappers)
+  - owner.py (coordinator inject; business → coordinate owner discard; no BehaviorCanceller)
+  - setup.py (DI coordinator into OwnerDetectionMiddleware; order unchanged)
+- Cross-checked: application ↛ aiogram; telegram thin caller; no cognitive/**; no alembic
+- Tests surface: G.3 matrix, concurrent VIP, G.5 timeout, owner MW supersede + private no-discard
+- Verdict: PASS WITH NOTES, 0 critical
+- Report: .grok/agent-memory/arch-enforcer/turn-coordinator-contract.md
+- MEMORY.md pointer updated
+- Handoff: test-guardian
+
+## Verdict
+PASS WITH NOTES | Critical: 0 | Next: test-guardian

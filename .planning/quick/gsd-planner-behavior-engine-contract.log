@@ -1,0 +1,57 @@
+# gsd-planner — behavior-engine-contract
+
+**Date:** 2026-07-23  
+**Item:** behavior-engine-contract (Anexo I · Pool remaining-contracts-app · ITEM 3/3)  
+**Mode:** standard (impact + locked decisions provided)  
+**Output:** `.planning/quick/behavior-engine-contract/PLAN.md`  
+**Decisions:** `.planning/quick/behavior-engine-contract/decisions.md`
+
+## Inputs consumed
+
+1. Impact FULL: `.grok/agent-memory/impact-analyzer/behavior-engine-contract.md`
+2. Contract SoT: `docs/contratos_restantes.md` Anexo I (I.1–I.5)
+3. `AGENTS.md` Behavior boundaries + deliver/cancel contracts
+4. Code: `behavior/engine.py`, `ports.py`, `fake.py`, `admin_service._resolve_and_deliver`, `composition.py`, `config.py`
+5. Gold PLAN shape: `turn-coordinator-contract`, `generator-contract`
+6. Orchestrator locks: pre-send, retries, mode enum, I.5 Admin fail surface, sequence, never-zero delay, no cognitive/alembic, no text gen
+
+## Gaps planned (from impact)
+
+| Gap | Plan handling |
+|-----|---------------|
+| I.4 pre-send | Task 2 — TurnStatusReader gate before each send |
+| I.4 retries | Task 2 — TransientSendError + max_attempts |
+| I.2 mode enum | Task 1 + config Task 3 |
+| fake_delivery | Task 2 record-only no-network (L10) |
+| I.5 failed+notify | Task 3 Admin owns Turn write |
+| Never-zero delay | Task 3 RandomDelayPolicy / Settings gt=0 |
+| Sequence | Preserve existing order; regression test |
+
+## Key architecture choices
+
+- Pre-send in **engine** (not Admin-only) so all future deliverers get I.4
+- Terminal statuses as **local string frozenset** (no cognitive import)
+- Admin permanent fail: `mark_failed` + `notify_info` + approval `cancelled` (not waiting)
+- fake_delivery F1 = record-only success without actuator I/O
+- FixedDelayPolicy remains 0-ok for tests; prod policy clamped
+
+## Tasks (4)
+
+1. Ports + fakes + mode enum  
+2. Engine pre-send + retries + fake path (TDD core)  
+3. Admin I.5 + composition/config  
+4. Purity + full regression gate  
+
+## Next
+
+**gsd-executor** — Strict TDD English implementation per PLAN.md
+
+## Quality gate
+
+- [x] QUÉ dimensioned (outcome, scope, success criteria)
+- [x] CÓMO dimensioned (approach, patterns, files, order)
+- [x] Locked decisions table + decisions.md
+- [x] Tasks with Files + Action + Verification + Done
+- [x] Executor instructions + mock policy
+- [x] Exact test commands
+- [x] Scope = Anexo I only (residuals listed)

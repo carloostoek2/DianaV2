@@ -1,0 +1,21 @@
+=== gsd-behavior-engine-contract ===
+2026-07-23T07:47:25Z START executor
+PLAN: .planning/quick/behavior-engine-contract/PLAN.md
+STRICT TDD active
+2026-07-23T07:47:42Z Task1 RED: mode enum tests
+2026-07-23T07:48:37Z Task1 GREEN commit=b54b310 ports+fakes+mode enum
+2026-07-23T07:49:00Z Task2 RED: pre-send/retry/fake tests
+2026-07-23T07:49:37Z Task2 GREEN commit=1430ada engine I.4+retries+fake
+2026-07-23T07:49:37Z Task3 RED: Admin I.5 + config
+2026-07-23T07:51:25Z Task3 GREEN commit=464f4e7 admin I.5+config+composition
+2026-07-23T07:51:25Z Task4 START full regression
+2026-07-23T07:52:08Z Task4 GREEN purity+443 unit+8 TAC
+2026-07-23T07:52:08Z SUMMARY written
+## Self-Check: PASSED
+- [x] All tasks completed
+- [x] PLAN tests run
+- [x] 0 regressions attributable
+- [x] Conventions respected
+- [x] No cognitive/LLM/alembic edits
+Commits: b54b310, 1430ada, 464f4e7
+Next: gsd-arch-enforcer

@@ -1,0 +1,10 @@
+2026-07-23T07:27:13Z START registry-retrievers-contract executor — read PLAN; Strict TDD Task 1→2→3
+2026-07-23T07:27:51Z Task1 RED — rewrite test_retrievers for H.3 History/Context
+2026-07-23T07:28:11Z Task1 GREEN — implement history.py + context.py H.3
+2026-07-23T07:28:20Z Task1 DONE — 12 passed; commit 5cc909a fix(cognitive): align History/Context retrievers to Anexo H.3 shapes
+2026-07-23T07:28:35Z Task2 RED — extend test_registry for schedule half-register + planner universe
+2026-07-23T07:28:53Z Task2 GREEN — schedule fuente + registry universe + Retriever docstring
+2026-07-23T07:29:03Z Task2 DONE — 20 passed; commit f49bfb3 fix(cognitive): mark knowledge.schedule half-registered (Anexo H.3)
+2026-07-23T07:29:08Z Task3 — blast fixtures + H.4 gates
+2026-07-23T07:30:37Z Task3 DONE — 425 unit green; commit 163dc5a test(cognitive): lock registry/retriever Anexo H blast fixtures
+2026-07-23T07:30:42Z SELF-CHECK PASSED — Task1 5cc909a Task2 f49bfb3 Task3 163dc5a; 425 unit green; no alembic touch; D.5 empty history [] preserved; next arch-enforcer

@@ -1,0 +1,40 @@
+# gsd-planner — turn-coordinator-contract
+Date: 2026-07-23
+Item: turn-coordinator-contract (Anexo G · remaining-contracts-app · ITEM 1/3)
+Mode: standard (locked decisions + impact FULL)
+
+## Inputs consumed
+- Impact: `.grok/agent-memory/impact-analyzer/turn-coordinator-contract.md`
+- SoT: `docs/contratos_restantes.md` Anexo G (G.1–G.5)
+- Locks L1–L8 from orchestrator
+- Code: `turn_coordinator.py`, `turn_orchestrator.py`, `deterministic_escalate.py`, `owner.py`, `setup.py`, tests
+- Pattern: `.planning/quick/decider-contract/PLAN.md`
+- AGENTS.md §4.1/4.5/6.5
+
+## Dimensioning (QUÉ)
+- Outcome: Coordinator is concurrency guard with unified coordinate API; owner discard supersedes; G.5 loud fail
+- Gaps closed: G.2 action surface, G.3.1 owner, G.5 timeout, owner MW wire
+- Residuals: multi-process FOR UPDATE, durable enqueue
+
+## Dimensioning (CÓMO)
+- Additive `coordinate` + VIP `begin_turn*` wrappers (L4)
+- Owner never creates (L1/L1b)
+- Cascade extract shared; reason owner_message vs new_message
+- chat_scope: wait_for + retries + ChatLockTimeoutError
+- 4 TDD tasks: tests → impl → wire → full unit
+
+## Deliverables
+- `.planning/quick/turn-coordinator-contract/PLAN.md`
+- `.planning/quick/turn-coordinator-contract/decisions.md`
+
+## Gate checklist
+- [x] QUÉ dimensioned
+- [x] CÓMO dimensioned (patterns, files, order)
+- [x] Locked decisions table + Assumptions
+- [x] Tasks with Files + Action + Verification + Done
+- [x] Instrucciones gsd-executor + mock policy
+- [x] Exact test commands
+- [x] Scope tight (no FOR UPDATE / no cognitive)
+
+## Next
+gsd-executor (Strict TDD) → arch-enforcer → test-guardian

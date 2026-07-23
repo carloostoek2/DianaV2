@@ -1,0 +1,28 @@
+# gsd-impact-analyzer — turn-coordinator-contract
+# Date: 2026-07-23
+# Pool: remaining-contracts-app (Pool 2/2) ITEM 1/3 · effort 4
+# Scope: Align TurnCoordinator to Anexo G (G.1–G.5) docs/contratos_restantes.md
+# Mode: analysis only — no production edits
+
+## Timeline
+- Read AGENTS.md (via system), docs/contratos_restantes.md Anexo G, MVP_COMPONENT_DESIGN §5.2/§7.5
+- Read src/diana/application/turn_coordinator.py (full)
+- Read turn_orchestrator.py, admin_service.py (chat_scope), deterministic_escalate.py
+- Read owner middleware, telegram/setup wiring
+- Read tests: test_turn_coordinator.py, test_turn_orchestrator concurrent, test_owner_mw.py
+- Read SqlTurnStore / ports TurnRecord / TERMINAL_TURN_STATUSES
+- Grep consumers of TurnCoordinator / begin_turn / chat_scope
+- Pattern ref: impact-analyzer/planner-contract.md (prior remaining-contracts pool)
+- Write report → .grok/agent-memory/impact-analyzer/turn-coordinator-contract.md
+- Update MEMORY.md pointer
+
+## Evidence highlights
+- VIP supersede+create + in-process asyncio.Lock: largely OK for G.3.2 / partial G.4
+- G.2 API gap: no autor, no CoordinatorOutput.accion (crear|reemplazar|descartar_mensaje_dueña)
+- G.3.1 gap: owner business path only cancel_pending — does NOT supersede non-terminal turns
+- G.5 gap: no lock timeout / backoff / enqueue; silent wait on asyncio.Lock
+- Multi-process residual: SqlTurnStore list_non_terminal+create not under SELECT FOR UPDATE
+
+## Deliverables
+- Log: this file
+- Report: .grok/agent-memory/impact-analyzer/turn-coordinator-contract.md

@@ -1,0 +1,26 @@
+# Arch Enforcer Log: behavior-engine-contract
+Started: 2026-07-23
+Item: Align BehaviorEngine to Anexo I (I.1–I.5) — I.4 pre-send, retries, mode, I.5 Admin fail
+Agent: arch-enforcer
+Commits: b54b310, 1430ada, 464f4e7
+
+## Timeline
+- Log opened before reads
+- Read PLAN.md, behavior-engine-contract-SUMMARY.md, decisions.md, gsd-behavior-engine-contract.log
+- Read AGENTS.md Behavior limits (§3.1/3.2/4.1/4.5/5.4) + Anexo I (I.1–I.5)
+- Audited production:
+  - behavior/ports.py (mode enum, TransientSendError, TurnStatusReader)
+  - behavior/engine.py (pre-send gate, retries, fake_delivery, sequence, cancel)
+  - behavior/fake.py (readers + FlakySend)
+  - application/admin_service.py (mode; I.5 failed+notify; latch/cancelled)
+  - composition.py (TurnStoreStatusReader, RandomDelayPolicy, wiring)
+  - config.py (global_mode + retry/delay knobs)
+- Cross-checked: behavior ↛ cognitive/llm/aiogram; purity AST; no alembic/cognitive edits
+- Focus: I.4 pre-send PASS; no cognitive import PASS; I.5 admin fail path PASS
+- Verdict: PASS WITH NOTES, 0 critical
+- Report: .grok/agent-memory/arch-enforcer/behavior-engine-contract.md
+- MEMORY.md pointer updated
+- Handoff: test-guardian
+
+## Verdict
+PASS WITH NOTES | Critical: 0 | Next: test-guardian

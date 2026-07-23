@@ -1,0 +1,29 @@
+# gsd-impact-analyzer-behavior-engine-contract
+
+Date: 2026-07-23
+Pool: remaining-contracts-app ITEM 3/3
+Source: docs/contratos_restantes.md Anexo I (I.1–I.5)
+Analysis only — no production edits
+
+## Steps
+1. Read AGENTS.md module limits (Behavior Engine outside cognition; deliver/cancel contracts)
+2. Read Anexo I.1–I.5 full contract
+3. Read behavior package: engine.py, ports.py, fake.py, timer_manager.py
+4. Map consumers: admin_service deliver path, turn_coordinator cancel cascade, composition wiring, telegram actuator
+5. Map tests: tests/unit/behavior/*, admin, orchestrator, recovery, delivery transitions
+6. Confirm gaps vs contract:
+   - Sequence delay→read→typing→send: PRESENT (partial: delay may be 0; read optional if no message_id)
+   - Supersede check before send: ABSENT (task cancel only; race window)
+   - Bounded retries: ABSENT
+   - fake_delivery / mode enum: mode Literal["supervised"] only; no fake_delivery branch
+   - I.5 fail→notify owner + Turn.failed: ABSENT (admin reopens waiting)
+7. Persist report: .grok/agent-memory/impact-analyzer/behavior-engine-contract.md
+8. Update MEMORY.md pointer
+
+## Scope validity
+VALID and tight for effort ~4 if residuals explicit:
+- Multi-message split quirks (F3) out of scope
+- Full FakeDelivery sandbox implementation residual (enum only in F1)
+- Multi-process cancel residual already noted under G.4
+
+Next: gsd-planner

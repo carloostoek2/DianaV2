@@ -1,0 +1,36 @@
+# gsd-impact-analyzer — registry-retrievers-contract
+
+Date: 2026-07-23
+Pool: remaining-contracts-app ITEM 2/3
+Source: docs/contratos_restantes.md Anexo H (H.1–H.4)
+Status: analysis only
+
+## Timeline
+
+- [start] Scope: align Capability Registry + Retrievers to Anexo H
+- [read] AGENTS.md module boundaries (registry/retrievers read-only; no cross-retriever; Director resolves by name)
+- [read] docs/contratos_restantes.md H.1–H.4
+- [read] src/diana/cognitive/registry.py, ports.Retriever, retrievers/*
+- [read] director retrieve loop, context_builder knowledge map, composition wiring
+- [read] tests/unit/cognitive/test_registry.py, test_retrievers.py, test_director.py, test_context_builder.py
+- [read] infra history repo shape (role/text/timestamp)
+- [read] prior impact analyses (planner/context-builder) + documentador remaining-contracts note
+- [write] .grok/agent-memory/impact-analyzer/registry-retrievers-contract.md
+- [write] MEMORY.md pointer
+
+## Evidence highlights
+
+- resolve map: CapabilityRegistry.resolve + build_default_registry (7 caps incl. profile + schedule STUB)
+- History: returns list[dict] from port; empty chat → [] never None (OK empty semantics; shape ≠ H.3 wrapper)
+- Context: message_count/last_role/last_text_preview ≠ H.3 esperando_respuesta_desde / es_primer_mensaje_del_dia
+- Stubs memory/policy/examples: return None + registered (OK H.4)
+- Schedule: fully registered ScheduleRetriever STUB → None (vs H.3 half-registered / fuente no_implementado)
+- No cross-retriever imports (OK); read-only get_recent only (OK)
+- H.2 envelope {capacidad,resultado,fuente} not implemented; Director dict[cap→value]
+
+## Out of scope / no-touch
+
+- alembic turns.error residual
+- Behavior Engine (Anexo I)
+- TurnCoordinator (Anexo G) already analyzed
+- ContextBuilder D.4 redesign (only tolerate knowledge shape changes)

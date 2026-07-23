@@ -1,0 +1,58 @@
+# gsd-planner — registry-retrievers-contract
+
+Date: 2026-07-23
+Pool: remaining-contracts-app ITEM 2/3
+Source: docs/contratos_restantes.md Anexo H (H.1–H.4)
+Impact: .grok/agent-memory/impact-analyzer/registry-retrievers-contract.md
+Status: PLAN ready for gsd-executor
+
+## Timeline
+
+- [start] Scope: align Capability Registry + Retrievers to Anexo H
+- [read] impact FULL + locked orchestrator decisions
+- [read] docs/contratos_restantes.md H.1–H.4
+- [read] AGENTS.md registry/retriever limits
+- [read] registry.py, ports.Retriever, retrievers/history|context|schedule|stubs
+- [read] director retrieve loop + _ROLE_TO_AUTOR; context_builder _is_null_like
+- [read] tests: test_registry, test_retrievers, test_director isolation, test_context_builder fixtures
+- [read] prior PLANs: planner-contract, context-builder-contract (structure gold)
+- [write] .planning/quick/registry-retrievers-contract/PLAN.md
+- [write] this log + agent-memory pointer
+
+## Locked decisions materialized
+
+| ID | Decision |
+|----|----------|
+| L1 | Bare resultado (no H.2 envelope DTO) |
+| L2 | History empty bare `[]` never None (D.5 safe) |
+| L3 | History items autor/texto/timestamp bare list; no {mensajes:} wrapper |
+| L4 | Context English keys waiting_for_reply_since / is_first_message_of_day |
+| L5 | Schedule half-registered: resolve OK + fuente=no_implementado + None |
+| L6 | Memory/Policy/Examples stubs stay |
+| L7 | Profile F2 seat stays |
+| L8 | Read-only + no cross-retriever imports |
+| L9 | fetch(turn, comprehension) Protocol kept |
+| L10 | No alembic / dirty tree |
+
+## Architecture summary
+
+- HistoryRetriever maps port role/text → autor/texto/timestamp; drops bot/unknown
+- ContextRetriever deterministic formulas from history only; injectable clock
+- ScheduleRetriever.fuente = "no_implementado"; still registered for resolve
+- build_default_registry boot-resolves PLANNER_CAPABILITY_UNIVERSE
+- Director production: prefer no change; blast tests only
+
+## Tasks
+
+1. History + Context H.3 payloads (TDD)
+2. Schedule half-register + registry universe + protocol docs (TDD)
+3. Blast fixtures + H.4 gates + full unit
+
+## Out of scope
+
+- Envelope DTO, {mensajes:} wrapper, Anexos A–G/I rewrites
+- alembic turns.error, MVP doc sync, dual get_recent optimization
+
+## Next
+
+gsd-executor — Strict TDD Task 1→2→3

@@ -1,0 +1,50 @@
+# gsd-documentador — remaining-contracts-app
+# Started: 2026-07-23T08:00:56Z
+# Mode: hardening pool close (docs only)
+
+## Inputs read
+- .planning/quick/turn-coordinator-contract/{SUMMARY,decisions}.md
+- .planning/quick/registry-retrievers-contract/SUMMARY.md
+- .planning/quick/behavior-engine-contract/{behavior-engine-contract-SUMMARY,decisions}.md
+- .grok/agent-memory/arch-enforcer/{turn-coordinator,registry-retrievers,behavior-engine}-contract.md
+- .grok/agent-memory/test-guardian/{turn-coordinator,registry-retrievers,behavior-engine}-contract.md
+- .grok/agent-memory/review/{turn-coordinator,registry-retrievers,behavior-engine}-contract.md
+- .grok/agent-memory/impact-analyzer/{turn-coordinator,registry-retrievers,behavior-engine}-contract.md
+- .grok/agent-memory/documentador/remaining-contracts-cognitive.md (Pool 1 close)
+- .grok/agent-memory/MEMORY.md
+- docs/contratos_restantes.md (Anexos G–I)
+
+## Scope
+Pool remaining-contracts-app (Pool 2 of 2) — Anexos G–I:
+1. turn-coordinator-contract (Anexo G)
+2. registry-retrievers-contract (Anexo H)
+3. behavior-engine-contract (Anexo I)
+
+Overall: contratos restantes C–I complete across both pools (Pool 1 cognitive + Pool 2 app).
+
+## Writes planned
+- .grok/agent-memory/documentador/remaining-contracts-app.md
+- .grok/agent-memory/MEMORY.md (Documentador index entry)
+- this log (append completion)
+
+## Explicit non-writes
+- production / test code
+- alembic/versions/002_turns_error.py and infra dirty tree (models/repos/tests)
+- SPEC.md / REQUERIMIENTOS.md / MVP_COMPONENT_DESIGN rewrites (out-of-scope residuals only)
+
+## Status
+IN_PROGRESS — log opened before writes
+
+## Status
+COMPLETE
+
+## Docs commit
+7a9cc10 — docs(application): close remaining-contracts-app pool (G–I)
+
+## Residuals handoff
+- C–I complete (both pools); no next remaining-contracts pool
+- Out-of-scope: multi-process G.4, durable G.5 requeue, FakeDelivery UX, MVP_COMPONENT_DESIGN schedule/owner wording, AGENTS §5.4 signature, alembic turns.error dirty tree
+- Carry-forward Pool 1: eval_thresholds wire, regenerate F2, style_rules
+
+## Finished
+2026-07-23T08:00:56Z start · docs commit 7a9cc10

@@ -1,0 +1,34 @@
+# Arch Enforcer Log: registry-retrievers-contract
+Started: 2026-07-23
+Item: Align Capability Registry + Retrievers to Anexo H (H.1–H.4)
+Agent: arch-enforcer
+Commits: 5cc909a, f49bfb3, 163dc5a
+
+## Timeline
+- Log opened before reads/writes
+- Read PLAN.md, SUMMARY.md, impact-analyzer/registry-retrievers-contract.md
+- Read AGENTS.md module limits (§3 Capability Registry + Retrievers; §5.5 anti-contam; §6.1)
+- Read docs/contratos_restantes.md Anexo H (H.1–H.4)
+- Audited production:
+  - registry.py (universe + UNIMPLEMENTED + boot resolve)
+  - history.py (bare autor/texto/timestamp; empty []; drop bots)
+  - context.py (waiting_for_reply_since + is_first_message_of_day; clock)
+  - schedule.py (fuente=no_implementado; fetch None)
+  - ports.Retriever docstring (bare resultado ↔ conceptual H.2)
+  - director retrieve loop unchanged; context_builder _is_null_like untouched
+- Cross-checked: no cross-peer retriever imports; read-only; purity; D.5 bare []
+- Tests surface: test_registry, test_retrievers (H.4 AST), test_director isolation, test_context_builder fixtures
+- Verdict: PASS WITH NOTES, 0 critical
+- Report: .grok/agent-memory/arch-enforcer/registry-retrievers-contract.md
+- MEMORY.md pointer updated
+- Handoff: test-guardian
+
+## Focus checks
+1. H.1 resolve + planner universe boot — PASS
+2. H.2 bare resultado (no envelope DTO) — PASS (L1)
+3. H.3 History bare list / empty never None — PASS
+4. H.3 Context English keys + formulas — PASS
+5. H.3 Schedule half-register fuente — PASS
+6. H.4 no cross-retriever + read-only — PASS
+7. D.5 empty history [] still omitted — PASS
+8. Scope (no director/alembic/telegram/behavior) — PASS

@@ -1,0 +1,15 @@
+# test-guardian log — registry-retrievers-contract
+# 2026-07-23
+
+## Actions
+- [start] Read PLAN/SUMMARY + impact-analyzer + arch-enforcer reports
+- [audit] Coverage DoD map vs test_registry/test_retrievers/test_director isolation
+- [mock-audit] Inventory @patch/MagicMock/AsyncMock on item-touched tests
+- [re-run] Primary cluster + wiring blast + full unit (PLAN exact commands)
+- [re-run-start] 2026-07-23 primary cluster + wiring + full unit
+- [coverage] PLAN DoD H.1–H.4 all locked; 8 registry + 14 retrievers + isolation + H.4 AST
+- [mock-audit] 0 @patch/MagicMock/AsyncMock on item tests; FakeLLM+InMemory PERMITIDO
+- [evidence] SUMMARY 81 primary / 26 wiring / 425 full unit (5cc909a f49bfb3 163dc5a)
+- [verdict] suite protege adecuadamente | mocks_prohibidos=0 | tests_added=0
+- [handoff] next=step-6-tests report=.grok/agent-memory/test-guardian/registry-retrievers-contract.md
+- [done] 2026-07-23 test-guardian registry-retrievers-contract
