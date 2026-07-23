@@ -1,0 +1,40 @@
+# Arch Enforcer Log: evaluator-contract
+Started: 2026-07-23
+Item: Align Evaluator to contrato_evaluador.md Anexo B.1–B.7
+Agent: arch-enforcer
+
+## Timeline
+- Log opened before reads/writes
+- Read PLAN.md, SUMMARY.md, contrato_evaluador.md B.1–B.7, AGENTS.md limits
+- Read impact-analyzer/evaluator-contract.md + arch-enforcer/analyst-contract.md (pattern)
+- Audited production:
+  - models.py (EvaluatorInput, EvaluationProfile 7D English, Decision.action)
+  - context_builder.py (list_included_blocks + shared _is_null_like)
+  - exceptions.py (EvaluatorSchemaInvalidError)
+  - evaluator.py (DTO API, B.1 prompt, doctrine ~0.7 guidance, retry×1)
+  - director.py (sole evaluate call site; blocks from same retrieved map)
+  - turn_orchestrator.py (typed fail + notify_info; no VIP send)
+  - decider.py (vector matrix; approve|escalate only)
+- Cross-checked: cognitive imports (no telegram/behavior/learning/aiogram/sqlalchemy),
+  BR-09 no score_global/mean, anti-contamination names-only, Learning not on fail path
+- Tests surface reviewed: test_evaluator, test_director, test_turn_orchestrator,
+  test_models, test_context_builder
+- Commits: 97eb6fe, e14993f, ce95f51, a07be80
+- Verdict: PASS WITH NOTES, 0 critical
+- Report: .grok/agent-memory/arch-enforcer/evaluator-contract.md
+- MEMORY.md pointer updated
+- Handoff: test-guardian
+
+## Focus checks
+1. Cognitive purity — PASS
+2. Evaluator single question / no action-mode-rewrite — PASS
+3. BR-09 no score collapse — PASS
+4. Anti-contamination included_blocks names only — PASS
+5. Director deterministic; sole evaluate(EvaluatorInput) — PASS
+6. B.6 retry once then typed error; no synthetic profile — PASS
+7. Orchestrator notify without cognitive→telegram; no VIP send — PASS
+8. F1 Decision.action approve|escalate only — PASS
+9. Layer deps direction OK — PASS
+
+## Verdict
+PASS WITH NOTES | Critical: 0 | Next: test-guardian

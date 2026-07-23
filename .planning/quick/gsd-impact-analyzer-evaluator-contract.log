@@ -1,0 +1,26 @@
+# gsd-impact-analyzer-evaluator-contract.log
+# Impact analysis: Align Evaluator contract to Anexo B
+# Date: 2026-07-23
+# Status: analysis only — no production code edits
+
+## Timeline
+- 2026-07-23 start: load AGENTS.md, contrato_evaluador.md (Anexo B), impact-analyzer agent def
+- Read evaluator.py, models.py EvaluationProfile, director.py evaluate call (~145), context_builder null-like
+- Read analyst.py A.6 retry + exceptions.py + turn_orchestrator Analyst notify branch
+- Grep consumers: Decider, Admin _eval_summary, ports TRACE evaluation, FakeLLM, tests
+- Pattern: .planning/quick/analyst-contract/PLAN.md
+- Report written: .grok/agent-memory/impact-analyzer/evaluator-contract.md
+- MEMORY.md pointer added
+
+## Verdict
+READY for gsd-planner — scope tight, 4-task split recommended
+
+## Top risks
+1. Inventing default EvaluationProfile on fail (forbidden B.6)
+2. Passing raw knowledge bodies into Evaluator (anti-contamination)
+3. bloques_incluidos drift vs ContextBuilder null-like omit
+4. Orchestrator reason typing evaluador_schema_invalido
+5. doctrine 0.7: prompt guidance preferred over hard-clamp
+
+## Primary test gate
+python -m pytest -q tests/unit

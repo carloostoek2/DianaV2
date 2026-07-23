@@ -1,0 +1,70 @@
+=== 2026-07-23T04:06:04Z START evaluator-contract ===
+plan: .planning/quick/evaluator-contract/PLAN.md
+mode: strict TDD
+status: loading sources
+=== 2026-07-23T04:06:16Z TASK1 START ===
+action: write failing tests for EvaluatorInput + list_included_blocks
+=== 2026-07-23T04:06:51Z TASK1 GREEN ===
+action: implement EvaluatorInput + list_included_blocks
+red: 5 failed as expected
+=== 2026-07-23T04:07:05Z TASK1 DONE ===
+result: PASSED (64 tests models+context+invariants)
+commit: 97eb6fe feat(cognitive): add EvaluatorInput and list_included_blocks
+=== 2026-07-23T04:07:29Z TASK2 START ===
+action: write failing evaluator B.1-B.6 tests
+=== 2026-07-23T04:08:24Z TASK2 GREEN ===
+action: implement EvaluatorSchemaInvalidError + evaluate(EvaluatorInput) retry
+red: ImportError EvaluatorSchemaInvalidError
+=== 2026-07-23T04:08:32Z TASK2 DONE ===
+result: PASSED (69 evaluator+models+invariants)
+commit: e14993f feat(cognitive): Evaluator schema retry and EvaluatorSchemaInvalidError
+=== 2026-07-23T04:08:32Z TASK3 START ===
+action: write director included_blocks + schema fail tests
+=== 2026-07-23T04:08:56Z TASK3 GREEN ===
+action: wire Director EvaluatorInput + included_blocks
+red: TypeError evaluate() arity
+=== 2026-07-23T04:09:12Z TASK3 DONE ===
+result: PASSED (41 director+evaluator+context+purity)
+commit: ce95f51 feat(cognitive): Director passes included_blocks to Evaluator
+=== 2026-07-23T04:09:12Z TASK4 START ===
+action: write orchestrator evaluator schema fail test
+=== 2026-07-23T04:09:28Z TASK4 GREEN ===
+action: orchestrator EvaluatorSchemaInvalidError notify branch
+red: notifier.infos empty
+=== 2026-07-23T04:09:34Z TASK4 DONE ===
+result: PASSED (51 orch+director+eval+purity)
+commit: a07be80 feat(application): notify owner on evaluador_schema_invalido
+=== 2026-07-23T04:09:34Z FULL UNIT GATE START ===
+=== 2026-07-23T04:10:34Z FULL UNIT GATE PASSED ===
+result: 355 passed (.venv/bin/python -m pytest -q tests/unit)
+note: system python3 lacks pydantic-settings; use project .venv
+
+## Self-Check: PASSED
+- [x] Todas las tareas completadas
+- [x] Tests del PLAN corridos
+- [x] 0 regresiones atribuibles
+- [x] Convenciones del proyecto respetadas
+
+## Residuals
+- doctrine hard-clamp (out-of-scope)
+- SPEC/REQ sync (out-of-scope)
+- dirty tree alembic/turns.error (out-of-scope)
+- included_blocks trace snapshot (in-scope-followup)
+- B.8 schema version (out-of-scope)
+=== 2026-07-23T04:10:34Z END evaluator-contract ===
+=== 2026-07-23T04:18:24Z FIX ROUND 1 START ===
+source: hardener tests review ISSUE-1..5
+action: load review + harden evaluator/orchestrator tests
+=== 2026-07-23T04:19:07Z FIX ROUND 1 IMPLEMENT ===
+action: harden test_evaluator + orchestrator notify count
+=== 2026-07-23T04:19:30Z FIX ROUND 1 COMMIT ===
+commit: 8de5069 test(cognitive): harden Evaluator B.6 and doctrine guidance coverage
+result: 67 passed evaluator+orch+director+purity+invariants
+=== 2026-07-23T04:19:42Z FIX ROUND 1 DONE ===
+commit: 8de5069 test(cognitive): harden Evaluator B.6 and doctrine guidance coverage
+issues: ISSUE-1..5 fixed (0 open)
+tests: 135 primary slice passed
+## Self-Check: PASSED
+- [x] All open review issues fixed
+- [x] Primary slice green
+- [x] Conventional commit, no AI attribution

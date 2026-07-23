@@ -1,0 +1,50 @@
+# gsd-planner — evaluator-contract
+date: 2026-07-23
+cwd: /home/ubuntu/repos/DianaV2
+status: PLAN ready
+
+## Inputs read
+- /home/ubuntu/.grok/agents/gsd-planner.md
+- AGENTS.md (module limits, EvaluationProfile vector, anti-contamination)
+- .grok/agent-memory/impact-analyzer/evaluator-contract.md
+- contrato_evaluador.md (Anexo B)
+- .planning/quick/analyst-contract/PLAN.md (structure + A.6 gold)
+- src/diana/cognitive/{evaluator,analyst,exceptions,context_builder,models,director}.py
+- src/diana/application/turn_orchestrator.py (Analyst notify branch)
+- tests unit surfaces listed in impact report
+
+## Deliverable
+- PLAN: .planning/quick/evaluator-contract/PLAN.md
+- Tasks: 4 (models/blocks → evaluator retry → director → orchestrator)
+- Strict TDD: active (python -m pytest -q)
+
+## Locked decisions (IDs)
+- L1 English EvaluationProfile field names unchanged
+- L2 EvaluatorInput English flat DTO (draft, comprehension, included_blocks, current_turn)
+- L3 included_blocks = registry names that pass ContextBuilder non-null-like filter
+- L4 null-like shared with build via list_included_blocks
+- L5 evaluate(EvaluatorInput) sole Director call site
+- L6 B.1 prompt profile-only; full public comprehension; no score_global/action
+- L7 doctrine ~0.7 when knowledge.policy absent = prompt guidance only (no hard-clamp)
+- L8 one schema retry then typed error (Analyst pattern)
+- L9 EvaluatorSchemaInvalidError reason evaluador_schema_invalido; no default profile
+- L10 orchestrator mark_failed + notify_info
+- L11 no VIP send on fail
+- L12 F1 Decision.action approve|escalate only
+- L13 anti-contamination: names not knowledge bodies
+- L14 Strict TDD / FakeLLM only
+- L15 out of scope residuals listed in PLAN
+
+## Residuals flagged for later items
+1. doctrine hard-clamp if prompt unreliable
+2. B.8 evaluacion_schema_version
+3. Spanish/English LLM key alias layer
+4. SPEC/REQ full Anexo B sync
+5. F2 regenerate from-scratch evaluation
+6. Decider system_config thresholds
+7. trace snapshot for included_blocks
+8. Telegram/Behavior/Learning/Alembic unrelated work
+
+## Gate
+- PLAN exists, executable, scope tight to evaluator-contract item
+- No production code implemented by planner

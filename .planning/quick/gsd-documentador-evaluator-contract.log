@@ -1,0 +1,39 @@
+=== documentador START evaluator-contract 2026-07-23T04:21:36Z ===
+mode: pool-close post hardener-agile evaluator-contract
+items: 1 (align Evaluator + EvaluatorInput to contrato_evaluador.md Anexo B.1–B.7)
+effort: 4
+review_rounds: 2
+open_issues_r1: 5 (0 bug, 3 suggestion, 2 nit) — all fixed
+open_issues_final: 0
+hard_id: c71950cb
+sources:
+  - .planning/quick/evaluator-contract/PLAN.md
+  - .planning/quick/evaluator-contract/SUMMARY.md
+  - .planning/quick/gsd-evaluator-contract.log
+  - .grok/agent-memory/impact-analyzer/evaluator-contract.md
+  - .grok/agent-memory/arch-enforcer/evaluator-contract.md
+  - .grok/agent-memory/test-guardian/evaluator-contract.md
+  - .grok/agent-memory/review/evaluator-contract.md
+  - contrato_evaluador.md
+commits: 97eb6fe, e14993f, ce95f51, a07be80, 8de5069 (hardener test-only)
+full_unit_gate: 355 passed
+primary_slice_post_fix: 135 passed (evaluator+orch+director+purity+invariants)
+arch: PASS WITH NOTES · 0 critical
+guardian: suite protege · 0 prohibited mocks · high reality confidence
+planned_writes:
+  - .planning/quick/evaluator-contract/SUMMARY.md (hardener review loop + residuals)
+  - .planning/quick/evaluator-contract/decisions.md (locked L1–L15)
+  - .grok/agent-memory/documentador/evaluator-contract.md
+  - .grok/agent-memory/MEMORY.md (documentador pointer)
+code_changes: 0
+spec_rewritten: no
+=== reading complete; writing docs ===
+=== writes done 2026-07-23T04:21:36Z ===
+- .planning/quick/evaluator-contract/SUMMARY.md (review loop + residuals + pool close)
+- .planning/quick/evaluator-contract/decisions.md (created)
+- .grok/agent-memory/documentador/evaluator-contract.md (created)
+- .grok/agent-memory/MEMORY.md (documentador + test-guardian pointer fix)
+- .planning/quick/gsd-documentador-evaluator-contract.log
+code_changes: 0
+spec_rewritten: no
+=== documentador END evaluator-contract CLOSED ===
