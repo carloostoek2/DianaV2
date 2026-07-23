@@ -13,6 +13,7 @@ from diana.cognitive.exceptions import (
     AnalystSchemaInvalidError,
     ContextExceedsLimitError,
     EvaluatorSchemaInvalidError,
+    GeneratorEmptyOutputError,
 )
 from diana.cognitive.models import (
     TERMINAL_TURN_STATUSES,
@@ -159,6 +160,23 @@ class TurnOrchestrator:
                 except Exception:
                     logger.exception(
                         "owner_notify_failed_after_context_exceeds_limit",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "chat_id": incoming.chat_id,
+                        },
+                    )
+            elif isinstance(exc, GeneratorEmptyOutputError):
+                error = "generador_salida_vacia"
+                await self._coordinator.mark_failed(turn_id, error=error)
+                # Never let notifier failures mask the typed empty-output error.
+                try:
+                    await self._admin.notify_info(
+                        f"Turn {turn_id} failed: generador_salida_vacia",
+                        chat_id=incoming.chat_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "owner_notify_failed_after_generator_empty_output",
                         extra={
                             "turn_id": str(turn_id),
                             "chat_id": incoming.chat_id,
