@@ -239,3 +239,94 @@ def test_examples_stub_has_no_memory_imports_ast() -> None:
             for alias in node.names:
                 for bad in forbidden_substrings:
                     assert bad not in alias.name, alias.name
+
+
+def test_retrievers_have_no_cross_peer_imports_ast() -> None:
+    """H.4: retriever modules must not import peer retrievers (no shared snapshot)."""
+    import ast
+    from pathlib import Path
+
+    root = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "diana"
+        / "cognitive"
+        / "retrievers"
+    )
+    peer_names = (
+        "history",
+        "context",
+        "memory",
+        "policy",
+        "examples",
+        "profile",
+        "schedule",
+    )
+    for name in peer_names:
+        path = root / f"{name}.py"
+        assert path.is_file(), path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    assert "diana.cognitive.retrievers" not in alias.name, (
+                        f"{path.name} imports {alias.name}"
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module == "diana.cognitive.retrievers" or module.startswith(
+                    "diana.cognitive.retrievers."
+                ):
+                    raise AssertionError(f"{path.name} imports from {module}")
+                # Relative peer import: from .history import ...
+                if module.startswith(".") and not module.startswith(".."):
+                    # . alone is package self; .history etc. are peers
+                    if module != ".":
+                        raise AssertionError(
+                            f"{path.name} relative-imports peer {module}"
+                        )
+
+
+def test_retrievers_are_read_only_ast() -> None:
+    """H.4 lightweight: no persistence mutators (commit/flush/delete/session.add)."""
+    import ast
+    from pathlib import Path
+
+    root = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "diana"
+        / "cognitive"
+        / "retrievers"
+    )
+    # Local list.append is fine; persistence-shaped mutators are not.
+    forbidden_attrs = frozenset({"commit", "flush", "delete", "rollback"})
+    peer_files = (
+        "history.py",
+        "context.py",
+        "memory.py",
+        "policy.py",
+        "examples.py",
+        "profile.py",
+        "schedule.py",
+    )
+    for filename in peer_files:
+        path = root / filename
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in forbidden_attrs:
+                raise AssertionError(
+                    f"{filename} uses mutating attribute .{node.attr} (read-only H.4)"
+                )
+            # session.add / db.add style
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add"
+            ):
+                raise AssertionError(
+                    f"{filename} calls .add(...) (read-only H.4)"
+                )
+        for bad in ("sqlalchemy", "Session", ".commit(", ".delete("):
+            assert bad not in source, f"{filename} must not contain {bad!r}"

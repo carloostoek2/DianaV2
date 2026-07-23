@@ -374,9 +374,13 @@ async def test_registry_isolation_history_uses_turn_chat_id() -> None:
 
     retrieved = trace.get(turn.turn_id, "retrieved")
     assert isinstance(retrieved, dict)
-    assert retrieved["knowledge.history"] == [{"role": "vip", "text": "from-42"}]
-    assert isinstance(retrieved["knowledge.context"], dict)
-    assert retrieved["knowledge.context"]["message_count"] == 1
+    assert retrieved["knowledge.history"] == [
+        {"autor": "vip", "texto": "from-42", "timestamp": ""},
+    ]
+    assert retrieved["knowledge.context"] == {
+        "waiting_for_reply_since": "",
+        "is_first_message_of_day": True,
+    }
     # All planned stub caps must be present and None (not vacuous omission).
     for cap in _STUB_CAPS:
         assert cap in retrieved

@@ -74,8 +74,11 @@ def test_null_knowledge_omits_stub_headings() -> None:
 def test_non_null_knowledge_sections_included() -> None:
     builder = ContextBuilder()
     knowledge = {
-        "knowledge.history": [{"role": "vip", "text": "prior"}],
-        "knowledge.context": {"message_count": 1, "last_role": "vip"},
+        "knowledge.history": [{"autor": "vip", "texto": "prior", "timestamp": ""}],
+        "knowledge.context": {
+            "waiting_for_reply_since": "t1",
+            "is_first_message_of_day": True,
+        },
         "knowledge.memory": None,
     }
     built = builder.build(
@@ -86,7 +89,7 @@ def test_non_null_knowledge_sections_included() -> None:
     )
     assert "## Knowledge: knowledge.history" in built.prompt_final
     assert "prior" in built.prompt_final
-    assert '"message_count": 1' in built.prompt_final
+    assert '"waiting_for_reply_since": "t1"' in built.prompt_final
     assert "## Knowledge: knowledge.context" in built.prompt_final
     assert "## Knowledge: knowledge.memory" not in built.prompt_final
 
@@ -120,8 +123,11 @@ def test_empty_list_and_dict_knowledge_omitted() -> None:
 def test_list_included_blocks_matches_prompt_sections() -> None:
     builder = ContextBuilder()
     knowledge = {
-        "knowledge.history": [{"role": "vip", "text": "prior"}],
-        "knowledge.context": {"message_count": 1},
+        "knowledge.history": [{"autor": "vip", "texto": "prior", "timestamp": ""}],
+        "knowledge.context": {
+            "waiting_for_reply_since": None,
+            "is_first_message_of_day": True,
+        },
         "knowledge.memory": None,
         "knowledge.policy": [],
         "knowledge.examples": {},
@@ -191,8 +197,11 @@ def test_build_returns_built_context_prompt_and_blocks() -> None:
 def test_d4_current_turn_is_last_section() -> None:
     builder = ContextBuilder()
     knowledge = {
-        "knowledge.history": [{"role": "vip", "text": "prior"}],
-        "knowledge.context": {"message_count": 2},
+        "knowledge.history": [{"autor": "vip", "texto": "prior", "timestamp": ""}],
+        "knowledge.context": {
+            "waiting_for_reply_since": None,
+            "is_first_message_of_day": False,
+        },
     }
     built = builder.build(
         _turn("CURRENT-BODY-XYZ"),
