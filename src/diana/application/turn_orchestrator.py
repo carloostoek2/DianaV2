@@ -9,7 +9,7 @@ from uuid import UUID
 from diana.application.admin_service import AdminService
 from diana.application.ports import MessageHistoryWriter, VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
-from diana.cognitive.exceptions import AnalystSchemaInvalidError
+from diana.cognitive.exceptions import AnalystSchemaInvalidError, EvaluatorSchemaInvalidError
 from diana.cognitive.models import (
     TERMINAL_TURN_STATUSES,
     Decision,
@@ -121,6 +121,23 @@ class TurnOrchestrator:
                 except Exception:
                     logger.exception(
                         "owner_notify_failed_after_analyst_schema_invalid",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "chat_id": incoming.chat_id,
+                        },
+                    )
+            elif isinstance(exc, EvaluatorSchemaInvalidError):
+                error = "evaluador_schema_invalido"
+                await self._coordinator.mark_failed(turn_id, error=error)
+                # Never let notifier failures mask the typed schema error.
+                try:
+                    await self._admin.notify_info(
+                        f"Turn {turn_id} failed: evaluador_schema_invalido",
+                        chat_id=incoming.chat_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "owner_notify_failed_after_evaluator_schema_invalid",
                         extra={
                             "turn_id": str(turn_id),
                             "chat_id": incoming.chat_id,

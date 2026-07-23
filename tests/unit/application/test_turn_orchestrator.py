@@ -371,6 +371,113 @@ async def test_orchestrator_analyst_schema_fail_marks_failed_notifies_owner() ->
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_evaluator_schema_fail_marks_failed_notifies_owner() -> None:
+    """B.6: Evaluator schema fail → failed + evaluador_schema_invalido + owner notify; no VIP send."""
+    from diana.cognitive.exceptions import EvaluatorSchemaInvalidError
+
+    incomplete = {
+        "naturalness": 0.5,
+        "precision": 0.5,
+        "doctrine": 0.5,
+        "consistency": 0.5,
+        "safety": 0.5,
+        "coverage": 0.5,
+        # empathy missing
+    }
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    history = InMemoryMessageHistoryWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            # valid Comprehension
+            {
+                "intent": "chat",
+                "topics": ["x"],
+                "emotion": "neutral",
+                "urgency": "baja",
+                "risk": "bajo",
+                "needs_memory": False,
+                "needs_policy": False,
+                "needs_schedule": False,
+                "needs_examples": False,
+                "needs_history": True,
+                "needs_context": True,
+            },
+            incomplete,
+            incomplete,
+        ],
+        text_responses=["draft text for vip"],
+    )
+    director = CognitiveDirector(
+        analyst=Analyst(llm),
+        planner=Planner(),
+        registry=build_default_registry(history),
+        context_builder=ContextBuilder(),
+        generator=Generator(llm),
+        evaluator=Evaluator(llm),
+        decider=Decider(),
+        trace=traces,
+        persona="You are Diana.",
+        history=history,
+        analyst_history_limit=8,
+        status_sink=coordinator,
+    )
+    learn = RecordingLearning()
+    orch = TurnOrchestrator(
+        coordinator=coordinator,
+        director=director,
+        admin=admin,
+        learning=learn,
+        history=history,
+    )
+
+    with pytest.raises(EvaluatorSchemaInvalidError):
+        await orch.handle_vip_message(_vip(text="eval-schema-fail-msg"))
+
+    failed_ids = [
+        t.id
+        for t in turns._turns.values()  # noqa: SLF001 — test assertion
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await turns.get(failed_ids[0])
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error == "evaluador_schema_invalido"
+
+    assert actuator.send_count() == 0
+    assert learn.calls == []
+    assert len(notifier.infos) >= 1
+    assert notifier.drafts == []
+    assert notifier.escalations == []
+    info_text, _info_chat = notifier.infos[0]
+    assert "evaluador_schema_invalido" in info_text
+    assert str(failed_ids[0]) in info_text
+
+
+@pytest.mark.asyncio
 async def test_turn_id_minted_before_director() -> None:
     decision = Decision(
         action="approve",
