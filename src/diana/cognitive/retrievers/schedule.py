@@ -1,17 +1,23 @@
-"""STUB retriever for knowledge.schedule — always None in F1."""
+"""Half-registered MVP seat for knowledge.schedule (Anexo H.3).
+
+``fuente=no_implementado``; ``fetch`` always returns None.
+Still resolvable so Planner may request it without mid-turn KeyError.
+"""
 
 from __future__ import annotations
-
-from typing import Any
 
 from diana.cognitive.models import Comprehension, IncomingTurn
 
 
 class ScheduleRetriever:
+    """Half-registered MVP seat (Anexo H.3). fuente=no_implementado; always None."""
+
+    fuente: str = "no_implementado"
+
     async def fetch(
         self,
         turn: IncomingTurn,
         comprehension: Comprehension,
-    ) -> Any | None:
+    ) -> None:
         _ = turn, comprehension
         return None

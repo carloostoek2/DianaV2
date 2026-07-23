@@ -76,7 +76,23 @@ class LLMProvider(Protocol):
 
 @runtime_checkable
 class Retriever(Protocol):
-    """Capability-scoped knowledge fetch. Returns None when unavailable."""
+    """Capability-scoped knowledge fetch (Anexo H.2).
+
+    Runtime contract: ``fetch`` returns the bare **resultado** (or None when
+    unavailable / stub). The Director stores that value directly in the
+    knowledge map — there is no Spanish envelope DTO at runtime.
+
+    Conceptual Anexo H.2 envelope (documentation only)::
+
+        {capacidad, resultado, fuente}
+
+    - ``resultado`` ↔ bare return value of ``fetch``
+    - ``capacidad`` ↔ registry name used at ``resolve``
+    - ``fuente`` ↔ optional class attribute on half-registered / unimplemented
+      seats (e.g. ScheduleRetriever.fuente = \"no_implementado\")
+
+    ``IncomingTurn.chat_id`` supplies the chat scope for history/context ports.
+    """
 
     async def fetch(
         self,

@@ -1,4 +1,4 @@
-"""Capability registry — name → Retriever resolution only."""
+"""Capability registry — name → Retriever resolution only (Anexo H.1)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,19 @@ from diana.cognitive.retrievers.profile import ProfileRetriever
 from diana.cognitive.retrievers.schedule import ScheduleRetriever
 
 DEFAULT_HISTORY_LIMIT = 20
+
+# Half-registered seats: resolve OK, fetch → None, optional fuente attribute.
+UNIMPLEMENTED_CAPABILITIES: frozenset[str] = frozenset({"knowledge.schedule"})
+
+# Planner-requestable names in F1 (Anexo C + H). Must resolve after build.
+PLANNER_CAPABILITY_UNIVERSE: tuple[str, ...] = (
+    "knowledge.history",
+    "knowledge.context",
+    "knowledge.memory",
+    "knowledge.policy",
+    "knowledge.examples",
+    "knowledge.schedule",
+)
 
 
 class CapabilityRegistry:
@@ -38,7 +51,12 @@ def build_default_registry(
     *,
     history_limit: int = DEFAULT_HISTORY_LIMIT,
 ) -> CapabilityRegistry:
-    """Register all 7 F1 capabilities (history/context REAL; others STUB)."""
+    """Register F1 capabilities and fail-fast for the planner universe.
+
+    Seven seats: history/context REAL; memory/policy/examples/profile STUB;
+    schedule half-registered (``fuente=no_implementado``, fetch always None).
+    Profile is an F2 seat outside the planner universe but remains registered.
+    """
     registry = CapabilityRegistry()
     registry.register(
         "knowledge.history",
@@ -53,4 +71,7 @@ def build_default_registry(
     registry.register("knowledge.policy", PolicyRetriever())
     registry.register("knowledge.examples", ExamplesRetriever())
     registry.register("knowledge.schedule", ScheduleRetriever())
+    # Boot fail-fast: planner-requested names must resolve (H.1).
+    for name in PLANNER_CAPABILITY_UNIVERSE:
+        registry.resolve(name)
     return registry
