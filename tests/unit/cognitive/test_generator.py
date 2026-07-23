@@ -43,15 +43,13 @@ async def test_generate_system_prompt_is_owner_reply_question() -> None:
     assert messages[0]["role"] == "system"
     system = messages[0]["content"].lower()
     assert "owner" in system and "reply" in system
-    # Must not instruct classify / score / choose actions / search.
-    for forbidden in ("classify", "score", "choose system actions", "search knowledge"):
-        # "Do not classify..." is allowed; bare instruction to do those is not.
-        # Soft-align: ensure prohibitions or absence of action-taking.
-        pass
-    assert "do not classify" in system or "do not" in system
-    assert "score" in system  # typically "do not ... score"
+    # E.1 / REQ-COG-07: system must explicitly forbid classify/search/score/action.
+    assert "do not classify" in system
+    assert "search knowledge" in system
+    assert "score" in system
+    assert "choose system actions" in system
     assert messages[1]["role"] == "user"
-    assert messages[1]["content"] == prompt
+    assert messages[1]["content"] == prompt  # prompt_final unmodified
 
 
 @pytest.mark.asyncio
