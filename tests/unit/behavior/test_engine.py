@@ -32,6 +32,7 @@ def engine_bundle() -> tuple[BehaviorEngine, FakeTelegramActuator, InMemoryPendi
         store,
         clock=clock,
         delay_policy=policy,
+        turn_status=AlwaysLiveTurnStatusReader(),
     )
     return engine, actuator, store, clock
 
@@ -207,3 +208,158 @@ async def test_whitespace_business_connection_id_fail_closed(
     )
     assert result.success is False
     assert actuator.send_count() == 0
+
+
+# --- I.4 pre-send gate / retries / I.2 fake_delivery (Task 2) ---
+
+
+def _engine(
+    actuator: FakeTelegramActuator | FlakySendActuator | None = None,
+    *,
+    turn_status: object | None = None,
+    max_send_attempts: int = 3,
+    retry_backoff_seconds: float = 0.05,
+    store: InMemoryPendingDeliveryStore | None = None,
+    clock: ImmediateClock | None = None,
+    initial: float = 0.05,
+    typing: float = 0.02,
+) -> tuple[BehaviorEngine, FakeTelegramActuator | FlakySendActuator, InMemoryPendingDeliveryStore, ImmediateClock]:
+    act = actuator or FakeTelegramActuator()
+    st = store or InMemoryPendingDeliveryStore()
+    ck = clock or ImmediateClock()
+    engine = BehaviorEngine(
+        act,
+        st,
+        clock=ck,
+        delay_policy=FixedDelayPolicy(initial=initial, typing=typing),
+        turn_status=turn_status if turn_status is not None else AlwaysLiveTurnStatusReader(),
+        max_send_attempts=max_send_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+    )
+    return engine, act, st, ck
+
+
+@pytest.mark.asyncio
+async def test_presend_superseded_aborts_without_send() -> None:
+    engine, actuator, store, _ = _engine(
+        turn_status=SequenceTurnStatusReader(["superseded"]),
+    )
+    result = await engine.deliver(["hola"], _ctx(), uuid4())
+    assert result.cancelled is True
+    assert result.success is False
+    assert actuator.send_count() == 0
+    rows = await store.list_all()
+    assert rows and rows[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_presend_terminal_failed_aborts() -> None:
+    engine, actuator, store, _ = _engine(
+        turn_status=SequenceTurnStatusReader(["failed"]),
+    )
+    result = await engine.deliver(["hola"], _ctx(), uuid4())
+    assert result.success is False
+    assert result.cancelled is True
+    assert actuator.send_count() == 0
+    rows = await store.list_all()
+    assert rows and rows[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_presend_missing_turn_aborts() -> None:
+    engine, actuator, store, _ = _engine(
+        turn_status=SequenceTurnStatusReader([None]),
+    )
+    result = await engine.deliver(["hola"], _ctx(), uuid4())
+    assert result.success is False
+    assert result.cancelled is True
+    assert actuator.send_count() == 0
+    rows = await store.list_all()
+    assert rows and rows[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_transient_then_success_within_budget() -> None:
+    flaky = FlakySendActuator(fail_times=1)
+    engine, _, _, clock = _engine(
+        flaky, max_send_attempts=3, retry_backoff_seconds=0.05
+    )
+    result = await engine.deliver(["hola"], _ctx(), uuid4())
+    assert result.success is True
+    assert flaky.send_attempts >= 2
+    assert flaky.send_count() == 1
+    assert 0.05 in clock.sleeps  # retry backoff recorded
+
+
+@pytest.mark.asyncio
+async def test_transient_exhausted_returns_error() -> None:
+    flaky = FlakySendActuator(always_fail=True)
+    engine, _, store, _ = _engine(
+        flaky, max_send_attempts=2, retry_backoff_seconds=0.01
+    )
+    result = await engine.deliver(["hola"], _ctx(), uuid4())
+    assert result.success is False
+    assert result.cancelled is False
+    assert result.error
+    assert flaky.send_attempts == 2
+    rows = await store.list_all()
+    assert rows and rows[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_permanent_error_no_retry() -> None:
+    class BoomActuator(FakeTelegramActuator):
+        def __init__(self) -> None:
+            super().__init__()
+            self.send_attempts = 0
+
+        async def send_message(
+            self,
+            chat_id: int,
+            text: str,
+            *,
+            business_connection_id: str,
+        ) -> int:
+            self.send_attempts += 1
+            raise RuntimeError("permanent boom")
+
+    boom = BoomActuator()
+    engine, _, store, _ = _engine(boom, max_send_attempts=3)
+    result = await engine.deliver(["hola"], _ctx(), uuid4())
+    assert result.success is False
+    assert boom.send_attempts == 1
+    rows = await store.list_all()
+    assert rows and rows[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_fake_delivery_no_network_send() -> None:
+    engine, actuator, store, clock = _engine(initial=0.05, typing=0.02)
+    result = await engine.deliver(
+        ["hola"],
+        _ctx(mode="fake_delivery"),
+        uuid4(),
+    )
+    assert result.success is True
+    assert result.message_ids == []
+    assert actuator.calls == []  # no read/typing/send
+    assert clock.sleeps == [0.05]  # initial delay may still apply
+    rows = await store.list_all()
+    assert rows and rows[0].status == "done"
+
+
+@pytest.mark.asyncio
+async def test_fake_delivery_presend_abort() -> None:
+    engine, actuator, store, _ = _engine(
+        turn_status=SequenceTurnStatusReader(["superseded"]),
+    )
+    result = await engine.deliver(
+        ["hola"],
+        _ctx(mode="fake_delivery"),
+        uuid4(),
+    )
+    assert result.success is False
+    assert result.cancelled is True
+    assert actuator.calls == []
+    rows = await store.list_all()
+    assert rows and rows[0].status == "cancelled"
