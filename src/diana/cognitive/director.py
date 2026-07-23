@@ -131,26 +131,27 @@ class CognitiveDirector:
         await self._store(turn_id, "retrieved", retrieved)
 
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
-        prompt = self._context_builder.build(
+        # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).
+        # On ContextExceedsLimitError: do not store partial prompt_text; re-raise.
+        built = self._context_builder.build(
             turn,
             comprehension,
             knowledge=retrieved,
             persona=self._persona,
         )
-        await self._store(turn_id, "prompt_text", prompt)
+        await self._store(turn_id, "prompt_text", built.prompt_final)
 
         await self._status.transition(turn_id, TurnStatus.GENERATING)
-        draft = await self._generator.generate(prompt)
+        draft = await self._generator.generate(built.prompt_final)
         await self._store(turn_id, "generated_text", draft)
 
         await self._status.transition(turn_id, TurnStatus.EVALUATING)
         # On EvaluatorSchemaInvalidError: do not store synthetic evaluation/decision.
-        blocks = self._context_builder.list_included_blocks(retrieved)
         evaluation = await self._evaluator.evaluate(
             EvaluatorInput(
                 draft=draft,
                 comprehension=comprehension,
-                included_blocks=blocks,
+                included_blocks=built.included_blocks,
                 current_turn=turn.text,
             )
         )

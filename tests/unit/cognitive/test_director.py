@@ -74,14 +74,21 @@ def make_director(
     thresholds: dict | None = None,
     persona: str = "You are Diana.",
     analyst_history_limit: int = 8,
+    context_builder: ContextBuilder | None = None,
+    max_prompt_chars: int | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
+    if context_builder is None:
+        if max_prompt_chars is not None:
+            context_builder = ContextBuilder(max_prompt_chars=max_prompt_chars)
+        else:
+            context_builder = ContextBuilder()
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),
         registry=build_default_registry(history),
-        context_builder=ContextBuilder(),
+        context_builder=context_builder,
         generator=Generator(fake_llm),
         evaluator=Evaluator(fake_llm),
         decider=Decider(thresholds=thresholds),
@@ -762,6 +769,80 @@ async def test_director_passes_included_blocks_to_evaluator() -> None:
     assert "prior-from-42-HISTORY-BODY" not in flat
     # Policy still null in F1 stubs — no accidental policy body dump.
     assert "SECRET-POLICY-BODY" not in flat
+
+
+@pytest.mark.asyncio
+async def test_director_prompt_uses_built_context_current_turn_last() -> None:
+    """Trace prompt_text is a string with Current VIP message after knowledge/comprehension."""
+    history = InMemoryMessageHistory(
+        {42: [{"role": "vip", "text": "prior-hist-line", "telegram_message_id": 1}]}
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(needs_history=True, needs_context=True),
+            _profile(),
+        ],
+        text_responses=["draft"],
+    )
+    director, trace, _ = make_director(llm, history_port=history)
+    turn = _turn(chat_id=42, text="CURRENT-TURN-BODY")
+    await director.handle_turn(turn)
+
+    prompt = trace.get(turn.turn_id, "prompt_text")
+    assert isinstance(prompt, str)
+    headings = [line for line in prompt.splitlines() if line.startswith("## ")]
+    assert headings[0] == "## Persona"
+    assert headings[-1] == "## Current VIP message"
+    assert "## Comprehension" in headings
+    assert prompt.index("## Comprehension") < prompt.index("## Current VIP message")
+    assert "CURRENT-TURN-BODY" in prompt
+
+
+@pytest.mark.asyncio
+async def test_director_context_exceeds_limit_no_decision() -> None:
+    """Size fail aborts before Decision; typed error; no Generator text call."""
+    from diana.cognitive.exceptions import ContextExceedsLimitError
+
+    history = InMemoryMessageHistory(
+        {
+            42: [
+                {
+                    "role": "vip",
+                    "text": "HUGE-HISTORY-" + ("X" * 500),
+                    "telegram_message_id": 1,
+                }
+            ]
+        }
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(needs_history=True, needs_context=True),
+        ],
+        text_responses=["should-not-be-used"],
+    )
+    sink = InMemoryTurnStatusSink()
+    director, trace, _ = make_director(
+        llm,
+        history_port=history,
+        status_sink=sink,
+        max_prompt_chars=80,
+    )
+    turn = _turn(chat_id=42, text="now")
+    with pytest.raises(ContextExceedsLimitError) as ei:
+        await director.handle_turn(turn)
+    assert str(ei.value) == "contexto_excede_limite"
+    assert ei.value.reason == "contexto_excede_limite"
+    keys = trace.keys_for(turn.turn_id)
+    assert "decision" not in keys
+    assert "generated_text" not in keys
+    # Store happens only after successful build — no prompt_text on fail.
+    assert "prompt_text" not in keys
+    # Generator uses generate (text); size fail must not call it.
+    assert not any(c[0] == "generate" for c in llm.calls)
+    statuses = [s for _, s in sink.transitions]
+    assert TurnStatus.BUILDING_CONTEXT.value in statuses
+    assert TurnStatus.GENERATING.value not in statuses
+    assert statuses[-1] == TurnStatus.FAILED.value
 
 
 @pytest.mark.asyncio
