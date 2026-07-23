@@ -73,6 +73,7 @@ def make_director(
     status_sink: InMemoryTurnStatusSink | None = None,
     thresholds: dict | None = None,
     persona: str = "You are Diana.",
+    analyst_history_limit: int = 8,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -87,6 +88,8 @@ def make_director(
         trace=trace,
         persona=persona,
         status_sink=status_sink,
+        history=history,
+        analyst_history_limit=analyst_history_limit,
     )
     return director, trace, history
 
@@ -386,3 +389,62 @@ async def test_pipeline_exception_marks_failed_status() -> None:
     with pytest.raises(RuntimeError):
         await director.handle_turn(turn)
     assert sink.transitions[-1] == (turn.turn_id, TurnStatus.FAILED.value)
+
+
+@pytest.mark.asyncio
+async def test_director_passes_historial_to_analyst() -> None:
+    history = InMemoryMessageHistory(
+        {
+            42: [
+                {
+                    "role": "vip",
+                    "text": "hist-vip-XYZ",
+                    "timestamp": "2026-01-01T10:00:00Z",
+                },
+                {
+                    "role": "owner",
+                    "text": "hist-owner-UVW",
+                    "timestamp": "2026-01-01T10:01:00Z",
+                },
+                {
+                    "role": "bot",
+                    "text": "hist-bot-SHOULD-ABSENT",
+                    "timestamp": "2026-01-01T10:02:00Z",
+                },
+            ]
+        }
+    )
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    await director.handle_turn(_turn(chat_id=42, text="current-msg"))
+
+    analyst_messages = llm.calls[0][1]["messages"]
+    flat = " ".join(m.get("content", "") for m in analyst_messages)
+    assert "hist-vip-XYZ" in flat
+    assert "hist-owner-UVW" in flat
+    assert "dueña" in flat  # owner → dueña mapping
+    assert "hist-bot-SHOULD-ABSENT" not in flat
+    assert "current-msg" in flat
+
+
+@pytest.mark.asyncio
+async def test_director_analyst_schema_fail_no_plan_trace() -> None:
+    from diana.cognitive.exceptions import AnalystSchemaInvalidError
+
+    invalid = {"intent": "only"}
+    llm = FakeLLM(structured_responses=[invalid, invalid], text_responses=[])
+    sink = InMemoryTurnStatusSink()
+    director, trace, _ = make_director(llm, status_sink=sink)
+    turn = _turn()
+    with pytest.raises(AnalystSchemaInvalidError) as exc_info:
+        await director.handle_turn(turn)
+    assert str(exc_info.value) == "analista_schema_invalido"
+    assert "plan" not in trace.keys_for(turn.turn_id)
+    assert "comprehension" not in trace.keys_for(turn.turn_id)
+    statuses = [s for _, s in sink.transitions]
+    assert TurnStatus.ANALYZING.value in statuses
+    assert TurnStatus.PLANNING.value not in statuses
+    assert statuses[-1] == TurnStatus.FAILED.value

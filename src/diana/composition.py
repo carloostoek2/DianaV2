@@ -183,6 +183,9 @@ def build_app(
         decider=Decider(),
         trace=traces,
         persona=DEFAULT_PERSONA,
+        # Same history port as registry — Analyst window is chat-scoped only (R1).
+        history=history,
+        analyst_history_limit=8,
         # TurnStatusSink protocol: object with .transition(...).
         # Must inject the coordinator itself, not the unbound method.
         status_sink=coordinator,

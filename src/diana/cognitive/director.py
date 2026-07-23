@@ -20,15 +20,31 @@ from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
-from diana.cognitive.models import Decision, IncomingTurn, TurnStatus
+from diana.cognitive.models import (
+    AnalystInput,
+    Decision,
+    HistoryMessage,
+    IncomingTurn,
+    TurnStatus,
+)
 from diana.cognitive.planner import Planner
 from diana.cognitive.ports import (
+    MessageHistoryPort,
     NoOpTurnStatusSink,
     TraceStore,
     TurnStatusSink,
     to_jsonable,
 )
 from diana.cognitive.registry import CapabilityRegistry
+
+# Short Analyst window (contrato A.2 recommends 5–10). Registry retrieval stays at 20.
+ANALYST_HISTORY_LIMIT = 8
+
+# Port/DB role vocabulary → contract autor (bot and unknown roles are excluded).
+_ROLE_TO_AUTOR: dict[str, str] = {
+    "vip": "vip",
+    "owner": "dueña",
+}
 
 
 class CognitiveDirector:
@@ -46,6 +62,8 @@ class CognitiveDirector:
         decider: Decider,
         trace: TraceStore,
         persona: str,
+        history: MessageHistoryPort,
+        analyst_history_limit: int = ANALYST_HISTORY_LIMIT,
         status_sink: TurnStatusSink | None = None,
     ) -> None:
         self._analyst = analyst
@@ -57,6 +75,8 @@ class CognitiveDirector:
         self._decider = decider
         self._trace = trace
         self._persona = persona
+        self._history = history
+        self._analyst_history_limit = analyst_history_limit
         self._status = status_sink or NoOpTurnStatusSink()
 
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
@@ -72,7 +92,8 @@ class CognitiveDirector:
 
         On unexpected errors the status sink receives ``TurnStatus.FAILED`` and
         the exception is re-raised. Partial artifacts already stored remain in
-        the TraceStore for reconstructability.
+        the TraceStore for reconstructability. On Analyst schema failure no
+        comprehension or plan is stored.
         """
         turn = turn_context
         turn_id = turn.turn_id
@@ -86,7 +107,9 @@ class CognitiveDirector:
         turn_id = turn.turn_id
 
         await self._status.transition(turn_id, TurnStatus.ANALYZING)
-        comprehension = await self._analyst.analyze(turn)
+        analyst_input = await self._build_analyst_input(turn)
+        # On AnalystSchemaInvalidError: do not store partial comprehension; re-raise.
+        comprehension = await self._analyst.analyze(analyst_input)
         await self._store(turn_id, "comprehension", comprehension)
 
         await self._status.transition(turn_id, TurnStatus.PLANNING)
@@ -141,6 +164,38 @@ class CognitiveDirector:
             )
         await self._store(turn_id, "decision", decision)
         return decision
+
+    async def _build_analyst_input(self, turn: IncomingTurn) -> AnalystInput:
+        """Fetch chat-scoped history and map to contract historial_reciente (R1)."""
+        raw = await self._history.get_recent(
+            turn.chat_id, limit=self._analyst_history_limit
+        )
+        mapped = self._map_history_messages(raw)
+        return AnalystInput(turno_actual=turn.text, historial_reciente=mapped)
+
+    @staticmethod
+    def _map_history_messages(raw: list[dict]) -> list[HistoryMessage]:
+        """Map port rows to HistoryMessage; exclude bot and unknown roles."""
+        out: list[HistoryMessage] = []
+        for item in raw:
+            role = item.get("role")
+            autor = _ROLE_TO_AUTOR.get(str(role) if role is not None else "")
+            if autor is None:
+                continue
+            texto = item.get("text")
+            if texto is None:
+                texto = ""
+            ts = item.get("timestamp")
+            if ts is None:
+                ts = ""
+            out.append(
+                HistoryMessage(
+                    autor=autor,  # type: ignore[arg-type]
+                    texto=str(texto),
+                    timestamp=ts,
+                )
+            )
+        return out
 
     async def _store(self, turn_id: Any, key: str, value: Any) -> None:
         await self._trace.store(turn_id, key, to_jsonable(value))
