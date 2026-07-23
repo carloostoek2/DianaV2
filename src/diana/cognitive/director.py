@@ -88,14 +88,15 @@ class CognitiveDirector:
                 assigned by the application layer (item 3+).
 
         Returns:
-            ``Decision`` with ``action`` in {approve, escalate} and ``draft_text``
-            set from the Generator (or empty string when escalate-for-empty-draft).
+            ``Decision`` with ``action`` in {approve, escalate} and non-empty
+            ``draft_text`` from a successful Generator return.
 
         On unexpected errors the status sink receives ``TurnStatus.FAILED`` and
         the exception is re-raised. Partial artifacts already stored remain in
         the TraceStore for reconstructability. On Analyst schema failure no
         comprehension or plan is stored. On Evaluator schema failure no
-        evaluation or decision is stored.
+        evaluation or decision is stored. On Generator empty fail no
+        ``generated_text`` / evaluation / decision is stored.
         """
         turn = turn_context
         turn_id = turn.turn_id
@@ -142,6 +143,7 @@ class CognitiveDirector:
         await self._store(turn_id, "prompt_text", built.prompt_final)
 
         await self._status.transition(turn_id, TurnStatus.GENERATING)
+        # On GeneratorEmptyOutputError: do not store generated_text/evaluation/decision.
         draft = await self._generator.generate(built.prompt_final)
         await self._store(turn_id, "generated_text", draft)
 
@@ -158,22 +160,14 @@ class CognitiveDirector:
         await self._store(turn_id, "evaluation", evaluation)
 
         await self._status.transition(turn_id, TurnStatus.DECIDING)
-        # Empty / whitespace-only draft must never approve (product safety).
-        if not (draft or "").strip():
-            decision = Decision(
-                action="escalate",
-                reason="empty_draft",
-                evaluation=evaluation,
-                draft_text=draft if draft is not None else "",
-            )
-        else:
-            base = self._decider.decide(evaluation, comprehension, mode="supervised")
-            decision = Decision(
-                action=base.action,
-                reason=base.reason,
-                evaluation=base.evaluation,
-                draft_text=draft,
-            )
+        # Generator guarantees non-empty draft on success; Decider owns action choice.
+        base = self._decider.decide(evaluation, comprehension, mode="supervised")
+        decision = Decision(
+            action=base.action,
+            reason=base.reason,
+            evaluation=base.evaluation,
+            draft_text=draft,
+        )
         await self._store(turn_id, "decision", decision)
         return decision
 

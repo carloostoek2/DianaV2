@@ -457,18 +457,44 @@ async def test_persona_appears_in_traced_prompt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_draft_escalates() -> None:
+async def test_generator_empty_fails_before_evaluator() -> None:
+    """E.4: permanent empty generation aborts before Evaluator/Decider."""
+    from diana.cognitive.exceptions import GeneratorEmptyOutputError
+    from diana.cognitive.models import EvaluationProfile
+
     llm = FakeLLM(
         structured_responses=[
             _comprehension(risk="bajo"),
+            # Evaluator profile must never be consumed on gen fail.
             _profile(safety=0.9),
         ],
-        text_responses=["   "],
+        text_responses=["", "  "],
     )
-    director, _, _ = make_director(llm)
-    decision = await director.handle_turn(_turn())
-    assert decision.action == "escalate"
-    assert decision.reason == "empty_draft"
+    sink = InMemoryTurnStatusSink()
+    director, trace, _ = make_director(llm, status_sink=sink)
+    turn = _turn()
+    with pytest.raises(GeneratorEmptyOutputError) as ei:
+        await director.handle_turn(turn)
+    assert str(ei.value) == "generador_salida_vacia"
+    assert ei.value.reason == "generador_salida_vacia"
+
+    keys = trace.keys_for(turn.turn_id)
+    assert "generated_text" not in keys
+    assert "evaluation" not in keys
+    assert "decision" not in keys
+
+    statuses = [s for _, s in sink.transitions]
+    assert TurnStatus.GENERATING.value in statuses
+    assert TurnStatus.EVALUATING.value not in statuses
+    assert TurnStatus.DECIDING.value not in statuses
+    assert statuses[-1] == TurnStatus.FAILED.value
+
+    # Only Analyst structured call — no EvaluationProfile structured call.
+    structured = [c for c in llm.calls if c[0] == "generate_structured"]
+    assert len(structured) == 1
+    assert structured[0][1]["schema"] is not EvaluationProfile
+    generate_calls = [c for c in llm.calls if c[0] == "generate"]
+    assert len(generate_calls) == 2
 
 
 @pytest.mark.asyncio
