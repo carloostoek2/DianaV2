@@ -119,6 +119,7 @@ async def test_happy_path_approve() -> None:
     assert decision.reason == "ok_for_human_review"
     assert decision.draft_text == "Draft reply for VIP"
     assert decision.draft_text  # non-empty
+    assert decision.mode_restriction_applied == "supervised_send_to_approve"
 
 
 @pytest.mark.asyncio

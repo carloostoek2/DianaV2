@@ -167,6 +167,7 @@ class CognitiveDirector:
             reason=base.reason,
             evaluation=base.evaluation,
             draft_text=draft,
+            mode_restriction_applied=base.mode_restriction_applied,
         )
         await self._store(turn_id, "decision", decision)
         return decision

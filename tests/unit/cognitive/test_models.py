@@ -126,6 +126,17 @@ def test_decision_rejects_extra_score_on_nested_evaluation() -> None:
         )
 
 
+def test_decision_mode_restriction_defaults_none() -> None:
+    from diana.cognitive.models import Decision
+
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+    )
+    assert decision.mode_restriction_applied is None
+
+
 _NEEDS = {
     "needs_memory": False,
     "needs_policy": False,

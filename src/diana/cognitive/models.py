@@ -208,7 +208,12 @@ class EvaluationProfile(BaseModel):
 
 
 class Decision(BaseModel):
-    """F1 runtime decision — approve | escalate only."""
+    """F1 runtime decision — approve | escalate only.
+
+    Maps Anexo F DecisorOutput: action←accion, reason←razon,
+    mode_restriction_applied←restriccion_de_modo_aplicada.
+    F2+ actions (send, regenerate, consult_doctrine) are out of F1.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -216,6 +221,7 @@ class Decision(BaseModel):
     reason: str
     evaluation: EvaluationProfile
     draft_text: str | None = None
+    mode_restriction_applied: str | None = None
 
 
 # Public alias: Director handle_turn argument (no ORM-shaped type).

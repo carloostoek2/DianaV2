@@ -137,3 +137,65 @@ def test_decision_type_is_domain_model() -> None:
     d = Decider().decide(_profile(), _comprehension())
     assert isinstance(d, Decision)
     assert d.draft_text is None
+
+
+def test_low_naturalness_still_approves_when_safety_ok() -> None:
+    """F.3 #2 residual: low naturalness does not change F1 action (fall-through approve)."""
+    decision = Decider().decide(
+        _profile(naturalness=0.1, safety=0.9),
+        _comprehension(risk="bajo"),
+    )
+    assert decision.action == "approve"
+    assert decision.reason == "ok_for_human_review"
+
+
+def test_low_naturalness_does_not_produce_regenerate() -> None:
+    """F.3 #2 residual: naturalness never unlocks regenerate in F1."""
+    decision = Decider().decide(
+        _profile(naturalness=0.1, safety=0.9),
+        _comprehension(risk="medio"),
+    )
+    assert decision.action != "regenerate"
+    assert decision.action in ("approve", "escalate")
+
+
+def test_mode_restriction_set_on_supervised_approve() -> None:
+    decision = Decider().decide(
+        _profile(safety=0.9),
+        _comprehension(risk="bajo"),
+        mode="supervised",
+    )
+    assert decision.action == "approve"
+    assert decision.mode_restriction_applied == "supervised_send_to_approve"
+
+
+def test_mode_restriction_none_on_escalate_safety() -> None:
+    decision = Decider().decide(
+        _profile(safety=0.1),
+        _comprehension(risk="bajo"),
+        mode="supervised",
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "safety_below_threshold"
+    assert decision.mode_restriction_applied is None
+
+
+def test_mode_restriction_none_on_escalate_risk() -> None:
+    decision = Decider().decide(
+        _profile(safety=0.9),
+        _comprehension(risk="alto"),
+        mode="supervised",
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "risk_high"
+    assert decision.mode_restriction_applied is None
+
+
+def test_mode_restriction_none_when_mode_not_supervised() -> None:
+    decision = Decider().decide(
+        _profile(safety=0.9),
+        _comprehension(risk="bajo"),
+        mode="autonomous",
+    )
+    assert decision.action == "approve"
+    assert decision.mode_restriction_applied is None
