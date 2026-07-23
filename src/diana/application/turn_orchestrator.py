@@ -9,6 +9,7 @@ from uuid import UUID
 from diana.application.admin_service import AdminService
 from diana.application.ports import MessageHistoryWriter, VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
+from diana.cognitive.exceptions import AnalystSchemaInvalidError
 from diana.cognitive.models import (
     TERMINAL_TURN_STATUSES,
     Decision,
@@ -107,7 +108,16 @@ class TurnOrchestrator:
         except Exception as exc:
             # Terminal latch: no-ops if already superseded while Director ran
             # (should not happen under full chat_scope; still safe).
-            await self._coordinator.mark_failed(turn_id, error=str(exc))
+            # A.6 Analyst schema fail: stable reason + owner notify (no VIP send).
+            if isinstance(exc, AnalystSchemaInvalidError):
+                error = "analista_schema_invalido"
+                await self._coordinator.mark_failed(turn_id, error=error)
+                await self._admin.notify_info(
+                    f"Turn {turn_id} failed: analista_schema_invalido",
+                    chat_id=incoming.chat_id,
+                )
+            else:
+                await self._coordinator.mark_failed(turn_id, error=str(exc))
             logger.exception(
                 "director_failed",
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},

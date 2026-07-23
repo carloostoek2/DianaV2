@@ -127,6 +127,10 @@ class AdminService:
             extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
         )
 
+    async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
+        """Thin wrapper for operator/info notifications (e.g. Analyst schema fail)."""
+        await self._notifier.notify_info(text, chat_id=chat_id)
+
     async def notify_escalation(
         self,
         turn: IncomingTurn,

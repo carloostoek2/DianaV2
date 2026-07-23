@@ -287,6 +287,85 @@ async def test_director_exception_marks_failed_and_reraises() -> None:
     assert failed is not None
     assert failed.status == "failed"
     assert failed.error == "llm down"
+    # Generic director errors do not use the Analyst schema-fail notify path.
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_analyst_schema_fail_marks_failed_notifies_owner() -> None:
+    """A.6: schema fail → failed + analista_schema_invalido + owner notify; no VIP send."""
+    from diana.cognitive.exceptions import AnalystSchemaInvalidError
+
+    invalid = {"intent": "only"}
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    history = InMemoryMessageHistoryWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    llm = FakeLLM(structured_responses=[invalid, invalid], text_responses=[])
+    director = CognitiveDirector(
+        analyst=Analyst(llm),
+        planner=Planner(),
+        registry=build_default_registry(history),
+        context_builder=ContextBuilder(),
+        generator=Generator(llm),
+        evaluator=Evaluator(llm),
+        decider=Decider(),
+        trace=traces,
+        persona="You are Diana.",
+        history=history,
+        analyst_history_limit=8,
+        status_sink=coordinator,
+    )
+    learn = RecordingLearning()
+    orch = TurnOrchestrator(
+        coordinator=coordinator,
+        director=director,
+        admin=admin,
+        learning=learn,
+        history=history,
+    )
+
+    with pytest.raises(AnalystSchemaInvalidError):
+        await orch.handle_vip_message(_vip(text="schema-fail-msg"))
+
+    failed_ids = [
+        t.id
+        for t in turns._turns.values()  # noqa: SLF001 — test assertion
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await turns.get(failed_ids[0])
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error == "analista_schema_invalido"
+
+    assert actuator.send_count() == 0
+    assert learn.calls == []
+    assert len(notifier.infos) >= 1
+    info_texts = [text for text, _ in notifier.infos]
+    assert any("analista_schema_invalido" in text for text in info_texts)
+    assert any(str(failed_ids[0]) in text for text in info_texts)
 
 
 @pytest.mark.asyncio
@@ -548,6 +627,8 @@ async def test_orchestrator_happy_path_real_director_fake_llm() -> None:
         decider=Decider(),
         trace=traces,
         persona="You are Diana.",
+        history=history,
+        analyst_history_limit=8,
         status_sink=coordinator,
     )
     learning = LearningService(traces)
