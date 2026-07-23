@@ -71,7 +71,7 @@
 
 ## Docs commit
 
-`docs(cognitive): evaluator-contract hardener pool close` (see `git log -1 --grep=evaluator-contract.hardener.pool.close`)
+`6a82af9` — `docs(cognitive): evaluator-contract hardener pool close`
 
 ## Next Steps
 
