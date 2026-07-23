@@ -146,6 +146,24 @@ class Plan(BaseModel):
     capabilities: list[str]
 
 
+
+
+class EvaluatorInput(BaseModel):
+    """Evaluator input (Anexo B.2).
+
+    English fields map to Spanish contract names:
+    draft←borrador, comprehension←comprension,
+    included_blocks←bloques_incluidos, current_turn←turno_actual.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    draft: str
+    comprehension: Comprehension
+    included_blocks: list[str]
+    current_turn: str
+
+
 class EvaluationProfile(BaseModel):
     """7-dimension evaluation vector. Never reduce to a single score.
 
@@ -192,6 +210,7 @@ __all__ = [
     "Decision",
     "Emotion",
     "EvaluationProfile",
+    "EvaluatorInput",
     "HistoryMessage",
     "IncomingTurn",
     "Plan",

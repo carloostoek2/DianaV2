@@ -352,3 +352,67 @@ def test_incoming_turn_constructs_and_requires_fields() -> None:
         IncomingTurn(turn_id=tid, text="hola")  # type: ignore[call-arg]
     with pytest.raises(ValidationError):
         IncomingTurn(turn_id=tid, chat_id=1)  # type: ignore[call-arg]
+
+
+def _full_comprehension():
+    from diana.cognitive.models import Comprehension
+
+    return Comprehension(
+        intent="chat",
+        topics=["general"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=False,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
+    )
+
+
+def test_evaluator_input_accepts_full_payload() -> None:
+    from diana.cognitive.models import EvaluatorInput
+
+    inp = EvaluatorInput(
+        draft="draft text",
+        comprehension=_full_comprehension(),
+        included_blocks=["knowledge.history", "knowledge.context"],
+        current_turn="hola",
+    )
+    assert inp.draft == "draft text"
+    assert inp.comprehension.intent == "chat"
+    assert inp.included_blocks == ["knowledge.history", "knowledge.context"]
+    assert inp.current_turn == "hola"
+
+
+def test_evaluator_input_rejects_extra_fields() -> None:
+    from diana.cognitive.models import EvaluatorInput
+
+    with pytest.raises(ValidationError):
+        EvaluatorInput.model_validate(
+            {
+                "draft": "d",
+                "comprehension": _full_comprehension().model_dump(),
+                "included_blocks": [],
+                "current_turn": "hola",
+                "score_global": 0.9,
+            }
+        )
+
+
+def test_evaluator_input_requires_all_fields() -> None:
+    from diana.cognitive.models import EvaluatorInput
+
+    base = {
+        "draft": "d",
+        "comprehension": _full_comprehension(),
+        "included_blocks": ["knowledge.history"],
+        "current_turn": "hola",
+    }
+    for key in ("draft", "comprehension", "included_blocks", "current_turn"):
+        data = dict(base)
+        del data[key]
+        with pytest.raises(ValidationError):
+            EvaluatorInput(**data)  # type: ignore[arg-type]

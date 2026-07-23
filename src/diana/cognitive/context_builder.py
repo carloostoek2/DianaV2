@@ -45,6 +45,10 @@ class ContextBuilder:
             parts.append(_format_value(value))
         return "\n".join(parts).strip() + "\n"
 
+    def list_included_blocks(self, knowledge: dict[str, Any | None]) -> list[str]:
+        """Capability names that would appear as ## Knowledge sections in build()."""
+        return [name for name, value in knowledge.items() if not _is_null_like(value)]
+
 
 def _is_null_like(value: Any) -> bool:
     if value is None:

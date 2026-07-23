@@ -109,3 +109,47 @@ def test_empty_list_and_dict_knowledge_omitted() -> None:
     assert "knowledge.history" not in prompt
     assert "knowledge.context" not in prompt
     assert "knowledge.memory" not in prompt
+
+
+def test_list_included_blocks_matches_prompt_sections() -> None:
+    builder = ContextBuilder()
+    knowledge = {
+        "knowledge.history": [{"role": "vip", "text": "prior"}],
+        "knowledge.context": {"message_count": 1},
+        "knowledge.memory": None,
+        "knowledge.policy": [],
+        "knowledge.examples": {},
+        "knowledge.schedule": "   ",
+        "knowledge.profile": "has value",
+    }
+    blocks = builder.list_included_blocks(knowledge)
+    prompt = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge=knowledge,
+        persona="Voice",
+    )
+    # Names that appear as ## Knowledge headings must match list_included_blocks
+    headings = [
+        line.removeprefix("## Knowledge: ").strip()
+        for line in prompt.splitlines()
+        if line.startswith("## Knowledge: ")
+    ]
+    assert blocks == headings
+    assert blocks == [
+        "knowledge.history",
+        "knowledge.context",
+        "knowledge.profile",
+    ]
+
+
+def test_list_included_blocks_empty_when_all_null_like() -> None:
+    builder = ContextBuilder()
+    knowledge = {
+        "knowledge.history": None,
+        "knowledge.context": [],
+        "knowledge.memory": {},
+        "knowledge.policy": "",
+        "knowledge.examples": "  \t  ",
+    }
+    assert builder.list_included_blocks(knowledge) == []
