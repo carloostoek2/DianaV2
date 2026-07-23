@@ -201,14 +201,38 @@ def test_d4_current_turn_is_last_section() -> None:
         persona="Persona text",
     )
     headings = _section_headings(built.prompt_final)
-    assert headings[0] == "## Persona"
-    assert headings[-1] == "## Current VIP message"
-    assert "## Comprehension" in headings
-    # Current turn body after all knowledge + comprehension
-    idx_comp = built.prompt_final.index("## Comprehension")
-    idx_turn = built.prompt_final.index("## Current VIP message")
-    assert idx_turn > idx_comp
+    # Full D.4 order: Persona → knowledge (fixed) → Comprehension → Current last
+    assert headings == [
+        "## Persona",
+        "## Knowledge: knowledge.history",
+        "## Knowledge: knowledge.context",
+        "## Comprehension",
+        "## Current VIP message",
+    ]
     assert built.prompt_final.rstrip().endswith("CURRENT-BODY-XYZ")
+
+
+def test_build_preserves_turn_text_trailing_whitespace() -> None:
+    """Current VIP message is last: must not strip trailing spaces from turn.text."""
+    builder = ContextBuilder()
+    vip_body = "hello VIP  \t  "
+    built = builder.build(
+        _turn(vip_body),
+        _comprehension(),
+        knowledge={},
+        persona="Persona",
+    )
+    # Body after heading must match turn.text exactly (before final prompt newline)
+    marker = "## Current VIP message\n"
+    assert marker in built.prompt_final
+    after = built.prompt_final.split(marker, 1)[1]
+    # Final assembly may add a single trailing newline after the body
+    assert after == vip_body + "\n" or after == vip_body
+    assert vip_body in built.prompt_final
+    # Trailing spaces on the VIP line must survive (pre-fix .strip() ate them)
+    body_line = after.rstrip("\n")
+    assert body_line == vip_body
+    assert body_line.endswith("  \t  ")
 
 
 def test_d4_knowledge_emitted_in_fixed_order_regardless_of_dict_insertion() -> None:

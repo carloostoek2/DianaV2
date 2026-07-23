@@ -84,7 +84,11 @@ class ContextBuilder:
                 turn.text,
             ]
         )
-        prompt = "\n".join(parts).strip() + "\n"
+        # Current VIP message is last (D.4): do NOT strip the full prompt —
+        # that would corrupt trailing whitespace in turn.text.
+        prompt = "\n".join(parts).lstrip("\n")
+        if not prompt.endswith("\n"):
+            prompt += "\n"
         if len(prompt) > self._max_prompt_chars:
             raise ContextExceedsLimitError()
         return BuiltContext(prompt_final=prompt, included_blocks=included_blocks)
