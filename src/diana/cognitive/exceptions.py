@@ -20,4 +20,21 @@ class AnalystSchemaInvalidError(Exception):
         return self.reason
 
 
-__all__ = ["AnalystSchemaInvalidError"]
+class EvaluatorSchemaInvalidError(Exception):
+    """Raised when Evaluator structured output fails schema after one retry.
+
+    Stable reason string matches contrato_evaluador.md B.6:
+    ``evaluador_schema_invalido``.
+    """
+
+    reason: str = "evaluador_schema_invalido"
+
+    def __init__(self, reason: str = "evaluador_schema_invalido") -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+    def __str__(self) -> str:
+        return self.reason
+
+
+__all__ = ["AnalystSchemaInvalidError", "EvaluatorSchemaInvalidError"]
