@@ -1,4 +1,22 @@
-"""Turn lifecycle owner: one non-terminal turn per chat_id + supersede cascade."""
+"""Turn lifecycle owner: concurrency guard for one non-terminal turn per chat.
+
+Single question (Anexo G.1): given (chat_id, autor, event), create a new turn
+or affect existing non-terminal turns? Never reasons on message text, never
+calls an LLM, never produces draft text or cognitive Decision actions.
+
+English runtime tokens ↔ Anexo G (Spanish):
+  autor="vip" | "owner"          ↔ autor: "vip" | "dueña"
+  action="create"                ↔ accion: "crear"
+  action="replace"               ↔ accion: "reemplazar"
+  action="discard_owner_message" ↔ accion: "descartar_mensaje_dueña"
+  CoordinateResult               ↔ CoordinatorOutput
+  coordinate / coordinate_unlocked ↔ G.2 entry under G.4 lock
+  ChatLockTimeoutError           ↔ G.5 lock failure (F1: raise, no enqueue)
+
+F1 residuals (out of scope here):
+  - Multi-process G.4: Postgres SELECT … FOR UPDATE / advisory lock across workers
+  - G.5 durable message requeue/outbox after lock timeout exhausts retries
+"""
 
 from __future__ import annotations
 
@@ -6,6 +24,8 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID, uuid4
 
 from diana.application.ports import (
@@ -17,6 +37,25 @@ from diana.application.ports import (
 from diana.cognitive.models import TERMINAL_TURN_STATUSES, TurnStatus, parse_turn_status
 
 logger = logging.getLogger("diana.application")
+
+Autor = Literal["vip", "owner"]
+CoordinateAction = Literal["create", "replace", "discard_owner_message"]
+
+LOCK_ACQUIRE_TIMEOUT_S = 5.0
+LOCK_ACQUIRE_RETRIES = 2
+_LOCK_BACKOFF_BASE_S = 0.05
+
+
+class ChatLockTimeoutError(TimeoutError):
+    """Raised when per-chat lock cannot be acquired (G.5 F1 loud fail)."""
+
+
+@dataclass(frozen=True, slots=True)
+class CoordinateResult:
+    """G.2 output: English action + optional turn id for create/replace."""
+
+    action: CoordinateAction
+    turn_id: UUID | None
 
 
 class ChatLockProvider:
@@ -34,7 +73,7 @@ class ChatLockProvider:
 
 
 class TurnCoordinator:
-    """Owns durable turn status transitions including Director sink."""
+    """Owns turn entry (G.3) and durable status transitions including Director sink."""
 
     def __init__(
         self,
@@ -43,18 +82,175 @@ class TurnCoordinator:
         behavior: BehaviorCanceller,
         *,
         locks: ChatLockProvider | None = None,
+        lock_acquire_timeout_s: float = LOCK_ACQUIRE_TIMEOUT_S,
+        lock_acquire_retries: int = LOCK_ACQUIRE_RETRIES,
     ) -> None:
         self._turns = turns
         self._approvals = approvals
         self._behavior = behavior
         self._locks = locks or ChatLockProvider()
+        self._lock_acquire_timeout_s = lock_acquire_timeout_s
+        self._lock_acquire_retries = lock_acquire_retries
 
     @asynccontextmanager
     async def chat_scope(self, chat_id: int) -> AsyncIterator[None]:
-        """Hold the per-chat lock for a full VIP/admin critical section."""
+        """Hold the per-chat lock; G.5 F1 timeout + bounded retry then raise."""
         lock = await self._locks.lock_for(chat_id)
-        async with lock:
+        attempts = self._lock_acquire_retries + 1
+        acquired = False
+        last_exc: BaseException | None = None
+        for attempt in range(attempts):
+            try:
+                await asyncio.wait_for(
+                    lock.acquire(),
+                    timeout=self._lock_acquire_timeout_s,
+                )
+                acquired = True
+                break
+            except TimeoutError as exc:
+                last_exc = exc
+                if attempt + 1 < attempts:
+                    await asyncio.sleep(_LOCK_BACKOFF_BASE_S * (attempt + 1))
+        if not acquired:
+            logger.error(
+                "chat_lock_timeout",
+                extra={
+                    "chat_id": chat_id,
+                    "timeout_s": self._lock_acquire_timeout_s,
+                    "retries": self._lock_acquire_retries,
+                },
+            )
+            raise ChatLockTimeoutError(
+                f"chat lock acquire timed out for chat_id={chat_id}"
+            ) from last_exc
+        try:
             yield
+        finally:
+            lock.release()
+
+    async def coordinate(
+        self,
+        chat_id: int,
+        autor: Autor,
+        *,
+        trigger_message_id: int | None = None,
+        vip_id: UUID | None = None,
+        turn_id: UUID | None = None,
+    ) -> CoordinateResult:
+        """G.2 entry: decide create | replace | discard_owner_message under lock."""
+        async with self.chat_scope(chat_id):
+            return await self.coordinate_unlocked(
+                chat_id,
+                autor,
+                trigger_message_id=trigger_message_id,
+                vip_id=vip_id,
+                turn_id=turn_id,
+            )
+
+    async def coordinate_unlocked(
+        self,
+        chat_id: int,
+        autor: Autor,
+        *,
+        trigger_message_id: int | None = None,
+        vip_id: UUID | None = None,
+        turn_id: UUID | None = None,
+    ) -> CoordinateResult:
+        """G.3 matrix; caller MUST already hold ``chat_scope(chat_id)``."""
+        if autor not in ("vip", "owner"):
+            raise ValueError(f"invalid autor: {autor!r}")
+
+        if autor == "owner":
+            prior = await self._supersede_nonterminal(
+                chat_id,
+                superseded_by=None,
+                cancel_reason="owner_message",
+            )
+            result = CoordinateResult(action="discard_owner_message", turn_id=None)
+            logger.info(
+                "coordinate_result",
+                extra={
+                    "chat_id": chat_id,
+                    "autor": autor,
+                    "action": result.action,
+                    "prior_count": len(prior),
+                    "trigger_message_id": trigger_message_id,
+                },
+            )
+            return result
+
+        # VIP path: create or replace.
+        new_id = turn_id or uuid4()
+        prior = await self._turns.list_non_terminal(chat_id)
+        action: CoordinateAction = "replace" if prior else "create"
+        if prior:
+            await self._supersede_nonterminal(
+                chat_id,
+                superseded_by=new_id,
+                cancel_reason="new_message",
+            )
+
+        record = TurnRecord(
+            id=new_id,
+            chat_id=chat_id,
+            status=TurnStatus.RECEIVED.value,
+            vip_id=vip_id,
+            trigger_message_id=trigger_message_id,
+        )
+        created = await self._turns.create(record)
+        logger.info(
+            "coordinate_result",
+            extra={
+                "chat_id": chat_id,
+                "autor": autor,
+                "action": action,
+                "turn_id": str(created.id),
+                "prior_count": len(prior),
+            },
+        )
+        logger.info(
+            "turn_begun",
+            extra={"turn_id": str(created.id), "chat_id": chat_id},
+        )
+        return CoordinateResult(action=action, turn_id=created.id)
+
+    async def _supersede_nonterminal(
+        self,
+        chat_id: int,
+        *,
+        superseded_by: UUID | None,
+        cancel_reason: str,
+    ) -> list[TurnRecord]:
+        """Mark all live turns superseded and cascade cancel delivery/approvals."""
+        prior = await self._turns.list_non_terminal(chat_id)
+        for old in prior:
+            await self._turns.transition(
+                old.id,
+                TurnStatus.SUPERSEDED.value,
+                superseded_by=superseded_by,
+            )
+            logger.info(
+                "turn_superseded",
+                extra={
+                    "turn_id": str(old.id),
+                    "chat_id": chat_id,
+                    "superseded_by": str(superseded_by) if superseded_by else None,
+                    "reason": cancel_reason,
+                },
+            )
+        if prior:
+            await self._behavior.cancel_pending(chat_id, cancel_reason)
+            cancelled = await self._approvals.cancel_waiting_for_chat(chat_id)
+            logger.info(
+                "supersede_cascade",
+                extra={
+                    "chat_id": chat_id,
+                    "approvals_cancelled": cancelled,
+                    "prior_count": len(prior),
+                    "reason": cancel_reason,
+                },
+            )
+        return prior
 
     async def begin_turn(
         self,
@@ -64,14 +260,18 @@ class TurnCoordinator:
         vip_id: UUID | None = None,
         turn_id: UUID | None = None,
     ) -> TurnRecord:
-        """Create a new received turn after superseding any live turn for chat_id."""
-        async with self.chat_scope(chat_id):
-            return await self.begin_turn_unlocked(
-                chat_id=chat_id,
-                trigger_message_id=trigger_message_id,
-                vip_id=vip_id,
-                turn_id=turn_id,
-            )
+        """VIP wrapper: coordinate create/replace and return the new TurnRecord."""
+        result = await self.coordinate(
+            chat_id,
+            "vip",
+            trigger_message_id=trigger_message_id,
+            vip_id=vip_id,
+            turn_id=turn_id,
+        )
+        assert result.turn_id is not None
+        record = await self._turns.get(result.turn_id)
+        assert record is not None
+        return record
 
     async def get_turn(self, turn_id: UUID) -> TurnRecord | None:
         """Load a durable turn row."""
@@ -85,48 +285,18 @@ class TurnCoordinator:
         vip_id: UUID | None = None,
         turn_id: UUID | None = None,
     ) -> TurnRecord:
-        """``begin_turn`` body; caller must already hold ``chat_scope(chat_id)``."""
-        new_id = turn_id or uuid4()
-        prior = await self._turns.list_non_terminal(chat_id)
-        for old in prior:
-            await self._turns.transition(
-                old.id,
-                TurnStatus.SUPERSEDED.value,
-                superseded_by=new_id,
-            )
-            logger.info(
-                "turn_superseded",
-                extra={
-                    "turn_id": str(old.id),
-                    "chat_id": chat_id,
-                    "superseded_by": str(new_id),
-                },
-            )
-        if prior:
-            await self._behavior.cancel_pending(chat_id, "new_message")
-            cancelled = await self._approvals.cancel_waiting_for_chat(chat_id)
-            logger.info(
-                "supersede_cascade",
-                extra={
-                    "chat_id": chat_id,
-                    "approvals_cancelled": cancelled,
-                    "prior_count": len(prior),
-                },
-            )
-
-        record = TurnRecord(
-            id=new_id,
-            chat_id=chat_id,
-            status=TurnStatus.RECEIVED.value,
-            vip_id=vip_id,
+        """VIP wrapper body; caller must already hold ``chat_scope(chat_id)``."""
+        result = await self.coordinate_unlocked(
+            chat_id,
+            "vip",
             trigger_message_id=trigger_message_id,
+            vip_id=vip_id,
+            turn_id=turn_id,
         )
-        created = await self._turns.create(record)
-        logger.info(
-            "turn_begun",
-            extra={"turn_id": str(created.id), "chat_id": chat_id},
-        )
-        return created
+        assert result.turn_id is not None
+        record = await self._turns.get(result.turn_id)
+        assert record is not None
+        return record
 
     async def transition(
         self,
@@ -160,3 +330,15 @@ class TurnCoordinator:
             return parse_turn_status(status) in TERMINAL_TURN_STATUSES
         except ValueError:
             return False
+
+
+__all__ = [
+    "Autor",
+    "ChatLockProvider",
+    "ChatLockTimeoutError",
+    "CoordinateAction",
+    "CoordinateResult",
+    "LOCK_ACQUIRE_RETRIES",
+    "LOCK_ACQUIRE_TIMEOUT_S",
+    "TurnCoordinator",
+]
