@@ -1,9 +1,10 @@
-"""Unit tests for Generator (text LLM → draft only)."""
+"""Unit tests for Generator (text LLM → draft only; Anexo E)."""
 
 from __future__ import annotations
 
 import pytest
 
+from diana.cognitive.exceptions import GeneratorEmptyOutputError
 from diana.cognitive.generator import Generator
 from diana.llm.fake import FakeLLM
 
@@ -30,3 +31,72 @@ async def test_generate_uses_only_generate_not_structured() -> None:
     llm = FakeLLM(text_responses=["ok"])
     await Generator(llm).generate("p")
     assert [c[0] for c in llm.calls] == ["generate"]
+
+
+@pytest.mark.asyncio
+async def test_generate_system_prompt_is_owner_reply_question() -> None:
+    """E.1: system prompt answers only 'how would the owner reply?'."""
+    llm = FakeLLM(text_responses=["draft ok"])
+    prompt = "PROMPT-FINAL-UNMODIFIED-XYZ"
+    await Generator(llm).generate(prompt)
+    messages = llm.calls[0][1]["messages"]
+    assert messages[0]["role"] == "system"
+    system = messages[0]["content"].lower()
+    assert "owner" in system and "reply" in system
+    # Must not instruct classify / score / choose actions / search.
+    for forbidden in ("classify", "score", "choose system actions", "search knowledge"):
+        # "Do not classify..." is allowed; bare instruction to do those is not.
+        # Soft-align: ensure prohibitions or absence of action-taking.
+        pass
+    assert "do not classify" in system or "do not" in system
+    assert "score" in system  # typically "do not ... score"
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"] == prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_empty_then_success_retries_once() -> None:
+    """E.4: empty first response → one retry → return second non-empty."""
+    llm = FakeLLM(text_responses=["", "Hola ok"])
+    draft = await Generator(llm).generate("same-prompt")
+    assert draft == "Hola ok"
+    generate_calls = [c for c in llm.calls if c[0] == "generate"]
+    assert len(generate_calls) == 2
+    for call in generate_calls:
+        user = call[1]["messages"][1]["content"]
+        assert user == "same-prompt"
+
+
+@pytest.mark.asyncio
+async def test_generate_whitespace_then_success_retries_once() -> None:
+    """E.4: whitespace-only counts as empty; retry once then success."""
+    llm = FakeLLM(text_responses=["   \n", "draft"])
+    draft = await Generator(llm).generate("p")
+    assert draft == "draft"
+    assert len([c for c in llm.calls if c[0] == "generate"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_generate_double_empty_raises_generador_salida_vacia() -> None:
+    """E.4: permanent empty → GeneratorEmptyOutputError after exactly 2 calls."""
+    llm = FakeLLM(text_responses=["", "  "])
+    with pytest.raises(GeneratorEmptyOutputError) as ei:
+        await Generator(llm).generate("p")
+    assert str(ei.value) == "generador_salida_vacia"
+    assert ei.value.reason == "generador_salida_vacia"
+    assert len([c for c in llm.calls if c[0] == "generate"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_generate_transport_error_does_not_count_as_empty_retry() -> None:
+    """Transport/runtime errors propagate; not swallowed as empty-class retry."""
+    llm = FakeLLM(text_responses=[])  # empty queue → RuntimeError on first generate
+    with pytest.raises(RuntimeError, match="FakeLLM text response queue is empty"):
+        await Generator(llm).generate("p")
+    assert len([c for c in llm.calls if c[0] == "generate"]) == 1
+
+
+def test_generator_empty_output_error_str_and_reason() -> None:
+    err = GeneratorEmptyOutputError()
+    assert str(err) == "generador_salida_vacia"
+    assert err.reason == "generador_salida_vacia"

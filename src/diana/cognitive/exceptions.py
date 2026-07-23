@@ -53,8 +53,25 @@ class ContextExceedsLimitError(Exception):
         return self.reason
 
 
+class GeneratorEmptyOutputError(Exception):
+    """Raised when Generator returns empty/whitespace after one retry (Anexo E.4).
+
+    Stable reason: ``generador_salida_vacia``.
+    """
+
+    reason: str = "generador_salida_vacia"
+
+    def __init__(self, reason: str = "generador_salida_vacia") -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+    def __str__(self) -> str:
+        return self.reason
+
+
 __all__ = [
     "AnalystSchemaInvalidError",
     "ContextExceedsLimitError",
     "EvaluatorSchemaInvalidError",
+    "GeneratorEmptyOutputError",
 ]
