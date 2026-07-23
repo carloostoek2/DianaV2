@@ -137,7 +137,7 @@
 
 ## Docs commit
 
-_(filled after git commit)_
+`5f5c052` — `docs(cognitive): close remaining-contracts-cognitive pool (C–F)`
 
 ## Next Steps
 

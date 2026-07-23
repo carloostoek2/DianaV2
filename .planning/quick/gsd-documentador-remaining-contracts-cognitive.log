@@ -33,4 +33,14 @@ Pool remaining-contracts-cognitive (Pool 1 of 2) — Anexos C–F:
 - SPEC.md / REQUERIMIENTOS.md rewrites (out-of-scope residuals only)
 
 ## Status
-IN_PROGRESS
+COMPLETE
+
+## Docs commit
+5f5c052 — docs(cognitive): close remaining-contracts-cognitive pool (C–F)
+
+## Residuals handoff
+- Pool 2: Anexos G–I (Turn Coordinator, Registry+Retrievers, Behavior Engine)
+- Out-of-scope: MVP force-history docs, regenerate F2, style_rules wire, eval_thresholds composition, alembic turns.error dirty tree
+
+## Finished
+2026-07-23T07:00:46Z start · docs commit 5f5c052
