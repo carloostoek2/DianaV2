@@ -416,3 +416,36 @@ def test_evaluator_input_requires_all_fields() -> None:
         del data[key]
         with pytest.raises(ValidationError):
             EvaluatorInput(**data)  # type: ignore[arg-type]
+
+
+def test_built_context_accepts_prompt_and_blocks() -> None:
+    from diana.cognitive.models import BuiltContext
+
+    built = BuiltContext(
+        prompt_final="## Persona\nhello\n",
+        included_blocks=["knowledge.history"],
+    )
+    assert built.prompt_final == "## Persona\nhello\n"
+    assert built.included_blocks == ["knowledge.history"]
+
+
+def test_built_context_rejects_extra_fields() -> None:
+    from diana.cognitive.models import BuiltContext
+
+    with pytest.raises(ValidationError):
+        BuiltContext.model_validate(
+            {
+                "prompt_final": "x",
+                "included_blocks": [],
+                "score_global": 0.9,
+            }
+        )
+
+
+def test_built_context_requires_both_fields() -> None:
+    from diana.cognitive.models import BuiltContext
+
+    with pytest.raises(ValidationError):
+        BuiltContext(prompt_final="x")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        BuiltContext(included_blocks=[])  # type: ignore[call-arg]

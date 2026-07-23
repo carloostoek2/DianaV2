@@ -1,11 +1,14 @@
-"""Unit tests for ContextBuilder prompt assembly."""
+"""Unit tests for ContextBuilder prompt assembly (Anexo D)."""
 
 from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from diana.cognitive.context_builder import ContextBuilder
-from diana.cognitive.models import Comprehension, IncomingTurn
+from diana.cognitive.exceptions import ContextExceedsLimitError
+from diana.cognitive.models import BuiltContext, Comprehension, IncomingTurn
 
 
 def _turn(text: str = "VIP says hi") -> IncomingTurn:
@@ -28,16 +31,21 @@ def _comprehension() -> Comprehension:
     )
 
 
+def _section_headings(prompt: str) -> list[str]:
+    return [line for line in prompt.splitlines() if line.startswith("## ")]
+
+
 def test_always_includes_persona_and_current_message() -> None:
     builder = ContextBuilder()
-    prompt = builder.build(
+    built = builder.build(
         _turn("current message body"),
         _comprehension(),
         knowledge={},
         persona="You are Diana, warm and professional.",
     )
-    assert "You are Diana, warm and professional." in prompt
-    assert "current message body" in prompt
+    assert isinstance(built, BuiltContext)
+    assert "You are Diana, warm and professional." in built.prompt_final
+    assert "current message body" in built.prompt_final
 
 
 def test_null_knowledge_omits_stub_headings() -> None:
@@ -51,17 +59,16 @@ def test_null_knowledge_omits_stub_headings() -> None:
         "knowledge.schedule": None,
         "knowledge.profile": None,
     }
-    prompt = builder.build(
+    built = builder.build(
         _turn("hello"),
         _comprehension(),
         knowledge=knowledge,
         persona="Persona block",
     )
-    # No empty capability section headings for null values
     for cap in knowledge:
-        assert cap not in prompt
-    assert "Persona block" in prompt
-    assert "hello" in prompt
+        assert cap not in built.prompt_final
+    assert "Persona block" in built.prompt_final
+    assert "hello" in built.prompt_final
 
 
 def test_non_null_knowledge_sections_included() -> None:
@@ -71,26 +78,25 @@ def test_non_null_knowledge_sections_included() -> None:
         "knowledge.context": {"message_count": 1, "last_role": "vip"},
         "knowledge.memory": None,
     }
-    prompt = builder.build(
+    built = builder.build(
         _turn("now"),
         _comprehension(),
         knowledge=knowledge,
         persona="Voice",
     )
-    assert "## Knowledge: knowledge.history" in prompt
-    assert "prior" in prompt
-    assert '"message_count": 1' in prompt
-    assert "## Knowledge: knowledge.context" in prompt
-    # null memory must not appear as a heading
-    assert "## Knowledge: knowledge.memory" not in prompt
+    assert "## Knowledge: knowledge.history" in built.prompt_final
+    assert "prior" in built.prompt_final
+    assert '"message_count": 1' in built.prompt_final
+    assert "## Knowledge: knowledge.context" in built.prompt_final
+    assert "## Knowledge: knowledge.memory" not in built.prompt_final
 
 
 def test_comprehension_summary_present() -> None:
     builder = ContextBuilder()
     c = _comprehension()
-    prompt = builder.build(_turn("x"), c, knowledge={}, persona="P")
-    assert "intent: greet" in prompt
-    assert f"intent: {c.intent}" in prompt
+    built = builder.build(_turn("x"), c, knowledge={}, persona="P")
+    assert "intent: greet" in built.prompt_final
+    assert f"intent: {c.intent}" in built.prompt_final
 
 
 def test_empty_list_and_dict_knowledge_omitted() -> None:
@@ -100,15 +106,15 @@ def test_empty_list_and_dict_knowledge_omitted() -> None:
         "knowledge.context": {},
         "knowledge.memory": None,
     }
-    prompt = builder.build(
+    built = builder.build(
         _turn("hello"),
         _comprehension(),
         knowledge=knowledge,
         persona="Persona",
     )
-    assert "knowledge.history" not in prompt
-    assert "knowledge.context" not in prompt
-    assert "knowledge.memory" not in prompt
+    assert "knowledge.history" not in built.prompt_final
+    assert "knowledge.context" not in built.prompt_final
+    assert "knowledge.memory" not in built.prompt_final
 
 
 def test_list_included_blocks_matches_prompt_sections() -> None:
@@ -122,25 +128,27 @@ def test_list_included_blocks_matches_prompt_sections() -> None:
         "knowledge.schedule": "   ",
         "knowledge.profile": "has value",
     }
-    blocks = builder.list_included_blocks(knowledge)
-    prompt = builder.build(
+    built = builder.build(
         _turn("now"),
         _comprehension(),
         knowledge=knowledge,
         persona="Voice",
     )
-    # Names that appear as ## Knowledge headings must match list_included_blocks
+    blocks = builder.list_included_blocks(knowledge)
     headings = [
         line.removeprefix("## Knowledge: ").strip()
-        for line in prompt.splitlines()
+        for line in built.prompt_final.splitlines()
         if line.startswith("## Knowledge: ")
     ]
     assert blocks == headings
+    assert built.included_blocks == headings
     assert blocks == [
         "knowledge.history",
         "knowledge.context",
         "knowledge.profile",
     ]
+    # profile last among non-null knowledge blocks (D.4 fixed order)
+    assert blocks[-1] == "knowledge.profile"
 
 
 def test_list_included_blocks_empty_when_all_null_like() -> None:
@@ -153,3 +161,162 @@ def test_list_included_blocks_empty_when_all_null_like() -> None:
         "knowledge.examples": "  \t  ",
     }
     assert builder.list_included_blocks(knowledge) == []
+
+
+def test_build_returns_built_context_prompt_and_blocks() -> None:
+    builder = ContextBuilder()
+    knowledge = {
+        "knowledge.history": [{"role": "vip", "text": "prior"}],
+        "knowledge.context": None,
+        "knowledge.memory": "mem body",
+    }
+    built = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge=knowledge,
+        persona="Voice",
+    )
+    assert isinstance(built, BuiltContext)
+    assert isinstance(built.prompt_final, str)
+    assert isinstance(built.included_blocks, list)
+    headings = [
+        line.removeprefix("## Knowledge: ").strip()
+        for line in built.prompt_final.splitlines()
+        if line.startswith("## Knowledge: ")
+    ]
+    assert built.included_blocks == headings
+    assert built.included_blocks == ["knowledge.history", "knowledge.memory"]
+
+
+def test_d4_current_turn_is_last_section() -> None:
+    builder = ContextBuilder()
+    knowledge = {
+        "knowledge.history": [{"role": "vip", "text": "prior"}],
+        "knowledge.context": {"message_count": 2},
+    }
+    built = builder.build(
+        _turn("CURRENT-BODY-XYZ"),
+        _comprehension(),
+        knowledge=knowledge,
+        persona="Persona text",
+    )
+    headings = _section_headings(built.prompt_final)
+    assert headings[0] == "## Persona"
+    assert headings[-1] == "## Current VIP message"
+    assert "## Comprehension" in headings
+    # Current turn body after all knowledge + comprehension
+    idx_comp = built.prompt_final.index("## Comprehension")
+    idx_turn = built.prompt_final.index("## Current VIP message")
+    assert idx_turn > idx_comp
+    assert built.prompt_final.rstrip().endswith("CURRENT-BODY-XYZ")
+
+
+def test_d4_knowledge_emitted_in_fixed_order_regardless_of_dict_insertion() -> None:
+    builder = ContextBuilder()
+    # Reverse / shuffled insertion order relative to D.4 emission tuple
+    knowledge = {
+        "knowledge.profile": "profile body",
+        "knowledge.schedule": "schedule body",
+        "knowledge.examples": ["ex1"],
+        "knowledge.policy": {"rule": "no spam"},
+        "knowledge.memory": "mem",
+        "knowledge.context": {"n": 1},
+        "knowledge.history": [{"role": "vip", "text": "h"}],
+        "knowledge.unknown_cap": "must be ignored",
+    }
+    built = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge=knowledge,
+        persona="P",
+    )
+    headings = [
+        line.removeprefix("## Knowledge: ").strip()
+        for line in built.prompt_final.splitlines()
+        if line.startswith("## Knowledge: ")
+    ]
+    assert headings == [
+        "knowledge.history",
+        "knowledge.context",
+        "knowledge.memory",
+        "knowledge.policy",
+        "knowledge.examples",
+        "knowledge.schedule",
+        "knowledge.profile",
+    ]
+    assert "knowledge.unknown_cap" not in built.prompt_final
+    assert built.included_blocks == headings
+
+
+def test_contexto_excede_limite_raises_typed_error_no_truncate() -> None:
+    builder = ContextBuilder(max_prompt_chars=50)
+    knowledge = {
+        "knowledge.history": [{"role": "vip", "text": "X" * 200}],
+    }
+    with pytest.raises(ContextExceedsLimitError) as exc_info:
+        builder.build(
+            _turn("now"),
+            _comprehension(),
+            knowledge=knowledge,
+            persona="Persona",
+        )
+    exc = exc_info.value
+    assert str(exc) == "contexto_excede_limite"
+    assert exc.reason == "contexto_excede_limite"
+    # No truncated partial return — exception only
+
+
+def test_style_rules_optional_under_persona() -> None:
+    builder = ContextBuilder()
+    built_with = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge={"knowledge.history": [{"t": 1}]},
+        persona="Base persona",
+        style_rules=["Be concise", "No emojis"],
+    )
+    headings = _section_headings(built_with.prompt_final)
+    persona_idx = headings.index("## Persona")
+    first_knowledge_idx = next(
+        i for i, h in enumerate(headings) if h.startswith("## Knowledge:")
+    )
+    assert persona_idx < first_knowledge_idx
+    assert "Be concise" in built_with.prompt_final
+    assert "No emojis" in built_with.prompt_final
+    # Style lines appear before first knowledge section
+    assert built_with.prompt_final.index("Be concise") < built_with.prompt_final.index(
+        "## Knowledge:"
+    )
+
+    built_empty = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge={},
+        persona="Base persona",
+        style_rules=[],
+    )
+    assert "Be concise" not in built_empty.prompt_final
+
+    built_default = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge={},
+        persona="Base persona",
+    )
+    assert "Be concise" not in built_default.prompt_final
+
+
+def test_included_blocks_exclude_comprehension_and_persona() -> None:
+    builder = ContextBuilder()
+    built = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge={"knowledge.history": [{"role": "vip", "text": "h"}]},
+        persona="Persona label text",
+    )
+    for block in built.included_blocks:
+        assert block.startswith("knowledge.")
+        assert "Comprehension" not in block
+        assert "Persona" not in block
+    assert "Comprehension" not in built.included_blocks
+    assert "Persona" not in built.included_blocks

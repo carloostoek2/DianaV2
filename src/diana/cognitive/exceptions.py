@@ -37,4 +37,24 @@ class EvaluatorSchemaInvalidError(Exception):
         return self.reason
 
 
-__all__ = ["AnalystSchemaInvalidError", "EvaluatorSchemaInvalidError"]
+class ContextExceedsLimitError(Exception):
+    """Raised when assembled prompt exceeds max_prompt_chars (Anexo D.5/D.6).
+
+    Stable reason: ``contexto_excede_limite``.
+    """
+
+    reason: str = "contexto_excede_limite"
+
+    def __init__(self, reason: str = "contexto_excede_limite") -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+    def __str__(self) -> str:
+        return self.reason
+
+
+__all__ = [
+    "AnalystSchemaInvalidError",
+    "ContextExceedsLimitError",
+    "EvaluatorSchemaInvalidError",
+]

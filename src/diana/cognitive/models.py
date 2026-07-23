@@ -152,6 +152,19 @@ class Plan(BaseModel):
 
 
 
+class BuiltContext(BaseModel):
+    """ContextBuilder output (Anexo D.3).
+
+    English fields map to Spanish contract names:
+    prompt_final←prompt_final, included_blocks←bloques_incluidos.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_final: str
+    included_blocks: list[str]
+
+
 class EvaluatorInput(BaseModel):
     """Evaluator input (Anexo B.2).
 
@@ -210,6 +223,7 @@ TurnContext = IncomingTurn
 
 __all__ = [
     "AnalystInput",
+    "BuiltContext",
     "Comprehension",
     "Decision",
     "Emotion",
