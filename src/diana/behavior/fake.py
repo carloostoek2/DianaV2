@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import UUID
+
+from diana.behavior.ports import TransientSendError
 
 
 class FakeTelegramActuator:
@@ -68,6 +71,74 @@ class FakeTelegramActuator:
         return sum(1 for c in self.calls if c["op"] == "send_message")
 
 
+class FlakySendActuator(FakeTelegramActuator):
+    """Fails first N send_message with TransientSendError, then succeeds."""
+
+    def __init__(
+        self,
+        *,
+        fail_times: int = 1,
+        start_message_id: int = 1,
+        always_fail: bool = False,
+    ) -> None:
+        super().__init__(start_message_id=start_message_id)
+        self._fail_times = fail_times
+        self._always_fail = always_fail
+        self._failures_so_far = 0
+        self.send_attempts = 0
+
+    async def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        business_connection_id: str,
+    ) -> int:
+        self.send_attempts += 1
+        if self._always_fail or self._failures_so_far < self._fail_times:
+            self._failures_so_far += 1
+            self.calls.append(
+                {
+                    "op": "send_message_failed",
+                    "chat_id": chat_id,
+                    "text": text,
+                    "business_connection_id": business_connection_id,
+                    "error": "transient",
+                }
+            )
+            raise TransientSendError("transient send failure")
+        return await super().send_message(
+            chat_id, text, business_connection_id=business_connection_id
+        )
+
+
+class AlwaysLiveTurnStatusReader:
+    """Returns a live turn status for unit tests (I.4 gate passes)."""
+
+    def __init__(self, status: str = "pending_approval") -> None:
+        self._status = status
+
+    async def get_status(self, turn_id: UUID) -> str | None:
+        _ = turn_id
+        return self._status
+
+
+class SequenceTurnStatusReader:
+    """Returns successive statuses for race-oriented tests (no wall clock)."""
+
+    def __init__(self, statuses: list[str | None]) -> None:
+        self._statuses = list(statuses)
+        self._idx = 0
+
+    async def get_status(self, turn_id: UUID) -> str | None:
+        _ = turn_id
+        if self._idx >= len(self._statuses):
+            return self._statuses[-1] if self._statuses else None
+        status = self._statuses[self._idx]
+        self._idx += 1
+        return status
+
+
 class ImmediateClock:
     """Clock whose sleep is a no-op (or optional recorder)."""
 
@@ -98,7 +169,10 @@ class FixedDelayPolicy:
 
 
 __all__ = [
+    "AlwaysLiveTurnStatusReader",
     "FakeTelegramActuator",
     "FixedDelayPolicy",
+    "FlakySendActuator",
     "ImmediateClock",
+    "SequenceTurnStatusReader",
 ]

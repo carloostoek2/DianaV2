@@ -1,4 +1,13 @@
-"""I/O ports for the behavior engine (no LLM, no cognitive decision modules)."""
+"""I/O ports for the behavior engine (no LLM, no cognitive decision modules).
+
+English ↔ Anexo I (docstring map only):
+- mode="supervised"      ↔ modo: "supervisado"
+- mode="autonomous"      ↔ modo: "autonomo"
+- mode="fake_delivery"   ↔ modo: "fake_delivery"
+- DeliveryResult.success ↔ ok
+- Pre-send TurnStatusReader ↔ I.4 last-mile supersede abort
+- Bounded TransientSendError retries ↔ I.4 / REQ-NFR-04
+"""
 
 from __future__ import annotations
 
@@ -7,6 +16,12 @@ from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+DeliveryMode = Literal["supervised", "autonomous", "fake_delivery"]
+
+
+class TransientSendError(Exception):
+    """Transient channel/API failure eligible for bounded retry (I.4)."""
 
 
 class DeliveryContext(BaseModel):
@@ -17,7 +32,7 @@ class DeliveryContext(BaseModel):
     chat_id: int
     business_connection_id: str
     vip_id: UUID | None = None
-    mode: Literal["supervised"] = "supervised"
+    mode: DeliveryMode = "supervised"
     telegram_message_id: int | None = None
 
 
@@ -80,10 +95,22 @@ class DelayPolicy(Protocol):
     def typing_duration_seconds(self, text: str) -> float: ...
 
 
+@runtime_checkable
+class TurnStatusReader(Protocol):
+    """Read current turn status without cognitive imports (I.4 pre-send gate)."""
+
+    async def get_status(self, turn_id: UUID) -> str | None:
+        """Return current turn status string, or None if missing."""
+        ...
+
+
 __all__ = [
     "Clock",
     "DelayPolicy",
     "DeliveryContext",
+    "DeliveryMode",
     "DeliveryResult",
     "TelegramActuatorPort",
+    "TransientSendError",
+    "TurnStatusReader",
 ]

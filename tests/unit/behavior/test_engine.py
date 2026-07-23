@@ -6,11 +6,19 @@ import asyncio
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from diana.application.memory import InMemoryPendingDeliveryStore
 from diana.behavior.engine import BehaviorEngine
-from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
-from diana.behavior.ports import DeliveryContext
+from diana.behavior.fake import (
+    AlwaysLiveTurnStatusReader,
+    FakeTelegramActuator,
+    FixedDelayPolicy,
+    FlakySendActuator,
+    ImmediateClock,
+    SequenceTurnStatusReader,
+)
+from diana.behavior.ports import DeliveryContext, TransientSendError
 
 
 @pytest.fixture
@@ -36,6 +44,35 @@ def _ctx(**overrides: object) -> DeliveryContext:
     }
     data.update(overrides)
     return DeliveryContext(**data)  # type: ignore[arg-type]
+
+
+# --- I.2 mode enum (Task 1) ---
+
+
+def test_delivery_context_accepts_autonomous_mode() -> None:
+    ctx = DeliveryContext(
+        chat_id=1, business_connection_id="bc", mode="autonomous"
+    )
+    assert ctx.mode == "autonomous"
+
+
+def test_delivery_context_accepts_fake_delivery_mode() -> None:
+    ctx = DeliveryContext(
+        chat_id=1, business_connection_id="bc", mode="fake_delivery"
+    )
+    assert ctx.mode == "fake_delivery"
+
+
+def test_delivery_context_rejects_invalid_mode() -> None:
+    with pytest.raises(ValidationError):
+        DeliveryContext(chat_id=1, business_connection_id="bc", mode="nope")  # type: ignore[arg-type]
+
+
+def test_task1_fakes_importable() -> None:
+    assert AlwaysLiveTurnStatusReader is not None
+    assert SequenceTurnStatusReader is not None
+    assert FlakySendActuator is not None
+    assert issubclass(TransientSendError, Exception)
 
 
 @pytest.mark.asyncio
