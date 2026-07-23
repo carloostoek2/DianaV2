@@ -18,7 +18,7 @@ from diana.application.ports import (
     TurnStore,
 )
 from diana.application.turn_coordinator import TurnCoordinator
-from diana.behavior.ports import DeliveryContext, DeliveryResult
+from diana.behavior.ports import DeliveryContext, DeliveryMode, DeliveryResult
 from diana.cognitive.models import (
     TERMINAL_TURN_STATUSES,
     Decision,
@@ -65,6 +65,7 @@ class AdminService:
         traces: DeliveryResultWriter,
         turns: TurnStore,
         owner_telegram_id: int,
+        delivery_mode: DeliveryMode = "supervised",
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -74,6 +75,7 @@ class AdminService:
         self._traces = traces
         self._turns = turns
         self._owner_telegram_id = owner_telegram_id
+        self._delivery_mode = delivery_mode
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -288,6 +290,7 @@ class AdminService:
             business_connection_id=claimed.business_connection_id,
             vip_id=claimed.vip_id,
             telegram_message_id=trigger_message_id,
+            mode=self._delivery_mode,
         )
         # Deliver outside the chat lock so cancel_pending can interrupt mid-flight.
         result = await self._behavior.deliver(
@@ -329,15 +332,34 @@ class AdminService:
                         "mode": approval_status,
                     },
                 )
-            else:
-                # Deliver failed/cancelled while turn still live — release claim.
+            elif result.cancelled:
+                # Live turn + cancel (rare) — reopen waiting for owner retry.
                 await self._approvals.mark_status(turn_id, "waiting")
                 logger.info(
-                    "admin_deliver_failed_reopened",
+                    "admin_deliver_cancelled_reopened",
                     extra={
                         "turn_id": str(turn_id),
                         "error": result.error,
-                        "cancelled": result.cancelled,
+                    },
+                )
+            else:
+                # I.5 permanent deliver failure after retries — do not silent-wait.
+                await self._approvals.mark_status(turn_id, "cancelled")
+                await self._coordinator.mark_failed(
+                    turn_id, error=result.error or "delivery_failed"
+                )
+                await self._notifier.notify_info(
+                    f"Turn {turn_id} failed: delivery_failed ({result.error})",
+                    chat_id=claimed.chat_id,
+                )
+                await self._traces.set_delivery_result(
+                    turn_id, result.to_trace_dict()
+                )
+                logger.info(
+                    "admin_deliver_failed",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "error": result.error,
                     },
                 )
         return result

@@ -38,7 +38,11 @@ class Settings(BaseSettings):
     database_url: SecretStr  # must be postgresql+asyncpg://...
     deepseek_api_key: SecretStr = SecretStr("")
     llm_base_url: str = "https://api.deepseek.com"
-    global_mode: Literal["supervised"] = "supervised"
+    global_mode: Literal["supervised", "autonomous", "fake_delivery"] = "supervised"
+    delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3
+    delivery_retry_backoff_seconds: Annotated[float, Field(gt=0)] = 0.05
+    delivery_initial_delay_min: Annotated[float, Field(gt=0)] = 4.0
+    delivery_initial_delay_max: Annotated[float, Field(gt=0)] = 14.0
     trace_ttl_days: Annotated[int, Field(ge=1)] = 30
     log_level: LogLevel = "INFO"
 

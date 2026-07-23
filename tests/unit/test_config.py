@@ -177,7 +177,7 @@ def test_settings_rejects_unsafe_llm_base_url(
         Settings()
 
 
-def test_settings_rejects_non_supervised_global_mode(
+def test_settings_accepts_delivery_modes(
     clear_settings_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -186,11 +186,64 @@ def test_settings_rejects_non_supervised_global_mode(
     from diana.config import Settings
 
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("GLOBAL_MODE", "autonomous")
+    for mode in ("supervised", "autonomous", "fake_delivery"):
+        monkeypatch.setenv("GLOBAL_MODE", mode)
+        settings = Settings()
+        assert settings.global_mode == mode
+
+    args = get_args(Settings.model_fields["global_mode"].annotation)
+    assert set(args) == {"supervised", "autonomous", "fake_delivery"}
+
+
+def test_settings_rejects_invalid_global_mode(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("GLOBAL_MODE", "nope")
     with pytest.raises(ValidationError):
         Settings()
 
-    assert get_args(Settings.model_fields["global_mode"].annotation) == ("supervised",)
+
+def test_settings_delivery_retry_and_delay_defaults(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    assert settings.delivery_max_send_attempts == 3
+    assert settings.delivery_retry_backoff_seconds == 0.05
+    assert settings.delivery_initial_delay_min == 4.0
+    assert settings.delivery_initial_delay_max == 14.0
+
+
+def test_settings_rejects_non_positive_delay_min(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("DELIVERY_INITIAL_DELAY_MIN", "0")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_random_delay_policy_rejects_zero_initial_min() -> None:
+    from diana.composition import RandomDelayPolicy
+
+    with pytest.raises(ValueError):
+        RandomDelayPolicy(initial_min=0.0, initial_max=14.0)
+    with pytest.raises(ValueError):
+        RandomDelayPolicy(initial_min=-1.0, initial_max=14.0)
+    with pytest.raises(ValueError):
+        RandomDelayPolicy(initial_min=10.0, initial_max=5.0)
+    policy = RandomDelayPolicy(initial_min=4.0, initial_max=14.0)
+    assert 4.0 <= policy.initial_delay_seconds() <= 14.0
 
 
 @pytest.mark.parametrize(

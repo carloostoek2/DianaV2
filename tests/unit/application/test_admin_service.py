@@ -18,7 +18,13 @@ from diana.application.memory import (
 )
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
-from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
+from diana.behavior.fake import (
+    AlwaysLiveTurnStatusReader,
+    FakeTelegramActuator,
+    FixedDelayPolicy,
+    ImmediateClock,
+    SequenceTurnStatusReader,
+)
 from diana.cognitive.models import Decision, EvaluationProfile, IncomingTurn
 
 OWNER_ID = 999001
@@ -60,6 +66,7 @@ def admin_graph() -> dict:
         deliveries,
         clock=ImmediateClock(),
         delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
     )
     coordinator = TurnCoordinator(turns, approvals, behavior)
     admin = AdminService(
@@ -259,3 +266,117 @@ async def test_terminal_latch_blocks_revive(admin_graph: dict) -> None:
     revived = await g["coordinator"].transition(a.id, "pending_approval")
     assert revived.status == "superseded"
     assert revived.superseded_by == b.id
+
+
+@pytest.mark.asyncio
+async def test_permanent_deliver_fail_marks_failed_and_notifies() -> None:
+    """I.5: permanent delivery failure → Turn.failed + owner notify + no waiting reopen."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    notifier = FakeOwnerNotifier()
+
+    class BoomActuator(FakeTelegramActuator):
+        async def send_message(
+            self,
+            chat_id: int,
+            text: str,
+            *,
+            business_connection_id: str,
+        ) -> int:
+            raise RuntimeError("telegram_down")
+
+    actuator = BoomActuator()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
+        max_send_attempts=3,
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    turn = await coordinator.begin_turn(chat_id=42, trigger_message_id=7)
+    await admin.send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="fail me"), turn.id
+    )
+    await coordinator.transition(turn.id, "pending_approval")
+    result = await admin.handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None
+    assert result.success is False
+    assert result.cancelled is False
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == "failed"
+    appr = await approvals.get_by_turn(turn.id)
+    assert appr is not None and appr.status == "cancelled"
+    assert appr.status != "waiting"
+    assert any(
+        "delivery_failed" in text or "failed" in text.lower()
+        for text, _ in notifier.infos
+    )
+    assert traces.get_delivery_result(turn.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_supersede_mid_flight_does_not_mark_failed() -> None:
+    """Cancelled/superseded path must not force Turn.failed (L8)."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    # First pre-send sees live, but we supersede via status before send:
+    # reader returns superseded → cancelled, no failed.
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=SequenceTurnStatusReader(["superseded"]),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    a = await coordinator.begin_turn(chat_id=42, trigger_message_id=7)
+    await admin.send_draft_for_approval(
+        _incoming(a.id), _decision(draft="old"), a.id
+    )
+    await coordinator.transition(a.id, "pending_approval")
+    # Supersede A before approve completes post-latch.
+    b = await coordinator.begin_turn(chat_id=42)
+    assert b.id != a.id
+    result = await admin.handle_approve(a.id, actor_id=OWNER_ID)
+    # Terminal latch: claim may still run if still pending_approval was superseded
+    # begin_turn already terminal-latched A to superseded → approve returns None
+    # OR if claim won earlier path: cancelled result without failed.
+    stored = await turns.get(a.id)
+    assert stored is not None
+    assert stored.status == "superseded"
+    assert stored.status != "failed"
+    assert actuator.send_count() == 0
+    # No false failed notify for supersede
+    failed_infos = [t for t, _ in notifier.infos if "delivery_failed" in t]
+    assert failed_infos == []
+    _ = result

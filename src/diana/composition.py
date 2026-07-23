@@ -21,6 +21,7 @@ from diana.application.recovery_startup import (
 )
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
+from diana.application.ports import TurnStore
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.ports import DelayPolicy
 from diana.cognitive.analyst import Analyst
@@ -68,7 +69,10 @@ class SystemClock:
 
 
 class RandomDelayPolicy(DelayPolicy):
-    """Production-ish random delays (4–14s initial; typing ~text length)."""
+    """Production-ish random delays (4–14s initial; typing ~text length).
+
+    REQ-NFR-01: initial_min must be > 0 (FixedDelayPolicy remains free for tests).
+    """
 
     def __init__(
         self,
@@ -79,6 +83,10 @@ class RandomDelayPolicy(DelayPolicy):
         typing_max: float = 5.0,
         rng: random.Random | None = None,
     ) -> None:
+        if initial_min <= 0:
+            raise ValueError("initial_min must be > 0 (REQ-NFR-01)")
+        if initial_max < initial_min:
+            raise ValueError("initial_max must be >= initial_min")
         self._min = initial_min
         self._max = initial_max
         self._per_char = typing_per_char
@@ -90,6 +98,17 @@ class RandomDelayPolicy(DelayPolicy):
 
     def typing_duration_seconds(self, text: str) -> float:
         return min(len(text or "") * self._per_char, self._typing_max)
+
+
+class TurnStoreStatusReader:
+    """Thin adapter: TurnStore → behavior TurnStatusReader (no cognitive imports)."""
+
+    def __init__(self, turns: TurnStore) -> None:
+        self._turns = turns
+
+    async def get_status(self, turn_id: Any) -> str | None:
+        row = await self._turns.get(turn_id)
+        return None if row is None else row.status
 
 
 @dataclass
@@ -145,9 +164,18 @@ def build_app(
         bot_inst, owner_telegram_id=settings.owner_telegram_id
     )
     clock = SystemClock()
-    policy = delay_policy or RandomDelayPolicy()
+    policy = delay_policy or RandomDelayPolicy(
+        initial_min=settings.delivery_initial_delay_min,
+        initial_max=settings.delivery_initial_delay_max,
+    )
     behavior = BehaviorEngine(
-        actuator, deliveries, clock=clock, delay_policy=policy
+        actuator,
+        deliveries,
+        clock=clock,
+        delay_policy=policy,
+        turn_status=TurnStoreStatusReader(turns),
+        max_send_attempts=settings.delivery_max_send_attempts,
+        retry_backoff_seconds=settings.delivery_retry_backoff_seconds,
     )
     coordinator = TurnCoordinator(turns, approvals, behavior)
     admin = AdminService(
@@ -159,6 +187,7 @@ def build_app(
         traces=traces,
         turns=turns,
         owner_telegram_id=settings.owner_telegram_id,
+        delivery_mode=settings.global_mode,
     )
 
     if llm is not None:
@@ -264,6 +293,7 @@ __all__ = [
     "DEFAULT_PERSONA",
     "RandomDelayPolicy",
     "SystemClock",
+    "TurnStoreStatusReader",
     "build_app",
     "load_forbidden_keywords",
     "run_app_startup_recovery",
