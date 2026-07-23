@@ -139,7 +139,11 @@ class Comprehension(BaseModel):
 
 
 class Plan(BaseModel):
-    """Planner output: which knowledge capabilities to retrieve."""
+    """Planner output (Anexo C.2): which knowledge capabilities to retrieve.
+
+    English field ``capabilities`` maps to Spanish contract name
+    ``capacidades_solicitadas``. Empty list is legal when all needs_* are false.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
