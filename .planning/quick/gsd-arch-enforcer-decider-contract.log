@@ -1,0 +1,33 @@
+# Arch Enforcer Log: decider-contract
+Started: 2026-07-23
+Item: Lock Decider to F1-safe Anexo F (F.1–F.5) — action approve|escalate, matrix, mode_restriction, purity
+Agent: arch-enforcer
+Commit: 4e1db5a
+
+## Timeline
+- Log opened before reads/writes
+- Read PLAN.md, SUMMARY.md, decisions.md, gsd-decider-contract.log
+- Read impact-analyzer/decider-contract.md + arch-enforcer/evaluator-contract.md (pattern)
+- Read AGENTS.md limits (§3, §5.1–5.3)
+- Audited production:
+  - models.py (Decision.action approve|escalate; mode_restriction_applied optional)
+  - decider.py (F1 matrix order; residual F.3 #2; supervised audit token; no LLM/mean/draft)
+  - director.py (sole decide call site; passthrough mode_restriction + draft attach)
+  - turn_orchestrator.py (approve|escalate branches + fail-closed; no-touch confirmed)
+  - composition.py (Decider() defaults; L6 deferred)
+- Cross-checked: cognitive imports (no telegram/behavior/learning/aiogram/sqlalchemy),
+  BR-09 no score collapse, F1 action Literal not expanded, residual naturalness fall-through
+- Tests surface reviewed: test_decider, test_models (Decision), test_director happy-path audit
+- Verdict: PASS WITH NOTES, 0 critical
+- Report: .grok/agent-memory/arch-enforcer/decider-contract.md
+- MEMORY.md pointer updated
+- Handoff: test-guardian
+
+## Focus checks
+1. Action not expanded (approve|escalate only) — PASS
+2. F1 matrix (safety → risk alto → approve) — PASS
+3. mode_restriction_applied (supervised approve token; escalate None; Director copy) — PASS
+4. Purity (no LLM, no mean, no draft, import clean) — PASS
+
+## Verdict
+PASS WITH NOTES | Critical: 0 | Next: test-guardian

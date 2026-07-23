@@ -1,0 +1,40 @@
+# gsd-test-guardian-generator-contract.log
+# Started: 2026-07-23
+# Item: generator-contract
+# Focus: empty retry, typed error, director no escalate empty, orchestrator notify, purity
+# Strict TDD: .venv/bin/python -m pytest -q
+
+## Timeline
+- test-guardian start
+- reading PLAN.md, SUMMARY.md, impact-analyzer + arch-enforcer reports
+- Arch PASS WITH NOTES, 0 critical; handoff to test-guardian
+- read test_generator.py, director empty-fail test, orchestrator gen-empty test
+- mock inventory: 0 @patch/MagicMock/AsyncMock in item-touched tests
+- coverage map vs PLAN DoD: all required cases present
+- arch note: system-prompt forbid loop is no-op — tighten assert for E.1
+- tightened test_generate_system_prompt_is_owner_reply_question forbidden tokens
+- static parity: production matches all PLAN asserts (generator/director/orchestrator)
+- executor SUMMARY evidence: primary 54 / full unit 396 passed (49dc4d9 3d60877 ef4f43d)
+- lastfailed: stale test_empty_draft_escalates only (pre-existing cache noise)
+- write report: .grok/agent-memory/test-guardian/generator-contract.md
+- MEMORY.md pointer updated
+
+## Coverage
+PLAN required:
+- test_generator: 9 tests (E.1 prompt, E.4 retry/success/fail/transport, exception unit)
+- test_director: test_generator_empty_fails_before_evaluator (no eval/decision/generated_text)
+- test_turn_orchestrator: test_orchestrator_generator_empty_marks_failed_notifies_owner
+- test_import_purity: in primary cluster
+DoD gaps: none
+
+## Mock Audit
+- test_generator / director gen-empty / orchestrator E.4: FakeLLM + FakeOwnerNotifier + FakeTelegramActuator + InMemory only
+- 0 prohibited mocks
+- Real SUT: Generator, Director, Orchestrator, AdminService, BehaviorEngine
+
+## Verdict
+**suite protege adecuadamente** | mock_audit=pass (0 prohibidos) | tests_changed=1 (E.1 tighten)
+next_recommended: step-6-tests
+
+## DONE test-guardian generator-contract
+Report: .grok/agent-memory/test-guardian/generator-contract.md

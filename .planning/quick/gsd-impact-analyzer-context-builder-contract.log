@@ -1,0 +1,58 @@
+# gsd-impact-analyzer-context-builder-contract.log
+# Pool: remaining-contracts-cognitive (Pool 1 of 2)
+# ITEM 2/4: Align ContextBuilder to Anexo D (D.1–D.6)
+# Date: 2026-07-23
+# Mode: analysis only — no production code edits
+
+## Timeline
+
+- 2026-07-23 start: impact analysis for ContextBuilder contract (Anexo D)
+- Read agent instructions (`~/.grok/agents/impact-analyzer.md`), project AGENTS.md (system context)
+- Read `docs/contratos_restantes.md` Anexo D.1–D.6
+- Read `src/diana/cognitive/context_builder.py` (build + list_included_blocks + _is_null_like)
+- Read Director wiring (`director.py` BUILDING_CONTEXT → generate → evaluate blocks)
+- Read Generator (prompt str only), exceptions (Analyst/Evaluator only), orchestrator typed fail branches
+- Read tests: test_context_builder.py, director included_blocks, orchestrator schema_fail golds
+- Read prior impact: planner-contract.md, evaluator-contract.md (list_included_blocks gold)
+- Grep consumers: ContextBuilder / included_blocks / prompt_text across src+tests
+- Confirmed gaps: D.4 current-turn-not-last; D.3 dual return; D.5/D.6 size fail missing; partial voz/style_rules
+- Non-gaps: null-like omit OK; list_included_blocks exists; no LLM in builder; no silent truncate today
+- Wrote report: `.grok/agent-memory/impact-analyzer/context-builder-contract.md`
+- Updated MEMORY.md pointer
+- status: complete → handoff gsd-planner
+
+## Evidence highlights
+
+### Current assembly order (anti-D.4)
+- Persona → Current VIP message → Comprehension → knowledge.items() order
+- Contract: Persona → knowledge fixed → (comprehension recommended) → current turn LAST
+
+### Dual return
+- build → str only; list_included_blocks separate (evaluator-contract added names export)
+- D.3 wants ContextoConstruido { prompt_final, bloques_incluidos }
+
+### Size fail
+- No max_prompt_chars / token budget on ContextBuilder or Settings
+- No ContextExceedsLimitError / contexto_excede_limite
+- Orchestrator has Analyst + Evaluator typed branches only
+
+### Consumers production
+- director.py sole production build + list_included_blocks caller
+- composition ContextBuilder() + DEFAULT_PERSONA
+- turn_orchestrator fail path for size reason (needed)
+- generator.generate(str) unchanged
+
+### Dirty tree leave alone
+- alembic turns.error residual, unrelated agent-memory mass, Anexos E–I / A–C rework
+
+## Top risks
+1. R1 D.4 reorder changes Generator prompt content order (contract-intended)
+2. R2 dual return call-site updates (Director + tests)
+3. R3 char-budget default false positives (use high default + injectable limit)
+4. R5 comprehension section not in D.4 list (lock keep before current turn, not in bloques)
+
+## Test gate
+```
+python -m pytest tests/unit/cognitive/test_context_builder.py tests/unit/cognitive/test_director.py tests/unit/cognitive/test_evaluator.py tests/unit/cognitive/test_planner.py tests/unit/cognitive/test_import_purity.py tests/unit/application/test_turn_orchestrator.py -q
+python -m pytest tests/unit -q
+```

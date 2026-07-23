@@ -1,0 +1,38 @@
+# gsd-impact-analyzer-planner-contract.log
+# Impact analysis: Align Planner contract to Anexo C (docs/contratos_restantes.md)
+# Date: 2026-07-23
+# Status: analysis only — no production code edits
+# Pool: remaining-contracts-cognitive (ITEM 1/4)
+# Engram project: dianav2
+
+## Timeline
+- 2026-07-23 start: load impact-analyzer agent def, AGENTS.md, work-unit-commits skill (context)
+- Read Anexo C (C.1–C.4) from docs/contratos_restantes.md
+- Read src/diana/cognitive/planner.py — CONFIRMED force-insert knowledge.history when needs_history=false
+- Read Plan model (models.py), Director plan call sites, composition Planner()
+- Grep consumers: director, composition, registry, tests (planner/director/models/orchestrator)
+- Pattern refs: .planning/quick/analyst-contract/, .planning/quick/evaluator-contract/
+- Gold note: analyst SUMMARY residual "Planner still force-inserts history" was L15 out-of-scope; THIS item fixes it
+- Report written: .grok/agent-memory/impact-analyzer/planner-contract.md
+- MEMORY.md pointer added
+
+## Verdict
+READY for gsd-planner — scope tight (mostly planner.py + tests); intentional behavior change on C.3
+
+## Confirmed delta (C.3 violation)
+planner.py lines 32-33:
+  if _HISTORY_CAP not in capabilities:
+      capabilities.insert(0, _HISTORY_CAP)
+Tests currently LOCK the anti-contract behavior:
+  test_planner_inserts_history_first_when_missing
+  test_planner_forces_history_even_when_all_false
+
+## Top risks
+1. Behavior change: needs_history=false no longer fetches knowledge.history for Generator path
+2. Empty Plan.capabilities now legal (all needs_* false) — Director loop must tolerate []
+3. MVP_COMPONENT_DESIGN.md still documents force-history — residual docs drift (out of item scope unless documentador)
+4. C.4 example order ≠ stable _NEED_TO_CAPABILITY order — treat C.4 as set semantics
+
+## Primary test gate
+.venv/bin/python -m pytest -q tests/unit/cognitive/test_planner.py tests/unit/cognitive/test_director.py tests/unit/cognitive/test_models.py tests/unit/cognitive/test_import_purity.py
+Full: .venv/bin/python -m pytest -q tests/unit

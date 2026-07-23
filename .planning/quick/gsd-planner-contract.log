@@ -1,0 +1,32 @@
+[2026-07-23T05:54:07Z] START planner-contract executor
+Reading PLAN complete; dirty tree WIP will not be staged.
+Task 1 starting: RED tests first (force-history invert).
+[2026-07-23T05:54:26Z] Task 1: rewriting test_planner.py for C.3 (expect RED on force-history)
+[2026-07-23T05:54:36Z] Task 1 RED confirmed: 3 failed (force-history). Implementing GREEN.
+[2026-07-23T05:54:43Z] Task 1 GREEN: 13 passed. Committing work unit 1.
+[2026-07-23T05:54:43Z] Task 1 commit: 396fbcb fix(cognitive): Planner omits caps when needs_* is false (Anexo C.3)
+[2026-07-23T05:54:47Z] Task 2 starting: director omit-history blast path test.
+[2026-07-23T05:55:17Z] Task 2 GREEN: cognitive slice 93 passed; full unit 369 passed.
+[2026-07-23T05:55:17Z] Task 2 commit: 66d3124 test(cognitive): Director omits knowledge.history when needs_history is false
+[2026-07-23T05:55:17Z] Self-check running.
+
+## Self-Check: PASSED
+- [x] Todas las tareas completadas
+- [x] Tests del PLAN corridos (planner 13, cognitive slice 93, full unit 369)
+- [x] 0 regresiones atribuibles
+- [x] Convenciones del proyecto respetadas
+- [x] Force-history removed; empty plan legal; stable order locked
+- [x] Dirty WIP not staged (alembic/infra residual intact)
+- [x] Commits: 396fbcb fix(cognitive) Planner C.3; 66d3124 test(cognitive) Director omit-history
+[2026-07-23T05:55:39Z] DONE planner-contract executor → next_recommended: arch-enforcer
+[2026-07-23T06:04:52Z] Fix round start: reading review bab3bdb6
+[2026-07-23T06:05:21Z] Fix round: Issues 1-7 (tests + getattr bare access)
+[2026-07-23T06:05:54Z] Fix round 1: all 7 issues fixed
+[2026-07-23T06:05:54Z] Commit: 56ab8d9 test(cognitive): harden Planner C.3 coverage and bare needs_* access
+[2026-07-23T06:05:54Z] Tests: cognitive slice 100; full unit 376 passed
+
+## Self-Check (fix round): PASSED
+- [x] All open review issues fixed
+- [x] Tests green (planner + director + full unit)
+- [x] Dirty WIP not staged
+- [x] Conventional commit only

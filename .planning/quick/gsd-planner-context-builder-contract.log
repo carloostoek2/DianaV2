@@ -1,0 +1,30 @@
+# gsd-planner log — context-builder-contract
+Date: 2026-07-23
+Project: DianaV2
+Pool: remaining-contracts-cognitive · ITEM 2/4
+
+## Inputs consumed
+- Impact: .grok/agent-memory/impact-analyzer/context-builder-contract.md (full)
+- Source: docs/contratos_restantes.md Anexo D (D.1–D.6)
+- Golds: .planning/quick/evaluator-contract/PLAN.md, .planning/quick/planner-contract/PLAN.md
+- Code: context_builder.py, director.py (~133-156), exceptions.py, models.py EvaluatorInput pattern, turn_orchestrator A.6/B.6
+- Tests: test_context_builder.py, test_director.py, test_turn_orchestrator.py
+- AGENTS.md module limits; work-unit-commits skill; planner-architect methodology
+- Locked decisions L1–L11 from orchestrator + L12–L14 derived (TDD, emission order, style_rules)
+
+## Gaps locked into PLAN
+1. Dual BuiltContext (D.3) — build returns DTO not str
+2. D.4 reorder — current turn last; fixed knowledge emission order
+3. Keep Comprehension before turn; exclude from included_blocks
+4. Size fail ContextExceedsLimitError reason contexto_excede_limite; no truncate/retry
+5. Orchestrator notify mirror A.6/B.6
+6. list_included_blocks shares _is_null_like + D.4 order; Director uses built.included_blocks
+
+## Deliverable
+- PLAN: .planning/quick/context-builder-contract/PLAN.md
+- Tasks: 3 (builder/models/exception → director wire → orchestrator notify + full gate)
+- mode: standard (contracts + locked decisions complete)
+
+## Status
+complete
+next: gsd-executor

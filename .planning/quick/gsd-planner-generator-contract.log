@@ -1,0 +1,54 @@
+# gsd-planner log — generator-contract (Anexo E)
+Date: 2026-07-23
+Status: PLAN_READY
+Deliverable: .planning/quick/generator-contract/PLAN.md
+
+## Inputs consumed
+- Impact: .grok/agent-memory/impact-analyzer/generator-contract.md (FULL)
+- Source: docs/contratos_restantes.md Anexo E (E.1–E.4)
+- Gold patterns: analyst/evaluator schema fail + empty retry locality; orchestrator notify branches (A.6/B.6/D.6)
+- Code: generator.py, director empty_draft branch, turn_orchestrator typed fails
+- Locked L1–L10 from orchestrator intake
+
+## Dimensioning (QUÉ)
+- Outcome: empty drafts fail closed with one retry + typed error + owner info notify; never escalate empty_draft; never approve empty
+- Critical gap: Director post-eval escalate(empty_draft) → must become Generator retry + failed
+- Non-goals: regenerate, quality scoring, GeneratorInput DTO, Behavior, Anexos C/D/F
+
+## Dimensioning (CÓMO)
+- Pattern: exceptions.py twins + Analyst _MAX_ATTEMPTS (empty-only) + orchestrator notify branch
+- Files: generator, exceptions, director, turn_orchestrator + 3 test files
+- Tasks: 3 (TDD) — Generator surface/retry → Director branch removal → Orchestrator notify
+
+## Tasks summary
+1. Generator E.1 prompt + E.4 empty retry + GeneratorEmptyOutputError
+2. Director remove empty_draft escalate; fail before Evaluator
+3. Orchestrator mark_failed + notify_info for generador_salida_vacia
+
+## Assumptions recorded
+- A1 bare str API (no DTO)
+- A2 single empty ownership in Generator
+- A3 no generated_text store on raise-before-return
+- A4 double FAILED status pattern kept
+- A5 transport errors not empty-class
+- A6 skip optional GeneratorInput
+- A7 soft owner-reply prompt wording
+
+## Next
+- Handoff: gsd-executor
+- Primary verify:
+  python -m pytest -q \
+    tests/unit/cognitive/test_generator.py \
+    tests/unit/cognitive/test_director.py \
+    tests/unit/application/test_turn_orchestrator.py \
+    tests/unit/cognitive/test_import_purity.py
+- Full gate: python -m pytest -q tests/unit
+
+## Gate checklist
+- [x] QUÉ dimensioned
+- [x] CÓMO dimensioned (patterns, files, order)
+- [x] Assumptions explicit
+- [x] Tasks with Files + Action + Verification + Done
+- [x] Instrucciones gsd-executor + mock policy + anti-patterns
+- [x] Test commands exact
+- [x] Scope = generator-contract only (no silent reduction / no regenerate)

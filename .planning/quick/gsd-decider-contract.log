@@ -1,0 +1,8 @@
+2026-07-23T06:51:29Z START decider-contract executor — read PLAN+decisions; dirty tree residual present (not in scope)
+2026-07-23T06:51:38Z TASK1 start — add failing tests residual naturalness + mode_restriction
+2026-07-23T06:52:11Z TASK1 done RED — residual naturalness green; 6 mode_restriction tests red (expected)
+2026-07-23T06:52:11Z TASK2 start — Decision field + Decider matrix + Director passthrough + docstring
+2026-07-23T06:53:07Z TASK2 green — primary + safety-net pytest all pass
+2026-07-23T06:53:07Z COMMIT 4e1db5a feat(cognitive): lock Decider F1 matrix + mode_restriction audit
+2026-07-23T06:53:07Z SELF-CHECK PASSED — all tasks, primary tests, no dirty-slice residual, conventions OK
+2026-07-23T06:53:07Z DONE — SUMMARY written; next=gsd-arch-enforcer

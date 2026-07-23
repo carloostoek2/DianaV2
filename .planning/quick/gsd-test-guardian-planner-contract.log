@@ -1,0 +1,34 @@
+# gsd-test-guardian-planner-contract.log
+# 2026-07-23
+
+## START test-guardian planner-contract
+- Read PLAN, SUMMARY, arch-enforcer PASS WITH NOTES (0 critical), impact-analyzer
+- Read mock-audit reference + test-guardian agent
+- Inventory: test_planner.py (Anexo C.1–C.4), test_director omit-history blast
+- Mock grep test_planner: ZERO @patch/MagicMock/AsyncMock
+- Force-history assertions: NONE remaining in tests/ or src/
+- Coverage DoD: omit-when-false, empty plan, determinism, C.2 map, C.4 set+stable, director blast — all present
+- Action: no new tests needed; re-verify critical evidence + write report
+
+## COVERAGE
+- test_planner.py: 8 functions + 6 param cases = 13 tests (PLAN must-list complete)
+- test_director.py::test_director_plan_omits_history_when_needs_history_false present
+- make_director uses real Planner() — FakeLLM only at LLM edge
+- Production planner.py: pure map, no _HISTORY_CAP, no force-insert
+
+## MOCK AUDIT
+- test_planner: 0 mocks → PASS
+- director blast FakeLLM: PERMITIDO (external LLM)
+- 0 prohibited mocks in item scope
+
+## RE-RUN EVIDENCE
+- Executor SUMMARY post 396fbcb/66d3124: planner 13, cognitive slice 93, full unit 369 passed
+- Static re-audit confirms sources unchanged relative to green gate
+- lastfailed: stale missing application/test_import_purity.py only (pre-existing noise)
+
+## VERDICT
+suite protege adecuadamente | mock_audit=pass | tests_added=0
+next_recommended: step-6-tests
+
+## DONE test-guardian planner-contract
+Report: .grok/agent-memory/test-guardian/planner-contract.md

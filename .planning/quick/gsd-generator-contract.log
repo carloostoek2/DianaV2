@@ -1,0 +1,28 @@
+=== gsd-generator-contract start 2026-07-23T06:34:30Z ===
+PLAN: .planning/quick/generator-contract/PLAN.md
+Mode: Strict TDD; .venv/bin/python -m pytest -q
+Dirty tree noted (alembic residual) — will not touch
+
+2026-07-23T06:34:57Z Task1 RED: extending test_generator.py
+2026-07-23T06:35:09Z Task1 GREEN: exceptions.py + generator.py
+2026-07-23T06:35:15Z Task1 DONE commit=49dc4d9 generator empty retry + GeneratorEmptyOutputError
+2026-07-23T06:35:22Z Task2 RED: flip test_empty_draft_escalates
+2026-07-23T06:35:44Z Task2 DONE commit=3d60877 remove empty_draft; gen fail before evaluator
+2026-07-23T06:35:50Z Task3 RED: orchestrator generator empty notify test
+2026-07-23T06:36:21Z Task3 GREEN: turn_orchestrator GeneratorEmptyOutputError branch
+2026-07-23T06:36:26Z Task3 DONE commit=ef4f43d orchestrator typed fail + notify_info
+2026-07-23T06:36:37Z Full unit gate: 396 passed
+2026-07-23T06:36:37Z Self-check start
+
+## Self-Check: PASSED
+- [x] All tasks completed
+- [x] PLAN tests green (54 primary)
+- [x] Full unit 396 passed
+- [x] Project conventions (AGENTS purity, deterministic Director)
+- [x] Atomic commits: 49dc4d9 3d60877 ef4f43d
+- [x] No alembic residual committed
+2026-07-23T06:36:59Z COMPLETE — next: arch-enforcer
+2026-07-23T06:46:07Z Commit Gate: test-guardian E.1 assert hardening only
+2026-07-23T06:46:08Z Commit Gate OK commit=1308d08 (only test_generator.py)
+2026-07-23T06:46:08Z Review CLEAN HARD_ID=ddcf928c effort=4 rounds=1 open=0
+2026-07-23T06:46:13Z SUMMARY updated: review CLEAN HARD_ID=ddcf928c rounds=1 open=0 commit-gate 1308d08

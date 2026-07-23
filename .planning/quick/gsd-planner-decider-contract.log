@@ -1,0 +1,18 @@
+# gsd-planner-decider-contract.log
+# Plan: decider-contract (Anexo F under F1 locks)
+# Date: 2026-07-23
+
+2026-07-23T00:00:00Z START slug=decider-contract agent=gsd-planner
+2026-07-23T00:00:01Z READ impact .grok/agent-memory/impact-analyzer/decider-contract.md FULL
+2026-07-23T00:00:02Z READ docs/contratos_restantes.md Anexo F
+2026-07-23T00:00:03Z READ AGENTS.md Decision + Decider limits
+2026-07-23T00:00:04Z READ src/diana/cognitive/decider.py models Decision director draft attach
+2026-07-23T00:00:05Z READ tests/unit/cognitive/test_decider.py test_models.py
+2026-07-23T00:00:06Z READ prior PLAN pattern planner-contract + generator-contract headers
+2026-07-23T00:00:07Z ASSESS alignment=substantial matrix already F1-correct
+2026-07-23T00:00:08Z DECIDE thin plan: residual naturalness tests + mode_restriction_applied + docstring
+2026-07-23T00:00:09Z DECIDE out: regenerate action, composition threshold wire, DeciderInput DTO
+2026-07-23T00:00:10Z LOCK L1-L8 from orchestrator into PLAN + decisions.md
+2026-07-23T00:00:11Z WRITE .planning/quick/decider-contract/PLAN.md (2 tasks)
+2026-07-23T00:00:12Z WRITE .planning/quick/decider-contract/decisions.md
+2026-07-23T00:00:13Z DONE status=plan_ready next=gsd-executor effort=2 risk=low

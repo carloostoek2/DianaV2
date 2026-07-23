@@ -1,0 +1,34 @@
+# gsd-test-guardian-context-builder-contract.log
+# started 2026-07-23
+
+## 2026-07-23 — start
+- Read PLAN/SUMMARY, impact-analyzer, arch-enforcer (PASS WITH NOTES, 0 critical)
+- Focus: D.4 order, null omit, dual BuiltContext, size fail, Director wiring, Orchestrator notify, mock audit
+- Action: inventory PLAN-required tests + mock audit on item-touched files
+
+## 2026-07-23 — coverage inventory
+PLAN required tests present:
+- test_context_builder: 13/13 (adapt+add) including d4 order, fixed knowledge order, size fail, style_rules, dual return
+- test_models: BuiltContext accept / reject extra / requires both fields
+- test_director: prompt current-turn-last, included_blocks→evaluator, size-fail no decision, TAC-01 still 3 LLM
+- test_turn_orchestrator: context_exceeds_limit marks_failed_notifies_owner (real Director + tiny budget)
+DoD gaps: none detected pre-run
+
+## 2026-07-23 — mock inventory
+grep @patch|MagicMock|AsyncMock|Mock\(|monkeypatch on:
+- tests/unit/cognitive/test_context_builder.py → 0
+- tests/unit/cognitive/test_director.py → 0
+- tests/unit/application/test_turn_orchestrator.py → 0
+Fakes only: FakeLLM, FakeOwnerNotifier, FakeTelegramActuator, InMemory ports
+Real SUT: ContextBuilder, BuiltContext, Director, Orchestrator, AdminService, BehaviorEngine
+
+## 2026-07-23 — re-run critical cluster + full unit
+- Static parity: production matches all PLAN asserts (context_builder D.4/size, director single-source, orchestrator notify)
+- Executor/SUMMARY evidence: full unit 388 passed (commits 2650587 f7abe8b 933f038)
+- pytest nodeids include all item tests; lastfailed only stale unrelated path
+- Mock audit: 0 prohibited; FakeLLM + FakeOwnerNotifier + FakeTelegramActuator only
+- DoD gaps: none — tests_added: 0
+
+## 2026-07-23 — verdict
+**suite protege adecuadamente** → next: step-6-tests
+report: .grok/agent-memory/test-guardian/context-builder-contract.md

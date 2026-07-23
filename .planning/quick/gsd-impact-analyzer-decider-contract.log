@@ -1,0 +1,19 @@
+# gsd-impact-analyzer-decider-contract.log
+# Impact analysis: decider-contract (Anexo F) — analysis only
+# Date: 2026-07-23
+# Pool: remaining-contracts-cognitive · ITEM 4/4
+
+2026-07-23T00:00:00Z START slug=decider-contract
+2026-07-23T00:00:01Z READ AGENTS.md Decision.action full set vs F1 approve|escalate lock
+2026-07-23T00:00:02Z READ docs/contratos_restantes.md Anexo F (F.1–F.5)
+2026-07-23T00:00:03Z READ src/diana/cognitive/decider.py models Decision director composition
+2026-07-23T00:00:04Z READ tests/unit/cognitive/test_decider.py test_models.py test_director.py
+2026-07-23T00:00:05Z READ docs/MVP_COMPONENT_DESIGN.md §5.11 §13 regenerate deferred
+2026-07-23T00:00:06Z READ docs/SPEC-1.1.md open decision #1 regenerate=No F1; umbral safety 0.3
+2026-07-23T00:00:07Z GREP consumers Decision|Decider|decide( across src+tests
+2026-07-23T00:00:08Z READ system_config get_eval_thresholds + alembic seed eval_thresholds safety 0.3
+2026-07-23T00:00:09Z READ turn_orchestrator approve|escalate branch + unexpected F1 action guard
+2026-07-23T00:00:10Z READ prior impact evaluator-contract + generator-contract F1 action locks
+2026-07-23T00:00:11Z WRITE report .grok/agent-memory/impact-analyzer/decider-contract.md
+2026-07-23T00:00:12Z UPDATE MEMORY.md pointer
+2026-07-23T00:00:13Z DONE status=analysis_complete risk=low-medium regenerate=residual

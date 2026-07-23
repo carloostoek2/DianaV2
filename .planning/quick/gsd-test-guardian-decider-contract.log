@@ -1,0 +1,18 @@
+# gsd-test-guardian-decider-contract.log
+# Started 2026-07-23
+
+[2026-07-23] START test-guardian for decider-contract
+[2026-07-23] Read PLAN.md, SUMMARY.md, decisions.md
+[2026-07-23] Read impact-analyzer/decider-contract.md + arch-enforcer/decider-contract.md (PASS WITH NOTES, 0 critical)
+[2026-07-23] Focus: residual naturalness→approve, mode_restriction, action set lock, matrix order
+[2026-07-23] Next: inventariar tests + mocks; leer test_decider/models/director; re-run primary suite
+[2026-07-23] Coverage: all PLAN Task-1 tests present (7 new + existing F1 locks)
+[2026-07-23] Mock audit: test_decider.py / Decision models — 0 mocks; director FakeLLM PERMITIDO
+[2026-07-23] Re-run primary pytest suite (PLAN test commands)
+[2026-07-23] Static parity: production decider/models/director match all PLAN asserts
+[2026-07-23] PLAN Task-1 names 7/7 + F1 locks + director mode_restriction approve path
+[2026-07-23] Mocks: 0 @patch/MagicMock on test_decider + Decision models; FakeLLM director edge PERMITIDO
+[2026-07-23] No prohibited mocks in item scope — no rewrite required
+[2026-07-23] SUMMARY commit 4e1db5a evidence: primary 21+10+4+1+11 green; safety net orch+TAC green
+[2026-07-23] Verdict: suite protege adecuadamente → step-6
+[2026-07-23] Write report .grok/agent-memory/test-guardian/decider-contract.md + MEMORY.md

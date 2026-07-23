@@ -1,0 +1,28 @@
+# gsd-impact-analyzer-generator-contract.log
+# Impact analysis: Align Generator contract to Anexo E
+# Date: 2026-07-23
+# Status: analysis only — no production code edits
+
+## Timeline
+- 2026-07-23 start: load AGENTS.md, docs/contratos_restantes.md Anexo E, impact-analyzer agent def
+- Read generator.py, director.py generate call (~144-176), models (Decision, BuiltContext), exceptions, ports LLMProvider
+- Read analyst.py / evaluator.py retry patterns (A.6 / B.6) as mirror for E.4
+- Read turn_orchestrator typed fail branches (analyst/evaluator/context) — no generator branch yet
+- Grep consumers: composition, admin draft_text, FakeLLM generate, tests generator/director/orchestrator
+- Pattern: .planning/quick/analyst-contract/PLAN.md + evaluator-contract impact report
+- Report written: .grok/agent-memory/impact-analyzer/generator-contract.md
+- MEMORY.md pointer added
+
+## Verdict
+READY for gsd-planner — scope tight, 3–4 task split recommended
+
+## Top risks
+1. empty_draft escalate path violates E.4 (must fail closed after one retry, never approval queue)
+2. Director still evaluates empty draft before escalate — waste + wrong terminal semantics
+3. No typed GeneratorEmptyOutputError / orchestrator notify yet
+4. Inventing quality checks in Generator (forbidden — Evaluator owns quality)
+
+## Primary test gate
+python -m pytest -q tests/unit/cognitive/test_generator.py tests/unit/cognitive/test_director.py tests/unit/application/test_turn_orchestrator.py tests/unit/cognitive/test_models.py tests/unit/cognitive/test_import_purity.py
+# full gate after slice:
+python -m pytest -q tests/unit

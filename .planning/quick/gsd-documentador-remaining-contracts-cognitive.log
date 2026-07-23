@@ -1,0 +1,36 @@
+# gsd-documentador — remaining-contracts-cognitive
+# Started: 2026-07-23T07:00:46Z
+# Mode: hardening pool close (docs only)
+
+## Inputs read
+- .planning/quick/planner-contract/SUMMARY.md
+- .planning/quick/context-builder-contract/SUMMARY.md
+- .planning/quick/generator-contract/SUMMARY.md
+- .planning/quick/decider-contract/{SUMMARY,decisions}.md
+- .grok/agent-memory/arch-enforcer/{planner,context-builder,generator,decider}-contract.md
+- .grok/agent-memory/test-guardian/{planner,context-builder,generator,decider}-contract.md
+- .grok/agent-memory/review/{planner,context-builder,generator,decider}-contract.md
+- .grok/agent-memory/impact-analyzer/{planner,context-builder,generator,decider}-contract.md
+- .grok/agent-memory/MEMORY.md
+- docs/contratos_restantes.md (Anexos C–I for residual handoff)
+- Prior documentador pattern: evaluator-contract.md
+
+## Scope
+Pool remaining-contracts-cognitive (Pool 1 of 2) — Anexos C–F:
+1. planner-contract
+2. context-builder-contract
+3. generator-contract
+4. decider-contract (F1-safe)
+
+## Writes planned
+- .grok/agent-memory/documentador/remaining-contracts-cognitive.md
+- .grok/agent-memory/MEMORY.md (Documentador index entry)
+- this log (append completion)
+
+## Explicit non-writes
+- production / test code
+- alembic/versions/002_turns_error.py and infra dirty tree
+- SPEC.md / REQUERIMIENTOS.md rewrites (out-of-scope residuals only)
+
+## Status
+IN_PROGRESS

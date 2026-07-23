@@ -1,0 +1,11 @@
+[2026-07-23] START arch-enforcer planner-contract
+Plan: .planning/quick/planner-contract/PLAN.md
+Summary: .planning/quick/planner-contract/SUMMARY.md
+Impact: .grok/agent-memory/impact-analyzer/planner-contract.md
+Commits under audit: 396fbcb, 66d3124
+Source: docs/contratos_restantes.md Anexo C (C.1–C.4)
+[2026-07-23] Reading AGENTS.md limits, PLAN/SUMMARY, production planner/models, tests, director path
+[2026-07-23] Evidence: force-history path gone; pure map; Decision.action approve|escalate; cognitive purity; scope tight
+[2026-07-23] Verdict: PASS WITH NOTES | critical=0 → next: test-guardian
+[2026-07-23] Report: .grok/agent-memory/arch-enforcer/planner-contract.md
+[2026-07-23] DONE arch-enforcer planner-contract

@@ -1,0 +1,39 @@
+# gsd-arch-enforcer-generator-contract.log
+# Started: 2026-07-23
+# Item: generator-contract
+# Commits: 49dc4d9, 3d60877, ef4f43d
+# Focus: Anexo E — empty fail closed, no empty escalate, purity
+
+## Timeline
+- arch-enforcer start
+- reading project rules, PLAN, SUMMARY, diffs
+- Read PLAN.md, SUMMARY.md, gsd-generator-contract.log, AGENTS.md limits
+- Read docs/contratos_restantes.md Anexo E (E.1–E.4)
+- Read impact-analyzer/generator-contract.md + arch-enforcer pattern (evaluator/context-builder)
+- Audited production:
+  - generator.py (E.1 owner-reply prompt; E.2 plain str; E.4 empty-only retry×1 → GeneratorEmptyOutputError)
+  - exceptions.py (GeneratorEmptyOutputError / generador_salida_vacia)
+  - director.py (empty_draft branch deleted; fail before Evaluator; no generated_text on raise)
+  - turn_orchestrator.py (typed fail + notify_info; no VIP send / no approval)
+- Cross-checked:
+  - empty_draft: zero matches in repo
+  - cognitive imports: no telegram/behavior/learning/aiogram/sqlalchemy/application
+  - Decision.action still approve|escalate
+  - sole generate call site: director; composition Generator(provider)
+  - tests: test_generator E.1/E.4; test_director fail-before-evaluator; test_orchestrator notify+no send
+- Verdict: PASS WITH NOTES, 0 critical
+- Report: .grok/agent-memory/arch-enforcer/generator-contract.md
+- MEMORY.md pointer updated
+- Handoff: test-guardian
+
+## Focus checks
+1. Empty fail closed (E.4) — PASS
+2. No empty_draft escalate — PASS
+3. Cognitive purity — PASS
+4. Owner notify in application — PASS
+5. No VIP send / no approval on gen fail — PASS
+6. Scope vs PLAN — PASS
+7. Director deterministic — PASS
+
+## Gate
+PASS WITH NOTES → advance to test-guardian

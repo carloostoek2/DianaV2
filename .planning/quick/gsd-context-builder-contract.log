@@ -1,0 +1,18 @@
+2026-07-23T06:15:14Z START context-builder-contract executor; reading sources
+2026-07-23T06:15:55Z Task1 START: RED tests for BuiltContext + D.4 + size fail
+2026-07-23T06:16:41Z Task1 GREEN: implement BuiltContext + ContextExceedsLimitError + ContextBuilder
+2026-07-23T06:16:49Z Task1 GREEN: 62 passed context_builder+models; committing
+2026-07-23T06:16:49Z Task1 COMMIT 2650587 feat(cognitive): ContextBuilder dual BuiltContext, D.4 order, size fail
+2026-07-23T06:16:52Z Task2 START: Director BuiltContext wiring tests RED
+2026-07-23T06:17:25Z Task2 GREEN: Director BuiltContext wiring
+2026-07-23T06:17:30Z Task2 COMMIT f7abe8b feat(cognitive): Director consumes BuiltContext for prompt and blocks
+2026-07-23T06:17:36Z Task3 START: Orchestrator D.6 notify RED
+2026-07-23T06:17:54Z Task3 GREEN: implement ContextExceedsLimitError orchestrator branch
+2026-07-23T06:17:58Z Task3 full unit gate starting
+2026-07-23T06:18:26Z Task3 COMMIT 933f038; full unit 388 passed
+2026-07-23T06:18:54Z SELF-CHECK PASSED; commits 2650587 f7abe8b 933f038; unit 388 passed; SUMMARY written; next arch-enforcer
+2026-07-23T06:27:10Z FIX ROUND START: review 438d8c31
+2026-07-23T06:27:37Z FIX: Issue1 RED preserve turn.text trailing ws; Issue3 full D.4 headings
+2026-07-23T06:28:05Z FIX: Issue1+3 fixed; Issue2 wontfix PLAN residual style_rules
+2026-07-23T06:28:05Z FIX COMMIT 037ad96 fix preserve turn.text + D.4 headings
+2026-07-23T06:28:07Z FIX ROUND DONE self-check PASSED 037ad96

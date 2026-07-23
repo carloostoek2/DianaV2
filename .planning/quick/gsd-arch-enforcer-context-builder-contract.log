@@ -1,0 +1,34 @@
+# Arch Enforcer Log: context-builder-contract
+Started: 2026-07-23
+Item: Align ContextBuilder to Anexo D (D.1–D.6)
+Agent: arch-enforcer
+Commits: 2650587, f7abe8b, 933f038
+
+## Timeline
+- Log opened before reads/writes
+- Read PLAN.md, SUMMARY.md, impact-analyzer/context-builder-contract.md
+- Read AGENTS.md module limits (§3 Cognitive Core, §5.1 Director, anti-contamination)
+- Read docs/contratos_restantes.md Anexo D (D.1–D.6)
+- Audited production:
+  - context_builder.py (dual BuiltContext, D.4 order, null-like omit, size fail)
+  - models.py (BuiltContext English + extra=forbid; Decision.action approve|escalate)
+  - exceptions.py (ContextExceedsLimitError reason contexto_excede_limite)
+  - director.py (single-source built.prompt_final + built.included_blocks; no partial store)
+  - turn_orchestrator.py (typed branch + admin.notify_info; re-raise; no VIP send)
+- Cross-checked: cognitive imports (no telegram/behavior/learning/aiogram/application),
+  no truncation helpers, no Decision expansion, composition still ContextBuilder() default
+- Tests surface reviewed: test_context_builder, test_director, test_turn_orchestrator, test_models
+- Verdict: PASS WITH NOTES, 0 critical
+- Report: .grok/agent-memory/arch-enforcer/context-builder-contract.md
+- MEMORY.md pointer updated
+- Handoff: test-guardian
+
+## Focus checks
+1. D.4 order (Persona → knowledge fixed → Comprehension → current turn last) — PASS
+2. Dual BuiltContext single assembly pass — PASS
+3. No null placeholders / null-like omit — PASS
+4. Size fail typed contexto_excede_limite; no truncate; no retry — PASS
+5. Cognitive purity (no telegram/behavior) — PASS
+6. No Decision expansion (approve|escalate only) — PASS
+7. Orchestrator notify without cognitive→telegram — PASS
+8. Scope tight; dirty-tree not in commits — PASS

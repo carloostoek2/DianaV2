@@ -1,0 +1,32 @@
+# gsd-planner log — planner-contract
+# Date: 2026-07-23
+# Pool: remaining-contracts-cognitive · ITEM 1/4
+# Mode: standard
+
+## Inputs read
+- impact: .grok/agent-memory/impact-analyzer/planner-contract.md
+- source: docs/contratos_restantes.md Anexo C (C.1–C.4)
+- gold plans: .planning/quick/evaluator-contract/PLAN.md, analyst-contract/PLAN.md
+- code: src/diana/cognitive/planner.py, models.py Plan, director plan call site, tests/unit/cognitive/test_planner.py
+- AGENTS.md module limits
+- methodology: planner-architect.md, commit-policy.md, work-unit-commits/SKILL.md
+- locked L1–L11 from orchestrator (non-negotiable)
+
+## Gap confirmed
+- Primary C.3 violation: planner.py force-inserts knowledge.history when needs_history=false
+- Unit tests lock anti-contract: test_planner_inserts_history_first_when_missing, test_planner_forces_history_even_when_all_false
+- C.1/C.2 mapping/_NEED_TO_CAPABILITY already correct; empty plan Director-safe
+- C.4 example is set; stable order is _NEED_TO_CAPABILITY (not C.4 list order)
+
+## Deliverable
+- PLAN written: .planning/quick/planner-contract/PLAN.md
+- Tasks: 2
+  1. C.3 unit contract + remove force-history (TDD RED→GREEN, work unit commit)
+  2. Director blast needs_history=false + full unit gate
+- Non-goals: Anexos D–I, force reintroduction, profile, Planner errors, dirty tree
+- Test runner: .venv/bin/python -m pytest -q
+- Strict TDD: active
+- Next: gsd-executor
+
+## Status
+done
