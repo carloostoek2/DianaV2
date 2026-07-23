@@ -252,6 +252,50 @@ async def test_tac04_trace_contains_all_seven_keys() -> None:
 
 
 @pytest.mark.asyncio
+async def test_director_plan_omits_history_when_needs_history_false() -> None:
+    """Anexo C.3 blast: plan/retrieved omit knowledge.history when needs_history is false."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(
+                needs_history=False,
+                needs_context=True,
+                needs_memory=False,
+                needs_policy=False,
+                needs_examples=False,
+                needs_schedule=False,
+            ),
+            _profile(),
+        ],
+        text_responses=["draft without forced history"],
+    )
+    director, trace, _ = make_director(llm)
+    turn = _turn()
+    decision = await director.handle_turn(turn)
+
+    assert isinstance(decision, Decision)
+    assert decision.action in ("approve", "escalate")
+
+    plan = trace.get(turn.turn_id, "plan")
+    assert isinstance(plan, dict)
+    assert "knowledge.history" not in plan["capabilities"]
+    assert "knowledge.context" in plan["capabilities"]
+    assert plan["capabilities"] == ["knowledge.context"]
+
+    retrieved = trace.get(turn.turn_id, "retrieved")
+    assert isinstance(retrieved, dict)
+    assert set(retrieved.keys()) == set(plan["capabilities"])
+    assert "knowledge.history" not in retrieved
+
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+    assert len(llm.calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_registry_isolation_history_uses_turn_chat_id() -> None:
     history = InMemoryMessageHistory(
         {
