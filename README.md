@@ -50,6 +50,9 @@ On startup the process:
    (re-notify owner; **never** silent VIP re-send / auto-approve)
 3. Starts aiogram long-polling
 
+**Ops assumption:** single active bot process. Multi-instance polling / multi-writer
+CAS for delivery rows is an F2 concern (see `.planning/phases/MVP-FASE1-SUMMARY.md`).
+
 ## Tests
 
 ```bash

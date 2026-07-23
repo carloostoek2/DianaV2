@@ -116,3 +116,7 @@ Commit: `fix(telegram): hardener round — forbidden scope, honest UX, FSM`
 ## Out of scope (confirmed not implemented)
 
 FreezeCheck, Staging, gray zone, autonomous `send`, product sandbox, live Telegram CI
+
+## Review loop
+- effort 5, rounds 2, 0 open final
+- tests: 297 passed

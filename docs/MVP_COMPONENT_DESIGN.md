@@ -1,13 +1,30 @@
-# MVP Component Design — Supervised Mode
+# MVP Component Design — Supervised Mode (Fase 1)
 **Diana Business Bot**
 
 | Campo | Valor |
 |-------|--------|
 | Nivel | Diseño de componentes para el primer valor seguro |
-| Basado en | `REQUERIMIENTOS.md` v2.1 + `SPEC.md` v1.0 + `AGENTS.md` v1.0 |
-| Objetivo | Entregar el MVP Supervisado lo antes posible, sin romper la arquitectura |
-| Versión | 1.0 |
+| Basado en | `REQUERIMIENTOS.md` v2.1 + `docs/SPEC-1.1.md` v1.5 + `AGENTS.md` v1.0 |
+| Objetivo | Entregar el MVP Supervisado (Fase 1) sin romper la arquitectura híbrida |
+| Versión | 1.1 |
 | Fecha | Julio 2026 |
+| Fuente de verdad de diseño | `docs/SPEC-1.1.md` (este doc es la guía de implementación de Fase 1) |
+
+---
+
+## 0. Principio rector (no negociable)
+
+> El sistema no genera respuestas.  
+> El sistema toma decisiones.  
+> Las respuestas son únicamente una consecuencia de esas decisiones.
+
+Consecuencias para el MVP:
+
+- **Director 100 % determinista** — nunca pregunta a un LLM “qué hacer”.
+- **Cada componente responde una sola pregunta**.
+- **Explicabilidad total** — objetos intermedios persistidos.
+- **Sustituibilidad** — Capability Registry desde el día 1 (reales o STUB).
+- **Anti-contaminación** — no se escribe en bancos de conocimiento en Fase 1.
 
 ---
 
@@ -15,68 +32,140 @@
 
 Un VIP autorizado envía un mensaje → el sistema genera un borrador → la dueña lo ve en su DM → aprueba o corrige → el mensaje se entrega en nombre de la dueña con delay + lectura + typing.
 
-**Criterio de éxito (AC-01 + AC-03 + AC-05):**
+**Criterio de éxito (AC-01 + AC-03 + AC-05 + roadmap Fase 1 de SPEC-1.1):**
+
 - El VIP recibe la respuesta como si fuera la dueña (Business Connection).
 - Nada llega al VIP sin aprobación explícita.
 - Hay espera, mark-as-read y typing indicator.
 - Escalación por palabras prohibidas funciona sin pasar por el LLM.
-- Un segundo mensaje del VIP cancela el turno anterior.
+- Un segundo mensaje del VIP supersede el turno anterior y cancela deliveries.
+- Toda decisión deja traza reconstruible en `pipeline_traces` + estado en `turns`.
 
 ---
 
-## 2. Alcance exacto del MVP
+## 2. Alcance exacto del MVP (Fase 1)
 
 ### Dentro de alcance
 
-| # | Componente | Notas |
-|---|------------|-------|
-| 1 | Telegram Layer (aiogram) | long-polling + business_message + admin DM |
+| # | Componente | Notas (alineado a SPEC-1.1 §4 / §8) |
+|---|------------|-------------------------------------|
+| 1 | Telegram Layer (aiogram 3.x) | long-polling + `business_message` + admin DM |
 | 2 | Middleware stack | Auth (allowlist) + Forbidden words + Owner detection |
-| 3 | TurnOrchestrator | Entrada del turno + cancelación de pending |
-| 4 | CognitiveDirector | Orquestación determinista del happy path |
-| 5 | Analyst | LLM → Comprehension (versión mínima) |
-| 6 | ContextBuilder | Prompt mínimo (persona + historial reciente + mensaje actual) |
-| 7 | Generator | LLM → texto del borrador |
-| 8 | Evaluator | LLM → EvaluationProfile (vector 7 dimensiones) |
-| 9 | Decider | Reglas deterministas → Decision (solo `approve` o `escalate` en MVP) |
-| 10 | BehaviorEngine | delay + read + typing + send + cancel |
-| 11 | AdminService + keyboards | Aprobar / Corregir / Ver traza resumida |
-| 12 | Persistencia mínima | vips, message_history, pipeline_traces, pending_deliveries, system_config |
-| 13 | Escalación determinística | Antes del Analista |
+| 3 | **Turn Coordinator** | Serializa por `chat_id`, máquina de estados, supersede (REQ-VIP-06) |
+| 4 | TurnOrchestrator / Application | Caso de uso: entrada VIP → Director → Admin/Behavior |
+| 5 | CognitiveDirector | Pipeline determinista completo de Fase 1 |
+| 6 | Analyst | LLM → `Comprehension` (con flags `needs_*`) |
+| 7 | **Planner** | Determinista → lista de capacidades |
+| 8 | **Capability Registry + Retrievers** | `history` y `context` REAL (parcial); resto STUB → null |
+| 9 | ContextBuilder | Prompt mínimo dinámico (omite bloques null) |
+| 10 | Generator | LLM → texto del borrador |
+| 11 | Evaluator | LLM → `EvaluationProfile` (vector 7D) |
+| 12 | Decider | Solo `approve` o `escalate` (modo supervisado global) |
+| 13 | BehaviorEngine | delay + read + typing + send + cancel |
+| 14 | AdminService + keyboards | Aprobar / Corregir / Escalar + menú básico |
+| 15 | Persistencia Fase 1 | `vips`, `message_history`, `pipeline_traces`, `pending_deliveries`, `turns`, `escalation_events`, `system_config`, `pending_approvals` |
+| 16 | Learning post-turno (mínimo) | Solo persistir traza; sin Staging |
 
-### Explícitamente fuera de alcance (se stubbean o no existen)
+### Explícitamente fuera de alcance (Fase 2+)
 
-| Componente | Tratamiento en MVP |
-|------------|--------------------|
-| Capability Registry + Retrievers | No existen. ContextBuilder usa solo historial + persona fija |
-| 5 tipos de conocimiento / pgvector | No |
-| Staging Area / Learning | No se escribe nada en bancos de conocimiento |
-| Zona gris / consult_doctrine | No. Decider solo puede devolver `approve` o `escalate` |
-| Modo autónomo | Solo existe modo supervisado |
-| Sandbox | No |
+| Componente | Tratamiento en Fase 1 |
+|------------|------------------------|
+| Retrievers de memory / policy / examples / profile / schedule | **STUB** que devuelven `null` (el Registry ya los resuelve) |
+| pgvector / embeddings | No |
+| Staging Area / destilación / promoción | No se escribe en bancos vivos |
+| Zona gris / `consult_doctrine` | Decider no puede devolverlo |
+| `regenerate` | Deshabilitado (dueña corrige en DM) |
+| Modo autónomo / `send` directo | Solo supervisado → siempre `approve` o `escalate` |
+| Sandbox / FakeDelivery | No |
 | Recontacto / Promo no-VIP | No |
-| Hot-swap de LLM | Hardcodeado a DeepSeek (interfaz ya preparada) |
-| Métricas / calibración | No |
-| Notas manuales / memoria por VIP | No |
+| Hot-swap de LLM en runtime | Interfaz abstracta lista; instancia DeepSeek |
+| FreezeCheck middleware | No (Fase 2) |
+| Métricas agregadas | No |
 
 ---
 
-## 3. Componentes del MVP — responsabilidades y contratos
+## 3. Arquitectura de Fase 1 (vista rápida)
 
-### 3.1 Telegram Layer + Middleware
+```
+Telegram Business Connection (aiogram 3.x)
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────────┐
+│  MIDDLEWARES                                                      │
+│  Logging → BusinessConnection → OwnerDetection                    │
+│  → ForbiddenKeywords (cortocircuito) → Auth (allowlist)           │
+└───────────────────────────────┬───────────────────────────────────┘
+                                │
+┌───────────────────────────────▼───────────────────────────────────┐
+│  TURN COORDINATOR                                                 │
+│  • 1 turno no terminal por chat_id                                │
+│  • supersede + cancel delivery del turno anterior                 │
+│  • máquina de estados del Turn                                    │
+└───────────────────────────────┬───────────────────────────────────┘
+                                │
+┌───────────────────────────────▼───────────────────────────────────┐
+│  COGNITIVE CORE (puro)                                            │
+│  Director → Analyst → Planner → Registry/Retrievers               │
+│  → ContextBuilder → Generator → Evaluator → Decider               │
+└───────────────────────────────┬───────────────────────────────────┘
+                                │ Decision (approve | escalate)
+┌───────────────────────────────▼───────────────────────────────────┐
+│  AdminService (DM dueña)  →  BehaviorEngine (solo tras approve)   │
+└───────────────────────────────┬───────────────────────────────────┘
+                                │
+┌───────────────────────────────▼───────────────────────────────────┐
+│  LEARNING post-turno: solo pipeline_traces                        │
+└───────────────────────────────────────────────────────────────────┘
+```
 
-**Orden obligatorio del middleware stack:**
+---
+
+## 4. Máquina de estados del Turn
+
+Cada mensaje VIP crea un `Turn` que transita así (SPEC-1.1 §3):
+
+```
+[received]
+    │
+    ├──(cortocircuito palabra prohibida)──► [escalated] (TERMINAL)
+    │
+    └──(flujo normal)──► [analyzing] ──► [planning] ──► [retrieving]
+                         ──► [building_context] ──► [generating]
+                         ──► [evaluating] ──► [deciding]
+                              │
+                              ▼
+                         [pending_approval] ──(dueña aprueba)──► [delivered] (TERMINAL)
+                              │
+                              ├──(dueña descarta/escala)──► [escalated] (TERMINAL)
+                              │
+                              └──(nuevo msg del VIP)──► [superseded] (TERMINAL)
+```
+
+**Invariante crítica:** solo puede existir un Turn no terminal  
+(`status` ∉ `{superseded, delivered, failed, escalated}`) por `chat_id`.
+
+El **Turn Coordinator** lo garantiza (serialización por chat: `SELECT … FOR UPDATE` sobre `turns`, o cola FIFO en memoria por `chat_id`).
+
+---
+
+## 5. Componentes — responsabilidades y contratos
+
+### 5.1 Telegram Layer + Middleware
+
+**Orden del stack (AGENTS.md + SPEC Fase 1):**
 
 ```
 1. LoggingMiddleware
 2. BusinessConnectionExtractor      # inyecta business_connection_id
-3. OwnerDetectionMiddleware         # si es la dueña → cancel_pending + observe only
+3. OwnerDetectionMiddleware         # dueña → cancel_pending + observe only
 4. ForbiddenKeywordsMiddleware      # cortocircuito → escalate (ANTES del Analista)
-5. AuthMiddleware                   # ¿está en allowlist y no está paused?
-6. → TurnOrchestrator
+5. AuthMiddleware                   # allowlist + not paused
+6. → Turn Coordinator / application entry
 ```
 
-**Contrato de entrada al sistema:**
+`FreezeCheck` no se implementa en Fase 1 (queda el slot de middleware listo para Fase 2).
+
+**Contrato de entrada:**
 
 ```python
 class IncomingTurn(BaseModel):
@@ -89,74 +178,130 @@ class IncomingTurn(BaseModel):
     is_from_owner: bool = False
 ```
 
-### 3.2 TurnOrchestrator
+### 5.2 Turn Coordinator
 
-**Responsabilidad:** punto de entrada de un turno VIP. Cancela lo anterior y lanza el Director.
+**Pregunta:** ¿Cómo garantizo un solo turno vivo por chat y su ciclo de vida?
+
+```python
+class TurnCoordinator:
+    async def begin_turn(self, incoming: IncomingTurn) -> Turn:
+        """
+        1. Adquirir lock por chat_id
+        2. Marcar turnos no terminales previos como superseded
+        3. cancel_pending(chat_id) en BehaviorEngine
+        4. Crear Turn(status='received') y devolverlo
+        """
+        ...
+
+    async def transition(self, turn_id: UUID, new_status: str, **meta) -> Turn: ...
+
+    async def mark_failed(self, turn_id: UUID, error: str) -> Turn: ...
+```
+
+Estados válidos (columna `turns.status`):  
+`received | analyzing | planning | retrieving | building_context | generating | evaluating | deciding | pending_approval | escalated | superseded | delivered | failed`
+
+### 5.3 Application entry (TurnOrchestrator)
+
+Orquesta el caso de uso; no contiene lógica cognitiva.
 
 ```python
 class TurnOrchestrator:
-    def __init__(self, director: CognitiveDirector, behavior: BehaviorEngine, ...): ...
+    def __init__(
+        self,
+        coordinator: TurnCoordinator,
+        director: CognitiveDirector,
+        admin: AdminService,
+        behavior: BehaviorEngine,
+        history: MessageHistoryRepo,
+        ...
+    ): ...
 
-    async def handle_vip_message(self, turn: IncomingTurn) -> None:
-        # 1. Cancelar cualquier delivery pendiente de este chat
-        await self.behavior.cancel_pending(turn.chat_id, reason="new_message")
+    async def handle_vip_message(self, incoming: IncomingTurn) -> None:
+        turn = await self.coordinator.begin_turn(incoming)
+        await self.history.append(incoming)
 
-        # 2. Guardar mensaje en message_history
-        await self.history.append(turn)
+        try:
+            decision = await self.director.handle_turn(turn, incoming)
+        except Exception as exc:
+            await self.coordinator.mark_failed(turn.id, str(exc))
+            raise
 
-        # 3. Ejecutar pipeline cognitivo
-        decision = await self.director.handle_turn(turn)
-
-        # 4. Actuar según Decision
         if decision.action == "escalate":
-            await self.admin.notify_escalation(turn, decision)
+            await self.coordinator.transition(turn.id, "escalated")
+            await self.admin.notify_escalation(incoming, decision, turn.id)
         elif decision.action == "approve":
-            await self.admin.send_draft_for_approval(turn, decision)
+            await self.coordinator.transition(turn.id, "pending_approval")
+            await self.admin.send_draft_for_approval(incoming, decision, turn.id)
         else:
-            # En MVP no deberían llegar otras acciones
-            raise ValueError(f"Unexpected action in MVP: {decision.action}")
+            # Fase 1: solo approve | escalate
+            raise ValueError(f"Unexpected action in Fase 1: {decision.action}")
+
+        # Learning post-turno (Fase 1 = solo asegurar traza completa)
+        await self.learning.run_post_turn(turn.id)
 ```
 
-### 3.3 CognitiveDirector (MVP)
+### 5.4 CognitiveDirector (Fase 1)
 
-**Responsabilidad:** orquestar el happy path de forma determinista.
+**Pregunta:** ¿Qué necesita este turno?  
+**Naturaleza:** 100 % determinista en el control de flujo.
 
 ```python
 class CognitiveDirector:
-    async def handle_turn(self, turn: IncomingTurn) -> Decision:
-        # 1. Analyst
-        comprehension = await self.analyst.analyze(turn)
-        await self.trace.store(turn_id, "comprehension", comprehension)
+    async def handle_turn(self, turn: Turn, incoming: IncomingTurn) -> Decision:
+        # 0. Cortocircuito de palabras prohibidas puede vivir en middleware;
+        #    si llega aquí, el texto ya es "seguro" a nivel léxico.
+        #    (El Director NO decide acción con LLM.)
 
-        # 2. ContextBuilder (MVP: solo historial + persona)
-        recent_history = await self.history.get_recent(turn.chat_id, limit=12)
+        await self.coordinator.transition(turn.id, "analyzing")
+        comprehension = await self.analyst.analyze(incoming)
+        await self.trace.store(turn.id, "comprehension", comprehension)
+
+        await self.coordinator.transition(turn.id, "planning")
+        plan = self.planner.plan(comprehension)  # lista de capacidades
+        await self.trace.store(turn.id, "plan", plan)
+
+        await self.coordinator.transition(turn.id, "retrieving")
+        retrieved = {}
+        for capability in plan.capabilities:
+            retriever = self.registry.resolve(capability)
+            retrieved[capability] = await retriever.fetch(incoming, comprehension)
+        await self.trace.store(turn.id, "retrieved", retrieved)
+
+        await self.coordinator.transition(turn.id, "building_context")
         prompt = self.context_builder.build(
-            turn=turn,
+            turn=incoming,
             comprehension=comprehension,
-            history=recent_history,
-            persona=self.persona,          # texto fijo de la dueña
+            knowledge=retrieved,   # nulls se omiten del prompt
+            persona=self.persona,
         )
-        await self.trace.store(turn_id, "prompt", prompt)
+        await self.trace.store(turn.id, "prompt", prompt)
 
-        # 3. Generator
+        await self.coordinator.transition(turn.id, "generating")
         draft = await self.generator.generate(prompt)
-        await self.trace.store(turn_id, "generated", draft)
+        await self.trace.store(turn.id, "generated", draft)
 
-        # 4. Evaluator
-        evaluation = await self.evaluator.evaluate(draft, comprehension, turn)
-        await self.trace.store(turn_id, "evaluation", evaluation)
+        await self.coordinator.transition(turn.id, "evaluating")
+        evaluation = await self.evaluator.evaluate(draft, comprehension, incoming)
+        await self.trace.store(turn.id, "evaluation", evaluation)
 
-        # 5. Decider
-        decision = self.decider.decide(evaluation, comprehension, mode="supervised")
+        await self.coordinator.transition(turn.id, "deciding")
+        decision = self.decider.decide(
+            evaluation=evaluation,
+            comprehension=comprehension,
+            mode="supervised",
+        )
         decision.draft_text = draft
-        await self.trace.store(turn_id, "decision", decision)
+        await self.trace.store(turn.id, "decision", decision)
 
         return decision
 ```
 
-**Nota MVP:** No hay Planner ni Registry. El ContextBuilder es deliberadamente simple.
+**Prohibido en el Director:** importar `aiogram`, `BehaviorEngine`, decidir delays, promediar scores.
 
-### 3.4 Analyst
+### 5.5 Analyst
+
+**Pregunta:** ¿Qué está pasando en este turno?
 
 ```python
 class Analyst(Protocol):
@@ -168,11 +313,77 @@ class Comprehension(BaseModel):
     emotion: str
     urgency: Literal["baja", "media", "alta"]
     risk: Literal["bajo", "medio", "alto"]
-    # En MVP los needs_* se ignoran (no hay retrieval)
+    needs_memory: bool = False
+    needs_policy: bool = False
+    needs_schedule: bool = False
+    needs_examples: bool = False
+    needs_history: bool = True
+    needs_context: bool = True
     raw_llm_output: dict | None = None
 ```
 
-### 3.5 ContextBuilder (MVP)
+En Fase 1 los flags `needs_*` **sí se usan**: el Planner los mapea a capacidades. Los STUBs devuelven `null` y el ContextBuilder omite esos bloques.
+
+### 5.6 Planner (determinista)
+
+**Pregunta:** ¿Qué conocimiento recuperar?
+
+```python
+class Plan(BaseModel):
+    capabilities: list[str]  # p.ej. ["knowledge.history", "knowledge.context"]
+
+class Planner:
+    def plan(self, comprehension: Comprehension) -> Plan:
+        caps: list[str] = []
+        if comprehension.needs_history:
+            caps.append("knowledge.history")
+        if comprehension.needs_context:
+            caps.append("knowledge.context")
+        if comprehension.needs_memory:
+            caps.append("knowledge.memory")
+        if comprehension.needs_policy:
+            caps.append("knowledge.policy")
+        if comprehension.needs_examples:
+            caps.append("knowledge.examples")
+        if comprehension.needs_schedule:
+            caps.append("knowledge.schedule")
+        # Siempre asegurar history como mínimo operativo
+        if "knowledge.history" not in caps:
+            caps.insert(0, "knowledge.history")
+        return Plan(capabilities=caps)
+```
+
+### 5.7 Capability Registry + Retrievers
+
+**Pregunta:** ¿Qué componente concreto satisface esta capacidad?
+
+```python
+class Retriever(Protocol):
+    async def fetch(
+        self,
+        turn: IncomingTurn,
+        comprehension: Comprehension,
+    ) -> Any | None: ...
+
+class CapabilityRegistry:
+    def resolve(self, capability: str) -> Retriever: ...
+```
+
+| Capacidad | Fase 1 |
+|-----------|--------|
+| `knowledge.history` | **REAL** — últimos N mensajes (SQL) |
+| `knowledge.context` | **REAL (parcial)** — estado simple derivado del historial |
+| `knowledge.profile` | **STUB** → `null` |
+| `knowledge.memory` | **STUB** → `null` |
+| `knowledge.policy` | **STUB** → `null` |
+| `knowledge.examples` | **STUB** → `null` |
+| `knowledge.schedule` | **STUB** → `null` |
+
+El Director solo conoce **nombres de capacidad**, nunca clases concretas (TAC-02 / ADR-002).
+
+### 5.8 ContextBuilder
+
+**Pregunta:** ¿Cuál es el contexto mínimo necesario?
 
 ```python
 class ContextBuilder:
@@ -180,29 +391,30 @@ class ContextBuilder:
         self,
         turn: IncomingTurn,
         comprehension: Comprehension,
-        history: list[Message],
+        knowledge: dict[str, Any | None],
         persona: str,
     ) -> str:
         """
-        Construye un prompt mínimo:
-        - Instrucciones de persona/voz
-        - Historial reciente (últimos N mensajes)
-        - Mensaje actual del VIP
-        - Instrucción de responder como la dueña
+        Composición dinámica (REQ-NFR-07):
+        - Siempre: persona/voz + reglas de estilo + mensaje actual
+        - Incluye solo bloques de knowledge cuyo valor no es null
+        - En Fase 1 típico: history (+ context parcial si existe)
         """
         ...
 ```
 
-### 3.6 Generator
+### 5.9 Generator
 
 ```python
 class Generator(Protocol):
     async def generate(self, prompt: str) -> str: ...
 ```
 
-Solo recibe el prompt ya construido y devuelve texto. Nada más.
+Solo recibe el prompt ya construido y devuelve texto. No clasifica, no decide, no busca.
 
-### 3.7 Evaluator
+### 5.10 Evaluator
+
+**Pregunta:** ¿Debemos confiar en este mensaje?
 
 ```python
 class Evaluator(Protocol):
@@ -214,35 +426,44 @@ class Evaluator(Protocol):
     ) -> EvaluationProfile: ...
 
 class EvaluationProfile(BaseModel):
-    naturalness: float
+    naturalness: float   # naturalidad
     precision: float
-    doctrine: float
-    consistency: float
-    safety: float
-    coverage: float
-    empathy: float
+    doctrine: float      # doctrina
+    consistency: float   # consistencia
+    safety: float        # seguridad
+    coverage: float      # cobertura
+    empathy: float       # empatia
     raw_llm_output: dict | None = None
 ```
 
-### 3.8 Decider (MVP — solo dos acciones)
+**Nunca** se reduce a un score único (`mean(...)` está prohibido).  
+Nombres de campo en código en inglés (AGENTS.md); semántica = vector 7D de SPEC-1.1.
+
+### 5.11 Decider (Fase 1 — solo dos acciones)
+
+**Pregunta:** ¿Qué acción tomar?
+
+Reglas de Fase 1 (modo supervisado global, SPEC-1.1 §4.8 + decisión abierta #3):
 
 ```python
 class Decider:
+    def __init__(self, thresholds: dict | None = None):
+        # Fuente: system_config['eval_thresholds']; default conservador
+        self.safety_threshold = (thresholds or {}).get("safety", 0.3)
+
     def decide(
         self,
         evaluation: EvaluationProfile,
         comprehension: Comprehension,
         mode: Literal["supervised"] = "supervised",
     ) -> Decision:
-        # Reglas mínimas MVP
-        if evaluation.safety < 0.75 or comprehension.risk == "alto":
+        if evaluation.safety < self.safety_threshold or comprehension.risk == "alto":
             return Decision(
                 action="escalate",
                 reason="safety_or_risk_high",
                 evaluation=evaluation,
             )
-
-        # En MVP solo existe modo supervisado → siempre approve
+        # Supervisado: nunca send directo
         return Decision(
             action="approve",
             reason="ok_for_human_review",
@@ -250,19 +471,24 @@ class Decider:
         )
 
 class Decision(BaseModel):
-    action: Literal["approve", "escalate"]   # MVP restringido
+    action: Literal["approve", "escalate"]  # Fase 1 restringido
     reason: str
     evaluation: EvaluationProfile
     draft_text: str | None = None
 ```
 
-### 3.9 BehaviorEngine (MVP)
+- `regenerate` y `consult_doctrine` **deshabilitados** en Fase 1.
+- Umbral inicial de seguridad: **0.3** (conservador); ajustable vía `system_config`.
+
+### 5.12 BehaviorEngine (Fase 1)
+
+**Pregunta:** ¿Cómo se actúa el mensaje? (infraestructura pura)
 
 ```python
 class DeliveryContext(BaseModel):
     chat_id: int
     business_connection_id: str
-    vip_id: int | None = None
+    vip_id: UUID | None = None
     mode: Literal["supervised"] = "supervised"
 
 class DeliveryResult(BaseModel):
@@ -278,31 +504,28 @@ class BehaviorEngine:
         texts: list[str],
         ctx: DeliveryContext,
         turn_id: UUID,
+        decision: Decision | None = None,
     ) -> DeliveryResult: ...
 
     async def cancel_pending(self, chat_id: int, reason: str = "new_message") -> None: ...
 ```
 
-**Secuencia de `deliver` en MVP:**
+**Secuencia `deliver`:**
 
-1. Insertar fila en `pending_deliveries` (status=`pending`)
-2. `asyncio.create_task` con:
-   - `await asyncio.sleep(random.uniform(4, 14))`          # delay supervisado
+1. Insertar fila en `pending_deliveries` (`status=pending`, con `vip_id` y `decision` si aplica).
+2. `asyncio.create_task`:
+   - delay configurable (ej. `random.uniform(4, 14)`)
    - `read_business_message(...)`
-   - `send_chat_action("typing")` + sleep proporcional a `len(text)`
+   - `send_chat_action("typing")` + duración proporcional a `len(text)`
    - `send_message(..., business_connection_id=...)`
-3. Actualizar `pending_deliveries` → `done` + guardar message_ids
-4. Devolver `DeliveryResult`
+3. Actualizar `pending_deliveries` → `done` (+ message_ids).
+4. Devolver `DeliveryResult`.
 
-**Cancelación:**
-- `Task.cancel()` + marcar status=`cancelled` en DB.
+**Cancelación:** `Task.cancel()` + `status=cancelled` en DB.
 
-### 3.10 AdminService (MVP)
+**Prohibido:** LLM, decidir acción, generar texto.
 
-**Responsabilidades:**
-- Enviar borrador + contexto resumido a la dueña
-- Manejar callbacks: Aprobar / Corregir
-- Notificar escalaciones
+### 5.13 AdminService (Fase 1)
 
 ```python
 class AdminService:
@@ -310,38 +533,61 @@ class AdminService:
         self,
         turn: IncomingTurn,
         decision: Decision,
+        turn_id: UUID,
     ) -> None:
         """
-        Envía al DM de la dueña:
+        DM de la dueña:
         - Texto del VIP
-        - Borrador propuesto
+        - Borrador
         - Resumen de EvaluationProfile
         - Botones: [✅ Aprobar] [✏️ Corregir] [🚫 Escalar]
+        Persiste fila en pending_approvals (cola operativa).
         """
         ...
 
     async def handle_approve(self, callback, turn_id: UUID) -> None:
-        # Recuperar decision.draft_text
-        # Llamar BehaviorEngine.deliver(...)
+        # Si el Turn ya está superseded → no entregar
+        # BehaviorEngine.deliver(draft)
+        # coordinator.transition(turn_id, "delivered")
         ...
 
     async def handle_correct(self, callback, turn_id: UUID, corrected_text: str) -> None:
-        # Entregar el texto corregido vía BehaviorEngine
-        # (En MVP no escribimos en Staging todavía)
+        # Entregar texto corregido vía BehaviorEngine
+        # Fase 1: NO escribe en Staging
+        # coordinator.transition(turn_id, "delivered")
         ...
 
-    async def notify_escalation(self, turn: IncomingTurn, decision: Decision) -> None:
+    async def notify_escalation(
+        self,
+        turn: IncomingTurn,
+        decision: Decision,
+        turn_id: UUID,
+    ) -> None:
+        # Crea escalation_events + notifica DM
         ...
 ```
 
+Superficie admin Fase 1 (SPEC-1.1 §7): `/start`, `/menu`, añadir/quitar VIP, ver estado, aprobar/corregir borradores.
+
+### 5.14 Learning post-turno (mínimo)
+
+```python
+class LearningService:
+    async def run_post_turn(self, turn_id: UUID) -> None:
+        """Fase 1: garantizar que pipeline_traces está completo. Sin Staging."""
+        ...
+```
+
+Solo se invoca **después** de que el turno tomó decisión de aplicación (approve path → pending_approval / escalate path). Nunca dentro del Director.
+
 ---
 
-## 4. Modelo de datos mínimo para MVP
+## 6. Modelo de datos Fase 1
 
-Solo estas tablas:
+Tablas de implementación inmediata (SPEC-1.1 §5 [FASE 1]) más `pending_approvals` y `system_config` como soporte operativo de la cola de DM y umbrales.
 
 ```sql
--- Allowlist
+-- VIP allowlist
 CREATE TABLE vips (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     telegram_user_id BIGINT NOT NULL UNIQUE,
@@ -351,7 +597,7 @@ CREATE TABLE vips (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Historial reciente
+-- Historial de mensajes (raw)
 CREATE TABLE message_history (
     id                  BIGSERIAL PRIMARY KEY,
     chat_id             BIGINT NOT NULL,
@@ -362,14 +608,32 @@ CREATE TABLE message_history (
 );
 CREATE INDEX ON message_history (chat_id, timestamp DESC);
 
--- Trazas del pipeline (auditoría mínima)
+-- Turnos (máquina de estados) — CLAVE Fase 1
+CREATE TABLE turns (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chat_id             BIGINT NOT NULL,
+    vip_id              UUID REFERENCES vips(id),
+    status              TEXT NOT NULL,
+    -- received | analyzing | planning | retrieving | building_context |
+    -- generating | evaluating | deciding | pending_approval |
+    -- escalated | superseded | delivered | failed
+    trigger_message_id  BIGINT,
+    superseded_by       UUID,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON turns (chat_id, status);
+CREATE INDEX ON turns (chat_id, created_at DESC);
+
+-- Trazas completas del pipeline
 CREATE TABLE pipeline_traces (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    turn_id         UUID NOT NULL UNIQUE,
+    turn_id         UUID NOT NULL,
     vip_id          UUID REFERENCES vips(id),
     chat_id         BIGINT NOT NULL,
-    incoming_text   TEXT,
     comprehension   JSONB,
+    plan            JSONB,
+    retrieved       JSONB,
     prompt_text     TEXT,
     generated_text  TEXT,
     evaluation      JSONB,
@@ -377,21 +641,26 @@ CREATE TABLE pipeline_traces (
     delivery_result JSONB,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX ON pipeline_traces (vip_id, created_at DESC);
+CREATE INDEX ON pipeline_traces (turn_id);
 
--- Deliveries en vuelo (Behavior Engine)
+-- Deliveries en vuelo
 CREATE TABLE pending_deliveries (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chat_id                 BIGINT NOT NULL,
+    vip_id                  UUID REFERENCES vips(id),
     business_connection_id  TEXT NOT NULL,
     texts                   JSONB NOT NULL,
-    turn_id                 UUID NOT NULL,
+    decision                JSONB NOT NULL,
     scheduled_at            TIMESTAMPTZ NOT NULL,
-    status                  TEXT NOT NULL DEFAULT 'pending',  -- pending | delivering | done | cancelled | expired
+    status                  TEXT NOT NULL DEFAULT 'pending',
+    -- pending | delivering | done | cancelled | expired
+    turn_id                 UUID NOT NULL,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX ON pending_deliveries (status, scheduled_at);
 
--- Borradores pendientes de aprobación (modo supervisado)
+-- Cola operativa de aprobación en DM (soporte de pending_approval)
 CREATE TABLE pending_approvals (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     turn_id                 UUID NOT NULL UNIQUE,
@@ -399,124 +668,131 @@ CREATE TABLE pending_approvals (
     chat_id                 BIGINT NOT NULL,
     business_connection_id  TEXT NOT NULL,
     draft_text              TEXT NOT NULL,
-    cognitive_summary       TEXT,                    -- resumen legible para la dueña
+    cognitive_summary       TEXT,
     evaluation              JSONB,
-    status                  TEXT NOT NULL DEFAULT 'waiting',  -- waiting | approved | corrected | cancelled | expired
-    owner_message_id        BIGINT,                  -- mensaje del DM con los botones
+    status                  TEXT NOT NULL DEFAULT 'waiting',
+    -- waiting | approved | corrected | cancelled | expired
+    owner_message_id        BIGINT,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at             TIMESTAMPTZ
 );
 CREATE INDEX ON pending_approvals (status, created_at);
 
--- Escalaciones
-CREATE TABLE escalations (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    vip_id          UUID REFERENCES vips(id),
-    chat_id         BIGINT NOT NULL,
-    reason          TEXT NOT NULL,
-    trigger_text    TEXT,
-    status          TEXT NOT NULL DEFAULT 'open',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Escalaciones (nombre canónico SPEC: escalation_events)
+CREATE TABLE escalation_events (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    turn_id     UUID NOT NULL,
+    tipo        TEXT NOT NULL,  -- cortocircuito_determinista | semantica
+    motivo      TEXT,
+    notificado  BOOLEAN DEFAULT false,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Configuración mínima
+-- Configuración (umbrales, forbidden words, owner id)
 CREATE TABLE system_config (
     key         TEXT PRIMARY KEY,
     value       JSONB NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Ejemplo de filas iniciales
 INSERT INTO system_config (key, value) VALUES
 ('global_mode', '"supervised"'),
 ('owner_telegram_id', '123456789'),
 ('forbidden_keywords', '["pago", "transferencia", "eres un bot", "reclamación"]'),
-('eval_thresholds', '{"safety": 0.75}');
+('eval_thresholds', '{"safety": 0.3}'),
+('trace_ttl_days', '30');
 ```
+
+**Nota:** tablas de Fase 2/3 (`profiles`, `memories`, `contexts`, `policies`, `examples`, `staging_candidates`, `gray_zone_queries`, `learning_metrics`) **no se implementan en código de Fase 1**. Pueden existir vacías en el esquema si se prefiere migrar una sola vez; el código de Fase 1 no las usa.
 
 ---
 
-## 5. Flujos críticos del MVP (paso a paso)
+## 7. Flujos críticos (paso a paso)
 
-### 5.1 Happy path — VIP escribe → dueña aprueba
+### 7.1 Happy path — VIP escribe → dueña aprueba
 
 ```
-1. VIP envía mensaje (business_message)
-2. Middleware:
-   - Extrae business_connection_id
-   - No es la dueña
-   - No contiene palabras prohibidas
-   - Está en allowlist y no está paused
-3. TurnOrchestrator:
+1. VIP envía business_message
+2. Middlewares: connection_id, no-owner, no-forbidden, allowlist OK
+3. TurnCoordinator.begin_turn:
+   - supersede turno previo no terminal (si hay)
    - cancel_pending(chat_id)
-   - guarda mensaje en message_history
-   - llama Director.handle_turn()
-4. Director:
-   - Analyst → Comprehension
-   - ContextBuilder → prompt (persona + historial + mensaje)
-   - Generator → draft
-   - Evaluator → EvaluationProfile
-   - Decider → Decision(action="approve", draft_text=...)
-5. AdminService envía al DM de la dueña:
-   - Mensaje del VIP
-   - Borrador
-   - Resumen de evaluación
-   - Botones [✅ Aprobar] [✏️ Corregir]
-6. Dueña pulsa ✅ Aprobar
-7. AdminService → BehaviorEngine.deliver(texts=[draft], ctx=...)
-8. BehaviorEngine:
-   - delay 4-14 s
-   - mark as read
-   - typing indicator
-   - send_message con business_connection_id
-9. Se actualiza pipeline_traces.delivery_result
+   - crea Turn(status=received)
+4. Guarda mensaje en message_history
+5. Director:
+   analyzing → Analyst → Comprehension
+   planning  → Planner → Plan
+   retrieving→ Registry (history REAL, context parcial, resto STUB null)
+   building_context → prompt (sin bloques null)
+   generating → draft
+   evaluating → EvaluationProfile
+   deciding → Decision(action=approve)
+6. Turn → pending_approval; AdminService envía borrador al DM
+7. Dueña ✅ Aprobar
+8. BehaviorEngine.deliver (delay → read → typing → send)
+9. Turn → delivered; pipeline_traces.delivery_result actualizado
+10. Learning post-turno: traza completa
 ```
 
-### 5.2 Dueña corrige
+### 7.2 Dueña corrige
 
 ```
-1-5. Igual que arriba
-6. Dueña pulsa ✏️ Corregir → se le pide el texto nuevo
-7. AdminService recibe el texto corregido
-8. BehaviorEngine.deliver(texts=[corrected_text], ...)
-9. (En MVP no se guarda en Staging)
+1–6. Igual que happy path
+7. Dueña ✏️ Corregir → envía texto nuevo
+8. BehaviorEngine.deliver(corrected_text)
+9. Turn → delivered
+10. Fase 1: NO se escribe en Staging / examples
 ```
 
-### 5.3 Escalación determinística
+### 7.3 Escalación determinística (palabra prohibida)
 
 ```
-1. VIP envía mensaje con palabra prohibida
-2. ForbiddenKeywordsMiddleware detecta match
-3. Se crea notificación de escalación a la dueña
-4. NO se llama al Director ni al Analista
-5. VIP no recibe ninguna respuesta automática
+1. VIP envía mensaje con keyword prohibida
+2. ForbiddenKeywordsMiddleware match
+3. TurnCoordinator crea Turn → escalated (o registra evento sin pipeline)
+4. escalation_events (tipo=cortocircuito_determinista) + notify dueña
+5. NO se llama al Director / Analyst / LLM
+6. VIP no recibe respuesta automática
 ```
 
-### 5.4 Cancelación por mensaje nuevo
+### 7.4 Escalación semántica (Decider)
 
 ```
-1. VIP envía mensaje A → se genera borrador y se espera aprobación
-2. VIP envía mensaje B antes de que la dueña apruebe
-3. TurnOrchestrator recibe B:
-   - cancel_pending(chat_id)  → se cancela cualquier Task de delivery del mensaje A
-   - se inicia pipeline limpio para el mensaje B
-4. El borrador del mensaje A queda obsoleto (no se envía)
+1. Pipeline completo hasta Decider
+2. safety < umbral OR risk=alto → Decision(action=escalate)
+3. Turn → escalated
+4. escalation_events (tipo=semantica) + notify dueña
+5. Sin delivery al VIP
 ```
 
-### 5.5 Reinicio del proceso
+### 7.5 Cancelación / supersede por mensaje nuevo (REQ-VIP-06)
 
 ```
-Al arrancar main.py:
-1. SELECT * FROM pending_deliveries WHERE status = 'pending'
-2. Para cada uno:
-   - Si scheduled_at es muy antiguo → marcar 'expired' + notificar dueña
-   - Si todavía es válido → re-crear el asyncio.Task
-3. (Opcional) re-notificar borradores pendientes de aprobación
+1. VIP mensaje A → Turn A en pending_approval (o delivery en curso)
+2. VIP mensaje B
+3. TurnCoordinator:
+   - Turn A → superseded (superseded_by = Turn B)
+   - cancel_pending(chat_id)  # Task + pending_deliveries
+   - pending_approvals de A → cancelled
+   - crea Turn B (received)
+4. Pipeline limpio para B
+5. Borrador de A no se envía
+```
+
+### 7.6 Reinicio del proceso (REQ-PER-02 / TAC-08)
+
+```
+main.py arranca:
+1. pending_deliveries WHERE status='pending'
+   - scheduled_at muy antiguo → expired + notificar dueña
+   - aún válido → re-crear asyncio.Task
+2. Re-notificar pending_approvals en waiting
+3. Re-notificar escalation_events no notificados (opcional)
 ```
 
 ---
 
-## 6. Interfaces LLM (MVP)
+## 8. Interfaces LLM (Fase 1)
 
 ```python
 class LLMProvider(Protocol):
@@ -538,48 +814,61 @@ class LLMProvider(Protocol):
     ) -> BaseModel: ...
 ```
 
-En MVP se usa solo `DeepSeekProvider` (OpenAI-compatible).  
-La interfaz ya permite añadir Anthropic después sin tocar el Cognitive Core.
-
-**Uso:**
-- Analyst y Evaluator → `generate_structured`
-- Generator → `generate` (texto libre)
+- Instancia Fase 1: `DeepSeekProvider` (OpenAI-compatible).
+- Interfaz lista para Anthropic en Fase 2 (hot-swap) sin tocar Cognitive Core.
+- **Uso:** Analyst y Evaluator → `generate_structured`; Generator → `generate`.
 
 ---
 
-## 7. Estructura de carpetas mínima para MVP
+## 9. Estructura de carpetas (Fase 1 subset de SPEC-1.1 §11)
 
 ```
 src/diana/
-├── main.py                     # entrypoint long-polling
-├── config.py                   # Pydantic Settings
+├── main.py
+├── config.py
 │
 ├── telegram/
 │   ├── handlers/
-│   │   ├── business.py         # business_message
-│   │   └── admin.py            # DM + callbacks
+│   │   ├── business.py
+│   │   ├── admin.py
+│   │   └── callbacks.py
 │   ├── middlewares/
 │   │   ├── auth.py
 │   │   ├── forbidden.py
-│   │   └── owner.py
+│   │   └── owner.py          # freeze.py se añade en Fase 2
 │   └── keyboards.py
 │
 ├── application/
+│   ├── turn_coordinator.py   # NUEVO — máquina de estados + serialización
 │   ├── turn_orchestrator.py
 │   └── admin_service.py
 │
 ├── cognitive/
 │   ├── director.py
 │   ├── analyst.py
+│   ├── planner.py            # determinista
 │   ├── context_builder.py
 │   ├── generator.py
 │   ├── evaluator.py
 │   ├── decider.py
-│   └── models.py               # Comprehension, EvaluationProfile, Decision, IncomingTurn
+│   ├── registry.py           # Capability Registry
+│   ├── models.py
+│   └── retrievers/
+│       ├── base.py
+│       ├── history.py        # REAL
+│       ├── context.py        # REAL parcial
+│       ├── memory.py         # STUB
+│       ├── profile.py        # STUB
+│       ├── policy.py         # STUB
+│       ├── examples.py       # STUB
+│       └── schedule.py       # STUB
 │
 ├── behavior/
 │   ├── engine.py
-│   └── timer_manager.py        # dict[chat_id, Task]
+│   └── timer_manager.py
+│
+├── learning/
+│   └── post_turn.py          # solo traza en Fase 1
 │
 ├── llm/
 │   ├── provider.py
@@ -587,61 +876,103 @@ src/diana/
 │
 └── infrastructure/
     ├── db/
-    │   ├── models.py           # SQLAlchemy
+    │   ├── models.py
     │   ├── session.py
     │   └── repositories/
+    ├── logging.py
     └── tracing.py
 ```
 
+Módulos de Fase 2/3 (`sandbox_service`, `fake.py`, `embeddings/`, etc.) **no se crean vacíos obligatorios**; se añaden al activar la fase.
+
 ---
 
-## 8. Orden de implementación recomendado (MVP)
+## 10. Orden de implementación recomendado
 
 | Paso | Qué construir | Criterio de “hecho” |
 |------|---------------|---------------------|
-| 1 | Proyecto + config + DB + tablas mínimas | `alembic upgrade head` funciona |
-| 2 | aiogram long-polling + handler vacío de business_message | Recibe mensajes de un VIP de prueba |
-| 3 | Middleware Auth + Forbidden + Owner | Short-circuits funcionan |
-| 4 | Modelos Pydantic + LLMProvider (DeepSeek) | Analyst y Generator devuelven datos |
-| 5 | ContextBuilder + Director (happy path) | Se genera un borrador real |
-| 6 | Evaluator + Decider | Se obtiene Decision(action="approve") |
-| 7 | AdminService + keyboards de aprobación | Dueña recibe borrador y puede aprobar |
-| 8 | BehaviorEngine (delay + read + typing + send) | Mensaje llega al VIP con comportamiento human-like |
-| 9 | Cancelación de pending + recovery en arranque | Segundo mensaje del VIP cancela el anterior |
-| 10 | pipeline_traces completo | Se puede reconstruir un turno |
+| 1 | Proyecto + config + DB + tablas Fase 1 | `alembic upgrade head` OK |
+| 2 | aiogram long-polling + handler `business_message` | Recibe mensajes de VIP de prueba |
+| 3 | Middlewares Auth + Forbidden + Owner | Short-circuits funcionan |
+| 4 | Turn Coordinator + tabla `turns` | 1 no-terminal por chat; supersede OK |
+| 5 | LLMProvider + Analyst + Generator | Datos reales desde DeepSeek |
+| 6 | Planner + Registry + Retrievers (REAL/STUB) | Registry resuelve todas las capacidades |
+| 7 | ContextBuilder + Director (pipeline completo) | Borrador + traza con plan/retrieved |
+| 8 | Evaluator + Decider | `approve` / `escalate` según umbrales |
+| 9 | AdminService + keyboards + `pending_approvals` | Dueña aprueba/corrige en DM |
+| 10 | BehaviorEngine + recovery en arranque | Delay/read/typing/send + cancel |
+| 11 | Learning post-turno + `pipeline_traces` completo | Turno reconstruible de punta a punta |
 
 ---
 
-## 9. Criterios de aceptación del MVP
+## 11. Criterios de aceptación (MVP + TAC Fase 1)
 
-| ID | Criterio | Cómo verificar |
-|----|----------|----------------|
-| MVP-01 | Un VIP de la allowlist recibe respuesta solo después de aprobación | Prueba manual |
-| MVP-02 | El mensaje sale con business_connection_id (como la dueña) | Inspección en Telegram |
-| MVP-03 | Hay delay + mark-as-read + typing antes del envío | Observación visual |
-| MVP-04 | Un segundo mensaje del VIP cancela el borrador anterior | Prueba de carrera |
-| MVP-05 | Palabra prohibida → escalación sin llamar al LLM | Log + notificación |
-| MVP-06 | Reinicio del proceso no pierde deliveries pendientes válidos | Matar proceso y reiniciar |
-| MVP-07 | Toda decisión deja traza en pipeline_traces | Query a la tabla |
-| MVP-08 | El Director no contiene ninguna llamada a LLM de control de flujo | Code review + AGENTS.md checklist |
-
----
-
-## 10. Qué se deja preparado para la siguiente fase
-
-Aunque no se implemente en el MVP, la estructura ya debe permitir:
-
-- Añadir Capability Registry sin tocar el Director (solo se cambia ContextBuilder → Planner + Registry)
-- Cambiar Decider para soportar `send`, `consult_doctrine`, `regenerate`
-- Añadir Staging Area en el flujo de corrección
-- Introducir pgvector y los 5 tipos de conocimiento
-- Activar modo autónomo solo cambiando la lógica del Decider + system_config
+| ID | Criterio | Cómo verificar | SPEC |
+|----|----------|----------------|------|
+| MVP-01 | VIP allowlist recibe respuesta solo tras aprobación | Prueba manual | TAC / AC |
+| MVP-02 | Envío con `business_connection_id` | Inspección Telegram | AC-01 |
+| MVP-03 | Delay + mark-as-read + typing | Observación | AC-03 |
+| MVP-04 | Segundo mensaje supersede turno y cancela delivery | Prueba de carrera | TAC-07 |
+| MVP-05 | Palabra prohibida → escalate sin LLM | Log + notify | TAC-06 |
+| MVP-06 | Reinicio no pierde deliveries válidos | Kill + restart | TAC-08 |
+| MVP-07 | Objetos intermedios en `pipeline_traces` (incl. plan/retrieved) | Query | TAC-04 |
+| MVP-08 | Director sin LLM de control de flujo | Code review | TAC-01 |
+| MVP-09 | EvaluationProfile es vector 7D (sin score único) | Code + traza | TAC-03 |
+| MVP-10 | Registry resuelve todos los retrievers (REAL o STUB) | Unit tests | TAC-02 |
+| MVP-11 | Behavior Engine fuera del Cognitive Core | Import graph | TAC-05 |
+| MVP-12 | Decider Fase 1 solo `approve` \| `escalate` | Unit tests | §4.8 |
+| MVP-13 | Invariante: ≤1 turno no terminal por `chat_id` | Integration test | §3 |
 
 ---
 
-**Fin del diseño de componentes del MVP**
+## 12. Qué deja preparada la Fase 1 para Fase 2
 
-Este documento es la guía de implementación de la Fase 1.  
-Cualquier desviación que rompa los contratos de `AGENTS.md` debe ser rechazada.
+El Director **ya** llama a Planner + Registry. En Fase 2:
+
+| Cambio | Impacto en Director |
+|--------|---------------------|
+| STUBs → Retrievers REAL + pgvector | **Cero** líneas del Director |
+| Activar `consult_doctrine` / `regenerate` | Solo Decider + umbrales |
+| Staging en correcciones | Solo Admin/Learning post-turno |
+| Modo autónomo (`send`) | Decider + `system_config` |
+| Freeze middleware + gray zone | Telegram + Admin; no Cognitive Core |
+| Hot-swap LLM | `llm/` + config |
+| Sandbox / FakeDelivery | `behavior/fake.py` |
+
+---
+
+## 13. Decisiones de implementación adoptadas (de SPEC-1.1 §9)
+
+| # | Tema | Decisión Fase 1 |
+|---|------|------------------|
+| 1 | Regeneración por naturalidad baja | **No**. Dueña corrige en DM. |
+| 2 | Serialización por chat | Preferir lock DB (`turns` + `FOR UPDATE`) o `asyncio.Queue` por chat; documentar en código. |
+| 3 | Umbral seguridad inicial | **0.3** en `system_config`; ajustar tras ~50 turnos reales. |
+| 4 | TTL de `pipeline_traces` | 30 días (configurable). |
+
+---
+
+## 14. Checklist de revisión (antes de merge)
+
+- [ ] ¿El Director sigue siendo 100 % determinista?
+- [ ] ¿Existen Planner + Registry con STUBs (no “omitidos”)?
+- [ ] ¿Turn Coordinator impone 1 no-terminal por chat?
+- [ ] ¿EvaluationProfile es vector 7D sin score único?
+- [ ] ¿Behavior Engine no genera texto ni decide acción?
+- [ ] ¿Learning solo post-turno y solo traza?
+- [ ] ¿No se escribe en `examples` / `memories` / Staging?
+- [ ] ¿Modos y umbrales salen de config, no hardcode mágico en lógica?
+- [ ] ¿Contratos alineados con `AGENTS.md` y `docs/SPEC-1.1.md`?
+
+Si alguna respuesta es “no”, el cambio **no se mergea**.
+
+---
+
+**Fin del diseño de componentes del MVP (Fase 1) v1.1**
+
+Guía de implementación de Fase 1.  
+Fuente de verdad de diseño: `docs/SPEC-1.1.md` v1.5.  
+Límites duros de módulo: `AGENTS.md`.  
+Cualquier desviación que rompa esos contratos debe ser rechazada.
 
 Equipo de Arquitectura — Julio 2026

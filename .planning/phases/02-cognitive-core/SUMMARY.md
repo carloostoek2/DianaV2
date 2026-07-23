@@ -141,3 +141,7 @@ Deferred to item 3 (wontfix): composition factory, dual history snapshot under c
 - Consume `Decision` with `draft_text` + `evaluation` + `action in {approve, escalate}`
 - Replace `InMemoryTraceStore` / history port with SQL repositories outside cognitive
 - Own durable turn status + Admin/Behavior; Learning only post-turn
+
+## Review loop
+- effort 5, rounds 3, 0 open final
+- tests: 150 passed
