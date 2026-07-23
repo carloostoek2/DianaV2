@@ -469,7 +469,7 @@ async def test_orchestrator_evaluator_schema_fail_marks_failed_notifies_owner() 
 
     assert actuator.send_count() == 0
     assert learn.calls == []
-    assert len(notifier.infos) >= 1
+    assert len(notifier.infos) == 1
     assert notifier.drafts == []
     assert notifier.escalations == []
     info_text, _info_chat = notifier.infos[0]
