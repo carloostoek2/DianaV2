@@ -9,7 +9,11 @@ from uuid import UUID
 from diana.application.admin_service import AdminService
 from diana.application.ports import MessageHistoryWriter, VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
-from diana.cognitive.exceptions import AnalystSchemaInvalidError, EvaluatorSchemaInvalidError
+from diana.cognitive.exceptions import (
+    AnalystSchemaInvalidError,
+    ContextExceedsLimitError,
+    EvaluatorSchemaInvalidError,
+)
 from diana.cognitive.models import (
     TERMINAL_TURN_STATUSES,
     Decision,
@@ -138,6 +142,23 @@ class TurnOrchestrator:
                 except Exception:
                     logger.exception(
                         "owner_notify_failed_after_evaluator_schema_invalid",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "chat_id": incoming.chat_id,
+                        },
+                    )
+            elif isinstance(exc, ContextExceedsLimitError):
+                error = "contexto_excede_limite"
+                await self._coordinator.mark_failed(turn_id, error=error)
+                # Never let notifier failures mask the typed size error.
+                try:
+                    await self._admin.notify_info(
+                        f"Turn {turn_id} failed: contexto_excede_limite",
+                        chat_id=incoming.chat_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "owner_notify_failed_after_context_exceeds_limit",
                         extra={
                             "turn_id": str(turn_id),
                             "chat_id": incoming.chat_id,
