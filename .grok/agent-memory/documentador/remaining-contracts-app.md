@@ -134,7 +134,7 @@ None created by this pool as auto-items. No next remaining-contracts pool (C–I
 
 ## Docs commit
 
-`7a9cc10` — `docs(application): close remaining-contracts-app pool (G–I)`
+`bb3df05` — `docs(application): close remaining-contracts-app pool (G–I)`
 
 ## Next Steps
 
