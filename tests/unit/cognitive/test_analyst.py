@@ -101,6 +101,8 @@ async def test_analyze_retries_once_on_validation_error() -> None:
     assert result.intent == "recovered"
     assert len(llm.calls) == 2
     assert all(c[0] == "generate_structured" for c in llm.calls)
+    # A.6: single retry uses the same input messages.
+    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
 
 
 @pytest.mark.asyncio
@@ -113,6 +115,71 @@ async def test_analyze_double_fail_raises_analista_schema_invalido() -> None:
     assert str(exc_info.value) == "analista_schema_invalido"
     assert exc_info.value.reason == "analista_schema_invalido"
     assert len(llm.calls) == 2
+    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
+
+
+class _ScriptedStructuredLLM:
+    """LLM double that raises or returns scripted structured outcomes."""
+
+    def __init__(self, outcomes: list[object]) -> None:
+        self._outcomes = list(outcomes)
+        self.calls: list[tuple[str, dict]] = []
+
+    async def generate_structured(self, messages, schema, **kwargs):  # noqa: ANN001
+        self.calls.append(
+            ("generate_structured", {"messages": messages, "schema": schema})
+        )
+        if not self._outcomes:
+            raise RuntimeError("scripted LLM queue empty")
+        item = self._outcomes.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+@pytest.mark.asyncio
+async def test_analyze_retries_once_on_value_error() -> None:
+    """DeepSeek-style JSON ValueError is a schema-class failure (A.6)."""
+    valid = _valid_comprehension(intent="from-valueerror-retry")
+    llm = _ScriptedStructuredLLM(
+        [ValueError("assistant content is not valid JSON"), valid]
+    )
+    result = await Analyst(llm).analyze(_input())  # type: ignore[arg-type]
+    assert result.intent == "from-valueerror-retry"
+    assert len(llm.calls) == 2
+    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_valueerror_double_fail_raises_analista_schema_invalido() -> None:
+    llm = _ScriptedStructuredLLM(
+        [
+            ValueError("assistant content is not valid JSON"),
+            ValueError("structured response must be a JSON object"),
+        ]
+    )
+    with pytest.raises(AnalystSchemaInvalidError) as exc_info:
+        await Analyst(llm).analyze(_input())  # type: ignore[arg-type]
+    assert str(exc_info.value) == "analista_schema_invalido"
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_analyze_timeout_maps_to_analista_schema_invalido() -> None:
+    """A.6.4: timeout follows the same typed fail path after one retry."""
+    llm = _ScriptedStructuredLLM([TimeoutError("llm timeout"), TimeoutError("again")])
+    with pytest.raises(AnalystSchemaInvalidError) as exc_info:
+        await Analyst(llm).analyze(_input())  # type: ignore[arg-type]
+    assert str(exc_info.value) == "analista_schema_invalido"
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_analyze_non_schema_errors_propagate_without_retry() -> None:
+    llm = _ScriptedStructuredLLM([RuntimeError("provider 500")])
+    with pytest.raises(RuntimeError, match="provider 500"):
+        await Analyst(llm).analyze(_input())  # type: ignore[arg-type]
+    assert len(llm.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -155,7 +222,21 @@ async def test_analyze_system_prompt_has_no_tone_or_policy_instructions() -> Non
     messages = llm.calls[0][1]["messages"]
     system = next(m["content"] for m in messages if m.get("role") == "system")
     lowered = system.lower()
-    blocked = ("tone", "style", "pricing", "write like", "how to reply")
+    blocked = (
+        "tone",
+        "style",
+        "pricing",
+        "write like",
+        "how to reply",
+        "write a reply",
+        "business rule",
+        "pricing rules",
+        "tono",
+        "estilo",
+        "precios",
+        "cómo responder",
+        "como responder",
+    )
     for word in blocked:
         assert word not in lowered, f"blocked instruction found: {word!r}"
     # Closed enums present

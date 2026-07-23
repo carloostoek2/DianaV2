@@ -166,18 +166,58 @@ class CognitiveDirector:
         return decision
 
     async def _build_analyst_input(self, turn: IncomingTurn) -> AnalystInput:
-        """Fetch chat-scoped history and map to contract historial_reciente (R1)."""
-        raw = await self._history.get_recent(
-            turn.chat_id, limit=self._analyst_history_limit
-        )
+        """Fetch chat-scoped history and map to contract historial_reciente (R1).
+
+        - Over-fetches raw rows so bot/unknown filtering still yields up to
+          ``analyst_history_limit`` vip/dueña lines when available.
+        - Excludes the current VIP trigger message (by telegram_message_id, or
+          trailing identical vip text fallback) so it is not duplicated with
+          ``turno_actual``.
+        """
+        limit = self._analyst_history_limit
+        # Oversample raw rows; filter roles; then trim to limit human messages.
+        # Bot-heavy tails need headroom beyond limit (A.2 short window is human lines).
+        fetch_limit = max(limit * 8, 32) if limit > 0 else 0
+        raw = await self._history.get_recent(turn.chat_id, limit=fetch_limit)
+        raw = self._drop_current_turn_rows(raw, turn)
         mapped = self._map_history_messages(raw)
+        if limit > 0 and len(mapped) > limit:
+            mapped = mapped[-limit:]
         return AnalystInput(turno_actual=turn.text, historial_reciente=mapped)
+
+    @staticmethod
+    def _drop_current_turn_rows(raw: list[dict], turn: IncomingTurn) -> list[dict]:
+        """Remove the triggering VIP message already appended by the application."""
+        mid = turn.telegram_message_id
+        if mid is not None:
+            return [
+                row
+                for row in raw
+                if not (
+                    isinstance(row, dict)
+                    and row.get("role") == "vip"
+                    and row.get("telegram_message_id") == mid
+                )
+            ]
+        # Fallback when message id is absent: drop trailing vip row with same text.
+        if not raw:
+            return raw
+        last = raw[-1]
+        if (
+            isinstance(last, dict)
+            and last.get("role") == "vip"
+            and str(last.get("text", "")) == turn.text
+        ):
+            return list(raw[:-1])
+        return list(raw)
 
     @staticmethod
     def _map_history_messages(raw: list[dict]) -> list[HistoryMessage]:
         """Map port rows to HistoryMessage; exclude bot and unknown roles."""
         out: list[HistoryMessage] = []
         for item in raw:
+            if not isinstance(item, dict):
+                continue
             role = item.get("role")
             autor = _ROLE_TO_AUTOR.get(str(role) if role is not None else "")
             if autor is None:
@@ -188,6 +228,8 @@ class CognitiveDirector:
             ts = item.get("timestamp")
             if ts is None:
                 ts = ""
+            elif not isinstance(ts, str) and not hasattr(ts, "isoformat"):
+                ts = str(ts)
             out.append(
                 HistoryMessage(
                     autor=autor,  # type: ignore[arg-type]

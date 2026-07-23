@@ -25,6 +25,21 @@ _SYSTEM = (
 
 _MAX_ATTEMPTS = 2  # initial try + exactly one retry (contrato A.6)
 
+# Structured-output / schema-class failures (contrato A.6.1 + A.6.4).
+# Includes DeepSeek JSON ValueError and transport timeouts without importing httpx.
+_SCHEMA_FAIL_TYPES = (ValidationError, ValueError, TimeoutError)
+
+
+def _is_schema_class_failure(exc: BaseException) -> bool:
+    """Return True for failures that mean unusable structured comprehension."""
+    if isinstance(exc, _SCHEMA_FAIL_TYPES):
+        return True
+    # httpx.TimeoutException and relatives without a cognitive→httpx import.
+    name = type(exc).__name__
+    if "Timeout" in name:
+        return True
+    return False
+
 
 class Analyst:
     def __init__(self, llm: LLMProvider) -> None:
@@ -42,7 +57,9 @@ class Analyst:
                     raw = result.model_dump(mode="json", exclude={"raw_llm_output"})
                     result = result.model_copy(update={"raw_llm_output": raw})
                 return result
-            except ValidationError as exc:
+            except Exception as exc:
+                if not _is_schema_class_failure(exc):
+                    raise
                 last_error = exc
                 continue
         raise AnalystSchemaInvalidError() from last_error

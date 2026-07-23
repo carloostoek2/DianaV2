@@ -26,7 +26,7 @@ from diana.behavior.ports import DelayPolicy
 from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
-from diana.cognitive.director import CognitiveDirector
+from diana.cognitive.director import ANALYST_HISTORY_LIMIT, CognitiveDirector
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
 from diana.cognitive.planner import Planner
@@ -185,7 +185,7 @@ def build_app(
         persona=DEFAULT_PERSONA,
         # Same history port as registry — Analyst window is chat-scoped only (R1).
         history=history,
-        analyst_history_limit=8,
+        analyst_history_limit=ANALYST_HISTORY_LIMIT,
         # TurnStatusSink protocol: object with .transition(...).
         # Must inject the coordinator itself, not the unbound method.
         status_sink=coordinator,

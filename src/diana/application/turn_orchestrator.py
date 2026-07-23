@@ -112,10 +112,20 @@ class TurnOrchestrator:
             if isinstance(exc, AnalystSchemaInvalidError):
                 error = "analista_schema_invalido"
                 await self._coordinator.mark_failed(turn_id, error=error)
-                await self._admin.notify_info(
-                    f"Turn {turn_id} failed: analista_schema_invalido",
-                    chat_id=incoming.chat_id,
-                )
+                # Never let notifier failures mask the typed schema error.
+                try:
+                    await self._admin.notify_info(
+                        f"Turn {turn_id} failed: analista_schema_invalido",
+                        chat_id=incoming.chat_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "owner_notify_failed_after_analyst_schema_invalid",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "chat_id": incoming.chat_id,
+                        },
+                    )
             else:
                 await self._coordinator.mark_failed(turn_id, error=str(exc))
             logger.exception(

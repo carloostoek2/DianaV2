@@ -260,6 +260,37 @@ def test_analyst_input_and_history_message_shape() -> None:
         HistoryMessage(autor="bot", texto="x", timestamp="t")  # type: ignore[arg-type]
 
 
+def test_comprehension_rejects_extra_fields() -> None:
+    from diana.cognitive.models import Comprehension
+
+    with pytest.raises(ValidationError):
+        Comprehension.model_validate(
+            {
+                "intent": "x",
+                "topics": [],
+                "emotion": "neutral",
+                "urgency": "baja",
+                "risk": "bajo",
+                **_NEEDS,
+                "confidence": 0.9,
+            }
+        )
+
+
+def test_comprehension_requires_intent() -> None:
+    from diana.cognitive.models import Comprehension
+
+    data = {
+        "topics": [],
+        "emotion": "neutral",
+        "urgency": "baja",
+        "risk": "bajo",
+        **_NEEDS,
+    }
+    with pytest.raises(ValidationError):
+        Comprehension(**data)  # type: ignore[arg-type]
+
+
 def test_plan_capabilities_ok() -> None:
     from diana.cognitive.models import Plan
 

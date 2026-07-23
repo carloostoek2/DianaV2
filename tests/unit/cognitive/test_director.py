@@ -400,16 +400,19 @@ async def test_director_passes_historial_to_analyst() -> None:
                     "role": "vip",
                     "text": "hist-vip-XYZ",
                     "timestamp": "2026-01-01T10:00:00Z",
+                    "telegram_message_id": 1,
                 },
                 {
                     "role": "owner",
                     "text": "hist-owner-UVW",
                     "timestamp": "2026-01-01T10:01:00Z",
+                    "telegram_message_id": 2,
                 },
                 {
                     "role": "bot",
                     "text": "hist-bot-SHOULD-ABSENT",
                     "timestamp": "2026-01-01T10:02:00Z",
+                    "telegram_message_id": 3,
                 },
             ]
         }
@@ -428,6 +431,201 @@ async def test_director_passes_historial_to_analyst() -> None:
     assert "dueña" in flat  # owner → dueña mapping
     assert "hist-bot-SHOULD-ABSENT" not in flat
     assert "current-msg" in flat
+
+
+@pytest.mark.asyncio
+async def test_director_analyst_history_respects_limit_8() -> None:
+    """Default analyst_history_limit=8: only the last 8 human (vip/dueña) lines."""
+    older = [
+        {
+            "role": "vip",
+            "text": f"hist-old-{i:02d}-SHOULD-ABSENT",
+            "timestamp": f"2026-01-01T09:{i:02d}:00Z",
+        }
+        for i in range(5)
+    ]
+    window = [
+        {
+            "role": "vip",
+            "text": f"hist-win-{i:02d}-KEEP",
+            "timestamp": f"2026-01-01T10:{i:02d}:00Z",
+        }
+        for i in range(8)
+    ]
+    history = InMemoryMessageHistory({42: older + window})
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history, analyst_history_limit=8)
+    await director.handle_turn(_turn(chat_id=42, text="current-msg"))
+
+    analyst_messages = llm.calls[0][1]["messages"]
+    flat = " ".join(m.get("content", "") for m in analyst_messages)
+    for i in range(5):
+        assert f"hist-old-{i:02d}-SHOULD-ABSENT" not in flat
+    for i in range(8):
+        assert f"hist-win-{i:02d}-KEEP" in flat
+
+
+@pytest.mark.asyncio
+async def test_director_excludes_current_vip_message_from_historial() -> None:
+    """Current turn must not appear twice (turno_actual + historial tail)."""
+    history = InMemoryMessageHistory(
+        {
+            42: [
+                {
+                    "role": "vip",
+                    "text": "older-vip",
+                    "timestamp": "2026-01-01T10:00:00Z",
+                    "telegram_message_id": 10,
+                },
+                {
+                    "role": "vip",
+                    "text": "current-msg",
+                    "timestamp": "2026-01-01T10:05:00Z",
+                    "telegram_message_id": 99,
+                },
+            ]
+        }
+    )
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    turn = IncomingTurn(
+        turn_id=uuid4(),
+        chat_id=42,
+        text="current-msg",
+        telegram_message_id=99,
+    )
+    await director.handle_turn(turn)
+
+    analyst_messages = llm.calls[0][1]["messages"]
+    user = next(m["content"] for m in analyst_messages if m.get("role") == "user")
+    assert "turno_actual:\ncurrent-msg" in user
+    # Only one occurrence of current-msg overall (turno_actual), not also in history.
+    assert user.count("current-msg") == 1
+    assert "older-vip" in user
+
+
+@pytest.mark.asyncio
+async def test_director_excludes_trailing_vip_text_when_message_id_missing() -> None:
+    history = InMemoryMessageHistory(
+        {
+            42: [
+                {"role": "vip", "text": "prior", "timestamp": "t1"},
+                {"role": "vip", "text": "dup-current", "timestamp": "t2"},
+            ]
+        }
+    )
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    await director.handle_turn(_turn(chat_id=42, text="dup-current"))
+    user = next(
+        m["content"] for m in llm.calls[0][1]["messages"] if m.get("role") == "user"
+    )
+    assert user.count("dup-current") == 1
+    assert "prior" in user
+
+
+@pytest.mark.asyncio
+async def test_director_filters_bot_before_applying_human_limit() -> None:
+    """Oversample + filter: bot-heavy tail still fills limit with vip/owner lines."""
+    rows: list[dict] = []
+    # Older VIP lines that must survive after bot filter + limit=3
+    for i in range(3):
+        rows.append(
+            {
+                "role": "vip",
+                "text": f"keep-human-{i}",
+                "timestamp": f"2026-01-01T08:{i:02d}:00Z",
+            }
+        )
+    # Interleaved bots that would starve a raw limit=3 window
+    for i in range(10):
+        rows.append(
+            {
+                "role": "bot",
+                "text": f"bot-noise-{i}",
+                "timestamp": f"2026-01-01T09:{i:02d}:00Z",
+            }
+        )
+    rows.append(
+        {
+            "role": "owner",
+            "text": "keep-owner",
+            "timestamp": "2026-01-01T10:00:00Z",
+        }
+    )
+    history = InMemoryMessageHistory({42: rows})
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history, analyst_history_limit=3)
+    await director.handle_turn(_turn(chat_id=42, text="now"))
+    flat = " ".join(m.get("content", "") for m in llm.calls[0][1]["messages"])
+    assert "bot-noise" not in flat
+    # Last 3 human lines: keep-human-1, keep-human-2, keep-owner (or similar tail)
+    assert "keep-owner" in flat
+    assert "keep-human-2" in flat
+    assert "keep-human-1" in flat
+    assert "keep-human-0" not in flat  # trimmed by human limit=3
+
+
+@pytest.mark.asyncio
+async def test_director_historial_excludes_unknown_roles_and_other_chats() -> None:
+    history = InMemoryMessageHistory(
+        {
+            42: [
+                {"role": "vip", "text": "from-42", "timestamp": "t1"},
+                {"role": "owner", "text": "owner-42", "timestamp": "t2"},
+                {"role": "bot", "text": "bot-42", "timestamp": "t3"},
+                {"role": "system", "text": "system-42-ABSENT", "timestamp": "t4"},
+                {"role": "assistant", "text": "assistant-42-ABSENT", "timestamp": "t5"},
+            ],
+            99: [
+                {"role": "vip", "text": "from-99-ABSENT", "timestamp": "t9"},
+            ],
+        }
+    )
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    await director.handle_turn(_turn(chat_id=42, text="now"))
+    flat = " ".join(m.get("content", "") for m in llm.calls[0][1]["messages"])
+    assert "from-42" in flat
+    assert "owner-42" in flat
+    assert "dueña" in flat
+    assert "bot-42" not in flat
+    assert "system-42-ABSENT" not in flat
+    assert "assistant-42-ABSENT" not in flat
+    assert "from-99-ABSENT" not in flat
+
+
+def test_map_history_messages_edge_coercion() -> None:
+    mapped = CognitiveDirector._map_history_messages(
+        [
+            {"role": "vip", "text": None, "timestamp": None},
+            {"role": None, "text": "skip", "timestamp": "t"},
+            {"role": "owner", "text": "ok", "timestamp": 12345},
+            "not-a-dict",  # type: ignore[list-item]
+        ]
+    )
+    assert len(mapped) == 2
+    assert mapped[0].autor == "vip"
+    assert mapped[0].texto == ""
+    assert mapped[0].timestamp == ""
+    assert mapped[1].autor == "dueña"
+    assert mapped[1].texto == "ok"
+    assert mapped[1].timestamp == "12345"
 
 
 @pytest.mark.asyncio

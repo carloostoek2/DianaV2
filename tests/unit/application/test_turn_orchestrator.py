@@ -362,10 +362,12 @@ async def test_orchestrator_analyst_schema_fail_marks_failed_notifies_owner() ->
 
     assert actuator.send_count() == 0
     assert learn.calls == []
-    assert len(notifier.infos) >= 1
-    info_texts = [text for text, _ in notifier.infos]
-    assert any("analista_schema_invalido" in text for text in info_texts)
-    assert any(str(failed_ids[0]) in text for text in info_texts)
+    assert len(notifier.infos) == 1
+    assert notifier.drafts == []
+    assert notifier.escalations == []
+    info_text, _info_chat = notifier.infos[0]
+    assert "analista_schema_invalido" in info_text
+    assert str(failed_ids[0]) in info_text
 
 
 @pytest.mark.asyncio
