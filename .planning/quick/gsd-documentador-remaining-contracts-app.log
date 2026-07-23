@@ -39,7 +39,7 @@ IN_PROGRESS — log opened before writes
 COMPLETE
 
 ## Docs commit
-7a9cc10 — docs(application): close remaining-contracts-app pool (G–I)
+bb3df05 — docs(application): close remaining-contracts-app pool (G–I)
 
 ## Residuals handoff
 - C–I complete (both pools); no next remaining-contracts pool
@@ -47,4 +47,4 @@ COMPLETE
 - Carry-forward Pool 1: eval_thresholds wire, regenerate F2, style_rules
 
 ## Finished
-2026-07-23T08:00:56Z start · docs commit 7a9cc10
+2026-07-23T08:00:56Z start · docs commit bb3df05
