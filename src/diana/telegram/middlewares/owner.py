@@ -9,26 +9,27 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
-from diana.application.ports import BehaviorCanceller
+from diana.application.turn_coordinator import TurnCoordinator
 
 logger = logging.getLogger("diana.telegram")
 
 
 class OwnerDetectionMiddleware(BaseMiddleware):
-    """If sender is owner: cancel_pending for chat, stop VIP pipeline.
+    """If sender is owner on a business chat: coordinate discard, stop pipeline.
 
     Owner private messages (commands / correct text) are allowed through when
-    the event is *not* a Business message (no business_connection_id).
+    the event is *not* a Business message (no business_connection_id). Private
+    admin traffic must not call owner discard for a VIP chat.
     """
 
     def __init__(
         self,
         *,
         owner_telegram_id: int,
-        behavior: BehaviorCanceller,
+        coordinator: TurnCoordinator,
     ) -> None:
         self._owner_id = owner_telegram_id
-        self._behavior = behavior
+        self._coordinator = coordinator
 
     async def __call__(
         self,
@@ -46,18 +47,24 @@ class OwnerDetectionMiddleware(BaseMiddleware):
 
         data["is_owner"] = True
 
-        # Business messages from owner (edge) — observe + cancel, no VIP pipeline.
+        # Business messages from owner — supersede live turn + cascade cancel.
         bc = data.get("business_connection_id") or getattr(
             event, "business_connection_id", None
         )
         if bc:
             chat = getattr(event, "chat", None)
             chat_id = getattr(chat, "id", None) if chat else None
+            action: str | None = None
             if chat_id is not None:
-                await self._behavior.cancel_pending(chat_id, "owner_message")
+                result = await self._coordinator.coordinate(
+                    chat_id,
+                    "owner",
+                    trigger_message_id=getattr(event, "message_id", None),
+                )
+                action = result.action
             logger.info(
                 "owner_business_observed",
-                extra={"chat_id": chat_id},
+                extra={"chat_id": chat_id, "action": action},
             )
             return None
 

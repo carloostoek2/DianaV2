@@ -89,7 +89,7 @@ def build_dispatcher(
         LoggingMiddleware(),
         BusinessConnectionMiddleware(),
         OwnerDetectionMiddleware(
-            owner_telegram_id=owner_telegram_id, behavior=behavior
+            owner_telegram_id=owner_telegram_id, coordinator=coordinator
         ),
         forbidden_mw,
         AuthMiddleware(vips=vips),
