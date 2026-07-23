@@ -32,3 +32,6 @@ build/
 .vscode/
 *.swp
 .DS_Store
+
+# Agent tooling local cache (skill registry, etc.)
+.atl/
