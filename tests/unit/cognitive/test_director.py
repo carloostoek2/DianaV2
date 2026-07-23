@@ -646,3 +646,61 @@ async def test_director_analyst_schema_fail_no_plan_trace() -> None:
     assert TurnStatus.ANALYZING.value in statuses
     assert TurnStatus.PLANNING.value not in statuses
     assert statuses[-1] == TurnStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_director_passes_included_blocks_to_evaluator() -> None:
+    """Included capability names from non-null knowledge appear in Evaluator messages."""
+    history = InMemoryMessageHistory(
+        {42: [{"role": "vip", "text": "prior-from-42-HISTORY-BODY"}]}
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(needs_history=True, needs_context=True),
+            _profile(),
+        ],
+        text_responses=["draft for vip"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    await director.handle_turn(_turn(chat_id=42, text="hola Diana"))
+
+    # Evaluator is the second generate_structured call (after Analyst).
+    eval_call = llm.calls[2]
+    assert eval_call[0] == "generate_structured"
+    assert eval_call[1]["schema"].__name__ == "EvaluationProfile"
+    flat = " ".join(m.get("content", "") for m in eval_call[1]["messages"])
+    assert "knowledge.history" in flat
+    assert "knowledge.context" in flat
+    # Anti-contamination: raw history body must not be dumped into Evaluator prompt.
+    assert "prior-from-42-HISTORY-BODY" not in flat
+    # Policy still null in F1 stubs — no accidental policy body dump.
+    assert "SECRET-POLICY-BODY" not in flat
+
+
+@pytest.mark.asyncio
+async def test_director_evaluator_schema_fail_no_decision_trace() -> None:
+    from diana.cognitive.exceptions import EvaluatorSchemaInvalidError
+
+    incomplete = {d: 0.5 for d in _EVAL_DIMS if d != "empathy"}
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            incomplete,
+            incomplete,
+        ],
+        text_responses=["draft text"],
+    )
+    sink = InMemoryTurnStatusSink()
+    director, trace, _ = make_director(llm, status_sink=sink)
+    turn = _turn()
+    with pytest.raises(EvaluatorSchemaInvalidError) as ei:
+        await director.handle_turn(turn)
+    assert str(ei.value) == "evaluador_schema_invalido"
+    keys = trace.keys_for(turn.turn_id)
+    assert "decision" not in keys
+    assert "evaluation" not in keys
+    assert "generated_text" in keys
+    statuses = [s for _, s in sink.transitions]
+    assert TurnStatus.EVALUATING.value in statuses
+    assert TurnStatus.DECIDING.value not in statuses
+    assert statuses[-1] == TurnStatus.FAILED.value

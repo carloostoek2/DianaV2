@@ -23,6 +23,7 @@ from diana.cognitive.generator import Generator
 from diana.cognitive.models import (
     AnalystInput,
     Decision,
+    EvaluatorInput,
     HistoryMessage,
     IncomingTurn,
     TurnStatus,
@@ -93,7 +94,8 @@ class CognitiveDirector:
         On unexpected errors the status sink receives ``TurnStatus.FAILED`` and
         the exception is re-raised. Partial artifacts already stored remain in
         the TraceStore for reconstructability. On Analyst schema failure no
-        comprehension or plan is stored.
+        comprehension or plan is stored. On Evaluator schema failure no
+        evaluation or decision is stored.
         """
         turn = turn_context
         turn_id = turn.turn_id
@@ -142,7 +144,16 @@ class CognitiveDirector:
         await self._store(turn_id, "generated_text", draft)
 
         await self._status.transition(turn_id, TurnStatus.EVALUATING)
-        evaluation = await self._evaluator.evaluate(draft, comprehension, turn)
+        # On EvaluatorSchemaInvalidError: do not store synthetic evaluation/decision.
+        blocks = self._context_builder.list_included_blocks(retrieved)
+        evaluation = await self._evaluator.evaluate(
+            EvaluatorInput(
+                draft=draft,
+                comprehension=comprehension,
+                included_blocks=blocks,
+                current_turn=turn.text,
+            )
+        )
         await self._store(turn_id, "evaluation", evaluation)
 
         await self._status.transition(turn_id, TurnStatus.DECIDING)
