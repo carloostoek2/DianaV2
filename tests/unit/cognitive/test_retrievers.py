@@ -1,7 +1,8 @@
-"""Unit tests for knowledge retrievers (REAL + STUB)."""
+"""Unit tests for knowledge retrievers (REAL + STUB) — Anexo H.3 shapes."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -39,10 +40,11 @@ def _comprehension() -> Comprehension:
 
 @pytest.mark.asyncio
 async def test_history_retriever_returns_chat_scoped_messages() -> None:
+    """Bare list of {autor,texto,timestamp}; assistant dropped; chat-scoped."""
     port = InMemoryMessageHistory(
         {
             100: [
-                {"role": "vip", "text": "a"},
+                {"role": "vip", "text": "a", "timestamp": "2026-01-01T10:00:00+00:00"},
                 {"role": "assistant", "text": "b"},
             ],
             200: [{"role": "vip", "text": "other-chat"}],
@@ -51,8 +53,11 @@ async def test_history_retriever_returns_chat_scoped_messages() -> None:
     retriever = HistoryRetriever(port, limit=20)
     result = await retriever.fetch(_turn(100), _comprehension())
     assert result == [
-        {"role": "vip", "text": "a"},
-        {"role": "assistant", "text": "b"},
+        {
+            "autor": "vip",
+            "texto": "a",
+            "timestamp": "2026-01-01T10:00:00+00:00",
+        },
     ]
 
 
@@ -67,8 +72,8 @@ async def test_history_retriever_isolates_chat_ids() -> None:
     retriever = HistoryRetriever(port)
     one = await retriever.fetch(_turn(1), _comprehension())
     two = await retriever.fetch(_turn(2), _comprehension())
-    assert one == [{"role": "vip", "text": "only-one"}]
-    assert two == [{"role": "vip", "text": "only-two"}]
+    assert one == [{"autor": "vip", "texto": "only-one", "timestamp": ""}]
+    assert two == [{"autor": "vip", "texto": "only-two", "timestamp": ""}]
 
 
 @pytest.mark.asyncio
@@ -77,26 +82,56 @@ async def test_history_retriever_respects_limit() -> None:
     port = InMemoryMessageHistory({5: msgs})
     retriever = HistoryRetriever(port, limit=3)
     result = await retriever.fetch(_turn(5), _comprehension())
+    assert result is not None
     assert len(result) == 3
-    assert result[-1]["text"] == "m9"
+    assert result[-1]["texto"] == "m9"
+
+
+@pytest.mark.asyncio
+async def test_history_retriever_empty_chat_returns_empty_list_not_none() -> None:
+    port = InMemoryMessageHistory()
+    retriever = HistoryRetriever(port)
+    result = await retriever.fetch(_turn(99), _comprehension())
+    assert result == []
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_history_retriever_maps_owner_to_duena() -> None:
+    port = InMemoryMessageHistory(
+        {
+            10: [
+                {"role": "owner", "text": "hola VIP", "timestamp": "t1"},
+            ]
+        }
+    )
+    retriever = HistoryRetriever(port)
+    result = await retriever.fetch(_turn(10), _comprehension())
+    assert result == [{"autor": "dueña", "texto": "hola VIP", "timestamp": "t1"}]
 
 
 @pytest.mark.asyncio
 async def test_context_retriever_derives_partial_from_history() -> None:
+    """H.3 English keys only; no preview/message_count fields."""
     port = InMemoryMessageHistory(
         {
             7: [
-                {"role": "vip", "text": "first"},
+                {"role": "vip", "text": "first", "timestamp": "2026-07-01T09:00:00+00:00"},
                 {"role": "assistant", "text": "second message here"},
             ]
         }
     )
-    retriever = ContextRetriever(port, limit=20)
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, limit=20, clock=lambda: fixed)
     ctx = await retriever.fetch(_turn(7), _comprehension())
     assert ctx is not None
-    assert ctx["message_count"] == 2
-    assert ctx["last_role"] == "assistant"
-    assert "second" in ctx["last_text_preview"]
+    assert set(ctx.keys()) == {"waiting_for_reply_since", "is_first_message_of_day"}
+    assert "message_count" not in ctx
+    assert "last_role" not in ctx
+    assert "last_text_preview" not in ctx
+    # Last mappable is vip (assistant dropped) → waiting = that ts; one vip today → True
+    assert ctx["waiting_for_reply_since"] == "2026-07-01T09:00:00+00:00"
+    assert ctx["is_first_message_of_day"] is True
 
 
 @pytest.mark.asyncio
@@ -105,9 +140,61 @@ async def test_context_retriever_empty_history() -> None:
     retriever = ContextRetriever(port)
     ctx = await retriever.fetch(_turn(99), _comprehension())
     assert ctx is not None
-    assert ctx["message_count"] == 0
-    assert ctx["last_role"] is None
-    assert ctx["last_text_preview"] == ""
+    assert ctx == {
+        "waiting_for_reply_since": None,
+        "is_first_message_of_day": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_context_waiting_when_last_is_vip() -> None:
+    port = InMemoryMessageHistory(
+        {
+            3: [
+                {"role": "owner", "text": "ok", "timestamp": "2026-07-01T08:00:00+00:00"},
+                {"role": "vip", "text": "pregunta", "timestamp": "2026-07-01T09:30:00+00:00"},
+            ]
+        }
+    )
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed)
+    ctx = await retriever.fetch(_turn(3), _comprehension())
+    assert ctx["waiting_for_reply_since"] == "2026-07-01T09:30:00+00:00"
+    assert ctx["is_first_message_of_day"] is True
+
+
+@pytest.mark.asyncio
+async def test_context_not_waiting_when_last_is_owner() -> None:
+    port = InMemoryMessageHistory(
+        {
+            4: [
+                {"role": "vip", "text": "hola", "timestamp": "2026-07-01T09:00:00+00:00"},
+                {"role": "owner", "text": "respuesta", "timestamp": "2026-07-01T09:05:00+00:00"},
+            ]
+        }
+    )
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed)
+    ctx = await retriever.fetch(_turn(4), _comprehension())
+    assert ctx["waiting_for_reply_since"] is None
+    assert ctx["is_first_message_of_day"] is True
+
+
+@pytest.mark.asyncio
+async def test_context_is_first_message_of_day_false_with_two_vip_today() -> None:
+    port = InMemoryMessageHistory(
+        {
+            5: [
+                {"role": "vip", "text": "a", "timestamp": "2026-07-01T08:00:00+00:00"},
+                {"role": "vip", "text": "b", "timestamp": "2026-07-01T09:00:00+00:00"},
+            ]
+        }
+    )
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed)
+    ctx = await retriever.fetch(_turn(5), _comprehension())
+    assert ctx["is_first_message_of_day"] is False
+    assert ctx["waiting_for_reply_since"] == "2026-07-01T09:00:00+00:00"
 
 
 @pytest.mark.asyncio
