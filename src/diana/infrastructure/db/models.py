@@ -79,6 +79,8 @@ class Turn(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     trigger_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     superseded_by: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    # Failure reason (e.g. analista_schema_invalido). Nullable; set on mark_failed.
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

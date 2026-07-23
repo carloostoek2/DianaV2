@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from diana.infrastructure.db.repositories.history import rows_to_recent_messages
+from diana.infrastructure.db.repositories.turns import turn_orm_to_record
 from diana.infrastructure.db.repositories.vips import vip_is_allowed, vip_orm_to_record
 
 
@@ -76,6 +77,42 @@ def test_history_get_recent_desc_then_chronological() -> None:
     assert [m["text"] for m in out] == ["a", "b", "c"]
     limited = rows_to_recent_messages(rows_desc, limit=2)  # type: ignore[arg-type]
     assert [m["text"] for m in limited] == ["b", "c"]
+
+
+def test_turn_orm_to_record_maps_error() -> None:
+    turn_id = uuid4()
+    vip_id = uuid4()
+    orm = SimpleNamespace(
+        id=turn_id,
+        chat_id=99,
+        status="failed",
+        vip_id=vip_id,
+        trigger_message_id=42,
+        superseded_by=None,
+        error="analista_schema_invalido",
+    )
+    rec = turn_orm_to_record(orm)  # type: ignore[arg-type]
+    assert rec.id == turn_id
+    assert rec.chat_id == 99
+    assert rec.status == "failed"
+    assert rec.vip_id == vip_id
+    assert rec.trigger_message_id == 42
+    assert rec.error == "analista_schema_invalido"
+
+
+def test_turn_orm_to_record_error_none_when_absent() -> None:
+    rec = turn_orm_to_record(
+        SimpleNamespace(
+            id=uuid4(),
+            chat_id=1,
+            status="received",
+            vip_id=None,
+            trigger_message_id=None,
+            superseded_by=None,
+            error=None,
+        )  # type: ignore[arg-type]
+    )
+    assert rec.error is None
 
 
 def test_infrastructure_has_no_aiogram_imports() -> None:

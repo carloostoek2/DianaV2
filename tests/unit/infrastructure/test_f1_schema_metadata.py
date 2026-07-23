@@ -74,6 +74,29 @@ def test_status_server_defaults() -> None:
     assert "waiting" in str(PendingApproval.__table__.c.status.server_default.arg)
 
 
+def test_turns_error_column_nullable_text() -> None:
+    """Durable failure reason for mark_failed / A.6 (analista_schema_invalido)."""
+    col = Turn.__table__.c.error
+    assert col.nullable is True
+    assert col.type.__class__.__name__ == "Text"
+
+
+def test_migration_002_adds_turns_error() -> None:
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "alembic"
+        / "versions"
+        / "002_turns_error.py"
+    )
+    text = migration.read_text(encoding="utf-8")
+    assert 'revision: str = "002_turns_error"' in text
+    assert 'down_revision' in text and "001_f1_foundation" in text
+    assert 'op.add_column' in text
+    assert '"turns"' in text or "'turns'" in text
+    assert '"error"' in text or "'error'" in text
+
+
+
 def test_desc_indexes_present_in_orm_metadata() -> None:
     """ORM indexes must encode DESC expressions (match migration intent)."""
     def index_exprs(table_name: str, index_name: str) -> str:

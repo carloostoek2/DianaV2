@@ -36,7 +36,7 @@ def turn_orm_to_record(row: Turn) -> TurnRecord:
         vip_id=row.vip_id,
         trigger_message_id=row.trigger_message_id,
         superseded_by=row.superseded_by,
-        error=None,  # column absent in F1 schema; domain field memory-only / logs
+        error=row.error,
     )
 
 
@@ -55,6 +55,7 @@ class SqlTurnStore:
                 vip_id=turn.vip_id,
                 trigger_message_id=turn.trigger_message_id,
                 superseded_by=turn.superseded_by,
+                error=turn.error,
             )
             session.add(row)
             await session.commit()
@@ -97,8 +98,8 @@ class SqlTurnStore:
             row.status = effective
             if superseded_by is not None:
                 row.superseded_by = superseded_by
-            # error column absent — intentional schema-gap policy (log at call site)
-            _ = error
+            if error is not None:
+                row.error = error
             await session.commit()
             await session.refresh(row)
             return turn_orm_to_record(row)
