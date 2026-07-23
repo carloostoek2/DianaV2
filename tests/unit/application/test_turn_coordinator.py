@@ -1,4 +1,4 @@
-"""TurnCoordinator: one non-terminal turn per chat + supersede cascade."""
+"""TurnCoordinator: G.3 coordinate matrix + one non-terminal turn per chat."""
 
 from __future__ import annotations
 
@@ -12,7 +12,11 @@ from diana.application.memory import (
     InMemoryTurnStore,
 )
 from diana.application.ports import ApprovalRecord, TurnRecord
-from diana.application.turn_coordinator import TurnCoordinator
+from diana.application.turn_coordinator import (
+    ChatLockTimeoutError,
+    CoordinateResult,
+    TurnCoordinator,
+)
 from diana.cognitive.models import TurnStatus
 
 
@@ -25,7 +29,9 @@ class FakeCanceller:
 
 
 @pytest.fixture
-def coordinator() -> tuple[TurnCoordinator, InMemoryTurnStore, InMemoryPendingApprovalStore, FakeCanceller]:
+def coordinator() -> tuple[
+    TurnCoordinator, InMemoryTurnStore, InMemoryPendingApprovalStore, FakeCanceller
+]:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     canceller = FakeCanceller()
@@ -152,3 +158,159 @@ async def test_begin_turn_accepts_explicit_turn_id(
     assert rec.id == tid
     assert isinstance(rec.id, UUID)
     assert rec.vip_id is not None
+
+
+# --- Anexo G.3 coordinate matrix ---
+
+
+@pytest.mark.asyncio
+async def test_coordinate_vip_idle_creates(coordinator: tuple) -> None:
+    coord, turns, _, _ = coordinator
+    result = await coord.coordinate(chat_id=200, autor="vip", trigger_message_id=9)
+    assert isinstance(result, CoordinateResult)
+    assert result.action == "create"
+    assert result.turn_id is not None
+    non_term = await turns.list_non_terminal(200)
+    assert len(non_term) == 1
+    assert non_term[0].id == result.turn_id
+    assert non_term[0].status == TurnStatus.RECEIVED.value
+
+
+@pytest.mark.asyncio
+async def test_coordinate_vip_nonterminal_replaces(coordinator: tuple) -> None:
+    coord, turns, _, _ = coordinator
+    first = await coord.coordinate(chat_id=201, autor="vip")
+    assert first.action == "create"
+    second = await coord.coordinate(chat_id=201, autor="vip")
+    assert second.action == "replace"
+    assert second.turn_id is not None
+    assert second.turn_id != first.turn_id
+    old = await turns.get(first.turn_id)  # type: ignore[arg-type]
+    assert old is not None
+    assert old.status == TurnStatus.SUPERSEDED.value
+    assert old.superseded_by == second.turn_id
+    non_term = await turns.list_non_terminal(201)
+    assert len(non_term) == 1
+    assert non_term[0].id == second.turn_id
+
+
+@pytest.mark.asyncio
+async def test_coordinate_owner_nonterminal_discards(coordinator: tuple) -> None:
+    coord, turns, _, _ = coordinator
+    created = await coord.coordinate(chat_id=202, autor="vip")
+    assert created.turn_id is not None
+    result = await coord.coordinate(chat_id=202, autor="owner")
+    assert result.action == "discard_owner_message"
+    assert result.turn_id is None
+    non_term = await turns.list_non_terminal(202)
+    assert non_term == []
+    old = await turns.get(created.turn_id)
+    assert old is not None
+    assert old.status == TurnStatus.SUPERSEDED.value
+    assert old.superseded_by is None
+
+
+@pytest.mark.asyncio
+async def test_coordinate_owner_idle_discards_no_create(coordinator: tuple) -> None:
+    coord, turns, _, _ = coordinator
+    result = await coord.coordinate(chat_id=203, autor="owner")
+    assert result.action == "discard_owner_message"
+    assert result.turn_id is None
+    non_term = await turns.list_non_terminal(203)
+    assert non_term == []
+    # No turn rows created for owner path.
+    all_for_chat = [
+        t for t in turns._turns.values() if t.chat_id == 203  # type: ignore[attr-defined]
+    ]
+    assert all_for_chat == []
+
+
+@pytest.mark.asyncio
+async def test_coordinate_owner_discards_cancels_approvals_and_pending(
+    coordinator: tuple,
+) -> None:
+    coord, turns, approvals, canceller = coordinator
+    first = await coord.begin_turn(chat_id=204)
+    await coord.transition(first.id, TurnStatus.PENDING_APPROVAL)
+    await approvals.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=first.id,
+            chat_id=204,
+            business_connection_id="bc",
+            draft_text="draft",
+            status="waiting",
+        )
+    )
+    result = await coord.coordinate(chat_id=204, autor="owner")
+    assert result.action == "discard_owner_message"
+    assert result.turn_id is None
+    assert await turns.list_non_terminal(204) == []
+    appr = await approvals.get_by_turn(first.id)
+    assert appr is not None
+    assert appr.status == "cancelled"
+    assert canceller.calls == [(204, "owner_message")]
+
+
+@pytest.mark.asyncio
+async def test_coordinate_vip_replace_cancel_reason_new_message(
+    coordinator: tuple,
+) -> None:
+    coord, _, _, canceller = coordinator
+    await coord.coordinate(chat_id=205, autor="vip")
+    await coord.coordinate(chat_id=205, autor="vip")
+    assert canceller.calls == [(205, "new_message")]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_coordinate_vip_one_non_terminal(
+    coordinator: tuple,
+) -> None:
+    coord, turns, _, _ = coordinator
+    results = await asyncio.gather(
+        coord.coordinate(chat_id=206, autor="vip"),
+        coord.coordinate(chat_id=206, autor="vip"),
+        coord.coordinate(chat_id=206, autor="vip"),
+    )
+    assert all(r.action in ("create", "replace") for r in results)
+    assert len({r.turn_id for r in results}) == 3
+    non_term = await turns.list_non_terminal(206)
+    assert len(non_term) == 1
+
+
+@pytest.mark.asyncio
+async def test_begin_turn_still_vip_create_replace(coordinator: tuple) -> None:
+    """VIP wrappers still supersede on second begin_turn."""
+    coord, turns, _, _ = coordinator
+    first = await coord.begin_turn(chat_id=207)
+    second = await coord.begin_turn(chat_id=207)
+    old = await turns.get(first.id)
+    assert old is not None
+    assert old.status == TurnStatus.SUPERSEDED.value
+    assert old.superseded_by == second.id
+    non_term = await turns.list_non_terminal(207)
+    assert len(non_term) == 1
+    assert non_term[0].id == second.id
+
+
+@pytest.mark.asyncio
+async def test_chat_scope_lock_timeout_raises() -> None:
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    canceller = FakeCanceller()
+    coord = TurnCoordinator(
+        turns,
+        approvals,
+        canceller,
+        lock_acquire_timeout_s=0.05,
+        lock_acquire_retries=0,
+    )
+    lock = await coord._locks.lock_for(208)
+    await lock.acquire()
+    try:
+        with pytest.raises(ChatLockTimeoutError):
+            await coord.coordinate(chat_id=208, autor="vip")
+        # No silent success / no turn created while lock held.
+        assert await turns.list_non_terminal(208) == []
+    finally:
+        lock.release()
