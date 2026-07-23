@@ -14,6 +14,7 @@ Each dimension is a finite float in ``[0.0, 1.0]``.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
@@ -83,22 +84,57 @@ class IncomingTurn(BaseModel):
     business_connection_id: str | None = None
 
 
+# Closed emotion enum (contrato_analista.md A.3). Free strings are forbidden.
+Emotion = Literal[
+    "neutral",
+    "positiva",
+    "ansiosa",
+    "molesta",
+    "triste",
+    "cariñosa",
+    "urgente",
+]
+
+
+class HistoryMessage(BaseModel):
+    """One short-window history line for Analyst input (contrato A.2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    autor: Literal["vip", "dueña"]
+    texto: str
+    timestamp: datetime | str
+
+
+class AnalystInput(BaseModel):
+    """Analyst input: current turn text + short chat-scoped history only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turno_actual: str
+    historial_reciente: list[HistoryMessage]
+
+
 class Comprehension(BaseModel):
-    """Analyst output: what is happening in this turn."""
+    """Analyst output: what is happening in this turn (contrato A.3).
+
+    All six needs_* flags are required — no partial comprehension.
+    Optional internal raw capture field is excluded from LLM required set.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     intent: str
     topics: list[str]
-    emotion: str
+    emotion: Emotion
     urgency: Literal["baja", "media", "alta"]
     risk: Literal["bajo", "medio", "alto"]
-    needs_memory: bool = False
-    needs_policy: bool = False
-    needs_schedule: bool = False
-    needs_examples: bool = False
-    needs_history: bool = True
-    needs_context: bool = True
+    needs_memory: bool
+    needs_policy: bool
+    needs_schedule: bool
+    needs_examples: bool
+    needs_history: bool
+    needs_context: bool
     raw_llm_output: dict | None = None
 
 
@@ -151,9 +187,12 @@ class Decision(BaseModel):
 TurnContext = IncomingTurn
 
 __all__ = [
+    "AnalystInput",
     "Comprehension",
     "Decision",
+    "Emotion",
     "EvaluationProfile",
+    "HistoryMessage",
     "IncomingTurn",
     "Plan",
     "ScoreUnit",

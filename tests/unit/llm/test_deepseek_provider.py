@@ -156,9 +156,15 @@ async def test_generate_structured_attaches_raw_when_schema_has_field() -> None:
     payload = {
         "intent": "greet",
         "topics": ["hi"],
-        "emotion": "ok",
+        "emotion": "neutral",
         "urgency": "baja",
         "risk": "bajo",
+        "needs_memory": False,
+        "needs_policy": False,
+        "needs_schedule": False,
+        "needs_examples": False,
+        "needs_history": True,
+        "needs_context": True,
     }
 
     def handler(request: httpx.Request) -> httpx.Response:

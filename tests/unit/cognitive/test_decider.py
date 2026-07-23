@@ -31,6 +31,12 @@ def _comprehension(*, risk: str = "bajo") -> Comprehension:
         emotion="neutral",
         urgency="baja",
         risk=risk,  # type: ignore[arg-type]
+        needs_memory=False,
+        needs_policy=False,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
     )
 
 

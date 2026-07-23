@@ -126,6 +126,26 @@ def test_decision_rejects_extra_score_on_nested_evaluation() -> None:
         )
 
 
+_NEEDS = {
+    "needs_memory": False,
+    "needs_policy": False,
+    "needs_schedule": False,
+    "needs_examples": False,
+    "needs_history": True,
+    "needs_context": True,
+}
+
+_EMOTION_ENUM = (
+    "neutral",
+    "positiva",
+    "ansiosa",
+    "molesta",
+    "triste",
+    "cariñosa",
+    "urgente",
+)
+
+
 def test_comprehension_rejects_invalid_urgency_and_risk() -> None:
     from diana.cognitive.models import Comprehension
 
@@ -136,6 +156,7 @@ def test_comprehension_rejects_invalid_urgency_and_risk() -> None:
             emotion="neutral",
             urgency="urgent",  # invalid
             risk="bajo",
+            **_NEEDS,
         )
     with pytest.raises(ValidationError):
         Comprehension(
@@ -144,6 +165,7 @@ def test_comprehension_rejects_invalid_urgency_and_risk() -> None:
             emotion="neutral",
             urgency="baja",
             risk="critical",  # invalid
+            **_NEEDS,
         )
 
 
@@ -153,12 +175,89 @@ def test_comprehension_valid_literals() -> None:
     c = Comprehension(
         intent="greet",
         topics=["hello"],
-        emotion="friendly",
+        emotion="positiva",
         urgency="media",
         risk="medio",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=True,
+        needs_history=True,
+        needs_context=False,
     )
     assert c.needs_history is True
     assert c.needs_memory is False
+    assert c.needs_policy is True
+    assert c.needs_context is False
+    assert c.emotion == "positiva"
+
+
+@pytest.mark.parametrize("bad_emotion", ["friendly", "amistosa", "happy", ""])
+def test_comprehension_rejects_unknown_emotion(bad_emotion: str) -> None:
+    from diana.cognitive.models import Comprehension
+
+    with pytest.raises(ValidationError):
+        Comprehension(
+            intent="x",
+            topics=[],
+            emotion=bad_emotion,
+            urgency="baja",
+            risk="bajo",
+            **_NEEDS,
+        )
+
+
+@pytest.mark.parametrize("emotion", _EMOTION_ENUM)
+def test_comprehension_accepts_all_emotion_enum_values(emotion: str) -> None:
+    from diana.cognitive.models import Comprehension
+
+    c = Comprehension(
+        intent="x",
+        topics=[],
+        emotion=emotion,
+        urgency="baja",
+        risk="bajo",
+        **_NEEDS,
+    )
+    assert c.emotion == emotion
+
+
+@pytest.mark.parametrize(
+    "missing_need",
+    [
+        "needs_memory",
+        "needs_policy",
+        "needs_schedule",
+        "needs_examples",
+        "needs_history",
+        "needs_context",
+    ],
+)
+def test_comprehension_requires_all_needs_flags(missing_need: str) -> None:
+    from diana.cognitive.models import Comprehension
+
+    data = {
+        "intent": "x",
+        "topics": [],
+        "emotion": "neutral",
+        "urgency": "baja",
+        "risk": "bajo",
+        **_NEEDS,
+    }
+    del data[missing_need]
+    with pytest.raises(ValidationError):
+        Comprehension(**data)
+
+
+def test_analyst_input_and_history_message_shape() -> None:
+    from diana.cognitive.models import AnalystInput, HistoryMessage
+
+    hist = HistoryMessage(autor="dueña", texto="hola", timestamp="2026-01-01T00:00:00Z")
+    inp = AnalystInput(turno_actual="¿precio?", historial_reciente=[hist])
+    assert inp.turno_actual == "¿precio?"
+    assert inp.historial_reciente[0].autor == "dueña"
+    with pytest.raises(ValidationError):
+        HistoryMessage(autor="bot", texto="x", timestamp="t")  # type: ignore[arg-type]
 
 
 def test_plan_capabilities_ok() -> None:

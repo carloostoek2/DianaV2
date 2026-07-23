@@ -28,6 +28,12 @@ def _comprehension() -> Comprehension:
         emotion="neutral",
         urgency="baja",
         risk="bajo",
+        needs_memory=False,
+        needs_policy=False,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
     )
 
 
