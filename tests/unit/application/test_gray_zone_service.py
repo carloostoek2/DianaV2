@@ -307,20 +307,18 @@ async def test_discard_and_close_no_vip_skips_unfreeze(
 
 
 @pytest.mark.asyncio
-async def test_discard_and_close_query_gone_after_update(
+async def test_discard_and_close_returns_original_query(
     service: GrayZoneService,
     query_repo: AsyncMock,
 ) -> None:
-    """discard_and_close handles the case where re-fetch returns None gracefully."""
+    """discard_and_close returns the original query (no re-fetch)."""
     query_id = uuid4()
-    query_repo.get_by_id.side_effect = [
-        _fake_query_row(query_id=query_id, vip_id=None),
-        None,  # second call returns None
-    ]
+    query_repo.get_by_id.return_value = _fake_query_row(query_id=query_id, vip_id=None)
     query_repo.update_status.return_value = True
 
     result = await service.discard_and_close(query_id=query_id)
-    assert result is None
+    assert result is not None
+    assert result.id == query_id
 
 
 # --- freeze_vip / unfreeze_vip ---

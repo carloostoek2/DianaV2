@@ -126,9 +126,10 @@ class CognitiveDirector:
                 retriever = self._registry.resolve(cap)
                 retrieved[cap] = await retriever.fetch(turn, comprehension)
         finally:
-            # Persist partial retrieved map even when a fetch fails mid-loop.
-            if retrieved:
-                await self._store(turn_id, "retrieved", retrieved)
+            # Persist the retrieved map unconditionally — even an empty dict
+            # signals "retrieval ran with no capabilities" vs "retrieval had
+            # a pre-loop exception" (in which case the turn is failed anyway).
+            await self._store(turn_id, "retrieved", retrieved)
 
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
         # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).
