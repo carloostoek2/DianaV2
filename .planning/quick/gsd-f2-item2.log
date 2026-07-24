@@ -23,3 +23,18 @@
 
 ### Task 3 done: 2026-07-24
 - GrayZoneService: create_query, resolve_with_doctrine, confirm_and_apply, discard_and_close, freeze_vip, unfreeze_vip, expire_old_queries
+
+### Verification: 2026-07-24
+- alembic upgrade head: OK (003 → 004_vip_frozen_until)
+- All 6 import checks: OK (repos, Policy, PolicyDistiller, StagingService, GrayZoneService, DeliveryContext)
+- pytest tests/unit/infrastructure/test_f1_schema_metadata.py: 11 passed
+- pytest tests/unit/cognitive/test_import_purity.py: 1 passed
+- pytest tests/unit/cognitive/test_retrievers.py: 22 passed
+- pytest tests/ -x: 459 passed
+- Residual found: test_sql_repo_shapes.py mock missing frozen_until — fixed inline
+
+## Self-Check: PASSED
+- [x] Todas las tareas completadas
+- [x] Tests del PLAN corridos
+- [x] 0 regresiones atribuibles (459 passed)
+- [x] Convenciones del proyecto respetadas (no aiogram in cognitive, no LLM in PolicyDistiller, no auto-promote, staged confirmations)
