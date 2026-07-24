@@ -7,6 +7,7 @@ from typing import Protocol
 from uuid import UUID
 
 from diana.application.admin_service import AdminService
+from diana.application.gray_zone_service import GrayZoneService
 from diana.application.ports import MessageHistoryWriter, VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.exceptions import (
@@ -57,12 +58,16 @@ class TurnOrchestrator:
         admin: AdminService,
         learning: LearningPort,
         history: MessageHistoryWriter,
+        gray_zone: GrayZoneService | None = None,
+        feature_gray_zone_enabled: bool = False,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
         self._admin = admin
         self._learning = learning
         self._history = history
+        self._gray_zone = gray_zone
+        self._feature_gray_zone_enabled = feature_gray_zone_enabled
 
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
@@ -211,14 +216,36 @@ class TurnOrchestrator:
                 turn_ctx, decision, turn_id
             )
             # CRITICAL: never call behavior.deliver here (L2 / R1)
+        elif decision.action == "consult_doctrine":
+            if not self._feature_gray_zone_enabled:
+                raise RuntimeError(
+                    "consult_doctrine action returned but gray zone feature is disabled"
+                )
+            if self._gray_zone is None:
+                raise RuntimeError(
+                    "consult_doctrine action returned but GrayZoneService is not injected"
+                )
+            await self._coordinator.transition(
+                turn_id, TurnStatus.GRAY_ZONE
+            )
+            query = await self._gray_zone.create_query(
+                vip_id=turn_ctx.vip_id,
+                turn_id=turn_id,
+                question=turn_ctx.text,
+                draft=decision.draft_text or "",
+            )
+            await self._admin.send_doctrine_query(
+                turn_ctx, decision, turn_id, query
+            )
+            # CRITICAL: never call behavior.deliver — VIP is frozen
         elif decision.action == "escalate":
             await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
             await self._admin.notify_escalation(turn_ctx, decision, turn_id)
         else:
             await self._coordinator.mark_failed(
-                turn_id, error=f"unexpected F1 action: {decision.action!r}"
+                turn_id, error=f"unexpected F2 action: {decision.action!r}"
             )
-            raise ValueError(f"unexpected F1 action: {decision.action!r}")
+            raise ValueError(f"unexpected F2 action: {decision.action!r}")
 
         await self._learning.run_post_turn(turn_id)
         logger.info(

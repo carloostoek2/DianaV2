@@ -65,7 +65,27 @@ def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
     )
 
 
+def doctrine_keyboard(turn_id: UUID, query_id: UUID | None = None) -> InlineKeyboardMarkup:
+    """Reply markup for gray zone doctrine queries.
+
+    Full implementation in Item 4 (callback handlers).
+    For now, returns a simple keyboard with the respond_doctrine action.
+    """
+    builder = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Respond to query",
+                    callback_data=f"doctrine_respond:{turn_id}:{query_id}" if query_id else f"doctrine_respond:{turn_id}",
+                ),
+            ]
+        ]
+    )
+    return builder
+
+
 __all__ = [
+    "doctrine_keyboard",
     "draft_keyboard",
     "encode_callback",
     "parse_callback",

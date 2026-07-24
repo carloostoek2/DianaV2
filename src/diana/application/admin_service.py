@@ -10,6 +10,7 @@ from diana.application.ports import (
     ApprovalRecord,
     BehaviorDeliverer,
     DeliveryResultWriter,
+    DoctrineNotification,
     DraftNotification,
     EscalationNotification,
     EscalationStore,
@@ -157,6 +158,52 @@ class AdminService:
         logger.info(
             "escalation_notified",
             extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
+        )
+
+    async def send_doctrine_query(
+        self,
+        turn: IncomingTurn,
+        decision: Decision,
+        turn_id: UUID,
+        query: object,  # GrayZoneQuery ORM row
+    ) -> None:
+        """Notify owner of a gray zone doctrine query (VIP frozen).
+
+        Sends DM with the VIP's question, the draft, and reply markup
+        for the owner to respond with doctrine guidance.
+        Does NOT deliver to the VIP (VIP is frozen).
+        """
+        bc = (turn.business_connection_id or "").strip()
+        if not bc:
+            raise ValueError("business_connection_id is required for doctrine query")
+
+        draft = decision.draft_text or ""
+        query_id = getattr(query, "id", None)
+
+        owner_mid = await self._notifier.notify_doctrine(
+            DoctrineNotification(
+                turn_id=turn_id,
+                chat_id=turn.chat_id,
+                vip_text=turn.text,
+                draft_text=draft,
+                reason=decision.reason,
+                evaluation_summary=_eval_summary(decision),
+                business_connection_id=bc,
+                reply_markup_spec={
+                    "actions": ["respond_doctrine", "resolve_with_draft", "escalate_doctrine"],
+                    "turn_id": str(turn_id),
+                    "query_id": str(query_id) if query_id else None,
+                },
+            )
+        )
+        logger.info(
+            "doctrine_query_notified",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": turn.chat_id,
+                "query_id": str(query_id) if query_id else None,
+                "owner_message_id": owner_mid,
+            },
         )
 
     async def handle_approve(

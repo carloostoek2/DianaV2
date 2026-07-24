@@ -93,6 +93,21 @@ class EscalationNotification(BaseModel):
     business_connection_id: str | None = None
 
 
+class DoctrineNotification(BaseModel):
+    """Notification to the owner with a gray zone doctrine query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: UUID
+    chat_id: int
+    vip_text: str
+    draft_text: str | None = None
+    evaluation_summary: str
+    reason: str
+    business_connection_id: str | None = None
+    reply_markup_spec: dict | None = None
+
+
 class VipInboundMessage(BaseModel):
     """Application DTO for an inbound VIP business message."""
 
@@ -162,6 +177,10 @@ class OwnerNotifierPort(Protocol):
     async def notify_escalation(self, payload: EscalationNotification) -> None: ...
 
     async def notify_info(self, text: str, *, chat_id: int | None = None) -> None: ...
+
+    async def notify_doctrine(
+        self, payload: DoctrineNotification
+    ) -> int | None: ...
 
 
 @runtime_checkable
@@ -284,6 +303,7 @@ __all__ = [
     "BehaviorDeliverer",
     "DeliveryRecord",
     "DeliveryResultWriter",
+    "DoctrineNotification",
     "DraftNotification",
     "EscalationNotification",
     "EscalationStore",
