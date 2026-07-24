@@ -69,7 +69,7 @@ class GrayZoneQueryRepo:
     async def expire_older_than(self, timeout_hours: int) -> list[GrayZoneQuery]:
         """Mark open queries older than timeout_hours as expired. Returns expired rows."""
         async with self._sf() as session:
-            cutoff = func.now() - text(f"interval '{timeout_hours} hours'")
+            cutoff = func.now() - text("interval :hours hours").bindparams(hours=str(timeout_hours))
             result = await session.execute(
                 select(GrayZoneQuery).where(
                     GrayZoneQuery.status == "open",

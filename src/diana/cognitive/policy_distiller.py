@@ -35,6 +35,10 @@ class PolicyDistiller:
         Returns:
             A pure domain Policy with trigger_description derived from the
             generalization, and source_query_id left unset.
+
+        Note:
+            Returns an unsaved Policy object with id=None and created_at=None.
+            The caller must persist it (e.g. via a repository or StagingCandidate).
         """
         # Mechanical extraction: generalization IS the rule; question provides trigger context.
         # If the owner provides a multi-line generalization, the first line is trigger,

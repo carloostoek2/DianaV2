@@ -135,7 +135,19 @@ class GrayZoneService:
         This is called AFTER StagingService.promote_to_policy succeeds (Item 3).
         Included here for completeness so the service owns the full lifecycle.
         Returns the updated GrayZoneQuery row.
+
+        Raises:
+            ValueError: If the query is not found or not in 'open' status.
         """
+        query = await self._queries.get_by_id(query_id)
+        if query is None:
+            raise ValueError(f"GrayZoneQuery {query_id} not found")
+        if query.status != "open":
+            raise ValueError(
+                f"GrayZoneQuery {query_id} status is {query.status!r}, "
+                f"expected 'open'"
+            )
+
         now = datetime.now(UTC)
         await self._queries.update_status(query_id, "resolved", resolved_at=now)
         query = await self._queries.get_by_id(query_id)
@@ -143,7 +155,14 @@ class GrayZoneService:
             raise ValueError(f"GrayZoneQuery {query_id} disappeared after update")
 
         if query.vip_id is not None:
-            await self._vips.unfreeze_vip(query.vip_id)
+            try:
+                await self._vips.unfreeze_vip(query.vip_id)
+            except ValueError:
+                logger.warning(
+                    "Failed to unfreeze VIP %s for resolved query %s",
+                    query.vip_id,
+                    query_id,
+                )
 
         logger.info(
             "gray_zone_query_closed",
@@ -158,11 +177,29 @@ class GrayZoneService:
         """Close a gray zone query without a policy (owner said no).
 
         Unfreezes the VIP and marks the query as resolved with no policy.
+
+        Raises:
+            ValueError: If the query is not found or not in 'open' status.
         """
-        now = datetime.now(UTC)
         query = await self._queries.get_by_id(query_id)
-        if query is not None and query.vip_id is not None:
-            await self._vips.unfreeze_vip(query.vip_id)
+        if query is None:
+            raise ValueError(f"GrayZoneQuery {query_id} not found")
+        if query.status != "open":
+            raise ValueError(
+                f"GrayZoneQuery {query_id} status is {query.status!r}, "
+                f"expected 'open'"
+            )
+
+        now = datetime.now(UTC)
+        if query.vip_id is not None:
+            try:
+                await self._vips.unfreeze_vip(query.vip_id)
+            except ValueError:
+                logger.warning(
+                    "Failed to unfreeze VIP %s for discarded query %s",
+                    query.vip_id,
+                    query_id,
+                )
 
         await self._queries.update_status(query_id, "resolved", resolved_at=now)
 
@@ -205,7 +242,14 @@ class GrayZoneService:
 
         for row in expired:
             if row.vip_id is not None:
-                await self._vips.unfreeze_vip(row.vip_id)
+                try:
+                    await self._vips.unfreeze_vip(row.vip_id)
+                except ValueError:
+                    logger.warning(
+                        "Failed to unfreeze VIP %s for expired query %s",
+                        row.vip_id,
+                        row.id,
+                    )
             logger.info(
                 "gray_zone_query_expired",
                 extra={
