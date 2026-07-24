@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -106,6 +106,49 @@ class DoctrineNotification(BaseModel):
     reason: str
     business_connection_id: str | None = None
     reply_markup_spec: dict | None = None
+
+
+@runtime_checkable
+class GrayZoneQueryView(Protocol):
+    """Minimal query view used by AdminService.send_doctrine_query.
+
+    Provides a stable interface over the ORM GrayZoneQuery row so the
+    application layer does not depend on infrastructure model shapes.
+    """
+
+    id: UUID
+
+
+DeliveryMode = Literal["supervised", "autonomous", "fake_delivery"]
+
+
+class DeliveryContext(BaseModel):
+    """Context required to act a message toward a VIP chat."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chat_id: int
+    business_connection_id: str
+    vip_id: UUID | None = None
+    mode: DeliveryMode = "supervised"
+    telegram_message_id: int | None = None
+    is_frozen: bool = False
+
+
+class DeliveryResult(BaseModel):
+    """Outcome of a deliver attempt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    success: bool
+    message_ids: list[int] = Field(default_factory=list)
+    actual_delay_seconds: float = 0.0
+    typing_duration_seconds: float = 0.0
+    error: str | None = None
+    cancelled: bool = False
+
+    def to_trace_dict(self) -> dict:
+        return self.model_dump(mode="json")
 
 
 class VipInboundMessage(BaseModel):
@@ -301,12 +344,16 @@ __all__ = [
     "ApprovalRecord",
     "BehaviorCanceller",
     "BehaviorDeliverer",
+    "DeliveryContext",
+    "DeliveryMode",
     "DeliveryRecord",
+    "DeliveryResult",
     "DeliveryResultWriter",
     "DoctrineNotification",
     "DraftNotification",
     "EscalationNotification",
     "EscalationStore",
+    "GrayZoneQueryView",
     "MessageHistoryWriter",
     "OwnerNotifierPort",
     "PendingApprovalStore",

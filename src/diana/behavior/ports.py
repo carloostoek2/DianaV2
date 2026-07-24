@@ -12,45 +12,14 @@ English ↔ Anexo I (docstring map only):
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
-
-DeliveryMode = Literal["supervised", "autonomous", "fake_delivery"]
+from diana.application.ports import DeliveryContext, DeliveryMode, DeliveryResult
 
 
 class TransientSendError(Exception):
     """Transient channel/API failure eligible for bounded retry (I.4)."""
-
-
-class DeliveryContext(BaseModel):
-    """Context required to act a message toward a VIP chat."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    chat_id: int
-    business_connection_id: str
-    vip_id: UUID | None = None
-    mode: DeliveryMode = "supervised"
-    telegram_message_id: int | None = None
-    is_frozen: bool = False
-
-
-class DeliveryResult(BaseModel):
-    """Outcome of a deliver attempt."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    success: bool
-    message_ids: list[int] = Field(default_factory=list)
-    actual_delay_seconds: float = 0.0
-    typing_duration_seconds: float = 0.0
-    error: str | None = None
-    cancelled: bool = False
-
-    def to_trace_dict(self) -> dict:
-        return self.model_dump(mode="json")
 
 
 @runtime_checkable

@@ -72,6 +72,17 @@ def parse_turn_status(value: str) -> TurnStatus:
         raise ValueError(f"invalid turn status: {value!r}") from exc
 
 
+def is_turn_status_terminal(status: str) -> bool:
+    """Check whether a free-text turn status is terminal.
+
+    Safe for any string (returns False for unknown status values).
+    """
+    try:
+        return parse_turn_status(status) in TERMINAL_TURN_STATUSES
+    except ValueError:
+        return False
+
+
 class IncomingTurn(BaseModel):
     """Inbound turn context consumed by later Analyst protocol."""
 
@@ -265,5 +276,6 @@ __all__ = [
     "TERMINAL_TURN_STATUSES",
     "TurnContext",
     "TurnStatus",
+    "is_turn_status_terminal",
     "parse_turn_status",
 ]

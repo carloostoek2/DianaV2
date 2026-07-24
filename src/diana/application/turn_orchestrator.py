@@ -17,11 +17,10 @@ from diana.cognitive.exceptions import (
     GeneratorEmptyOutputError,
 )
 from diana.cognitive.models import (
-    TERMINAL_TURN_STATUSES,
     Decision,
     IncomingTurn,
     TurnStatus,
-    parse_turn_status,
+    is_turn_status_terminal,
 )
 
 logger = logging.getLogger("diana.application")
@@ -33,13 +32,6 @@ class DirectorPort(Protocol):
 
 class LearningPort(Protocol):
     async def run_post_turn(self, turn_id: UUID) -> object: ...
-
-
-def _is_terminal(status: str) -> bool:
-    try:
-        return parse_turn_status(status) in TERMINAL_TURN_STATUSES
-    except ValueError:
-        return False
 
 
 class TurnOrchestrator:
@@ -197,7 +189,7 @@ class TurnOrchestrator:
 
         # Post-Director liveness check (defense in depth vs zombie pipeline).
         live = await self._coordinator.get_turn(turn_id)
-        if live is None or _is_terminal(live.status):
+        if live is None or is_turn_status_terminal(live.status):
             logger.info(
                 "orchestrator_aborted_terminal",
                 extra={

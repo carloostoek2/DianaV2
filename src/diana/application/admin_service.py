@@ -9,23 +9,25 @@ from uuid import UUID, uuid4
 from diana.application.ports import (
     ApprovalRecord,
     BehaviorDeliverer,
+    DeliveryContext,
+    DeliveryMode,
+    DeliveryResult,
     DeliveryResultWriter,
     DoctrineNotification,
     DraftNotification,
     EscalationNotification,
     EscalationStore,
+    GrayZoneQueryView,
     OwnerNotifierPort,
     PendingApprovalStore,
     TurnStore,
 )
 from diana.application.turn_coordinator import TurnCoordinator
-from diana.behavior.ports import DeliveryContext, DeliveryMode, DeliveryResult
 from diana.cognitive.models import (
-    TERMINAL_TURN_STATUSES,
     Decision,
     IncomingTurn,
     TurnStatus,
-    parse_turn_status,
+    is_turn_status_terminal,
 )
 
 logger = logging.getLogger("diana.application")
@@ -43,13 +45,6 @@ def _eval_summary(decision: Decision) -> str:
         f"doc={e.doctrine:.2f} con={e.consistency:.2f} "
         f"saf={e.safety:.2f} cov={e.coverage:.2f} emp={e.empathy:.2f}"
     )
-
-
-def _is_terminal(status: str) -> bool:
-    try:
-        return parse_turn_status(status) in TERMINAL_TURN_STATUSES
-    except ValueError:
-        return False
 
 
 class AdminService:
@@ -165,7 +160,7 @@ class AdminService:
         turn: IncomingTurn,
         decision: Decision,
         turn_id: UUID,
-        query: object,  # GrayZoneQuery ORM row
+        query: GrayZoneQueryView,
     ) -> None:
         """Notify owner of a gray zone doctrine query (VIP frozen).
 
@@ -178,7 +173,7 @@ class AdminService:
             raise ValueError("business_connection_id is required for doctrine query")
 
         draft = decision.draft_text or ""
-        query_id = getattr(query, "id", None)
+        query_id = query.id
 
         owner_mid = await self._notifier.notify_doctrine(
             DoctrineNotification(
@@ -232,7 +227,7 @@ class AdminService:
     async def is_pending_approval(self, turn_id: UUID) -> bool:
         """True when turn is non-terminal and has a waiting approval."""
         turn = await self._turns.get(turn_id)
-        if turn is None or _is_terminal(turn.status):
+        if turn is None or is_turn_status_terminal(turn.status):
             return False
         approval = await self._approvals.get_by_turn(turn_id)
         return approval is not None and approval.status == "waiting"
@@ -258,7 +253,7 @@ class AdminService:
 
         async with self._coordinator.chat_scope(chat_id):
             turn = await self._turns.get(turn_id)
-            if turn is None or _is_terminal(turn.status):
+            if turn is None or is_turn_status_terminal(turn.status):
                 logger.info(
                     "owner_escalate_terminal_noop",
                     extra={
@@ -304,7 +299,7 @@ class AdminService:
         # Claim under chat lock so only one owner resolve wins (BUG-003).
         async with self._coordinator.chat_scope(chat_id):
             turn = await self._turns.get(turn_id)
-            if turn is None or _is_terminal(turn.status):
+            if turn is None or is_turn_status_terminal(turn.status):
                 logger.info(
                     "admin_resolve_terminal_noop",
                     extra={
@@ -349,7 +344,7 @@ class AdminService:
 
         async with self._coordinator.chat_scope(chat_id):
             turn_after = await self._turns.get(turn_id)
-            if turn_after is None or _is_terminal(turn_after.status):
+            if turn_after is None or is_turn_status_terminal(turn_after.status):
                 # Superseded or otherwise terminal mid-flight — do not revive.
                 await self._approvals.mark_status(turn_id, "cancelled")
                 logger.info(
