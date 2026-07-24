@@ -71,6 +71,7 @@ def build_dispatcher(
     owner_telegram_id: int,
     forbidden_keywords: list[str],
     correct_sessions: CorrectSessionStore | None = None,
+    doctrine_router: Router | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -102,6 +103,10 @@ def build_dispatcher(
         dp.callback_query.middleware(mw)
 
     root = Router(name="root")
+    # Doctrine router must be included BEFORE the catch-all callback router
+    # so that doctrine-specific prefixes (dr:, dx:, de:) are handled first.
+    if doctrine_router is not None:
+        root.include_router(doctrine_router)
     root.include_router(build_callback_router(admin=admin, correct_sessions=sessions))
     root.include_router(
         build_admin_router(

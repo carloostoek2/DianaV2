@@ -8,7 +8,7 @@ from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
 
-# F1 order — FreezeCheck intentionally absent.
+# F1 order — FreezeCheck intentionally absent (registered separately in main.py).
 F1_MIDDLEWARE_ORDER: tuple[str, ...] = (
     "LoggingMiddleware",
     "BusinessConnectionMiddleware",

@@ -1,4 +1,4 @@
-"""Diana F1 entrypoint — long-polling + safe startup recovery."""
+"""Diana F1 entrypoint — long-polling + safe startup recovery + F2 background jobs."""
 
 from __future__ import annotations
 
@@ -7,11 +7,14 @@ import logging
 import sys
 
 from diana.composition import (
+    AppContainer,
     build_app,
     load_forbidden_keywords,
     run_app_startup_recovery,
 )
 from diana.config import Settings
+from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
+from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 
 logger = logging.getLogger("diana.composition")
 
@@ -38,10 +41,48 @@ async def async_main() -> None:
             "re_notified": report.re_notified_approvals,
         },
     )
-    await app.dispatcher.start_polling(
-        app.bot,
-        allowed_updates=["message", "business_message", "callback_query"],
+
+    # ---- F2 Item 4: background jobs, middleware, doctrine wiring ----
+    expiration_job = _setup_expiration_job(app)
+    _setup_freeze_middleware(app)
+
+    try:
+        await app.dispatcher.start_polling(
+            app.bot,
+            allowed_updates=["message", "business_message", "callback_query"],
+        )
+    finally:
+        if expiration_job is not None:
+            expiration_job.cancel()
+            try:
+                await expiration_job
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+def _setup_expiration_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the gray zone expiration background job if gray_zone is enabled."""
+    if app.gray_zone is None:
+        logger.info("expiration_job_skipped_gray_zone_disabled")
+        return None
+
+    job = GrayZoneExpirationJob(
+        app.gray_zone,
+        app.notifier,
+        interval_seconds=300,
     )
+    task = asyncio.create_task(job.start())
+    logger.info("expiration_job_started", extra={"interval_seconds": 300})
+    return task
+
+
+def _setup_freeze_middleware(app: AppContainer) -> None:
+    """Register FreezeCheckMiddleware as the innermost middleware."""
+    mw = FreezeCheckMiddleware(app.vips)
+    app.dispatcher.message.middleware(mw)
+    app.dispatcher.business_message.middleware(mw)
+    app.dispatcher.callback_query.middleware(mw)
+    logger.debug("freeze_middleware_registered")
 
 
 def main() -> None:
