@@ -33,5 +33,28 @@ class SqlSystemConfigStore:
         value = await self.get("eval_thresholds")
         return dict(value) if isinstance(value, dict) else {}
 
+    async def get_feature_flags(self) -> dict[str, bool]:
+        """Read all FEATURE_* keys from system_config. Returns {key: bool_value}.
+
+        If a known feature flag key is missing from the DB, it is omitted
+        from the returned dict (caller applies defaults from Settings).
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(SystemConfig.key, SystemConfig.value).where(
+                    SystemConfig.key.startswith("FEATURE_")
+                )
+            )
+            flags: dict[str, bool] = {}
+            for key, value in result.all():
+                if isinstance(value, bool):
+                    flags[key] = value
+                elif isinstance(value, str):
+                    flags[key] = value.lower() in ("true", "1", "yes", "on")
+                elif isinstance(value, (int, float)):
+                    flags[key] = bool(value)
+                # Any other type → skip (no guesswork)
+            return flags
+
 
 __all__ = ["SqlSystemConfigStore"]

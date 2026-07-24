@@ -1,10 +1,10 @@
-"""F1 cognitive domain contracts (pure Pydantic).
+"""Cognitive domain contracts (pure Pydantic).
 
 Product vision (AGENTS.md) defines Decision actions as:
   send | approve | escalate | consult_doctrine | regenerate
 
-Fase 1 runtime **restricts** Decision.action to approve | escalate only.
-The full action set is reserved for F2+ and must not be exposed here.
+F2 runtime exposes: approve | escalate | consult_doctrine.
+send and regenerate are reserved for F3+.
 
 EvaluationProfile is a 7-dimension vector. Never collapse it to a single
 score (no confidence field, no overall_score, no mean() helper).
@@ -47,6 +47,7 @@ class TurnStatus(StrEnum):
     EVALUATING = "evaluating"
     DECIDING = "deciding"
     PENDING_APPROVAL = "pending_approval"
+    GRAY_ZONE = "gray_zone"
     ESCALATED = "escalated"
     SUPERSEDED = "superseded"
     DELIVERED = "delivered"
@@ -226,16 +227,19 @@ class Policy(BaseModel):
 
 
 class Decision(BaseModel):
-    """F1 runtime decision — approve | escalate only.
+    """F2 runtime decision — approve | escalate | consult_doctrine.
+
+    F1 actions: approve, escalate.
+    F2 extension: consult_doctrine (gray zone doctrine query).
 
     Maps Anexo F DecisorOutput: action←accion, reason←razon,
     mode_restriction_applied←restriccion_de_modo_aplicada.
-    F2+ actions (send, regenerate, consult_doctrine) are out of F1.
+    F2+ actions (send, regenerate) remain out of scope.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve", "escalate"]
+    action: Literal["approve", "escalate", "consult_doctrine"]
     reason: str
     evaluation: EvaluationProfile
     draft_text: str | None = None

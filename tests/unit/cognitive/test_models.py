@@ -73,7 +73,7 @@ def test_decision_approve_and_escalate_ok() -> None:
 def test_decision_action_literal_is_exactly_approve_escalate() -> None:
     from diana.cognitive.models import Decision
 
-    assert get_args(Decision.model_fields["action"].annotation) == ("approve", "escalate")
+    assert get_args(Decision.model_fields["action"].annotation) == ("approve", "escalate", "consult_doctrine")
 
 
 def test_decision_requires_evaluation() -> None:
@@ -96,7 +96,7 @@ def test_decision_requires_action_and_reason() -> None:
         assert Decision.model_fields[name].is_required() is True
 
 
-@pytest.mark.parametrize("bad_action", ["send", "regenerate", "consult_doctrine", "wait"])
+@pytest.mark.parametrize("bad_action", ["send", "regenerate", "wait"])
 def test_decision_rejects_non_f1_actions(bad_action: str) -> None:
     from diana.cognitive.models import Decision
 
@@ -332,6 +332,7 @@ def test_turn_status_terminal_and_non_terminal_set() -> None:
         "evaluating",
         "deciding",
         "pending_approval",
+        "gray_zone",
         "escalated",
         "superseded",
         "delivered",
