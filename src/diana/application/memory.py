@@ -285,6 +285,7 @@ class FakeOwnerNotifier:
         self.drafts: list[Any] = []
         self.escalations: list[Any] = []
         self.infos: list[tuple[str, int | None]] = []
+        self.doctrines: list[Any] = []
         self._next_message_id = 5000
 
     async def notify_draft(self, payload: Any) -> int | None:
@@ -298,6 +299,12 @@ class FakeOwnerNotifier:
 
     async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
         self.infos.append((text, chat_id))
+
+    async def notify_doctrine(self, payload: Any) -> int | None:
+        self.doctrines.append(payload)
+        mid = self._next_message_id
+        self._next_message_id += 1
+        return mid
 
 
 class InMemoryVipStore:

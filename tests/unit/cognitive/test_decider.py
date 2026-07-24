@@ -81,7 +81,8 @@ def test_safety_equal_threshold_approves() -> None:
     assert decision.reason == "ok_for_human_review"
 
 
-def test_never_returns_non_f1_actions() -> None:
+def test_never_returns_non_f2_actions() -> None:
+    """F1 matrix only approve|escalate when gray zone disabled (default)."""
     for risk in ("bajo", "medio", "alto"):
         for safety in (0.0, 0.29, 0.3, 1.0):
             d = Decider().decide(_profile(safety=safety), _comprehension(risk=risk))
@@ -199,3 +200,129 @@ def test_mode_restriction_none_when_mode_not_supervised() -> None:
     )
     assert decision.action == "approve"
     assert decision.mode_restriction_applied is None
+
+
+# ── F2 consult_doctrine rule ──────────────────────────────────────────
+
+
+def _comprehension_needs_policy() -> Comprehension:
+    return Comprehension(
+        intent="consulta_comercial",
+        topics=["precios"],
+        emotion="neutral",
+        urgency="media",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
+    )
+
+
+def test_consult_doctrine_when_no_policy_and_flag_enabled() -> None:
+    decider = Decider(feature_gray_zone_enabled=True)
+    decision = decider.decide(
+        _profile(safety=0.9),
+        _comprehension_needs_policy(),
+        retrieved={"knowledge.policy": None},
+    )
+    assert decision.action == "consult_doctrine"
+    assert decision.reason == "doctrine_not_found"
+
+
+def test_consult_doctrine_when_policy_list_empty() -> None:
+    """Empty list (no match) should also trigger consult_doctrine."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    decision = decider.decide(
+        _profile(safety=0.9),
+        _comprehension_needs_policy(),
+        retrieved={"knowledge.policy": []},
+    )
+    assert decision.action == "consult_doctrine"
+    assert decision.reason == "doctrine_not_found"
+
+
+def test_no_consult_doctrine_when_flag_disabled() -> None:
+    """F1 backward compat: gray zone disabled falls through to approve."""
+    decider = Decider(feature_gray_zone_enabled=False)
+    decision = decider.decide(
+        _profile(safety=0.9),
+        _comprehension_needs_policy(),
+        retrieved={"knowledge.policy": None},
+    )
+    assert decision.action == "approve"
+
+
+def test_no_consult_doctrine_when_policy_found() -> None:
+    """Policy exists — falls through to approve."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    decision = decider.decide(
+        _profile(safety=0.9),
+        _comprehension_needs_policy(),
+        retrieved={"knowledge.policy": ["Always offer 10% for 3+ units"]},
+    )
+    assert decision.action == "approve"
+
+
+def test_no_consult_doctrine_when_needs_policy_false() -> None:
+    """Even with flag enabled, needs_policy=False should not trigger."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    decision = decider.decide(
+        _profile(safety=0.9),
+        _comprehension(risk="bajo"),
+        retrieved={"knowledge.policy": None},
+    )
+    assert decision.action == "approve"
+
+
+def test_retrieved_none_does_not_crash() -> None:
+    """Default retrieved=None should not crash Decider."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    decision = decider.decide(
+        _profile(safety=0.9),
+        _comprehension_needs_policy(),
+    )
+    assert decision.action == "consult_doctrine"
+
+
+def test_safety_wins_over_doctrine() -> None:
+    """Priority 1 (safety) still wins over priority 2 (doctrine)."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    decision = decider.decide(
+        _profile(safety=0.1),
+        _comprehension_needs_policy(),
+        retrieved={"knowledge.policy": None},
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "safety_below_threshold"
+
+
+def test_doctrine_wins_over_risk_alto() -> None:
+    """Priority 2 (doctrine) fires before priority 3 (risk alto).
+
+    When both conditions are true — needs_policy + no policy + risk alto —
+    consult_doctrine wins. The owner provides doctrine which may resolve the risk.
+    """
+    decider = Decider(feature_gray_zone_enabled=True)
+    comp = Comprehension(
+        intent="consulta_comercial",
+        topics=["precios"],
+        emotion="neutral",
+        urgency="media",
+        risk="alto",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
+    )
+    decision = decider.decide(
+        _profile(safety=0.9),
+        comp,
+        retrieved={"knowledge.policy": None},
+    )
+    assert decision.action == "consult_doctrine"
+    assert decision.reason == "doctrine_not_found"
