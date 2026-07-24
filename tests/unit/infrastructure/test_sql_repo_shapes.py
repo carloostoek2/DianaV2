@@ -20,6 +20,7 @@ def test_vip_orm_to_record_mapper() -> None:
         display_name="Bob",
         is_active=True,
         paused_until=paused,
+        frozen_until=None,
     )
     rec = vip_orm_to_record(orm)  # type: ignore[arg-type]
     assert rec.id == vip_id
@@ -27,6 +28,7 @@ def test_vip_orm_to_record_mapper() -> None:
     assert rec.display_name == "Bob"
     assert rec.is_active is True
     assert rec.paused_until == paused
+    assert rec.frozen_until is None
 
 
 def test_vip_is_allowed_respects_pause() -> None:
@@ -38,6 +40,7 @@ def test_vip_is_allowed_respects_pause() -> None:
             display_name=None,
             is_active=True,
             paused_until=now + timedelta(hours=1),
+            frozen_until=None,
         )  # type: ignore[arg-type]
     )
     assert vip_is_allowed(rec, now=now) is False
@@ -52,6 +55,7 @@ def test_vip_inactive_not_allowed() -> None:
             display_name=None,
             is_active=False,
             paused_until=None,
+            frozen_until=None,
         )  # type: ignore[arg-type]
     )
     assert vip_is_allowed(rec) is False
