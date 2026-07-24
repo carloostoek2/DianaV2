@@ -16,3 +16,7 @@
 - GrayZoneQueryRepo: insert/get_by_id/update_status/expire_older_than/list_open
 - ExamplesRepo.insert() added
 - PoliciesRepo.insert() added
+
+### Task 2 done: 2026-07-24
+- StagingService: save_correction, promote_to_example, promote_to_policy, discard — all with status validation
+- PolicyDistiller: distill_from_text returns cognitive.models.Policy (mechanical, no LLM)
