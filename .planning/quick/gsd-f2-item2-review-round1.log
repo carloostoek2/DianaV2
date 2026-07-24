@@ -1,0 +1,16 @@
+## 2026-07-24T19:00:00Z — Fix Round 1 for F2 Item 2 review
+- **Task**: Fix 6 open findings from merged review d3a40220
+- **Findings fixed**: 1 (status guard), 2 (unfreeze try/except), 3 (ValueError on not-found), 4 (SQL bind param), 5 (expire loop resilience), 8 (docstring note)
+- **Files changed**:
+  - `src/diana/application/gray_zone_service.py` — all behavioral fixes
+  - `src/diana/infrastructure/db/repositories/gray_zone.py` — bind param for interval
+  - `src/diana/cognitive/policy_distiller.py` — docstring note
+- **Commit**: 1dce3e2 fix(f2): resolve review round 1 issues for item 2
+- **Tests**: 507 passed, 0 failed
+- **Review file updated**: /tmp/grok-hardener-review-d3a40220.md
+
+## Self-Check: PASSED
+- [x] Todas las tareas completadas
+- [x] Tests del PLAN corridos
+- [x] 0 regresiones atribuibles
+- [x] Convenciones del proyecto respetadas

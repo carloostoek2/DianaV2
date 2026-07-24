@@ -305,11 +305,17 @@ class InMemoryVipStore:
 
     def __init__(self) -> None:
         self._by_tg: dict[int, VipRecord] = {}
+        self._by_id: dict[UUID, VipRecord] = {}
 
     async def get_by_telegram_user_id(
         self, telegram_user_id: int
     ) -> VipRecord | None:
         rec = self._by_tg.get(telegram_user_id)
+        return rec.model_copy(deep=True) if rec else None
+
+    async def get_by_id(self, vip_id: UUID) -> VipRecord | None:
+        """Lookup VIP by UUID primary key."""
+        rec = self._by_id.get(vip_id)
         return rec.model_copy(deep=True) if rec else None
 
     async def is_allowed(
@@ -326,6 +332,11 @@ class InMemoryVipStore:
             paused = paused.replace(tzinfo=clock.tzinfo)
         return paused < clock
 
+    async def _upsert(self, rec: VipRecord) -> None:
+        """Store record in both indexes."""
+        self._by_tg[rec.telegram_user_id] = rec
+        self._by_id[rec.id] = rec
+
     async def add(
         self, telegram_user_id: int, *, display_name: str | None = None
     ) -> VipRecord:
@@ -334,7 +345,7 @@ class InMemoryVipStore:
             updated = existing.model_copy(
                 update={"is_active": True, "display_name": display_name or existing.display_name}
             )
-            self._by_tg[telegram_user_id] = updated
+            await self._upsert(updated)
             return updated.model_copy(deep=True)
         rec = VipRecord(
             id=uuid4(),
@@ -342,15 +353,32 @@ class InMemoryVipStore:
             display_name=display_name,
             is_active=True,
         )
-        self._by_tg[telegram_user_id] = rec
+        await self._upsert(rec)
         return rec.model_copy(deep=True)
 
     async def deactivate(self, telegram_user_id: int) -> bool:
         rec = self._by_tg.get(telegram_user_id)
         if rec is None:
             return False
-        self._by_tg[telegram_user_id] = rec.model_copy(update={"is_active": False})
+        updated = rec.model_copy(update={"is_active": False})
+        await self._upsert(updated)
         return True
+
+    async def freeze_vip(self, vip_id: UUID, frozen_until: datetime) -> None:
+        """Set frozen_until. Raises ValueError if VIP not found."""
+        rec = self._by_id.get(vip_id)
+        if rec is None:
+            raise ValueError(f"VIP {vip_id} not found")
+        updated = rec.model_copy(update={"frozen_until": frozen_until})
+        await self._upsert(updated)
+
+    async def unfreeze_vip(self, vip_id: UUID) -> None:
+        """Clear frozen_until. Raises ValueError if VIP not found."""
+        rec = self._by_id.get(vip_id)
+        if rec is None:
+            raise ValueError(f"VIP {vip_id} not found")
+        updated = rec.model_copy(update={"frozen_until": None})
+        await self._upsert(updated)
 
     def set_paused_until(
         self, telegram_user_id: int, paused_until: datetime | None

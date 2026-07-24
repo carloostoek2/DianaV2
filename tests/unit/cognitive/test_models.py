@@ -460,3 +460,56 @@ def test_built_context_requires_both_fields() -> None:
         BuiltContext(prompt_final="x")  # type: ignore[call-arg]
     with pytest.raises(ValidationError):
         BuiltContext(included_blocks=[])  # type: ignore[call-arg]
+
+
+def test_policy_constructs_with_minimal_fields() -> None:
+    from diana.cognitive.models import Policy
+
+    p = Policy(trigger_description="offer 10%", rule="Always offer 10% for 3+ units")
+    assert p.trigger_description == "offer 10%"
+    assert p.rule == "Always offer 10% for 3+ units"
+    assert p.scope == "all"
+    assert p.is_active is True
+    assert p.source_query_id is None
+    assert p.created_at is None
+    assert p.id is None
+
+
+def test_policy_rejects_extra_fields() -> None:
+    from diana.cognitive.models import Policy
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Policy.model_validate(
+            {
+                "trigger_description": "x",
+                "rule": "y",
+                "confidence": 0.9,
+            }
+        )
+
+
+def test_policy_requires_trigger_and_rule() -> None:
+    from diana.cognitive.models import Policy
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Policy(trigger_description="x")  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        Policy(rule="y")  # type: ignore[call-arg]
+
+
+def test_policy_accepts_optional_source_query_id() -> None:
+    from uuid import uuid4
+    from diana.cognitive.models import Policy
+
+    qid = uuid4()
+    p = Policy(trigger_description="x", rule="y", source_query_id=qid)
+    assert p.source_query_id == qid
+
+
+def test_policy_default_scope_is_all() -> None:
+    from diana.cognitive.models import Policy
+
+    p = Policy(trigger_description="x", rule="y")
+    assert p.scope == "all"
