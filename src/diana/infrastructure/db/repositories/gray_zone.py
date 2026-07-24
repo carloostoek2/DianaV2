@@ -83,6 +83,17 @@ class GrayZoneQueryRepo:
             await session.commit()
             return rows
 
+    async def get_open_by_turn_id(self, turn_id: UUID) -> GrayZoneQuery | None:
+        """Return the open query for a given turn, or None."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(GrayZoneQuery).where(
+                    GrayZoneQuery.turn_id == turn_id,
+                    GrayZoneQuery.status == "open",
+                )
+            )
+            return result.scalar_one_or_none()
+
     async def list_open(self) -> list[GrayZoneQuery]:
         async with self._sf() as session:
             result = await session.execute(

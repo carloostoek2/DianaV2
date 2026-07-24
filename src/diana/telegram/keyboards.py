@@ -11,6 +11,8 @@ _ACTION_APPROVE = "a"
 _ACTION_CORRECT = "c"
 _ACTION_ESCALATE = "e"
 _ACTION_DOCTRINE_RESPOND = "dr"
+_ACTION_DOCTRINE_RESOLVE = "dx"
+_ACTION_DOCTRINE_ESCALATE = "de"
 
 
 def encode_callback(action: str, turn_id: UUID) -> str:
@@ -32,7 +34,17 @@ def parse_callback(data: str) -> tuple[str, UUID] | None:
         return None
     code, raw_id = data.split(":", 1)
 
-    # Try doctrine callback first (code "dr" — longer prefix wins).
+    # Try doctrine callbacks first.
+    if code == _ACTION_DOCTRINE_RESOLVE:
+        try:
+            return "resolve_with_draft", UUID(raw_id)
+        except ValueError:
+            return None
+    if code == _ACTION_DOCTRINE_ESCALATE:
+        try:
+            return "escalate_doctrine", UUID(raw_id)
+        except ValueError:
+            return None
     if code == _ACTION_DOCTRINE_RESPOND:
         try:
             return "respond_doctrine", UUID(raw_id)
@@ -95,16 +107,30 @@ def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
     )
 
 
+def encode_doctrine_resolve_callback(turn_id: UUID) -> str:
+    """Build callback_data for doctrine resolve-with-draft button: dx:<uuid>."""
+    data = f"{_ACTION_DOCTRINE_RESOLVE}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_doctrine_escalate_callback(turn_id: UUID) -> str:
+    """Build callback_data for doctrine escalate button: de:<uuid>."""
+    data = f"{_ACTION_DOCTRINE_ESCALATE}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
 def doctrine_keyboard(turn_id: UUID, query_id: UUID | None = None) -> InlineKeyboardMarkup:
-    """Reply markup for gray zone doctrine queries.
+    """Reply markup for gray zone doctrine queries (three actions).
 
-    Uses compact callback encoding (dr:<uuid>) to stay under Telegram's
-    64-byte callback_data limit. The query_id is stored server-side via
-    the reply_markup_spec for the handler to look up.
-
-    Full implementation in Item 4 (callback handlers).
-    For now, returns a simple keyboard with the respond_doctrine action.
+    - Respond: owner writes free-text doctrine
+    - Use draft: auto-resolve with the existing draft
+    - Escalate: discard query, escalate turn
     """
+    _ = query_id
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -112,7 +138,17 @@ def doctrine_keyboard(turn_id: UUID, query_id: UUID | None = None) -> InlineKeyb
                     text="Respond to query",
                     callback_data=encode_doctrine_callback(turn_id),
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Use draft as-is",
+                    callback_data=encode_doctrine_resolve_callback(turn_id),
+                ),
+                InlineKeyboardButton(
+                    text="Escalate",
+                    callback_data=encode_doctrine_escalate_callback(turn_id),
+                ),
+            ],
         ]
     )
 
@@ -122,6 +158,8 @@ __all__ = [
     "draft_keyboard",
     "encode_callback",
     "encode_doctrine_callback",
+    "encode_doctrine_resolve_callback",
+    "encode_doctrine_escalate_callback",
     "parse_callback",
     "parse_doctrine_callback",
 ]
