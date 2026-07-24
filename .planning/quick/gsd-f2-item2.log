@@ -20,3 +20,6 @@
 ### Task 2 done: 2026-07-24
 - StagingService: save_correction, promote_to_example, promote_to_policy, discard — all with status validation
 - PolicyDistiller: distill_from_text returns cognitive.models.Policy (mechanical, no LLM)
+
+### Task 3 done: 2026-07-24
+- GrayZoneService: create_query, resolve_with_doctrine, confirm_and_apply, discard_and_close, freeze_vip, unfreeze_vip, expire_old_queries
