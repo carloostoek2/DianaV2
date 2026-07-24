@@ -1,0 +1,30 @@
+# gsd-executor log — Fix Round 1 — F2 Item 1 review issues
+Started: 2026-07-24
+
+## Task: Fix Round 1
+Review file: /tmp/grok-hardener-review-e8751822.md
+Implementation at: 642731c
+
+### Edits performed:
+2026-07-24T00:00:00Z — Applied all fixes, tests passing (459 passed)
+- Fix 1: sa.REAL() -> sa.Float() in migration 003 (confidence, value)
+- Fix 2: StagingCandidate.type -> candidate_type (models.py + migration)
+- Fix 3: Added test_examples_retriever_counter_example test
+- Fix 4: Removed dead getattr calls in policy.py
+- Fix 5: Added text[:2000] truncation in embedding.py embed()
+- Fix 6: Added logger.debug() calls in memory.py, policy.py, examples.py
+- Fix 7: list[] -> list[str] in memory.py docstring
+- Fix 8: Removed duplicate import in test_retrievers.py
+- Fix 8 comment: Added loose-coupling comment for source_query_id
+- WONTFIX: Findings 6, 7, 9, 13, 14 (documented in review file)
+- Plus uncommitted test-guardian tests in test_registry.py, test_f1_schema_metadata.py, test_config.py
+
+Commit: 7474b02 — fix(f2): resolve review round 1 issues for item 1
+Tests: 459 passed, 0 failed
+
+## Self-Check: PASSED
+- [x] All tasks completed (3 bugs fixed, 3 suggestions fixed, 5 wontfix documented, 4 nits fixed)
+- [x] Tests run: 459 passed, 0 failed
+- [x] 0 regressions attributable
+- [x] Commit: 7474b02
+- [x] Review file updated with all Status + Response fields

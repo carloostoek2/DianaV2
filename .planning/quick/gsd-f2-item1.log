@@ -1,0 +1,38 @@
+## 2026-07-24T00:00:00Z — Task 1 start
+- editing: pyproject.toml, models.py
+- creating: alembic/versions/003_f2_knowledge_tables.py
+## 2026-07-24T00:00:00Z — Task 1 done
+- status: PASSED
+- migration upgraded head OK (16 tables, 3 HNSW + 3 B-tree indexes, 4 seed flags)
+- ORM models: 16 tables registered on Base
+- deps: pgvector + sentence-transformers installed
+- commit: <pending>
+## 2026-07-24T00:00:00Z — Task 2 start
+- creating: src/diana/cognitive/embedding.py
+## 2026-07-24T00:00:00Z — Task 2 done
+- status: PASSED
+- created: src/diana/cognitive/embedding.py
+- verification: lazy-load, 384-dim, run_in_executor, cached model
+- commit: <pending>
+## 2026-07-24T00:00:00Z — Task 3 start
+- creating: src/diana/infrastructure/db/repositories/memories.py
+- creating: src/diana/infrastructure/db/repositories/policies.py
+- creating: src/diana/infrastructure/db/repositories/examples.py
+## 2026-07-24T00:00:00Z — Task 3 done
+- status: PASSED
+- created: memories.py, policies.py, examples.py repo modules
+- verification: imports clean, AST gate for examples (no memory refs)
+- commit: <pending>
+## 2026-07-24T00:00:00Z — Task 4 start
+- editing: config.py, memory.py, policy.py, examples.py, registry.py, composition.py, test_f1_schema_metadata.py
+## 2026-07-24T00:00:00Z — Task 4 done
+- status: PASSED
+- edited: config.py, memory.py, policy.py, examples.py, registry.py, composition.py, test_f1_schema_metadata.py
+- verification: 443/443 tests pass, import purity clean, backward compat verified
+- commit: <pending>
+
+## Self-Check: PASSED
+- [x] Todas las tareas completadas (1-4)
+- [x] Tests del PLAN corridos (443/443 pass)
+- [x] 0 regresiones atribuibles
+- [x] Convenciones del proyecto respetadas (import purity, BR-15, AST gates)
