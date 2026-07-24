@@ -167,6 +167,10 @@ class AdminService:
         Sends DM with the VIP's question, the draft, and reply markup
         for the owner to respond with doctrine guidance.
         Does NOT deliver to the VIP (VIP is frozen).
+
+        Note: owner_mid is NOT persisted in F2 because the
+        GrayZoneQuery model lacks an owner_message_id column. For F3/Item 4
+        callback handlers, the handler looks up the open query by turn_id.
         """
         bc = (turn.business_connection_id or "").strip()
         if not bc:
@@ -175,22 +179,37 @@ class AdminService:
         draft = decision.draft_text or ""
         query_id = query.id
 
-        owner_mid = await self._notifier.notify_doctrine(
-            DoctrineNotification(
-                turn_id=turn_id,
-                chat_id=turn.chat_id,
-                vip_text=turn.text,
-                draft_text=draft,
-                reason=decision.reason,
-                evaluation_summary=_eval_summary(decision),
-                business_connection_id=bc,
-                reply_markup_spec={
-                    "actions": ["respond_doctrine", "resolve_with_draft", "escalate_doctrine"],
+        reply_spec: dict = {
+            "actions": ["respond_doctrine", "resolve_with_draft", "escalate_doctrine"],
+            "turn_id": str(turn_id),
+        }
+        if query_id is not None:
+            reply_spec["query_id"] = str(query_id)
+
+        try:
+            owner_mid = await self._notifier.notify_doctrine(
+                DoctrineNotification(
+                    turn_id=turn_id,
+                    chat_id=turn.chat_id,
+                    vip_text=turn.text,
+                    draft_text=draft,
+                    reason=decision.reason,
+                    evaluation_summary=_eval_summary(decision),
+                    business_connection_id=bc,
+                    reply_markup_spec=reply_spec,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "doctrine_notification_failed",
+                extra={
                     "turn_id": str(turn_id),
+                    "chat_id": turn.chat_id,
                     "query_id": str(query_id) if query_id else None,
                 },
             )
-        )
+            raise
+
         logger.info(
             "doctrine_query_notified",
             extra={
