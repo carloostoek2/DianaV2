@@ -15,10 +15,12 @@ from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from diana.application.admin_service import AdminService
+from diana.application.gray_zone_service import GrayZoneService
 from diana.application.recovery_startup import (
     DEFAULT_STALE_AFTER,
     run_startup_recovery,
 )
+from diana.application.sandbox import SandboxService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.ports import TurnStore
@@ -32,8 +34,11 @@ from diana.cognitive.embedding import EmbeddingService
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
 from diana.cognitive.planner import Planner
+from diana.cognitive.policy_distiller import PolicyDistiller
 from diana.cognitive.registry import build_default_registry
 from diana.config import Settings
+from diana.infrastructure.db.repositories.gray_zone import GrayZoneQueryRepo
+from diana.infrastructure.db.repositories.staging import StagingCandidateRepo
 from diana.infrastructure.db.repositories.approvals import SqlPendingApprovalStore
 from diana.infrastructure.db.repositories.deliveries import SqlPendingDeliveryStore
 from diana.infrastructure.db.repositories.escalations import SqlEscalationStore
@@ -136,6 +141,8 @@ class AppContainer:
     forbidden_keywords: list[str]
     clock: SystemClock
     wiring: TelegramWiring
+    gray_zone: GrayZoneService | None = None
+    sandbox: SandboxService | None = None
 
 
 def build_app(
@@ -211,6 +218,31 @@ def build_app(
     policies_repo = PoliciesRepo(sf)
     examples_repo = ExamplesRepo(sf)
 
+    # ---- F2 Item 3: feature flags, gray zone, sandbox ----
+    # Feature flags: initially from Settings defaults.
+    # An async startup helper reads DB and patches feature_flags at boot.
+    feature_gray_zone_enabled = settings.feature_gray_zone_enabled
+    feature_sandbox_enabled = settings.feature_sandbox_enabled
+
+    # PolicyDistiller — standalone, no deps (cognitive module)
+    policy_distiller = PolicyDistiller()
+
+    # GrayZoneService — query lifecycle + VIP freeze (Item 2)
+    staging_repo = StagingCandidateRepo(sf)
+    gray_zone_repo = GrayZoneQueryRepo(sf)
+    gray_zone = GrayZoneService(
+        query_repo=gray_zone_repo,
+        vip_store=vips,
+        staging_repo=staging_repo,
+        distiller=policy_distiller,
+    )
+
+    # SandboxService — minimal F2 sandbox (profiles + trace isolation)
+    sandbox = SandboxService() if feature_sandbox_enabled else None
+
+    # Decider with gray zone feature flag (must be before Director)
+    decider = Decider(feature_gray_zone_enabled=feature_gray_zone_enabled)
+
     registry = build_default_registry(
         history,
         memory_repo=memories_repo,
@@ -225,7 +257,7 @@ def build_app(
         context_builder=ContextBuilder(),
         generator=Generator(provider),
         evaluator=Evaluator(provider),
-        decider=Decider(),
+        decider=decider,
         trace=traces,
         persona=DEFAULT_PERSONA,
         # Same history port as registry — Analyst window is chat-scoped only (R1).
@@ -242,6 +274,8 @@ def build_app(
         admin=admin,
         learning=learning,
         history=history,
+        gray_zone=gray_zone,
+        feature_gray_zone_enabled=feature_gray_zone_enabled,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
@@ -278,6 +312,8 @@ def build_app(
         forbidden_keywords=forbidden_keywords,
         clock=clock,
         wiring=wiring,
+        gray_zone=gray_zone,
+        sandbox=sandbox,
     )
 
 
@@ -291,6 +327,21 @@ async def load_forbidden_keywords(app: AppContainer) -> list[str]:
     app.wiring.forbidden_middleware.set_keywords(kws)
     logger.info("forbidden_keywords_loaded", extra={"count": len(kws)})
     return kws
+
+
+async def load_feature_flags(app: AppContainer) -> dict[str, bool]:
+    """Load feature flags from system_config into the container (boot-time)."""
+    store = SqlSystemConfigStore(app.session_factory)
+    flags = await store.get_feature_flags()
+    if flags:
+        logger.info(
+            "feature_flags_loaded",
+            extra={
+                "count": len(flags),
+                "flags": flags,
+            },
+        )
+    return flags
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:
@@ -311,6 +362,7 @@ __all__ = [
     "SystemClock",
     "TurnStoreStatusReader",
     "build_app",
+    "load_feature_flags",
     "load_forbidden_keywords",
     "run_app_startup_recovery",
 ]
