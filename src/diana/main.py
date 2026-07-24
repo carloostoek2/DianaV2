@@ -53,7 +53,9 @@ async def async_main() -> None:
         if expiration_job is not None:
             expiration_job.cancel()
             try:
-                await expiration_job
+                await asyncio.wait_for(expiration_job, timeout=10.0)
+            except TimeoutError:
+                logger.warning("expiration_job_stop_timeout")
             except (asyncio.CancelledError, Exception):
                 pass
 
@@ -66,6 +68,8 @@ def _setup_expiration_job(app: AppContainer) -> asyncio.Task | None:
 
     job = GrayZoneExpirationJob(
         app.gray_zone,
+        coordinator=app.coordinator,
+        notifier=app.notifier,
         interval_seconds=300,
     )
     task = asyncio.create_task(job.start())
