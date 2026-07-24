@@ -99,28 +99,9 @@ class FakeCoordinator:
 
 @pytest.mark.asyncio
 async def test_respond_returns_prompted() -> None:
-    gray_zone = FakeGrayZone()
-    turn_id = uuid4()
-    query = gray_zone.add_query(turn_id)
-
-    status = await handle_doctrine_respond(
-        gray_zone=gray_zone,
-        turn_id=turn_id,
-        query=query,
-    )
-    assert status == "prompted"
-
-
-@pytest.mark.asyncio
-async def test_respond_without_query_also_prompts() -> None:
-    gray_zone = FakeGrayZone()
     turn_id = uuid4()
 
-    status = await handle_doctrine_respond(
-        gray_zone=gray_zone,
-        turn_id=turn_id,
-        query=None,
-    )
+    status = await handle_doctrine_respond(turn_id=turn_id)
     assert status == "prompted"
 
 

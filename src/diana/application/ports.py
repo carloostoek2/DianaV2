@@ -117,6 +117,31 @@ class GrayZoneQueryView(Protocol):
     """
 
     id: UUID
+    draft: str
+
+
+@runtime_checkable
+class GrayZoneServicePort(Protocol):
+    """Application service for the gray zone query lifecycle.
+
+    Exposes the methods consumed by telegram handlers so the telegram layer
+    can depend on the protocol instead of ``Any``.
+    """
+
+    async def get_open_query_by_turn_id(self, turn_id: UUID) -> object | None: ...
+
+    async def resolve_with_doctrine(
+        self,
+        query_id: UUID,
+        generalization: str,
+        rule: str,
+    ) -> object: ...
+
+    async def confirm_and_apply(
+        self, query_id: UUID, candidate_id: UUID
+    ) -> object: ...
+
+    async def discard_and_close(self, query_id: UUID) -> object: ...
 
 
 DeliveryMode = Literal["supervised", "autonomous", "fake_delivery"]
@@ -354,6 +379,7 @@ __all__ = [
     "EscalationNotification",
     "EscalationStore",
     "GrayZoneQueryView",
+    "GrayZoneServicePort",
     "MessageHistoryWriter",
     "OwnerNotifierPort",
     "PendingApprovalStore",

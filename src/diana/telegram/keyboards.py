@@ -72,12 +72,18 @@ def encode_doctrine_callback(turn_id: UUID) -> str:
     return data
 
 
-def parse_doctrine_callback(data: str) -> UUID | None:
-    """Parse doctrine callback_data into turn_id or None."""
+def parse_doctrine_callback(data: str, prefix: str | None = None) -> UUID | None:
+    """Extract UUID from doctrine callback data (dr:|dx:|de:<uuid>).
+
+    Args:
+        data: The callback data string.
+        prefix: If provided, only match this prefix (e.g. ``"dr"``).
+                When ``None`` (default), any prefix is accepted.
+    """
     if not data or ":" not in data:
         return None
     code, raw_id = data.split(":", 1)
-    if code != _ACTION_DOCTRINE_RESPOND:
+    if prefix is not None and code != prefix:
         return None
     try:
         return UUID(raw_id)
@@ -123,14 +129,13 @@ def encode_doctrine_escalate_callback(turn_id: UUID) -> str:
     return data
 
 
-def doctrine_keyboard(turn_id: UUID, query_id: UUID | None = None) -> InlineKeyboardMarkup:
+def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
     """Reply markup for gray zone doctrine queries (three actions).
 
     - Respond: owner writes free-text doctrine
     - Use draft: auto-resolve with the existing draft
     - Escalate: discard query, escalate turn
     """
-    _ = query_id
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [

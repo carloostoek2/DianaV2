@@ -39,9 +39,20 @@ class FreezeCheckMiddleware(BaseMiddleware):
         if user_id is None:
             return await handler(event, data)
 
-        vip_record = await self._vips.get_by_telegram_user_id(user_id)
+        try:
+            vip_record = await self._vips.get_by_telegram_user_id(user_id)
+        except Exception:
+            logger.exception(
+                "freeze_check_lookup_error",
+                extra={"telegram_user_id": user_id},
+            )
+            return await handler(event, data)
+
         if vip_record is None:
             return await handler(event, data)
+
+        # Cache the record so AuthMiddleware can reuse it.
+        data["_vip_record"] = vip_record
 
         frozen_until = getattr(vip_record, "frozen_until", None)
         if frozen_until is not None and frozen_until > datetime.now(UTC):

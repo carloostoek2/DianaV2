@@ -102,7 +102,10 @@ def build_dispatcher(
     for mw in middlewares:
         dp.message.middleware(mw)
         dp.business_message.middleware(mw)
-        dp.callback_query.middleware(mw)
+        # FreezeCheckMiddleware is a no-op for non-Message events so skip it on
+        # callback_query to keep the middleware chain lean (LOW-3).
+        if not isinstance(mw, FreezeCheckMiddleware):
+            dp.callback_query.middleware(mw)
 
     root = Router(name="root")
     # Doctrine router must be included BEFORE the catch-all callback router

@@ -59,7 +59,12 @@ class AuthMiddleware(BaseMiddleware):
             )
             return None
 
-        rec = await self._vips.get_by_telegram_user_id(user.id)
+        # Use _vip_record cached by FreezeCheckMiddleware (MED-3) to avoid a
+        # redundant DB lookup. This is safe because FreezeCheckMiddleware runs
+        # before AuthMiddleware in the middleware order.
+        rec: Any = data.get("_vip_record")
+        if rec is None:
+            rec = await self._vips.get_by_telegram_user_id(user.id)
         if rec is not None:
             data["vip_id"] = rec.id
             data["vip_record"] = rec

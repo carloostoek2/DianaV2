@@ -62,13 +62,7 @@ class AiogramOwnerNotifier:
         )
         if payload.evaluation_summary:
             text += f"\nEval: {payload.evaluation_summary}"
-        query_id = None
-        if payload.reply_markup_spec and payload.reply_markup_spec.get("query_id"):
-            query_id = UUID(payload.reply_markup_spec["query_id"])
-        markup = doctrine_keyboard(
-            turn_id=payload.turn_id,
-            query_id=query_id,
-        )
+        markup = doctrine_keyboard(turn_id=payload.turn_id)
         msg = await self._bot.send_message(
             chat_id=self._owner_id,
             text=text,

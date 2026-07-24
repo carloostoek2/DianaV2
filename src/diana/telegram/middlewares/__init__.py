@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from diana.telegram.middlewares.auth import AuthMiddleware
 from diana.telegram.middlewares.business_connection import BusinessConnectionMiddleware
-from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
@@ -23,7 +22,6 @@ __all__ = [
     "BusinessConnectionMiddleware",
     "F2_MIDDLEWARE_ORDER",
     "ForbiddenKeywordsMiddleware",
-    "FreezeCheckMiddleware",
     "LoggingMiddleware",
     "OwnerDetectionMiddleware",
 ]
