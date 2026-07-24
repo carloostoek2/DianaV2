@@ -42,14 +42,13 @@ class PolicyRetriever:
         policy matching. Defaults to no scope filter when segment is unknown.
         """
         if self._repo is None or self._embed is None:
+            logger.debug("PolicyRetriever: deps not configured, returning None")
             return None  # stub compat
 
         embedding = await self._embed.embed(turn.text)
 
-        # Extract VIP segment from comprehension if available.
+        # Scope filtering is reserved for future use (when Comprehension has segment fields).
         vip_segment: str | None = None
-        if comprehension:
-            vip_segment = getattr(comprehension, "vip_segment", None) or getattr(comprehension, "segment", None)
 
         rows = await self._repo.find_active_by_similarity(
             embedding,
@@ -58,6 +57,7 @@ class PolicyRetriever:
             limit=DEFAULT_POLICY_LIMIT,
         )
         if not rows:
+            logger.debug("PolicyRetriever: no matching policies")
             return []
 
         out: list[str] = []

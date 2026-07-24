@@ -30,6 +30,7 @@ class EmbeddingService:
         and cached for subsequent calls. The encode call runs in a thread pool
         executor to avoid blocking the event loop.
         """
+        text = text[:2000]
         if self._model is None:
             from sentence_transformers import SentenceTransformer  # noqa: PLC0415
 

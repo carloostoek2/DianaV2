@@ -50,7 +50,7 @@ def upgrade() -> None:
         sa.Column("embedding", Vector(384), nullable=False),
         sa.Column("content", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("category", sa.Text(), nullable=False),
-        sa.Column("confidence", sa.REAL(), nullable=False),
+        sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["vip_id"], ["vips.id"]),
         sa.PrimaryKeyConstraint("id"),
@@ -81,6 +81,8 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.Column("valid_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("source_query_id", postgresql.UUID(as_uuid=True), nullable=True),
+        # NOTE: No FK constraint on source_query_id — intentionally loose-coupled
+        # so gray_zone_queries can be cleaned independently without cascade issues.
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -103,7 +105,7 @@ def upgrade() -> None:
     op.create_table(
         "staging_candidates",
         sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), nullable=False),
-        sa.Column("type", sa.Text(), nullable=False),
+        sa.Column("candidate_type", sa.Text(), nullable=False),
         sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("status", sa.Text(), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("turn_id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -136,7 +138,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), nullable=False),
         sa.Column("vip_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("metric_name", sa.Text(), nullable=False),
-        sa.Column("value", sa.REAL(), nullable=False),
+        sa.Column("value", sa.Float(), nullable=False),
         sa.Column("recorded_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["vip_id"], ["vips.id"]),
         sa.PrimaryKeyConstraint("id"),

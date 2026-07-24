@@ -111,6 +111,40 @@ def test_desc_indexes_present_in_orm_metadata() -> None:
     assert "DESC" in index_exprs("pipeline_traces", "ix_pipeline_traces_vip_id_created_at")
 
 
+def test_migration_003_creates_f2_knowledge_tables() -> None:
+    """Migration 003 must create 8 F2 tables (profiles, memories, contexts,
+    policies, examples, staging_candidates, gray_zone_queries, learning_metrics)."""
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "alembic"
+        / "versions"
+        / "003_f2_knowledge_tables.py"
+    )
+    text = migration.read_text(encoding="utf-8")
+    assert 'revision: str = "003_f2_knowledge_tables"' in text
+    assert 'down_revision' in text and "002_turns_error" in text
+    # All 8 F2 tables must be created.
+    f2_tables = (
+        "profiles",
+        "memories",
+        "contexts",
+        "policies",
+        "examples",
+        "staging_candidates",
+        "gray_zone_queries",
+        "learning_metrics",
+    )
+    for table in f2_tables:
+        assert f'"{table}"' in text or f"'{table}'" in text
+    # pgvector extension and Vector(384) columns.
+    assert "CREATE EXTENSION IF NOT EXISTS vector" in text
+    # Seed flags for F2 runtime config.
+    assert "FEATURE_MEMORY_ENABLED" in text
+    assert "FEATURE_GRAY_ZONE_ENABLED" in text
+    assert "FEATURE_STAGING_ENABLED" in text
+    assert "FEATURE_SANDBOX_ENABLED" in text
+
+
 def test_migration_seed_keys_allowlist() -> None:
     migration = Path(__file__).resolve().parents[3] / "alembic" / "versions" / "001_f1_foundation.py"
     text = migration.read_text(encoding="utf-8")

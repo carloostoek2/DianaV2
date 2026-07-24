@@ -45,13 +45,15 @@ class MemoryRetriever:
         Returns:
             None: when deps are not configured, or VIP is unidentified.
             list[str]: formatted memory entries when matches are found.
-            list[]: empty list when no matches are found.
+            list[str]: empty list when no matches are found.
         """
         if self._repo is None or self._embed is None:
+            logger.debug("MemoryRetriever: deps not configured, returning None")
             return None  # stub compat
 
         vip_id = turn.vip_id
         if vip_id is None:
+            logger.debug("MemoryRetriever: vip_id is None, returning None")
             return None  # BR-15: unidentified VIP
 
         embedding = await self._embed.embed(turn.text)
@@ -62,6 +64,7 @@ class MemoryRetriever:
             limit=DEFAULT_MEMORY_LIMIT,
         )
         if not rows:
+            logger.debug("MemoryRetriever: no results for vip_id=%s", vip_id)
             return []
 
         out: list[str] = []

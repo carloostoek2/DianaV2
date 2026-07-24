@@ -113,3 +113,37 @@ async def test_profile_f2_seat_still_registered() -> None:
     registry = build_default_registry(InMemoryMessageHistory())
     retriever = registry.resolve("knowledge.profile")
     assert await retriever.fetch(_turn(), _comprehension()) is None
+
+
+@pytest.mark.asyncio
+async def test_build_default_registry_accepts_repo_and_embedding_kwargs() -> None:
+    """F2 Item 1: registry accepts memory_repo, policy_repo, examples_repo, embedding_service."""
+    from unittest.mock import MagicMock
+
+    history = InMemoryMessageHistory()
+    fake_repo = MagicMock()
+    fake_embed = MagicMock()
+    registry = build_default_registry(
+        history,
+        memory_repo=fake_repo,
+        policy_repo=fake_repo,
+        examples_repo=fake_repo,
+        embedding_service=fake_embed,
+    )
+    # All 6 planner-requestable caps still resolve.
+    for name in PLANNER_CAPABILITY_UNIVERSE:
+        retriever = registry.resolve(name)
+        assert retriever is not None
+        assert hasattr(retriever, "fetch")
+
+
+@pytest.mark.asyncio
+async def test_build_default_registry_without_repos_still_stubs() -> None:
+    """F2 Item 1: registry without repo kwargs keeps Memory/Policy/Examples as stubs."""
+    history = InMemoryMessageHistory()
+    registry = build_default_registry(history)
+    turn = _turn()
+    c = _comprehension()
+    for name in ("knowledge.memory", "knowledge.policy", "knowledge.examples"):
+        retriever = registry.resolve(name)
+        assert await retriever.fetch(turn, c) is None

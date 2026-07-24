@@ -330,3 +330,181 @@ def test_retrievers_are_read_only_ast() -> None:
                 )
         for bad in ("sqlalchemy", "Session", ".commit(", ".delete("):
             assert bad not in source, f"{filename} must not contain {bad!r}"
+
+
+# ── F2 real (non-stub) retriever path tests ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_memory_retriever_returns_none_when_vip_id_none() -> None:
+    """BR-15: MemoryRetriever returns None for unidentified VIP even with deps."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    retriever = MemoryRetriever(embedding_service=embed, repo=repo)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=None)
+    result = await retriever.fetch(turn, _comprehension())
+    assert result is None
+    embed.embed.assert_not_called()
+    repo.find_by_vip_and_similarity.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_memory_retriever_returns_empty_on_no_results() -> None:
+    """MemoryRetriever returns [] when repo returns no results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_by_vip_and_similarity = AsyncMock(return_value=[])
+    retriever = MemoryRetriever(embedding_service=embed, repo=repo)
+    turn = IncomingTurn(
+        turn_id=uuid4(),
+        chat_id=100,
+        text="hola",
+        vip_id=uuid4(),
+    )
+    result = await retriever.fetch(turn, _comprehension())
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_memory_retriever_formats_results() -> None:
+    """MemoryRetriever formats repo rows into [category] fact strings."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_by_vip_and_similarity = AsyncMock(
+        return_value=[
+            {"category": "preference", "content": {"fact": "likes coffee"}},
+            {"category": "fact", "content": {"fact": "born in 1990"}},
+            {"category": "general", "content": {"note": "no fact key"}},
+        ]
+    )
+    retriever = MemoryRetriever(embedding_service=embed, repo=repo)
+    turn = IncomingTurn(
+        turn_id=uuid4(),
+        chat_id=100,
+        text="hola",
+        vip_id=uuid4(),
+    )
+    result = await retriever.fetch(turn, _comprehension())
+    assert result == [
+        "[preference] likes coffee",
+        "[fact] born in 1990",
+        "[general] {'note': 'no fact key'}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_returns_empty_on_no_results() -> None:
+    """PolicyRetriever returns [] when repo returns no results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(return_value=[])
+    retriever = PolicyRetriever(embedding_service=embed, repo=repo)
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_formats_results() -> None:
+    """PolicyRetriever formats repo rows into trigger/rule strings."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(
+        return_value=[
+            {"trigger_description": "user says bye", "rule": "say bye back"},
+            {"trigger_description": "user asks help", "rule": "offer assistance"},
+        ]
+    )
+    retriever = PolicyRetriever(embedding_service=embed, repo=repo)
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result == [
+        "Trigger: user says bye | Rule: say bye back",
+        "Trigger: user asks help | Rule: offer assistance",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_examples_retriever_returns_empty_on_no_results() -> None:
+    """ExamplesRetriever returns [] when repo returns no results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_by_similarity = AsyncMock(return_value=[])
+    retriever = ExamplesRetriever(embedding_service=embed, repo=repo)
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_examples_retriever_formats_results() -> None:
+    """ExamplesRetriever formats repo rows into turn/draft/corrected strings."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_by_similarity = AsyncMock(
+        return_value=[
+            {"turn_text": "hello", "draft_text": "hi", "corrected_text": "hello there"},
+        ]
+    )
+    retriever = ExamplesRetriever(embedding_service=embed, repo=repo, counter_example_chance=0.0)
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result == [
+        "Turn: hello | Draft: hi | Corrected: hello there",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_examples_retriever_counter_example() -> None:
+    """ExamplesRetriever includes [COUNTER-EXAMPLE] prefix when counter_example_chance=1.0."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+
+    async def find_by_similarity(
+        embedding: list[float],
+        threshold: float,
+        limit: int,
+        counter_example: bool = False,
+    ) -> list[dict[str, str]]:
+        if counter_example:
+            return [
+                {
+                    "turn_text": "bad example",
+                    "draft_text": "wrong",
+                    "corrected_text": "right",
+                }
+            ]
+        return [
+            {"turn_text": "hello", "draft_text": "hi", "corrected_text": "hello there"},
+        ]
+
+    repo.find_by_similarity = find_by_similarity
+    retriever = ExamplesRetriever(
+        embedding_service=embed, repo=repo, counter_example_chance=1.0,
+    )
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result is not None
+    assert len(result) == 2
+    assert result[0] == "Turn: hello | Draft: hi | Corrected: hello there"
+    assert "[COUNTER-EXAMPLE]" in result[1]
+    assert "bad example" in result[1]

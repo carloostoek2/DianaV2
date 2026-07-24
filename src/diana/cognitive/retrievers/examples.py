@@ -47,6 +47,7 @@ class ExamplesRetriever:
         Optionally includes one counter-example at ~10% probability.
         """
         if self._repo is None or self._embed is None:
+            logger.debug("ExamplesRetriever: deps not configured, returning None")
             return None  # stub compat
 
         embedding = await self._embed.embed(turn.text)
@@ -58,6 +59,7 @@ class ExamplesRetriever:
             counter_example=False,
         )
         if not rows:
+            logger.debug("ExamplesRetriever: no examples found")
             return []
 
         out: list[str] = []
@@ -75,6 +77,7 @@ class ExamplesRetriever:
                 counter_example=True,
             )
             if counter_rows:
+                logger.debug("ExamplesRetriever: counter-example appended")
                 cr = counter_rows[0]
                 out.append(
                     f"[COUNTER-EXAMPLE] Turn: {cr['turn_text']} | Draft: {cr['draft_text']} | Corrected: {cr['corrected_text']}"
