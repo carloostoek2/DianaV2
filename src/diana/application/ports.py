@@ -128,7 +128,7 @@ class GrayZoneServicePort(Protocol):
     can depend on the protocol instead of ``Any``.
     """
 
-    async def get_open_query_by_turn_id(self, turn_id: UUID) -> object | None: ...
+    async def get_open_query_by_turn_id(self, turn_id: UUID) -> GrayZoneQueryView | None: ...
 
     async def resolve_with_doctrine(
         self,
@@ -142,6 +142,10 @@ class GrayZoneServicePort(Protocol):
     ) -> object: ...
 
     async def discard_and_close(self, query_id: UUID) -> object: ...
+
+    async def expire_old_queries(
+        self, timeout_hours: int | None = None
+    ) -> list[object]: ...
 
 
 DeliveryMode = Literal["supervised", "autonomous", "fake_delivery"]
