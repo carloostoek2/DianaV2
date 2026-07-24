@@ -217,9 +217,12 @@ class TurnOrchestrator:
                 raise RuntimeError(
                     "consult_doctrine action returned but GrayZoneService is not injected"
                 )
-            await self._coordinator.transition(
-                turn_id, TurnStatus.GRAY_ZONE
-            )
+            if turn_ctx.vip_id is None:
+                raise RuntimeError(
+                    "consult_doctrine requires vip_id but turn has None"
+                )
+            # Create query + notify BEFORE transitioning to GRAY_ZONE so
+            # a failure does not leave the turn stuck in gray_zone (BUG-3).
             query = await self._gray_zone.create_query(
                 vip_id=turn_ctx.vip_id,
                 turn_id=turn_id,
@@ -229,11 +232,30 @@ class TurnOrchestrator:
             await self._admin.send_doctrine_query(
                 turn_ctx, decision, turn_id, query
             )
+            await self._coordinator.transition(
+                turn_id, TurnStatus.GRAY_ZONE
+            )
+            logger.info(
+                "consult_doctrine_completed",
+                extra={
+                    "turn_id": str(turn_id),
+                    "vip_id": str(turn_ctx.vip_id),
+                    "query_id": str(query.id) if hasattr(query, "id") else None,
+                },
+            )
             # CRITICAL: never call behavior.deliver — VIP is frozen
         elif decision.action == "escalate":
             await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
             await self._admin.notify_escalation(turn_ctx, decision, turn_id)
         else:
+            logger.error(
+                "unexpected_f2_action",
+                extra={
+                    "turn_id": str(turn_id),
+                    "action": decision.action,
+                    "chat_id": incoming.chat_id,
+                },
+            )
             await self._coordinator.mark_failed(
                 turn_id, error=f"unexpected F2 action: {decision.action!r}"
             )

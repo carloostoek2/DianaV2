@@ -57,11 +57,21 @@ class GrayZoneService:
     ) -> object:
         """Create an open gray zone query and freeze the VIP.
 
+        VIP is frozen FIRST so that no window exists where the query is
+        inserted but the VIP is unfrozen. If freeze_vip raises, no insert
+        occurs.
+
         The VIP remains frozen until the query is resolved or expired.
         Returns the ORM GrayZoneQuery row.
         """
+        if vip_id is None:
+            raise ValueError("vip_id is required to create a gray zone query")
+
         duration = freeze_duration_hours or self._default_timeout
         frozen_until = datetime.now(UTC) + timedelta(hours=duration)
+
+        # Freeze first — if this fails, no query is orphaned.
+        await self._vips.freeze_vip(vip_id, frozen_until)
 
         row = await self._queries.insert(
             vip_id=vip_id,
@@ -70,7 +80,6 @@ class GrayZoneService:
             draft=draft,
             freeze_until=frozen_until,
         )
-        await self._vips.freeze_vip(vip_id, frozen_until)
 
         logger.info(
             "gray_zone_query_created",
@@ -98,6 +107,8 @@ class GrayZoneService:
         Does NOT close the query or unfreeze here — that happens on
         confirmation (Item 3). Returns the StagingCandidate row.
         """
+        if query_id is None:
+            raise ValueError("query_id is required to resolve with doctrine")
         query = await self._queries.get_by_id(query_id)
         if query is None:
             raise ValueError(f"GrayZoneQuery {query_id} not found")
@@ -139,6 +150,10 @@ class GrayZoneService:
         Raises:
             ValueError: If the query is not found or not in 'open' status.
         """
+        if query_id is None:
+            raise ValueError("query_id is required to confirm and apply")
+        if candidate_id is None:
+            raise ValueError("candidate_id is required to confirm and apply")
         query = await self._queries.get_by_id(query_id)
         if query is None:
             raise ValueError(f"GrayZoneQuery {query_id} not found")
@@ -150,10 +165,9 @@ class GrayZoneService:
 
         now = datetime.now(UTC)
         await self._queries.update_status(query_id, "resolved", resolved_at=now)
-        query = await self._queries.get_by_id(query_id)
-        if query is None:
-            raise ValueError(f"GrayZoneQuery {query_id} disappeared after update")
 
+        # Use the originally-fetched query's vip_id — no re-fetch across
+        # sessions to avoid race conditions (SUG-4).
         if query.vip_id is not None:
             try:
                 await self._vips.unfreeze_vip(query.vip_id)
@@ -181,6 +195,8 @@ class GrayZoneService:
         Raises:
             ValueError: If the query is not found or not in 'open' status.
         """
+        if query_id is None:
+            raise ValueError("query_id is required to discard and close")
         query = await self._queries.get_by_id(query_id)
         if query is None:
             raise ValueError(f"GrayZoneQuery {query_id} not found")
@@ -191,6 +207,10 @@ class GrayZoneService:
             )
 
         now = datetime.now(UTC)
+        await self._queries.update_status(query_id, "resolved", resolved_at=now)
+
+        # Unfreeze AFTER status update so a failure does not leave VIP
+        # unfrozen with an open query (matching confirm_and_apply pattern).
         if query.vip_id is not None:
             try:
                 await self._vips.unfreeze_vip(query.vip_id)
@@ -201,16 +221,16 @@ class GrayZoneService:
                     query_id,
                 )
 
-        await self._queries.update_status(query_id, "resolved", resolved_at=now)
-
         logger.info(
             "gray_zone_query_discarded",
             extra={"query_id": str(query_id)},
         )
-        return await self._queries.get_by_id(query_id)
+        return query
 
     async def freeze_vip(self, vip_id: UUID, duration_hours: int | None = None) -> None:
         """Freeze a VIP for a given duration (or default timeout)."""
+        if vip_id is None:
+            raise ValueError("vip_id is required to freeze a VIP")
         duration = duration_hours or self._default_timeout
         frozen_until = datetime.now(UTC) + timedelta(hours=duration)
         await self._vips.freeze_vip(vip_id, frozen_until)
@@ -224,6 +244,8 @@ class GrayZoneService:
 
     async def unfreeze_vip(self, vip_id: UUID) -> None:
         """Unfreeze a VIP (clear frozen_until)."""
+        if vip_id is None:
+            raise ValueError("vip_id is required to unfreeze a VIP")
         await self._vips.unfreeze_vip(vip_id)
         logger.info("vip_unfrozen", extra={"vip_id": str(vip_id)})
 
