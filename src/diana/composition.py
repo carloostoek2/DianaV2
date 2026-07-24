@@ -28,6 +28,7 @@ from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.director import ANALYST_HISTORY_LIMIT, CognitiveDirector
+from diana.cognitive.embedding import EmbeddingService
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
 from diana.cognitive.planner import Planner
@@ -42,6 +43,9 @@ from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore
 from diana.infrastructure.db.session import create_engine, create_session_factory
+from diana.infrastructure.db.repositories.examples import ExamplesRepo
+from diana.infrastructure.db.repositories.memories import MemoriesRepo
+from diana.infrastructure.db.repositories.policies import PoliciesRepo
 from diana.learning.post_turn import LearningService
 from diana.llm.deepseek import DeepSeekProvider
 from diana.llm.fake import FakeLLM
@@ -201,7 +205,19 @@ def build_app(
             base_url=settings.llm_base_url,
         )
 
-    registry = build_default_registry(history)
+    # F2 knowledge services (Item 1)
+    embedding_svc = EmbeddingService()  # lazy, no model load at boot
+    memories_repo = MemoriesRepo(sf)
+    policies_repo = PoliciesRepo(sf)
+    examples_repo = ExamplesRepo(sf)
+
+    registry = build_default_registry(
+        history,
+        memory_repo=memories_repo,
+        policy_repo=policies_repo,
+        examples_repo=examples_repo,
+        embedding_service=embedding_svc,
+    )
     director = CognitiveDirector(
         analyst=Analyst(provider),
         planner=Planner(),

@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     trace_ttl_days: Annotated[int, Field(ge=1)] = 30
     log_level: LogLevel = "INFO"
 
+    # F2 feature flag static defaults (runtime reading via SqlSystemConfigStore is Item 3).
+    feature_memory_enabled: bool = False
+    feature_gray_zone_enabled: bool = False
+    feature_staging_enabled: bool = False
+    feature_sandbox_enabled: bool = False
+
     @field_validator("telegram_bot_token", "database_url", mode="after")
     @classmethod
     def reject_empty_required_secrets(cls, value: SecretStr) -> SecretStr:

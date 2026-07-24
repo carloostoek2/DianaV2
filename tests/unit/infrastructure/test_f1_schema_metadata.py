@@ -39,9 +39,10 @@ SEED_KEYS = frozenset(
 )
 
 
-def test_orm_exposes_exactly_eight_f1_tables() -> None:
-    assert set(Base.metadata.tables.keys()) == F1_TABLES
-    assert len(Base.metadata.tables) == 8
+def test_orm_exposes_exactly_sixteen_tables() -> None:
+    """8 F1 tables + 8 F2 knowledge tables = 16 total."""
+    assert F1_TABLES.issubset(set(Base.metadata.tables.keys()))
+    assert len(Base.metadata.tables) == 16
 
 
 def test_pipeline_traces_turn_id_fk_targets_turns() -> None:
