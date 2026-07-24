@@ -161,7 +161,12 @@ class CognitiveDirector:
 
         await self._status.transition(turn_id, TurnStatus.DECIDING)
         # Generator guarantees non-empty draft on success; Decider owns action choice.
-        base = self._decider.decide(evaluation, comprehension, mode="supervised")
+        base = self._decider.decide(
+            evaluation,
+            comprehension,
+            retrieved=retrieved,
+            mode="supervised",
+        )
         decision = Decision(
             action=base.action,
             reason=base.reason,
