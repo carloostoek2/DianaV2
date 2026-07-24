@@ -113,3 +113,22 @@ async def test_non_message_event_passes_through() -> None:
     result = await mw(handler, FakeEvent(), {})
     assert result == "callback_ok"
     handler.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_message_without_from_user_passes_through() -> None:
+    """A Message with no ``from_user`` should pass through (LOW-5/TEST-5)."""
+    vips = InMemoryVipStore()
+    mw = FreezeCheckMiddleware(vips=vips)
+    handler = AsyncMock(return_value="next")
+    msg = Message(
+        message_id=1,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        text="hello",
+        business_connection_id="bc-1",
+    )
+    assert msg.from_user is None
+    result = await mw(handler, msg, {})
+    assert result == "next"
+    handler.assert_awaited_once()

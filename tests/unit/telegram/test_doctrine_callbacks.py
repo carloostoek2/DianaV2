@@ -74,6 +74,8 @@ class FakeGrayZone:
         self, query_id: UUID, generalization: str, rule: str,
     ) -> FakeCandidate:
         self.resolve_calls.append((query_id, generalization, rule))
+        if query_id in self._resolve_errors_by_qid():
+            raise RuntimeError(f"simulated resolve error for {query_id}")
         candidate = FakeCandidate()
         self.candidates.append(candidate)
         return candidate
@@ -84,7 +86,15 @@ class FakeGrayZone:
 
     async def discard_and_close(self, query_id: UUID) -> object:
         self.discard_calls.append(query_id)
+        if query_id in self._discard_errors_by_qid():
+            raise RuntimeError(f"simulated discard error for {query_id}")
         return object()
+
+    def _resolve_errors_by_qid(self) -> set[UUID]:
+        return {q.id for t_id, q in self.queries.items() if t_id in self.resolve_errors}
+
+    def _discard_errors_by_qid(self) -> set[UUID]:
+        return {q.id for t_id, q in self.queries.items() if t_id in self.discard_errors}
 
 
 class FakeCoordinator:
@@ -216,3 +226,104 @@ async def test_escalate_lookup_error() -> None:
     assert status == "error"
     assert len(gray_zone.discard_calls) == 0
     assert len(coordinator.transitions) == 0
+
+
+# --- Error-on-resolve / error-on-discard tests (TEST-2) ---
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_resolve_error() -> None:
+    """resolve_with_doctrine raises -> handler returns 'error'."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    query = gray_zone.add_query(turn_id)
+    gray_zone.error_on_resolve(turn_id)  # => resolves to query.id
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+    )
+    assert status == "error"
+    # The call was made but raised -- confirm_and_apply should NOT be called.
+    assert len(gray_zone.resolve_calls) == 1
+    assert len(gray_zone.confirm_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_confirm_error() -> None:
+    """confirm_and_apply raises -> handler returns 'error'."""
+    gray_zone = _FakeGrayZoneWithConfirmError()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id)
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+    )
+    assert status == "error"
+    assert len(gray_zone.resolve_calls) == 1
+    assert len(gray_zone.confirm_calls) == 1
+
+
+class _FakeGrayZoneWithConfirmError(FakeGrayZone):
+    """FakeGrayZone variant that raises on confirm_and_apply."""
+
+    async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
+        self.confirm_calls.append((query_id, candidate_id))
+        msg = f"simulated confirm error for {query_id}"
+        raise RuntimeError(msg)
+
+
+@pytest.mark.asyncio
+async def test_escalate_discard_error() -> None:
+    """discard_and_close raises -> handler returns 'error'."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    query = gray_zone.add_query(turn_id)
+    gray_zone.error_on_discard(turn_id)  # => resolves to query.id
+
+    status = await handle_doctrine_escalate(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+    )
+    assert status == "error"
+    assert len(gray_zone.discard_calls) == 1
+    # Transition was called first (MED-6 order), so it should be recorded.
+    assert len(coordinator.transitions) == 1
+
+
+# --- parse_doctrine_callback tests (TEST-1) ---
+
+
+from diana.telegram.keyboards import parse_doctrine_callback  # noqa: E402
+
+
+def test_parse_doctrine_callback_valid() -> None:
+    tid = uuid4()
+    assert parse_doctrine_callback(f"dr:{tid}") == tid
+    assert parse_doctrine_callback(f"dx:{tid}") == tid
+    assert parse_doctrine_callback(f"de:{tid}") == tid
+
+
+def test_parse_doctrine_callback_with_prefix() -> None:
+    tid = uuid4()
+    assert parse_doctrine_callback(f"dr:{tid}", prefix="dr") == tid
+    assert parse_doctrine_callback(f"dx:{tid}", prefix="dx") == tid
+    assert parse_doctrine_callback(f"de:{tid}", prefix="de") == tid
+
+
+def test_parse_doctrine_callback_prefix_mismatch() -> None:
+    assert parse_doctrine_callback("dx:abc123", prefix="dr") is None
+
+
+def test_parse_doctrine_callback_invalid() -> None:
+    assert parse_doctrine_callback("") is None
+    assert parse_doctrine_callback("invalid") is None
+    assert parse_doctrine_callback(":") is None
+    assert parse_doctrine_callback("dr:not-a-uuid") is None
