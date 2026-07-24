@@ -8,7 +8,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from diana.infrastructure.db.models import Example
+from diana.infrastructure.db.models import Example  # noqa: TCH001
 
 
 def example_to_dict(row: Example) -> dict:
@@ -29,6 +29,30 @@ class ExamplesRepo:
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
+
+    async def insert(
+        self,
+        *,
+        turn_text: str,
+        draft_text: str,
+        corrected_text: str,
+        context: dict,
+        is_counter_example: bool = False,
+        embedding: list[float] | None = None,
+    ) -> Example:
+        async with self._sf() as session:
+            row = Example(
+                embedding=embedding or [0.0] * 384,
+                turn_text=turn_text,
+                draft_text=draft_text,
+                corrected_text=corrected_text,
+                context=context,
+                is_counter_example=is_counter_example,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return row
 
     async def find_by_similarity(
         self,

@@ -8,6 +8,8 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from uuid import UUID
+
 from diana.application.ports import VipRecord
 from diana.infrastructure.db.models import Vip
 
@@ -20,6 +22,7 @@ def vip_orm_to_record(row: Vip) -> VipRecord:
         display_name=row.display_name,
         is_active=bool(row.is_active),
         paused_until=row.paused_until,
+        frozen_until=row.frozen_until,
     )
 
 
@@ -97,6 +100,30 @@ class SqlVipStore:
             row.is_active = False
             await session.commit()
             return True
+
+    async def get_by_id(self, vip_id: UUID) -> VipRecord | None:
+        async with self._sf() as session:
+            result = await session.execute(select(Vip).where(Vip.id == vip_id))
+            row = result.scalar_one_or_none()
+            return vip_orm_to_record(row) if row else None
+
+    async def freeze_vip(self, vip_id: UUID, frozen_until: datetime) -> None:
+        async with self._sf() as session:
+            result = await session.execute(select(Vip).where(Vip.id == vip_id))
+            row = result.scalar_one_or_none()
+            if row is None:
+                raise ValueError(f"VIP {vip_id} not found")
+            row.frozen_until = frozen_until
+            await session.commit()
+
+    async def unfreeze_vip(self, vip_id: UUID) -> None:
+        async with self._sf() as session:
+            result = await session.execute(select(Vip).where(Vip.id == vip_id))
+            row = result.scalar_one_or_none()
+            if row is None:
+                raise ValueError(f"VIP {vip_id} not found")
+            row.frozen_until = None
+            await session.commit()
 
 
 __all__ = ["SqlVipStore", "vip_is_allowed", "vip_orm_to_record"]

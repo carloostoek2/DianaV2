@@ -1,0 +1,18 @@
+# gsd-f2-item2.log
+# GSD Execution Log — Fase 2 Item 2
+# Started: 2026-07-24
+
+## Task 1: Contract prerequisites + SQL repos
+
+### Task 1 done: 2026-07-24
+- Migration 004_vip_frozen_until created and applied
+- Vip ORM model: frozen_until column added
+- VipRecord: frozen_until field added
+- VipStore protocol: get_by_id, freeze_vip, unfreeze_vip methods added
+- SqlVipStore: all 3 methods implemented (raises ValueError on missing VIP)
+- cognitive/models.Policy: pure Pydantic domain model added
+- DeliveryContext.is_frozen: defaults to False
+- StagingCandidateRepo: insert/get_by_id/update_status
+- GrayZoneQueryRepo: insert/get_by_id/update_status/expire_older_than/list_open
+- ExamplesRepo.insert() added
+- PoliciesRepo.insert() added

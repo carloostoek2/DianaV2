@@ -207,6 +207,24 @@ class EvaluationProfile(BaseModel):
         return value
 
 
+class Policy(BaseModel):
+    """Pure domain model for a distilled business policy (non-ORM).
+
+    Used by PolicyDistiller (cognitive/) and StagingService (application/)
+    as a shared data contract. NOT the same as db/models.Policy (ORM).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trigger_description: str
+    rule: str
+    scope: str = "all"
+    is_active: bool = True
+    source_query_id: UUID | None = None
+    created_at: datetime | None = None
+    id: UUID | None = None
+
+
 class Decision(BaseModel):
     """F1 runtime decision — approve | escalate only.
 
@@ -235,6 +253,7 @@ __all__ = [
     "Emotion",
     "EvaluationProfile",
     "EvaluatorInput",
+    "Policy",
     "HistoryMessage",
     "IncomingTurn",
     "Plan",

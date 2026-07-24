@@ -115,6 +115,7 @@ class VipRecord(BaseModel):
     display_name: str | None = None
     is_active: bool = True
     paused_until: datetime | None = None
+    frozen_until: datetime | None = None
 
 
 @runtime_checkable
@@ -137,6 +138,18 @@ class VipStore(Protocol):
 
     async def deactivate(self, telegram_user_id: int) -> bool:
         """Soft-remove: set is_active=False. Returns False if unknown."""
+        ...
+
+    async def get_by_id(self, vip_id: UUID) -> VipRecord | None:
+        """Lookup VIP by UUID primary key."""
+        ...
+
+    async def freeze_vip(self, vip_id: UUID, frozen_until: datetime) -> None:
+        """Set frozen_until column. Raises ValueError if VIP not found."""
+        ...
+
+    async def unfreeze_vip(self, vip_id: UUID) -> None:
+        """Clear frozen_until column (set to NULL). Raises ValueError if VIP not found."""
         ...
 
 

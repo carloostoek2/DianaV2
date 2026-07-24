@@ -38,6 +38,7 @@ class Vip(Base):
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frozen_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

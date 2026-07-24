@@ -34,6 +34,7 @@ class DeliveryContext(BaseModel):
     vip_id: UUID | None = None
     mode: DeliveryMode = "supervised"
     telegram_message_id: int | None = None
+    is_frozen: bool = False
 
 
 class DeliveryResult(BaseModel):

@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from diana.infrastructure.db.models import Policy
+from diana.infrastructure.db.models import Policy  # noqa: TCH001
 
 
 def policy_to_dict(row: Policy) -> dict:
@@ -29,6 +29,30 @@ class PoliciesRepo:
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
+
+    async def insert(
+        self,
+        *,
+        trigger_description: str,
+        rule: str,
+        scope: str = "all",
+        is_active: bool = True,
+        source_query_id: UUID | None = None,
+        embedding: list[float] | None = None,
+    ) -> Policy:
+        async with self._sf() as session:
+            row = Policy(
+                embedding=embedding or [0.0] * 384,
+                trigger_description=trigger_description,
+                rule=rule,
+                scope=scope,
+                is_active=is_active,
+                source_query_id=source_query_id,
+            )
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return row
 
     async def find_active_by_similarity(
         self,
