@@ -95,10 +95,37 @@ class RecordingLearning:
         return None
 
 
+class FakeGrayZone:
+    """Fake GrayZoneService for consult_doctrine tests."""
+
+    def __init__(self) -> None:
+        self.queries: list[dict] = []
+        self.next_query_id: UUID = uuid4()
+
+    async def create_query(
+        self,
+        vip_id: UUID,
+        turn_id: UUID,
+        question: str,
+        draft: str,
+        **kwargs,
+    ) -> object:
+        self.queries.append({
+            "vip_id": vip_id,
+            "turn_id": turn_id,
+            "question": question,
+            "draft": draft,
+        })
+        # Return a simple object matching GrayZoneQueryView protocol (id: UUID).
+        return type("_Query", (), {"id": self.next_query_id})()
+
+
 def _build(
     director: object,
     *,
     learning: RecordingLearning | None = None,
+    gray_zone: FakeGrayZone | None = None,
+    feature_gray_zone_enabled: bool = False,
 ) -> dict:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -132,11 +159,14 @@ def _build(
         admin=admin,
         learning=learn,
         history=history,
+        gray_zone=gray_zone,
+        feature_gray_zone_enabled=feature_gray_zone_enabled,
     )
     return {
         "orch": orch,
         "director": director,
         "admin": admin,
+        "gray_zone": gray_zone,
         "learning": learn,
         "actuator": actuator,
         "behavior": behavior,
@@ -1041,3 +1071,78 @@ async def test_r2_supersede_invokes_behavior_cancel_pending() -> None:
     assert behavior.cancel_calls == []
     await orch.handle_vip_message(_vip(text="msg B"))
     assert behavior.cancel_calls == [(100, "new_message")]
+
+
+# ── F2 consult_doctrine branch ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_happy_path() -> None:
+    """Happy path: consult_doctrine → query created, owner notified, gray_zone."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="need policy",
+    )
+    gz = FakeGrayZone()
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=gz,
+        feature_gray_zone_enabled=True,
+    )
+    vip_id = uuid4()
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert len(gz.queries) == 1
+    assert gz.queries[0]["vip_id"] == vip_id
+    assert gz.queries[0]["turn_id"] == turn_id
+    assert gz.queries[0]["question"] == "hola diana"
+    assert gz.queries[0]["draft"] == "need policy"
+    assert len(g["notifier"].doctrines) == 1
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "gray_zone"
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_raises_when_feature_disabled() -> None:
+    """Guard: consult_doctrine action with feature disabled raises RuntimeError."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+    )
+    g = _build(FakeDirector(decision), gray_zone=FakeGrayZone())
+    with pytest.raises(RuntimeError, match="gray zone feature is disabled"):
+        await g["orch"].handle_vip_message(_vip())
+    assert g["notifier"].doctrines == []
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_raises_when_gray_zone_none() -> None:
+    """Guard: consult_doctrine action with gray_zone=None raises RuntimeError."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+    )
+    g = _build(FakeDirector(decision), feature_gray_zone_enabled=True)
+    with pytest.raises(RuntimeError, match="GrayZoneService is not injected"):
+        await g["orch"].handle_vip_message(_vip())
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_raises_when_vip_id_none() -> None:
+    """Guard: consult_doctrine with vip_id=None raises RuntimeError."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+    )
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=FakeGrayZone(),
+        feature_gray_zone_enabled=True,
+    )
+    with pytest.raises(RuntimeError, match="consult_doctrine requires vip_id"):
+        await g["orch"].handle_vip_message(_vip(vip_id=None))

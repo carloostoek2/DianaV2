@@ -380,3 +380,76 @@ async def test_supersede_mid_flight_does_not_mark_failed() -> None:
     failed_infos = [t for t, _ in notifier.infos if "delivery_failed" in t]
     assert failed_infos == []
     _ = result
+
+
+# ── send_doctrine_query (F2 gray zone) ──────────────────────────────────
+
+
+def _make_query_view(*, query_id: UUID | None = None) -> object:
+    """Build a minimal GrayZoneQueryView-compatible object."""
+    return type("_Query", (), {"id": query_id})() if query_id is not None else type("_Query", (), {"id": None})()
+
+
+@pytest.mark.asyncio
+async def test_send_doctrine_query_success(admin_graph: dict) -> None:
+    """Happy path: doctrine query creates notification and records owner_mid."""
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    d = _decision(action="consult_doctrine", draft="doctrine draft")
+    await g["admin"].send_doctrine_query(
+        _incoming(turn.id), d, turn.id, _make_query_view(query_id=uuid4())
+    )
+    assert len(g["notifier"].doctrines) == 1
+    payload = g["notifier"].doctrines[0]
+    assert payload.turn_id == turn.id
+    assert payload.draft_text == "doctrine draft"
+    assert payload.business_connection_id == "bc-1"
+    assert payload.reply_markup_spec is not None
+    assert "actions" in payload.reply_markup_spec
+    assert "respond_doctrine" in payload.reply_markup_spec["actions"]
+
+
+@pytest.mark.asyncio
+async def test_send_doctrine_query_missing_bc_raises(admin_graph: dict) -> None:
+    """Missing business_connection_id should raise ValueError."""
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42)
+    d = _decision(action="consult_doctrine")
+    with pytest.raises(ValueError, match="business_connection_id"):
+        await g["admin"].send_doctrine_query(
+            _incoming(turn.id, business_connection_id=None),
+            d,
+            turn.id,
+            _make_query_view(query_id=uuid4()),
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_doctrine_query_adds_query_id_when_present(admin_graph: dict) -> None:
+    """reply_markup_spec includes query_id when available, omits when None."""
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42)
+    d = _decision(action="consult_doctrine")
+    qid = uuid4()
+    await g["admin"].send_doctrine_query(
+        _incoming(turn.id), d, turn.id, _make_query_view(query_id=qid)
+    )
+    assert len(g["notifier"].doctrines) == 1
+    spec = g["notifier"].doctrines[0].reply_markup_spec
+    assert spec is not None
+    assert spec.get("query_id") == str(qid)
+
+
+@pytest.mark.asyncio
+async def test_send_doctrine_query_omits_query_id_when_none(admin_graph: dict) -> None:
+    """When query.id is None, query_id key is absent from reply_markup_spec."""
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42)
+    d = _decision(action="consult_doctrine")
+    await g["admin"].send_doctrine_query(
+        _incoming(turn.id), d, turn.id, _make_query_view(query_id=None)
+    )
+    assert len(g["notifier"].doctrines) == 1
+    spec = g["notifier"].doctrines[0].reply_markup_spec
+    assert spec is not None
+    assert "query_id" not in spec

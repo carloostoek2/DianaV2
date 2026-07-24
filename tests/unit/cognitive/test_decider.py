@@ -326,3 +326,29 @@ def test_doctrine_wins_over_risk_alto() -> None:
     )
     assert decision.action == "consult_doctrine"
     assert decision.reason == "doctrine_not_found"
+
+
+def test_policy_found_and_risk_alto_escalates() -> None:
+    """When policy IS found and risk is alto, Decider falls through
+    consult_doctrine gate and hits risk=alto gate -> escalate."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    comp = Comprehension(
+        intent="consulta_comercial",
+        topics=["precios"],
+        emotion="neutral",
+        urgency="media",
+        risk="alto",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
+    )
+    decision = decider.decide(
+        _profile(safety=0.9),
+        comp,
+        retrieved={"knowledge.policy": ["Always offer 10% for 3+ units"]},
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "risk_high"
