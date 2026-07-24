@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import SystemConfig
+
+logger = logging.getLogger("diana.infrastructure.db")
 
 
 class SqlSystemConfigStore:
@@ -38,23 +41,34 @@ class SqlSystemConfigStore:
 
         If a known feature flag key is missing from the DB, it is omitted
         from the returned dict (caller applies defaults from Settings).
+
+        Returns an empty dict on DB error (graceful fallback).
         """
-        async with self._sf() as session:
-            result = await session.execute(
-                select(SystemConfig.key, SystemConfig.value).where(
-                    SystemConfig.key.startswith("FEATURE_")
+        try:
+            async with self._sf() as session:
+                result = await session.execute(
+                    select(SystemConfig.key, SystemConfig.value).where(
+                        SystemConfig.key.startswith("FEATURE_")
+                    )
                 )
-            )
-            flags: dict[str, bool] = {}
-            for key, value in result.all():
-                if isinstance(value, bool):
-                    flags[key] = value
-                elif isinstance(value, str):
-                    flags[key] = value.lower() in ("true", "1", "yes", "on")
-                elif isinstance(value, (int, float)):
-                    flags[key] = bool(value)
-                # Any other type → skip (no guesswork)
-            return flags
+                flags: dict[str, bool] = {}
+                for key, value in result.all():
+                    if isinstance(value, bool):
+                        flags[key] = value
+                    elif isinstance(value, str):
+                        flags[key] = value.lower() in ("true", "1", "yes", "on")
+                    elif isinstance(value, (int, float)):
+                        flags[key] = bool(value)
+                    else:
+                        logger.warning(
+                            "Skipping feature flag %r with unsupported type %s",
+                            key,
+                            type(value).__name__,
+                        )
+                return flags
+        except Exception:
+            logger.exception("Failed to read feature flags from DB")
+            return {}
 
 
 __all__ = ["SqlSystemConfigStore"]

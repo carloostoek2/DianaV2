@@ -219,23 +219,25 @@ def build_app(
     examples_repo = ExamplesRepo(sf)
 
     # ---- F2 Item 3: feature flags, gray zone, sandbox ----
-    # Feature flags: initially from Settings defaults.
-    # An async startup helper reads DB and patches feature_flags at boot.
+    # Feature flags come from Settings (source of truth). DB-side overrides
+    # are not implemented in F2 (load_feature_flags removed per review).
     feature_gray_zone_enabled = settings.feature_gray_zone_enabled
     feature_sandbox_enabled = settings.feature_sandbox_enabled
 
-    # PolicyDistiller — standalone, no deps (cognitive module)
-    policy_distiller = PolicyDistiller()
-
-    # GrayZoneService — query lifecycle + VIP freeze (Item 2)
-    staging_repo = StagingCandidateRepo(sf)
-    gray_zone_repo = GrayZoneQueryRepo(sf)
-    gray_zone = GrayZoneService(
-        query_repo=gray_zone_repo,
-        vip_store=vips,
-        staging_repo=staging_repo,
-        distiller=policy_distiller,
-    )
+    # GrayZoneService — created only when the feature is enabled.
+    # When disabled, TurnOrchestrator receives None (dead-code guard).
+    if feature_gray_zone_enabled:
+        staging_repo = StagingCandidateRepo(sf)
+        gray_zone_repo = GrayZoneQueryRepo(sf)
+        policy_distiller = PolicyDistiller()
+        gray_zone = GrayZoneService(
+            query_repo=gray_zone_repo,
+            vip_store=vips,
+            staging_repo=staging_repo,
+            distiller=policy_distiller,
+        )
+    else:
+        gray_zone = None
 
     # SandboxService — minimal F2 sandbox (profiles + trace isolation)
     sandbox = SandboxService() if feature_sandbox_enabled else None
@@ -329,21 +331,6 @@ async def load_forbidden_keywords(app: AppContainer) -> list[str]:
     return kws
 
 
-async def load_feature_flags(app: AppContainer) -> dict[str, bool]:
-    """Load feature flags from system_config into the container (boot-time)."""
-    store = SqlSystemConfigStore(app.session_factory)
-    flags = await store.get_feature_flags()
-    if flags:
-        logger.info(
-            "feature_flags_loaded",
-            extra={
-                "count": len(flags),
-                "flags": flags,
-            },
-        )
-    return flags
-
-
 async def run_app_startup_recovery(app: AppContainer) -> Any:
     """Expire mid-flight deliveries; re-notify waiting approvals."""
     return await run_startup_recovery(
@@ -362,7 +349,6 @@ __all__ = [
     "SystemClock",
     "TurnStoreStatusReader",
     "build_app",
-    "load_feature_flags",
     "load_forbidden_keywords",
     "run_app_startup_recovery",
 ]
