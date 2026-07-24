@@ -19,12 +19,10 @@ class GrayZoneExpirationJob:
     def __init__(
         self,
         gray_zone: Any,
-        notifier: Any,
         *,
         interval_seconds: int = 300,
     ) -> None:
         self._gray_zone = gray_zone
-        self._notifier = notifier
         self._interval = interval_seconds
         self._stop_event = asyncio.Event()
 

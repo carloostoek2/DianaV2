@@ -1,4 +1,4 @@
-"""Diana F1 entrypoint — long-polling + safe startup recovery + F2 background jobs."""
+"""Diana F2 entrypoint — long-polling + safe startup recovery + F2 background jobs."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from diana.composition import (
 )
 from diana.config import Settings
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
-from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 
 logger = logging.getLogger("diana.composition")
 
@@ -42,9 +41,8 @@ async def async_main() -> None:
         },
     )
 
-    # ---- F2 Item 4: background jobs, middleware, doctrine wiring ----
+    # F2 Item 4: start gray zone expiration background job.
     expiration_job = _setup_expiration_job(app)
-    _setup_freeze_middleware(app)
 
     try:
         await app.dispatcher.start_polling(
@@ -68,21 +66,11 @@ def _setup_expiration_job(app: AppContainer) -> asyncio.Task | None:
 
     job = GrayZoneExpirationJob(
         app.gray_zone,
-        app.notifier,
         interval_seconds=300,
     )
     task = asyncio.create_task(job.start())
     logger.info("expiration_job_started", extra={"interval_seconds": 300})
     return task
-
-
-def _setup_freeze_middleware(app: AppContainer) -> None:
-    """Register FreezeCheckMiddleware as the innermost middleware."""
-    mw = FreezeCheckMiddleware(app.vips)
-    app.dispatcher.message.middleware(mw)
-    app.dispatcher.business_message.middleware(mw)
-    app.dispatcher.callback_query.middleware(mw)
-    logger.debug("freeze_middleware_registered")
 
 
 def main() -> None:

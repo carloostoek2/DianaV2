@@ -1,18 +1,19 @@
-"""F1 middleware stack modules."""
+"""F2 middleware stack modules — FreezeCheck added at position 4."""
 
 from __future__ import annotations
 
 from diana.telegram.middlewares.auth import AuthMiddleware
 from diana.telegram.middlewares.business_connection import BusinessConnectionMiddleware
+from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
 
-# F1 order — FreezeCheck intentionally absent (registered separately in main.py).
-F1_MIDDLEWARE_ORDER: tuple[str, ...] = (
+F2_MIDDLEWARE_ORDER: tuple[str, ...] = (
     "LoggingMiddleware",
     "BusinessConnectionMiddleware",
     "OwnerDetectionMiddleware",
+    "FreezeCheckMiddleware",
     "ForbiddenKeywordsMiddleware",
     "AuthMiddleware",
 )
@@ -20,8 +21,9 @@ F1_MIDDLEWARE_ORDER: tuple[str, ...] = (
 __all__ = [
     "AuthMiddleware",
     "BusinessConnectionMiddleware",
-    "F1_MIDDLEWARE_ORDER",
+    "F2_MIDDLEWARE_ORDER",
     "ForbiddenKeywordsMiddleware",
+    "FreezeCheckMiddleware",
     "LoggingMiddleware",
     "OwnerDetectionMiddleware",
 ]

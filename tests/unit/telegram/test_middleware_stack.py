@@ -1,4 +1,4 @@
-"""F1 middleware registration order — live Dispatcher + Freeze absent."""
+"""F2 middleware registration order — live Dispatcher + FreezeCheck at position 4."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from diana.application.memory import (
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
-from diana.telegram.middlewares import F1_MIDDLEWARE_ORDER
+from diana.telegram.middlewares import F2_MIDDLEWARE_ORDER
 from diana.telegram.setup import (
     build_dispatcher,
     extract_observer_middleware_names,
@@ -24,20 +24,21 @@ from diana.telegram.setup import (
 )
 
 
-def test_f1_middleware_order_constant() -> None:
+def test_f2_middleware_order_constant() -> None:
+    assert registered_middleware_names() == F2_MIDDLEWARE_ORDER
     assert registered_middleware_names() == (
         "LoggingMiddleware",
         "BusinessConnectionMiddleware",
         "OwnerDetectionMiddleware",
+        "FreezeCheckMiddleware",
         "ForbiddenKeywordsMiddleware",
         "AuthMiddleware",
     )
-    assert F1_MIDDLEWARE_ORDER == registered_middleware_names()
 
 
-def test_freeze_check_absent() -> None:
+def test_f2_middleware_includes_freeze_check() -> None:
     names = registered_middleware_names()
-    assert not any("Freeze" in n for n in names)
+    assert names[3] == "FreezeCheckMiddleware"
 
 
 def _fake_orchestrator() -> MagicMock:
@@ -56,7 +57,7 @@ def _fake_admin() -> MagicMock:
     return admin
 
 
-def test_build_dispatcher_registers_f1_order_on_business_message() -> None:
+def test_build_dispatcher_registers_f2_order_on_business_message() -> None:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
@@ -80,9 +81,11 @@ def test_build_dispatcher_registers_f1_order_on_business_message() -> None:
         owner_telegram_id=999001,
         forbidden_keywords=["x"],
     )
-    assert middleware_class_names(wiring.registered_middlewares) == F1_MIDDLEWARE_ORDER
+    assert middleware_class_names(wiring.registered_middlewares) == F2_MIDDLEWARE_ORDER
     live = extract_observer_middleware_names(wiring.dispatcher.business_message)
-    assert live == F1_MIDDLEWARE_ORDER
+    assert live == F2_MIDDLEWARE_ORDER
     live_msg = extract_observer_middleware_names(wiring.dispatcher.message)
-    assert live_msg == F1_MIDDLEWARE_ORDER
-    assert not any("Freeze" in n for n in live)
+    assert live_msg == F2_MIDDLEWARE_ORDER
+    assert "FreezeCheckMiddleware" in live
+    # Verify position 4 (index 3) is FreezeCheck
+    assert live[3] == "FreezeCheckMiddleware"

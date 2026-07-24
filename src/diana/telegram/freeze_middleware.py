@@ -18,9 +18,9 @@ logger = logging.getLogger("diana.telegram")
 class FreezeCheckMiddleware(BaseMiddleware):
     """Drop messages from VIPs whose frozen_until > now (silent discard).
 
-    Must run AFTER AuthMiddleware so that ``data["vip_record"]`` is available
-    for Message events. For non-Message events (callbacks, etc.) this is a
-    no-op pass-through.
+    Self-sufficient: looks up VIP by ``event.from_user.id`` via injected
+    ``VipStore``. Does NOT depend on AuthMiddleware.
+    Registered at position 4 per AGENTS.md middleware order.
     """
 
     def __init__(self, vips: VipStore) -> None:
@@ -35,13 +35,16 @@ class FreezeCheckMiddleware(BaseMiddleware):
         if not isinstance(event, Message):
             return await handler(event, data)
 
-        vip_record = data.get("vip_record")
+        user_id = getattr(getattr(event, "from_user", None), "id", None)
+        if user_id is None:
+            return await handler(event, data)
+
+        vip_record = await self._vips.get_by_telegram_user_id(user_id)
         if vip_record is None:
             return await handler(event, data)
 
         frozen_until = getattr(vip_record, "frozen_until", None)
         if frozen_until is not None and frozen_until > datetime.now(UTC):
-            user_id = getattr(getattr(event, "from_user", None), "id", None)
             logger.debug(
                 "freeze_drop",
                 extra={
@@ -49,7 +52,7 @@ class FreezeCheckMiddleware(BaseMiddleware):
                     "frozen_until": frozen_until.isoformat(),
                 },
             )
-            return None  # Silent drop
+            return None
 
         return await handler(event, data)
 

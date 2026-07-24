@@ -22,7 +22,8 @@ from diana.telegram.handlers.callbacks import (
     CorrectSessionStore,
     build_callback_router,
 )
-from diana.telegram.middlewares import F1_MIDDLEWARE_ORDER
+from diana.telegram.freeze_middleware import FreezeCheckMiddleware
+from diana.telegram.middlewares import F2_MIDDLEWARE_ORDER
 from diana.telegram.middlewares.auth import AuthMiddleware
 from diana.telegram.middlewares.business_connection import BusinessConnectionMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
@@ -78,7 +79,7 @@ def build_dispatcher(
     sessions = correct_sessions or CorrectSessionStore()
 
     # first registered = outermost (aiogram wraps with reversed()).
-    # F1 execution order: Logging → BC → Owner → Forbidden → Auth → handler.
+    # F2 execution order: Logging → BC → Owner → FreezeCheck → Forbidden → Auth → handler.
     forbidden_mw = ForbiddenKeywordsMiddleware(
         keywords=forbidden_keywords,
         coordinator=coordinator,
@@ -92,6 +93,7 @@ def build_dispatcher(
         OwnerDetectionMiddleware(
             owner_telegram_id=owner_telegram_id, coordinator=coordinator
         ),
+        FreezeCheckMiddleware(vips=vips),
         forbidden_mw,
         AuthMiddleware(vips=vips),
     ]
@@ -121,7 +123,7 @@ def build_dispatcher(
 
     return TelegramWiring(
         dispatcher=dp,
-        middleware_order=F1_MIDDLEWARE_ORDER,
+        middleware_order=F2_MIDDLEWARE_ORDER,
         correct_sessions=sessions,
         forbidden_middleware=forbidden_mw,
         registered_middlewares=list(middlewares),
@@ -129,8 +131,8 @@ def build_dispatcher(
 
 
 def registered_middleware_names() -> tuple[str, ...]:
-    """F1 ordered middleware names (Freeze absent)."""
-    return F1_MIDDLEWARE_ORDER
+    """F2 ordered middleware names (FreezeCheck at position 4)."""
+    return F2_MIDDLEWARE_ORDER
 
 
 __all__ = [

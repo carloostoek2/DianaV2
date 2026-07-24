@@ -297,11 +297,12 @@ def test_f1_middleware_order_acceptance() -> None:
     from diana.telegram.setup import (
         build_dispatcher,
         extract_observer_middleware_names,
+        registered_middleware_names,
     )
 
     names = registered_middleware_names()
-    assert "Freeze" not in "".join(names)
     assert names[0] == "LoggingMiddleware"
+    assert names[3] == "FreezeCheckMiddleware"
     assert names[-1] == "AuthMiddleware"
 
     deliveries = InMemoryPendingDeliveryStore()
