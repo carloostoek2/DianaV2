@@ -40,6 +40,11 @@ class TimingContext:
         # Must return None — never suppress exceptions.
 
     @property
+    def step_name(self) -> str:
+        """Return the step name this timing context was created for."""
+        return self._step_name
+
+    @property
     def elapsed_ms(self) -> float:
         if self._elapsed_ms is None:
             raise RuntimeError(

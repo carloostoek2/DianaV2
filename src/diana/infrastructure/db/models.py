@@ -101,7 +101,7 @@ class PipelineTrace(Base):
     __table_args__ = (
         Index("ix_pipeline_traces_turn_id", "turn_id"),
         Index("ix_pipeline_traces_vip_id_created_at", "vip_id", text("created_at DESC")),
-        Index("pipeline_traces_created_at_idx", "created_at"),
+        Index("pipeline_traces_created_at_idx", text("created_at DESC")),
     )
 
     id: Mapped[UUID] = mapped_column(

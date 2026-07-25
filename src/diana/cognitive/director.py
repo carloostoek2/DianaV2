@@ -14,6 +14,7 @@ into ``IncomingTurn`` at the application layer.
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
@@ -287,5 +288,5 @@ class CognitiveDirector:
             )
         return out
 
-    async def _store(self, turn_id: Any, key: str, value: Any) -> None:
+    async def _store(self, turn_id: UUID, key: str, value: Any) -> None:
         await self._trace.store(turn_id, key, to_jsonable(value))

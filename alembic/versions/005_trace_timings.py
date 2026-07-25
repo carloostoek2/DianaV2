@@ -30,7 +30,7 @@ def upgrade() -> None:
         op.create_index(
             "pipeline_traces_created_at_idx",
             "pipeline_traces",
-            ["created_at"],
+            [sa.text("created_at DESC")],
             postgresql_concurrently=True,
             if_not_exists=True,
         )
@@ -40,7 +40,6 @@ def downgrade() -> None:
     with op.get_context().autocommit_block():
         op.drop_index(
             "pipeline_traces_created_at_idx",
-            if_exists=True,
             postgresql_concurrently=True,
         )
     op.drop_column("pipeline_traces", "timings")
