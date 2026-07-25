@@ -295,18 +295,17 @@ def _engine(
     act = actuator or FakeTelegramActuator()
     st = store or InMemoryPendingDeliveryStore()
     ck = clock or ImmediateClock()
-    kwargs: dict = {
-        "clock": ck,
-        "delay_policy": FixedDelayPolicy(initial=initial, typing=typing),
-        "turn_status": turn_status if turn_status is not None else AlwaysLiveTurnStatusReader(),
-        "max_send_attempts": max_send_attempts,
-        "retry_backoff_seconds": retry_backoff_seconds,
-    }
-    # Pass advanced kwargs only when requested so pre-GREEN suite stays green.
-    if feature_advanced_behavior or quirk_probability:
-        kwargs["feature_advanced_behavior"] = feature_advanced_behavior
-        kwargs["quirk_probability"] = quirk_probability
-    engine = BehaviorEngine(act, st, **kwargs)
+    engine = BehaviorEngine(
+        act,
+        st,
+        clock=ck,
+        delay_policy=FixedDelayPolicy(initial=initial, typing=typing),
+        turn_status=turn_status if turn_status is not None else AlwaysLiveTurnStatusReader(),
+        max_send_attempts=max_send_attempts,
+        retry_backoff_seconds=retry_backoff_seconds,
+        feature_advanced_behavior=feature_advanced_behavior,
+        quirk_probability=quirk_probability,
+    )
     return engine, act, st, ck
 
 

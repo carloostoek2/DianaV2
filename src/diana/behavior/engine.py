@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -28,6 +29,7 @@ from diana.behavior.ports import (
     TransientSendError,
     TurnStatusReader,
 )
+from diana.behavior.split import split_text
 from diana.behavior.timer_manager import TimerManager
 
 logger = logging.getLogger("diana.behavior")
@@ -36,6 +38,8 @@ logger = logging.getLogger("diana.behavior")
 _TERMINAL_SEND_ABORT: frozenset[str] = frozenset(
     {"superseded", "delivered", "failed", "escalated"}
 )
+# C4: light quirks = fixed extra pause only (never rewrites text).
+_QUIRK_EXTRA_PAUSE_SECONDS = 0.03
 
 
 class BehaviorEngine:
@@ -52,6 +56,8 @@ class BehaviorEngine:
         turn_status: TurnStatusReader | None = None,
         max_send_attempts: int = 3,
         retry_backoff_seconds: float = 0.05,
+        feature_advanced_behavior: bool = False,
+        quirk_probability: float = 0.0,
     ) -> None:
         self._actuator = actuator
         self._deliveries = deliveries
@@ -61,6 +67,8 @@ class BehaviorEngine:
         self._turn_status = turn_status
         self._max_send_attempts = max(1, max_send_attempts)
         self._retry_backoff_seconds = retry_backoff_seconds
+        self._advanced = bool(feature_advanced_behavior)
+        self._quirk_probability = max(0.0, min(1.0, float(quirk_probability)))
 
     async def deliver(
         self,
@@ -73,7 +81,29 @@ class BehaviorEngine:
 
         ``turn_id`` is required for pending_deliveries FK and cancel scope.
         ``decision`` is stored as a dump for reconstructability only.
+
+        Caller-supplied multi-text keeps single typing (no inter-gap). When
+        dual-gate split expands a long text, inter-message delay+typing applies
+        between expanded segments (SPEC §6.6 / A2).
         """
+        prepared, inter_gap = self._prepare_texts(list(texts), ctx)
+        return await self._deliver_core(
+            prepared,
+            ctx,
+            turn_id,
+            decision=decision,
+            inter_message_gap=inter_gap,
+        )
+
+    async def _deliver_core(
+        self,
+        texts: list[str],
+        ctx: DeliveryContext,
+        turn_id: UUID,
+        *,
+        decision: Any | None = None,
+        inter_message_gap: bool = False,
+    ) -> DeliveryResult:
         bc = (ctx.business_connection_id or "").strip()
         if not bc:
             return DeliveryResult(
@@ -85,6 +115,9 @@ class BehaviorEngine:
         frozen = self._frozen_abort(ctx)
         if frozen is not None:
             return frozen
+
+        if not texts:
+            return DeliveryResult(success=False, error="empty_texts")
 
         delivery_id = uuid4()
         decision_dump: dict = {}
@@ -121,6 +154,8 @@ class BehaviorEngine:
             initial = self._delay.initial_delay_seconds()
             await self._clock.sleep(initial)
 
+            await self._maybe_quirk_pause(ctx)
+
             if ctx.mode == "fake_delivery":
                 return await self._deliver_fake(
                     delivery_id=delivery_id,
@@ -136,17 +171,20 @@ class BehaviorEngine:
                     business_connection_id=bc,
                 )
 
-            typing_for = texts[0] if texts else ""
-            typing_secs = self._delay.typing_duration_seconds(typing_for)
-            await self._actuator.send_chat_action(
-                ctx.chat_id,
-                "typing",
-                business_connection_id=bc,
-            )
-            await self._clock.sleep(typing_secs)
-
+            typing_secs = 0.0
             message_ids: list[int] = []
-            for text in texts:
+            for index, text in enumerate(texts):
+                if index == 0 or inter_message_gap:
+                    if index > 0 and inter_message_gap:
+                        await self._clock.sleep(initial)
+                    typing_secs = self._delay.typing_duration_seconds(text)
+                    await self._actuator.send_chat_action(
+                        ctx.chat_id,
+                        "typing",
+                        business_connection_id=bc,
+                    )
+                    await self._clock.sleep(typing_secs)
+
                 frozen_mid = await self._frozen_abort_pending(
                     delivery_id=delivery_id,
                     ctx=ctx,
@@ -218,6 +256,54 @@ class BehaviorEngine:
         except Exception as exc:  # noqa: BLE001 — surface as delivery failure
             await self._safe_mark(delivery_id, "error")
             return DeliveryResult(success=False, error=str(exc))
+
+    def _prepare_texts(
+        self, texts: list[str], ctx: DeliveryContext
+    ) -> tuple[list[str], bool]:
+        """Normalize + optional dual-gate split. Returns (texts, inter_message_gap).
+
+        Inter-gap is True only when split expansion produced multi-segment from
+        dual-gate advanced split (A2). Caller multi-text without expand stays False.
+        """
+        normalized = [t for t in (x.strip() if isinstance(x, str) else x for x in texts) if t]
+        if not (self._advanced and ctx.allow_split):
+            return normalized, False
+
+        expanded: list[str] = []
+        did_expand = False
+        for t in normalized:
+            if len(t) > ctx.split_chars:
+                parts = split_text(t, ctx.split_chars)
+                if len(parts) > 1:
+                    did_expand = True
+                expanded.extend(parts if parts else [t])
+            else:
+                expanded.append(t)
+
+        if did_expand:
+            logger.info(
+                "delivery_split",
+                extra={
+                    "chat_id": ctx.chat_id,
+                    "segments": len(expanded),
+                    "split_chars": ctx.split_chars,
+                },
+            )
+        return expanded, did_expand
+
+    async def _maybe_quirk_pause(self, ctx: DeliveryContext) -> None:
+        """C4: dual-gate light quirk — extra pause only; never mutates text."""
+        if not (self._advanced and ctx.allow_human_quirks):
+            return
+        if self._quirk_probability <= 0.0:
+            return
+        if random.random() >= self._quirk_probability:
+            return
+        logger.info(
+            "delivery_quirk_pause",
+            extra={"chat_id": ctx.chat_id, "seconds": _QUIRK_EXTRA_PAUSE_SECONDS},
+        )
+        await self._clock.sleep(_QUIRK_EXTRA_PAUSE_SECONDS)
 
     def _frozen_abort(self, ctx: DeliveryContext) -> DeliveryResult | None:
         """C1: entry freeze hard-check (no pending row yet)."""
