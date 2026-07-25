@@ -101,6 +101,7 @@ class PipelineTrace(Base):
     __table_args__ = (
         Index("ix_pipeline_traces_turn_id", "turn_id"),
         Index("ix_pipeline_traces_vip_id_created_at", "vip_id", text("created_at DESC")),
+        Index("pipeline_traces_created_at_idx", "created_at"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -127,6 +128,7 @@ class PipelineTrace(Base):
     evaluation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     decision: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     delivery_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    timings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

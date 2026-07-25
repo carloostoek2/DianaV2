@@ -109,6 +109,7 @@ def test_desc_indexes_present_in_orm_metadata() -> None:
     assert "DESC" in index_exprs("message_history", "ix_message_history_chat_id_timestamp")
     assert "DESC" in index_exprs("turns", "ix_turns_chat_id_created_at")
     assert "DESC" in index_exprs("pipeline_traces", "ix_pipeline_traces_vip_id_created_at")
+    assert "pipeline_traces_created_at_idx" in {i.name for i in Base.metadata.tables["pipeline_traces"].indexes}
 
 
 def test_migration_003_creates_f2_knowledge_tables() -> None:
