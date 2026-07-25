@@ -1,4 +1,4 @@
-"""F2 Decider — pure deterministic matrix: what action to take?
+"""F3 Decider — pure deterministic matrix: what action to take?
 
 Answers a single question: what action to take for this turn?
 Never re-judges quality, never reads draft text, never invokes a language
@@ -7,40 +7,53 @@ overall/aggregate metric.
 
 English <-> Anexo F mapping
 -------------------------
-| Runtime                         | Anexo F                              |
-|---------------------------------|--------------------------------------|
-| EvaluationProfile               | perfil / PerfilEvaluacion            |
-| safety / naturalness            | seguridad / naturalidad              |
-| mode: supervised | autonomous    | modo_activo: supervisado | autonomo  |
-| thresholds["safety"]            | umbrales.seguridad_min               |
-| action: approve | escalate      | accion: aprobar | escalar            |
-| consult_doctrine                | consultar_doctrina (F2 new)          |
-| reason                          | razon                                |
-| mode_restriction_applied        | restriccion_de_modo_aplicada         |
+| Runtime                              | Anexo F                              |
+|--------------------------------------|--------------------------------------|
+| EvaluationProfile                    | perfil / PerfilEvaluacion            |
+| safety / naturalness / doctrine      | seguridad / naturalidad / doctrina   |
+| mode: supervised | autonomous         | modo_activo: supervisado | autonomo  |
+| thresholds["safety"] (P1 escalate)   | umbrales.seguridad (F1 bare key)     |
+| autonomous_thresholds safety_min etc | umbrales.seguridad_min (F3 send)     |
+| action: approve | escalate | send     | accion: aprobar | escalar | enviar  |
+| consult_doctrine                     | consultar_doctrina (F2)              |
+| reason                               | razon                                |
+| mode_restriction_applied             | restriccion_de_modo_aplicada         |
 
-F2 matrix (first match wins)
+F3 matrix (first match wins)
 ----------------------------
-1. safety < threshold -> escalate (reason=safety_below_threshold)
-2. feature_gray_zone_enabled AND needs_policy AND no policy retrieved -> consult_doctrine
+1. safety < P1 threshold -> escalate (reason=safety_below_threshold)
+2. feature_gray_zone_enabled AND needs_policy AND no policy retrieved
+   -> consult_doctrine (reason=doctrine_not_found)
 3. risk == "alto" -> escalate (reason=risk_high)
-4. else -> approve (reason=ok_for_human_review)
+4. (residual) naturalness -> re-draft loop — not implemented
+5. feature_autonomous_mode AND all dims >= *_min
+   -> send (reason=autonomous_ok)
+6. else -> approve (reason=ok_for_human_review)
 
-Residual: F.3 rule 2 (naturalness -> re-draft loop) is not implemented.
+P1 uses bare ``thresholds["safety"]`` (default 0.3). Autonomous send uses
+separate ``autonomous_thresholds`` keys ``safety_min`` / ``doctrine_min`` /
+``naturalness_min`` (defaults from DEFAULT_AUTONOMOUS_THRESHOLDS). Never mix
+shapes in one dict.
+
+Residual: F.3 rule 2 (naturalness re-draft loop) is not implemented;
+low naturalness under autonomous only blocks send (falls through to approve).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from diana.cognitive.models import Comprehension, Decision, EvaluationProfile
+from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 
 _DEFAULT_SAFETY_THRESHOLD = 0.3
 
 
 class Decider:
-    """F2 supervised matrix: escalate on low safety; consult_doctrine on missing
-    policy; escalate on high risk; else approve.
+    """Pure matrix: escalate / consult_doctrine / send / approve.
 
-    Never returns non-F2 actions outside approve|escalate|consult_doctrine.
-    Never collapses EvaluationProfile to a single aggregate score.
+    Flag-gated autonomous send (feature_autonomous_mode) never collapses
+    EvaluationProfile to a mean score. Default flag off = F2 parity (no send).
     """
 
     def __init__(
@@ -48,12 +61,19 @@ class Decider:
         thresholds: dict | None = None,
         *,
         feature_gray_zone_enabled: bool = False,
+        feature_autonomous_mode: bool = False,
+        autonomous_thresholds: Mapping[str, float] | None = None,
     ) -> None:
         thresholds = thresholds or {}
         self._safety_threshold = float(
             thresholds.get("safety", _DEFAULT_SAFETY_THRESHOLD)
         )
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
+        self._feature_autonomous_mode = feature_autonomous_mode
+        mins = autonomous_thresholds or DEFAULT_AUTONOMOUS_THRESHOLDS
+        self._safety_min = float(mins["safety_min"])
+        self._doctrine_min = float(mins["doctrine_min"])
+        self._naturalness_min = float(mins["naturalness_min"])
 
     def decide(
         self,
@@ -63,7 +83,7 @@ class Decider:
         retrieved: dict | None = None,
         mode: str = "supervised",
     ) -> Decision:
-        # 1. Safety gate (unchanged from F1).
+        # 1. Safety gate (unchanged from F1) — P1 bare "safety" threshold.
         if evaluation.safety < self._safety_threshold:
             return Decision(
                 action="escalate",
@@ -95,7 +115,25 @@ class Decider:
                 mode_restriction_applied=None,
             )
 
-        # 4. Fall-through: approve for human review.
+        # 4. Residual: naturalness re-draft loop — not implemented.
+
+        # 5. Autonomous send (F3) — only when flag injected.
+        if self._feature_autonomous_mode:
+            if (
+                evaluation.safety >= self._safety_min
+                and evaluation.doctrine >= self._doctrine_min
+                and evaluation.naturalness >= self._naturalness_min
+            ):
+                return Decision(
+                    action="send",
+                    reason="autonomous_ok",
+                    evaluation=evaluation,
+                    draft_text=None,
+                    mode_restriction_applied=None,
+                )
+            # else: fall through to approve (rule 6)
+
+        # 6. Fall-through: approve for human review.
         restriction = (
             "supervised_send_to_approve" if mode == "supervised" else None
         )
