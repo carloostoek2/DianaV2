@@ -134,7 +134,22 @@ class TurnOrchestrator:
             )
             return turn_id
 
-        assert self._behavior is not None
+        # Prepare already fails closed if behavior is None; re-check for
+        # partial wiring / race without relying on assert (stripped under -O).
+        if self._behavior is None:
+            async with self._coordinator.chat_scope(chat_id):
+                live = await self._coordinator.get_turn(turn_id)
+                if live is not None and not is_turn_status_terminal(live.status):
+                    await self._coordinator.mark_failed(
+                        turn_id, error="autonomous_behavior_not_wired"
+                    )
+            await self._learning.run_post_turn(turn_id)
+            logger.error(
+                "autonomous_behavior_not_wired",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return turn_id
+
         # Defense for item4 engine hard-check: job only exists when VIP was
         # unfrozen at prepare; re-check above already failed-closed if frozen.
         deliver_ctx = pending_deliver.ctx.model_copy(
@@ -525,9 +540,10 @@ class TurnOrchestrator:
         chat_id: int,
         result: DeliveryResult,
     ) -> bool:
-        """CAS triad after deliver (Admin I.5 parity, no approval row).
+        """Post-deliver terminal check under chat lock (Admin I.5 parity, no approval).
 
         Returns True only when the turn was transitioned to DELIVERED.
+        Not a SQL CAS / claim token — single-process lock + terminal latch.
         """
         turn_after = await self._coordinator.get_turn(turn_id)
         if turn_after is None or is_turn_status_terminal(turn_after.status):

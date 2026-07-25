@@ -60,7 +60,7 @@ class AutonomousModeService:
         vip = await self._vip_store.get_by_id(vip_id)
         if vip is None:
             return False
-        return bool(getattr(vip, "auto_send", False))
+        return bool(vip.auto_send)
 
     async def notify_if_needed(
         self,
