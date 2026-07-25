@@ -594,3 +594,109 @@ async def test_quirks_dual_gate_flag_off_no_extra() -> None:
     )
     assert result.success is True
     assert clock.sleeps == [0.05, 0.02]
+
+
+# --- Item4 Task3: deliver_with_sequence inter-message gaps ---
+
+
+@pytest.mark.asyncio
+async def test_deliver_with_sequence_three_texts_inter_gap() -> None:
+    engine, actuator, _, clock = _engine(initial=0.05, typing=0.02)
+    turn_id = uuid4()
+    result = await engine.deliver_with_sequence(
+        ["a", "b", "c"],
+        _ctx(telegram_message_id=None),
+        turn_id,
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert [s["text"] for s in sends] == ["a", "b", "c"]
+    typing_actions = [c for c in actuator.calls if c["op"] == "send_chat_action"]
+    assert len(typing_actions) >= 3
+    # Initial delay + typing per bubble + inter delays between subsequent.
+    assert len(clock.sleeps) > 2
+    # Multi-text deliver (no sequence) keeps single typing baseline.
+    engine2, actuator2, _, clock2 = _engine(initial=0.05, typing=0.02)
+    await engine2.deliver(["a", "b", "c"], _ctx(telegram_message_id=None), uuid4())
+    typing2 = [c for c in actuator2.calls if c["op"] == "send_chat_action"]
+    assert len(typing2) == 1
+    assert clock2.sleeps == [0.05, 0.02]
+
+
+@pytest.mark.asyncio
+async def test_deliver_with_sequence_frozen_zero_sends() -> None:
+    engine, actuator, store, _ = _engine()
+    result = await engine.deliver_with_sequence(
+        ["a", "b"],
+        _ctx(is_frozen=True),
+        uuid4(),
+    )
+    assert result.success is False
+    assert result.cancelled is True
+    assert result.error == "vip_frozen"
+    assert actuator.send_count() == 0
+    assert await store.list_all() == []
+
+
+@pytest.mark.asyncio
+async def test_deliver_with_sequence_empty_fail_closed() -> None:
+    engine, actuator, store, _ = _engine()
+    for texts in ([], ["   ", "\n"], ["", "  "]):
+        result = await engine.deliver_with_sequence(
+            texts,
+            _ctx(telegram_message_id=None),
+            uuid4(),
+        )
+        assert result.success is False
+        assert result.error == "empty_texts"
+        assert actuator.send_count() == 0
+    assert await store.list_all() == []
+
+
+@pytest.mark.asyncio
+async def test_deliver_with_sequence_cancel_mid_no_further_sends() -> None:
+    actuator = FakeTelegramActuator()
+    store = InMemoryPendingDeliveryStore()
+
+    class SlowClock:
+        def now(self):
+            from datetime import UTC, datetime
+
+            return datetime.now(UTC)
+
+        async def sleep(self, seconds: float) -> None:
+            await asyncio.sleep(0.15)
+
+    engine = BehaviorEngine(
+        actuator,
+        store,
+        clock=SlowClock(),
+        delay_policy=FixedDelayPolicy(initial=10.0, typing=0.0),
+        turn_status=AlwaysLiveTurnStatusReader(),
+    )
+    turn_id = uuid4()
+    task = asyncio.create_task(
+        engine.deliver_with_sequence(["a", "b", "c"], _ctx(telegram_message_id=None), turn_id)
+    )
+    await asyncio.sleep(0.05)
+    await engine.cancel_pending(10)
+    result = await task
+    assert result.cancelled is True
+    assert result.success is False
+    # Cancel during first delay → zero sends.
+    assert actuator.send_count() == 0
+    rows = await store.list_all()
+    assert rows
+    assert all(r.status == "cancelled" for r in rows)
+
+
+def test_deliver_with_sequence_not_on_behavior_deliverer_protocol() -> None:
+    from diana.application.ports import BehaviorDeliverer
+
+    assert not hasattr(BehaviorDeliverer, "deliver_with_sequence") or (
+        "deliver_with_sequence" not in getattr(BehaviorDeliverer, "__protocol_attrs__", set())
+        and "deliver_with_sequence" not in BehaviorDeliverer.__dict__
+    )
+    # Concrete engine exposes the method; protocol only requires deliver.
+    assert hasattr(BehaviorEngine, "deliver_with_sequence")
+    assert hasattr(BehaviorDeliverer, "deliver")
