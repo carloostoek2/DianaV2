@@ -5,14 +5,17 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from uuid import UUID
 
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
 from diana.application.admin_service import AdminService, OwnerAuthError
+from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import VipStore
 from diana.telegram.handlers.callbacks import CorrectSessionStore
+from diana.telegram.keyboards import trace_detail_keyboard, trace_list_keyboard
 
 logger = logging.getLogger("diana.telegram")
 
@@ -28,6 +31,7 @@ async def handle_admin_text(
     vips: VipStore,
     admin: AdminService,
     correct_sessions: CorrectSessionStore,
+    admin_trace: AdminTraceService | None = None,
 ) -> str:
     """Pure admin text dispatcher for unit tests. Returns honest status token."""
     if actor_id is None or actor_id != owner_telegram_id:
@@ -36,6 +40,24 @@ async def handle_admin_text(
     stripped = (text or "").strip()
     if not stripped:
         return "ignored"
+
+    # Trace commands (checked before correct session to avoid false positives).
+    if stripped.startswith("/turnos"):
+        return "trace_list"
+
+    if stripped.startswith("/traza"):
+        parts = stripped.split(None, 1)
+        if len(parts) < 2:
+            return "trace_invalid_id"
+        raw_id = parts[1].strip()
+        if not raw_id:
+            return "trace_invalid_id"
+        # Support full UUID or first 8+ hex chars prefix match.
+        try:
+            turn_id = UUID(raw_id) if len(raw_id) == 36 else UUID(raw_id)
+        except ValueError:
+            return "trace_invalid_id"
+        return "trace_detail"
 
     # Free-text correct follow-up takes priority when session is open.
     pending_turn = correct_sessions.get(actor_id)
@@ -87,6 +109,7 @@ def build_admin_router(
     vips: VipStore,
     admin: AdminService,
     correct_sessions: CorrectSessionStore | None = None,
+    admin_trace: AdminTraceService | None = None,
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
@@ -104,7 +127,9 @@ def build_admin_router(
             "Diana F1 admin\n"
             "/add_vip <telegram_user_id> [name]\n"
             "/remove_vip <telegram_user_id>\n"
-            "Draft buttons: Approve / Correct / Escalate"
+            "Draft buttons: Approve / Correct / Escalate\n"
+            "/turnos — recent turns\n"
+            "/traza <id> — trace detail"
         )
 
     @router.message(Command("add_vip"))
@@ -142,6 +167,83 @@ def build_admin_router(
             await message.answer("VIP not found")
         else:
             await message.answer("Usage: /remove_vip <telegram_user_id>")
+
+    @router.message(Command("turnos"))
+    async def on_turnos(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        if admin_trace is None:
+            await message.answer("Trace module not available.")
+            return
+
+        turns = await admin_trace.get_recent_turns(limit=10, offset=0)
+        if not turns:
+            await message.answer("No recent turns found.")
+            return
+
+        total = await admin_trace.count_recent()
+        total_pages = max(1, (total + 9) // 10)
+        page = 0
+        lines: list[str] = [f"Recent turns (page {page + 1}/{total_pages}):", ""]
+        for i, t in enumerate(turns, 1):
+            sid = str(t.turn_id)[:8]
+            name = t.vip_name or "Unknown"
+            ts = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else ""
+            preview = (t.message_preview[:47] + "...") if len(t.message_preview) > 50 else t.message_preview
+            lines.append(f"{i}. [{sid}] {name} (chat {t.chat_id}): \"{preview}\" -> {t.decision} ({ts})")
+
+        turns_data = [(t.turn_id, str(t.turn_id)[:8]) for t in turns]
+        kb = trace_list_keyboard(turns_data, page=page, total_pages=total_pages)
+        await message.answer("\n".join(lines), reply_markup=kb)
+
+    @router.message(Command("traza"))
+    async def on_traza(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        if admin_trace is None:
+            await message.answer("Trace module not available.")
+            return
+
+        parts = (message.text or "").split(None, 1)
+        if len(parts) < 2:
+            await message.answer("Usage: /traza <turn_id>")
+            return
+        raw_id = parts[1].strip()
+        try:
+            turn_id = UUID(raw_id)
+        except ValueError:
+            await message.answer(f"Invalid turn ID: {raw_id}")
+            return
+
+        trace = await admin_trace.get_full_trace(turn_id)
+        if trace is None:
+            await message.answer("Turn not found.")
+            return
+
+        sid = str(trace.turn_id)[:8]
+        ts = trace.created_at.strftime("%Y-%m-%d %H:%M:%S") if trace.created_at else ""
+        vip_name = trace.vip_id and str(trace.vip_id)[:8] or "N/A"
+        original = (trace.comprehension or {}).get("intent", "N/A")
+        draft = (trace.generated_text or "")[:80]
+        decision_action = "N/A"
+        if trace.decision:
+            decision_action = trace.decision.get("action", "N/A")
+        total_ms = 0
+        if trace.timings:
+            total_ms = int(sum(v for v in trace.timings.values() if isinstance(v, (int, float))))
+        status = trace.status or "N/A"
+
+        lines = [
+            f"Trace {sid}",
+            f"Date: {ts}",
+            f"Status: {status}",
+            f"Original intent: {original}",
+            f"Draft: \"{draft}...\"",
+            f"Decision: {decision_action}",
+            f"Total time: {total_ms}ms",
+        ]
+        kb = trace_detail_keyboard(trace.turn_id, timings=trace.timings)
+        await message.answer("\n".join(lines), reply_markup=kb)
 
     @router.message()
     async def on_owner_text(message: Message, **_: Any) -> None:

@@ -8,6 +8,7 @@ from typing import Any
 from aiogram import Dispatcher, Router
 
 from diana.application.admin_service import AdminService
+from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import (
     BehaviorCanceller,
     EscalationStore,
@@ -73,6 +74,7 @@ def build_dispatcher(
     forbidden_keywords: list[str],
     correct_sessions: CorrectSessionStore | None = None,
     doctrine_router: Router | None = None,
+    admin_trace: AdminTraceService | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -112,13 +114,16 @@ def build_dispatcher(
     # so that doctrine-specific prefixes (dr:, dx:, de:) are handled first.
     if doctrine_router is not None:
         root.include_router(doctrine_router)
-    root.include_router(build_callback_router(admin=admin, correct_sessions=sessions))
+    root.include_router(
+        build_callback_router(admin=admin, correct_sessions=sessions, admin_trace=admin_trace)
+    )
     root.include_router(
         build_admin_router(
             owner_telegram_id=owner_telegram_id,
             vips=vips,
             admin=admin,
             correct_sessions=sessions,
+            admin_trace=admin_trace,
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))
