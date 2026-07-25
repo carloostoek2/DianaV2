@@ -95,6 +95,27 @@ class BehaviorEngine:
             inter_message_gap=inter_gap,
         )
 
+    async def deliver_with_sequence(
+        self,
+        texts: list[str],
+        ctx: DeliveryContext,
+        turn_id: UUID,
+        decision: Any | None = None,
+    ) -> DeliveryResult:
+        """Multi-text delivery with inter-message delay+typing (C5 / REQ-HUM-05).
+
+        Always uses inter-message gaps. Honors ``is_frozen`` and advanced dual
+        gates. Not part of ``BehaviorDeliverer`` protocol — concrete API only.
+        """
+        prepared, _split_gap = self._prepare_texts(list(texts), ctx)
+        return await self._deliver_core(
+            prepared,
+            ctx,
+            turn_id,
+            decision=decision,
+            inter_message_gap=True,
+        )
+
     async def _deliver_core(
         self,
         texts: list[str],
