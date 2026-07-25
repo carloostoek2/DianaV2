@@ -146,6 +146,7 @@ class AppContainer:
     gray_zone: GrayZoneService | None = None
     sandbox: SandboxService | None = None
     admin_trace: AdminTraceService | None = None
+    trace_store: SqlTraceStore | None = None
 
 
 def build_app(
@@ -331,6 +332,7 @@ def build_app(
         gray_zone=gray_zone,
         sandbox=sandbox,
         admin_trace=admin_trace,
+        trace_store=traces,
     )
 
 

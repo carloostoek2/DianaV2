@@ -14,6 +14,7 @@ from diana.composition import (
 )
 from diana.config import Settings
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
+from diana.jobs.trace_purge import TracePurgeJob
 
 logger = logging.getLogger("diana.composition")
 
@@ -43,6 +44,7 @@ async def async_main() -> None:
 
     # F2 Item 4: start gray zone expiration background job.
     expiration_job = _setup_expiration_job(app)
+    purge_job = _setup_purge_job(app)
 
     try:
         await app.dispatcher.start_polling(
@@ -50,6 +52,14 @@ async def async_main() -> None:
             allowed_updates=["message", "business_message", "callback_query"],
         )
     finally:
+        if purge_job is not None:
+            purge_job.cancel()
+            try:
+                await asyncio.wait_for(purge_job, timeout=10.0)
+            except TimeoutError:
+                logger.warning("purge_job_stop_timeout")
+            except (asyncio.CancelledError, Exception):
+                pass
         if expiration_job is not None:
             expiration_job.cancel()
             try:
@@ -74,6 +84,18 @@ def _setup_expiration_job(app: AppContainer) -> asyncio.Task | None:
     )
     task = asyncio.create_task(job.start())
     logger.info("expiration_job_started", extra={"interval_seconds": 300})
+    return task
+
+
+def _setup_purge_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the trace TTL purge background job."""
+    if app.trace_store is None:
+        logger.info("purge_job_skipped_no_trace_store")
+        return None
+
+    job = TracePurgeJob(app.trace_store, interval_seconds=3600)
+    task = asyncio.create_task(job.start())
+    logger.info("purge_job_started", extra={"interval_seconds": 3600})
     return task
 
 
