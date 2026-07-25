@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, literal, select, text, update
+from sqlalchemy import delete, func, literal, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.cognitive.ports import TRACE_KEYS, TRACE_KEY_TO_COLUMN, to_jsonable
@@ -162,6 +162,39 @@ class SqlTraceStore:
         async with self._sf() as session:
             result = await session.execute(stmt)
             return result.scalar_one()
+
+    async def purge_expired(self, ttl_days: int | None = None) -> int:
+        """Delete pipeline_traces rows older than TTL, batched.
+
+        Uses LIMIT 1000 per batch with separate sessions to avoid long-lived
+        transactions and table locks. Returns total rows deleted.
+        """
+        days = ttl_days if ttl_days is not None else self._ttl_days
+
+        cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
+        total_deleted = 0
+
+        while True:
+            async with self._sf() as session:
+                stmt = (
+                    delete(PipelineTrace)
+                    .where(PipelineTrace.created_at < cutoff)
+                    .limit(1000)
+                )
+                stmt = stmt.params(ttl_days=days)
+                result = await session.execute(stmt)
+                await session.commit()
+                batch_count = result.rowcount
+                total_deleted += batch_count
+                if batch_count < 1000:
+                    break
+
+        if total_deleted:
+            import logging
+            _log = logging.getLogger("diana.infrastructure")
+            _log.info("purge_expired_complete", extra={"deleted": total_deleted, "ttl_days": days})
+
+        return total_deleted
 
 
 __all__ = ["SqlTraceStore"]
