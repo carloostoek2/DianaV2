@@ -555,7 +555,7 @@ Estas reglas son **productales**; el SPEC las implementa sin contradecirlas.
 | ID | Regla |
 |----|--------|
 | BR-01 | **Aprobación ≠ escalación ≠ zona gris ≠ nota.** Cada una responde una pregunta distinta. |
-| BR-02 | Escalación **gana** sobre zona gris: si el caso es de humano ya, no se abre consulta de doctrina. |
+| BR-02 | La escalación por seguridad (safety baja en el perfil de evaluación) tiene prioridad absoluta sobre la zona gris. La escalación por riesgo semántico (risk=alto en la Comprensión) se evalúa después de la zona gris, ya que la ausencia de doctrina puede ser la causa raíz del riesgo y resolverla evita escalaciones futuras. En caso de que ambas señales (seguridad baja y riesgo alto) estén presentes, gana la seguridad (se escala).. |
 | BR-03 | Zona gris no se usa para dudas de tono/estilo (eso es dimensión Naturalidad baja + Regenerar o Aprobar). |
 | BR-04 | El bot no inventa precios, excepciones ni compromisos no respaldados por prompt, políticas o respuesta de la dueña. |
 | BR-05 | Un VIP en pausa de datos no recibe automatización ni recontacto. |
