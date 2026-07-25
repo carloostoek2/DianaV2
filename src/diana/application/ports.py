@@ -162,6 +162,10 @@ class DeliveryContext(BaseModel):
     mode: DeliveryMode = "supervised"
     telegram_message_id: int | None = None
     is_frozen: bool = False
+    # Advanced behavior (H3.6) — fail-closed defaults; dual-gated in engine.
+    allow_split: bool = False
+    allow_human_quirks: bool = False
+    split_chars: int = Field(default=4096, ge=1)
 
 
 class DeliveryResult(BaseModel):

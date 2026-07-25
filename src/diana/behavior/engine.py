@@ -81,6 +81,11 @@ class BehaviorEngine:
                 error="business_connection_id is required",
             )
 
+        # C1: frozen snapshot at entry — no insert, no send, no fake success.
+        frozen = self._frozen_abort(ctx)
+        if frozen is not None:
+            return frozen
+
         delivery_id = uuid4()
         decision_dump: dict = {}
         if decision is not None:
@@ -142,6 +147,16 @@ class BehaviorEngine:
 
             message_ids: list[int] = []
             for text in texts:
+                frozen_mid = await self._frozen_abort_pending(
+                    delivery_id=delivery_id,
+                    ctx=ctx,
+                    initial=initial,
+                    typing_secs=typing_secs,
+                    message_ids=message_ids,
+                )
+                if frozen_mid is not None:
+                    return frozen_mid
+
                 abort = await self._presend_abort_if_not_live(
                     delivery_id=delivery_id,
                     turn_id=turn_id,
@@ -204,6 +219,46 @@ class BehaviorEngine:
             await self._safe_mark(delivery_id, "error")
             return DeliveryResult(success=False, error=str(exc))
 
+    def _frozen_abort(self, ctx: DeliveryContext) -> DeliveryResult | None:
+        """C1: entry freeze hard-check (no pending row yet)."""
+        if not ctx.is_frozen:
+            return None
+        logger.info(
+            "delivery_frozen",
+            extra={"chat_id": ctx.chat_id, "phase": "entry"},
+        )
+        return DeliveryResult(
+            success=False,
+            cancelled=True,
+            error="vip_frozen",
+        )
+
+    async def _frozen_abort_pending(
+        self,
+        *,
+        delivery_id: UUID,
+        ctx: DeliveryContext,
+        initial: float,
+        typing_secs: float,
+        message_ids: list[int],
+    ) -> DeliveryResult | None:
+        """C1: re-check freeze before real/fake completion; mark cancelled if pending."""
+        if not ctx.is_frozen:
+            return None
+        await self._safe_mark(delivery_id, "cancelled")
+        logger.info(
+            "delivery_frozen",
+            extra={"chat_id": ctx.chat_id, "phase": "presend"},
+        )
+        return DeliveryResult(
+            success=False,
+            cancelled=True,
+            message_ids=list(message_ids),
+            actual_delay_seconds=initial,
+            typing_duration_seconds=typing_secs,
+            error="vip_frozen",
+        )
+
     async def _deliver_fake(
         self,
         *,
@@ -212,7 +267,17 @@ class BehaviorEngine:
         ctx: DeliveryContext,
         initial: float,
     ) -> DeliveryResult:
-        """Record-only path: no actuator I/O; still honors pre-send live check."""
+        """Record-only path: no actuator I/O; still honors freeze + pre-send live check."""
+        frozen = await self._frozen_abort_pending(
+            delivery_id=delivery_id,
+            ctx=ctx,
+            initial=initial,
+            typing_secs=0.0,
+            message_ids=[],
+        )
+        if frozen is not None:
+            return frozen
+
         abort = await self._presend_abort_if_not_live(
             delivery_id=delivery_id,
             turn_id=turn_id,
