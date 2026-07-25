@@ -245,8 +245,10 @@ class Decision(BaseModel):
 
     F1 actions: approve, escalate.
     F2 extension: consult_doctrine (gray zone doctrine query).
-    F3 extension: send is **constructible** on this model; Decider emission
-    and orchestrator deliver branch are later items (fail-closed until then).
+    F3 extension: send is constructible and **emitted** by Decider when
+    ``feature_autonomous_mode`` is injected and evaluation dims meet
+    autonomous mins (item2). Orchestrator deliver branch remains item3
+    (fail-closed on send until then).
 
     Maps Anexo F DecisorOutput: action←accion, reason←razon,
     mode_restriction_applied←restriccion_de_modo_aplicada.

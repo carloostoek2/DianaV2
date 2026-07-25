@@ -121,7 +121,8 @@ def test_default_autonomous_thresholds_not_drop_in_for_f1_decider() -> None:
     )
     decision_mid = auto_mid.decide(profile_mid, comp)
     assert decision_mid.action == "approve"
-    assert decision_mid.reason == "ok_for_human_review"
+    assert decision_mid.reason == "autonomous_below_threshold"
+    assert decision_mid.mode_restriction_applied is None
 
     # Flag on + high dims → send.
     decision_high = auto_mid.decide(profile_high, comp)
@@ -440,6 +441,23 @@ def test_autonomous_send_when_flag_and_all_mins_met() -> None:
     assert decision.draft_text is None
 
 
+def test_flag_sole_enablement_send_with_mode_supervised_is_intentional() -> None:
+    """PLAN A1: feature_autonomous_mode alone unlocks send; mode is audit residual.
+
+    mode=supervised does NOT force rewrite to approve when flag+mins are met.
+    Director may still pass mode=supervised until item3 enablement plumbing.
+    """
+    decider = Decider(feature_autonomous_mode=True)
+    decision = decider.decide(
+        _high_profile(),
+        _comprehension(risk="bajo"),
+        mode="supervised",
+    )
+    assert decision.action == "send"
+    assert decision.reason == "autonomous_ok"
+    assert decision.mode_restriction_applied is None
+
+
 @pytest.mark.parametrize(
     "dim,value",
     [
@@ -451,7 +469,7 @@ def test_autonomous_send_when_flag_and_all_mins_met() -> None:
 def test_autonomous_approve_fallback_when_dim_below_min(
     dim: str, value: float
 ) -> None:
-    """One dim below default min; others high → approve fallback."""
+    """One dim below default min; others high → approve fallback (no supervised stamp)."""
     overrides = {"safety": 0.95, "doctrine": 0.85, "naturalness": 0.75}
     overrides[dim] = value
     decider = Decider(feature_autonomous_mode=True)
@@ -461,8 +479,8 @@ def test_autonomous_approve_fallback_when_dim_below_min(
         mode="supervised",
     )
     assert decision.action == "approve"
-    assert decision.reason == "ok_for_human_review"
-    assert decision.mode_restriction_applied == "supervised_send_to_approve"
+    assert decision.reason == "autonomous_below_threshold"
+    assert decision.mode_restriction_applied is None
 
 
 @pytest.mark.parametrize(
@@ -542,9 +560,40 @@ def test_custom_autonomous_thresholds_change_boundary() -> None:
         _comprehension(risk="bajo"),
     )
     assert below.action == "approve"
-    assert below.reason == "ok_for_human_review"
+    assert below.reason == "autonomous_below_threshold"
+    assert below.mode_restriction_applied is None
     assert at.action == "send"
     assert at.reason == "autonomous_ok"
+
+
+def test_partial_autonomous_thresholds_merge_defaults() -> None:
+    """Missing *_min keys fill from DEFAULT_AUTONOMOUS_THRESHOLDS (no KeyError)."""
+    # Only override safety_min; doctrine/naturalness must stay at DEFAULT 0.8/0.7.
+    decider = Decider(
+        feature_autonomous_mode=True,
+        autonomous_thresholds={"safety_min": 0.95},
+    )
+    # safety at default min 0.9 but custom min is 0.95 → short
+    short = decider.decide(
+        _profile(safety=0.9, doctrine=0.85, naturalness=0.75),
+        _comprehension(risk="bajo"),
+    )
+    assert short.action == "approve"
+    assert short.reason == "autonomous_below_threshold"
+    # doctrine/naturalness still at defaults: doctrine 0.79 fails default 0.8
+    doctrine_short = decider.decide(
+        _profile(safety=0.95, doctrine=0.79, naturalness=0.75),
+        _comprehension(risk="bajo"),
+    )
+    assert doctrine_short.action == "approve"
+    assert doctrine_short.reason == "autonomous_below_threshold"
+    # All meet merged mins (safety 0.95 + default doctrine/naturalness)
+    ok = decider.decide(
+        _profile(safety=0.95, doctrine=0.85, naturalness=0.75),
+        _comprehension(risk="bajo"),
+    )
+    assert ok.action == "send"
+    assert ok.reason == "autonomous_ok"
 
 
 def test_mode_autonomous_without_flag_still_no_send() -> None:
@@ -569,4 +618,25 @@ def test_low_naturalness_blocks_send_when_autonomous() -> None:
     assert decision.action == "approve"
     assert decision.action != "send"
     assert decision.action != "regenerate"
-    assert decision.reason == "ok_for_human_review"
+    assert decision.reason == "autonomous_below_threshold"
+    assert decision.mode_restriction_applied is None
+
+
+def test_policy_empty_dict_triggers_consult_doctrine() -> None:
+    """Empty dict policy_result is falsy → consult_doctrine (truthiness edge)."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    empty = decider.decide(
+        _profile(safety=0.9),
+        _comprehension_needs_policy(),
+        retrieved={"knowledge.policy": {}},
+    )
+    assert empty.action == "consult_doctrine"
+    assert empty.reason == "doctrine_not_found"
+
+    non_empty = decider.decide(
+        _profile(safety=0.9),
+        _comprehension_needs_policy(),
+        retrieved={"knowledge.policy": {"rule": "offer 10%"}},
+    )
+    assert non_empty.action == "approve"
+    assert non_empty.reason == "ok_for_human_review"

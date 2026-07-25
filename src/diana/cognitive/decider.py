@@ -11,13 +11,18 @@ English <-> Anexo F mapping
 |--------------------------------------|--------------------------------------|
 | EvaluationProfile                    | perfil / PerfilEvaluacion            |
 | safety / naturalness / doctrine      | seguridad / naturalidad / doctrina   |
-| mode: supervised | autonomous         | modo_activo: supervisado | autonomo  |
+| mode: supervised | autonomous         | modo_activo (audit residual only)    |
 | thresholds["safety"] (P1 escalate)   | umbrales.seguridad (F1 bare key)     |
 | autonomous_thresholds safety_min etc | umbrales.seguridad_min (F3 send)     |
 | action: approve | escalate | send     | accion: aprobar | escalar | enviar  |
 | consult_doctrine                     | consultar_doctrina (F2)              |
 | reason                               | razon                                |
 | mode_restriction_applied             | restriccion_de_modo_aplicada         |
+
+**Enablement contract (PLAN A1):** ``feature_autonomous_mode`` is the sole
+send gate. ``mode`` is an audit residual only — it never unlocks or blocks
+send by itself. Flag on + mins met → send even when ``mode="supervised"``
+(Director may still pass supervised until item3 wiring).
 
 F3 matrix (first match wins)
 ----------------------------
@@ -28,15 +33,18 @@ F3 matrix (first match wins)
 4. (residual) naturalness -> re-draft loop — not implemented
 5. feature_autonomous_mode AND all dims >= *_min
    -> send (reason=autonomous_ok)
-6. else -> approve (reason=ok_for_human_review)
+6a. feature_autonomous_mode AND any dim below *_min
+   -> approve (reason=autonomous_below_threshold, restriction=None)
+6b. else F2 approve (reason=ok_for_human_review;
+    restriction supervised_send_to_approve only when mode supervised)
 
 P1 uses bare ``thresholds["safety"]`` (default 0.3). Autonomous send uses
 separate ``autonomous_thresholds`` keys ``safety_min`` / ``doctrine_min`` /
-``naturalness_min`` (defaults from DEFAULT_AUTONOMOUS_THRESHOLDS). Never mix
-shapes in one dict.
+``naturalness_min`` (defaults from DEFAULT_AUTONOMOUS_THRESHOLDS; partial
+maps merge over defaults). Never mix shapes in one dict for P1.
 
 Residual: F.3 rule 2 (naturalness re-draft loop) is not implemented;
-low naturalness under autonomous only blocks send (falls through to approve).
+low naturalness under autonomous only blocks send (approve fallback).
 """
 
 from __future__ import annotations
@@ -54,6 +62,7 @@ class Decider:
 
     Flag-gated autonomous send (feature_autonomous_mode) never collapses
     EvaluationProfile to a mean score. Default flag off = F2 parity (no send).
+    ``mode`` does not enable send — only the ctor flag does.
     """
 
     def __init__(
@@ -70,7 +79,9 @@ class Decider:
         )
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
         self._feature_autonomous_mode = feature_autonomous_mode
-        mins = autonomous_thresholds or DEFAULT_AUTONOMOUS_THRESHOLDS
+        mins = dict(DEFAULT_AUTONOMOUS_THRESHOLDS)
+        if autonomous_thresholds is not None:
+            mins.update(dict(autonomous_thresholds))
         self._safety_min = float(mins["safety_min"])
         self._doctrine_min = float(mins["doctrine_min"])
         self._naturalness_min = float(mins["naturalness_min"])
@@ -117,7 +128,7 @@ class Decider:
 
         # 4. Residual: naturalness re-draft loop — not implemented.
 
-        # 5. Autonomous send (F3) — only when flag injected.
+        # 5–6a. Autonomous send / threshold-miss fallback (flag only; mode audit).
         if self._feature_autonomous_mode:
             if (
                 evaluation.safety >= self._safety_min
@@ -131,9 +142,15 @@ class Decider:
                     draft_text=None,
                     mode_restriction_applied=None,
                 )
-            # else: fall through to approve (rule 6)
+            return Decision(
+                action="approve",
+                reason="autonomous_below_threshold",
+                evaluation=evaluation,
+                draft_text=None,
+                mode_restriction_applied=None,
+            )
 
-        # 6. Fall-through: approve for human review.
+        # 6b. F2 fall-through: approve for human review.
         restriction = (
             "supervised_send_to_approve" if mode == "supervised" else None
         )
