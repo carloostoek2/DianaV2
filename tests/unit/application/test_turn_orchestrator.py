@@ -1,13 +1,15 @@
-"""TurnOrchestrator: VIP message → decision application (no auto-send)."""
+"""TurnOrchestrator: VIP message → decision application (incl. autonomous send)."""
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
 
 from diana.application.admin_service import AdminService
+from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.memory import (
     FakeOwnerNotifier,
     InMemoryEscalationStore,
@@ -16,6 +18,7 @@ from diana.application.memory import (
     InMemoryPendingDeliveryStore,
     InMemoryTraceReaderWriter,
     InMemoryTurnStore,
+    InMemoryVipStore,
 )
 from diana.application.ports import VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
@@ -41,6 +44,22 @@ from diana.learning.post_turn import LearningService
 from diana.llm.fake import FakeLLM
 
 OWNER_ID = 999001
+
+
+class AsyncSleepClock:
+    """Clock that actually awaits sleep (for mid-flight supersede tests)."""
+
+    def __init__(self) -> None:
+        self._now = datetime.now(UTC)
+        self.sleeps: list[float] = []
+
+    def now(self) -> datetime:
+        return self._now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        if seconds > 0:
+            await asyncio.sleep(seconds)
 
 
 def _eval() -> EvaluationProfile:
@@ -126,6 +145,14 @@ def _build(
     learning: RecordingLearning | None = None,
     gray_zone: FakeGrayZone | None = None,
     feature_gray_zone_enabled: bool = False,
+    wire_autonomous: bool = False,
+    feature_autonomous_mode: bool = False,
+    global_mode: str = "supervised",
+    delivery_mode: str = "supervised",
+    vip_store: InMemoryVipStore | None = None,
+    actuator: FakeTelegramActuator | None = None,
+    clock: object | None = None,
+    delay_policy: FixedDelayPolicy | None = None,
 ) -> dict:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -134,12 +161,12 @@ def _build(
     traces = InMemoryTraceReaderWriter()
     history = InMemoryMessageHistoryWriter()
     notifier = FakeOwnerNotifier()
-    actuator = FakeTelegramActuator()
+    act = actuator or FakeTelegramActuator()
     behavior = BehaviorEngine(
-        actuator,
+        act,
         deliveries,
-        clock=ImmediateClock(),
-        delay_policy=FixedDelayPolicy(),
+        clock=clock or ImmediateClock(),
+        delay_policy=delay_policy or FixedDelayPolicy(),
     )
     coordinator = TurnCoordinator(turns, approvals, behavior)
     admin = AdminService(
@@ -151,8 +178,18 @@ def _build(
         traces=traces,
         turns=turns,
         owner_telegram_id=OWNER_ID,
+        delivery_mode=delivery_mode,  # type: ignore[arg-type]
     )
     learn = learning or RecordingLearning(LearningService(traces))
+    vips = vip_store or InMemoryVipStore()
+    ams: AutonomousModeService | None = None
+    if wire_autonomous:
+        ams = AutonomousModeService(
+            feature_autonomous_mode=feature_autonomous_mode,
+            global_mode=global_mode,
+            vip_store=vips,
+            notifier=notifier,
+        )
     orch = TurnOrchestrator(
         coordinator=coordinator,
         director=director,  # type: ignore[arg-type]
@@ -161,6 +198,11 @@ def _build(
         history=history,
         gray_zone=gray_zone,
         feature_gray_zone_enabled=feature_gray_zone_enabled,
+        behavior=behavior if wire_autonomous else None,
+        autonomous_mode=ams,
+        vip_store=vips if wire_autonomous else None,
+        traces=traces if wire_autonomous else None,
+        delivery_mode=delivery_mode,  # type: ignore[arg-type]
     )
     return {
         "orch": orch,
@@ -168,7 +210,7 @@ def _build(
         "admin": admin,
         "gray_zone": gray_zone,
         "learning": learn,
-        "actuator": actuator,
+        "actuator": act,
         "behavior": behavior,
         "notifier": notifier,
         "turns": turns,
@@ -177,6 +219,8 @@ def _build(
         "history": history,
         "traces": traces,
         "deliveries": deliveries,
+        "vip_store": vips,
+        "ams": ams,
     }
 
 
@@ -293,8 +337,8 @@ async def test_escalate_path_no_deliver() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_action_fail_closed_marks_failed() -> None:
-    """Item1: Decision(action=send) is constructible; orchestrator stays fail-closed."""
+async def test_send_without_ams_marks_failed_not_wired() -> None:
+    """Defense: send with AMS not injected → no deliver, failed autonomous_not_wired."""
     decision = Decision(
         action="send",
         reason="autonomous_ok",
@@ -302,20 +346,208 @@ async def test_send_action_fail_closed_marks_failed() -> None:
         draft_text="would deliver",
     )
     g = _build(FakeDirector(decision))
-    with pytest.raises(ValueError, match="unexpected F2 action: 'send'"):
-        await g["orch"].handle_vip_message(_vip())
+    turn_id = await g["orch"].handle_vip_message(_vip())
     assert g["actuator"].send_count() == 0
-    assert g["learning"].calls == []
-    failed_ids = [
-        t.id
-        for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
-        if t.chat_id == 100
-    ]
-    assert len(failed_ids) == 1
-    failed = await g["turns"].get(failed_ids[0])
+    assert g["learning"].calls == [turn_id]
+    failed = await g["turns"].get(turn_id)
     assert failed is not None
     assert failed.status == "failed"
-    assert failed.error == "unexpected F2 action: 'send'"
+    assert failed.error == "autonomous_not_wired"
+
+
+@pytest.mark.asyncio
+async def test_send_autonomous_delivers_and_marks_delivered() -> None:
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert g["actuator"].send_count() >= 1
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert g["learning"].calls == [turn_id]
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert g["traces"].get_delivery_result(turn_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_send_ams_disabled_falls_back_to_approve() -> None:
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="would auto",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=False,  # L1 off
+        global_mode="autonomous",
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_send_ams_supervised_without_auto_send_falls_back_to_approve() -> None:
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="would auto",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(5001)
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        vip_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip.id))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_send_frozen_vip_no_deliver() -> None:
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="frozen draft",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(5002)
+    await store.freeze_vip(vip.id, datetime.now(UTC) + timedelta(hours=2))
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        vip_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip.id))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error == "vip_frozen"
+    assert g["learning"].calls == [turn_id]
+    assert any("vip_frozen" in t or "frozen" in t.lower() for t, _ in g["notifier"].infos)
+
+
+@pytest.mark.asyncio
+async def test_send_empty_draft_no_deliver() -> None:
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="   ",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error == "empty_draft"
+    assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_send_deliver_fail_marks_failed_and_notifies() -> None:
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="boom",
+    )
+
+    class BoomActuator(FakeTelegramActuator):
+        async def send_message(
+            self,
+            chat_id: int,
+            text: str,
+            *,
+            business_connection_id: str,
+        ) -> int:
+            raise RuntimeError("telegram_down")
+
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        actuator=BoomActuator(),
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "failed"
+    assert stored.error is not None
+    assert any(
+        "delivery_failed" in text or "failed" in text.lower()
+        for text, _ in g["notifier"].infos
+    )
+    assert g["traces"].get_delivery_result(turn_id) is not None
+    assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_send_supersede_mid_flight_no_delivered_revive() -> None:
+    """Second VIP message supersedes while first deliver sleeps — no delivered revive."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="slow auto",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        clock=AsyncSleepClock(),
+        delay_policy=FixedDelayPolicy(initial=0.35, typing=0.0),
+    )
+    first = asyncio.create_task(
+        g["orch"].handle_vip_message(_vip(text="msg A", telegram_message_id=11))
+    )
+    await asyncio.sleep(0.05)
+    second = asyncio.create_task(
+        g["orch"].handle_vip_message(_vip(text="msg B", telegram_message_id=12))
+    )
+    turn_a, turn_b = await asyncio.gather(first, second)
+    stored_a = await g["turns"].get(turn_a)
+    assert stored_a is not None
+    assert stored_a.status != "delivered"
+    assert stored_a.status in {"superseded", "failed"}
+    stored_b = await g["turns"].get(turn_b)
+    assert stored_b is not None
+    # Second may deliver (still live) or land elsewhere — must not revive A.
+    assert stored_a.status != "delivered"
 
 
 @pytest.mark.asyncio
