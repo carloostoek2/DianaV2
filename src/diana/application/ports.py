@@ -203,6 +203,7 @@ class VipRecord(BaseModel):
     is_active: bool = True
     paused_until: datetime | None = None
     frozen_until: datetime | None = None
+    auto_send: bool = False
 
 
 @runtime_checkable

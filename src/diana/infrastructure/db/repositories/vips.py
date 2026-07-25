@@ -23,6 +23,7 @@ def vip_orm_to_record(row: Vip) -> VipRecord:
         is_active=bool(row.is_active),
         paused_until=row.paused_until,
         frozen_until=row.frozen_until,
+        auto_send=bool(getattr(row, "auto_send", False)),
     )
 
 
