@@ -3,7 +3,10 @@
 Product vision (AGENTS.md) defines Decision actions as:
   send | approve | escalate | consult_doctrine | regenerate
 
-F3 runtime exposes: approve | escalate | consult_doctrine | send.
+F3 **type surface** exposes: approve | escalate | consult_doctrine | send
+(``Decision.action`` is constructible with ``send``). Runtime emission of
+``send`` is deferred to Decider (item 2) and orchestrator delivery (item 3);
+until then producers stay on the F2 action set and unknown paths fail closed.
 regenerate remains reserved / out of scope (still rejected by the Literal).
 
 EvaluationProfile is a 7-dimension vector. Never collapse it to a single
@@ -238,12 +241,12 @@ class Policy(BaseModel):
 
 
 class Decision(BaseModel):
-    """F3 runtime decision — approve | escalate | consult_doctrine | send.
+    """F3 decision type surface — approve | escalate | consult_doctrine | send.
 
     F1 actions: approve, escalate.
     F2 extension: consult_doctrine (gray zone doctrine query).
-    F3 extension: send (autonomous delivery path; constructible here,
-    Decider emission and orchestrator branch are later items).
+    F3 extension: send is **constructible** on this model; Decider emission
+    and orchestrator deliver branch are later items (fail-closed until then).
 
     Maps Anexo F DecisorOutput: action←accion, reason←razon,
     mode_restriction_applied←restriccion_de_modo_aplicada.

@@ -1,4 +1,7 @@
-"""Unit tests for F1 cognitive domain models."""
+"""Unit tests for cognitive domain models (F1–F3 type surface).
+
+Decision.action public set: approve | escalate | consult_doctrine | send.
+"""
 
 from __future__ import annotations
 
