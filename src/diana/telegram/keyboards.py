@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -164,6 +165,16 @@ def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
 
 # ---- Trace callback helpers ----
 
+
+@dataclass
+class TraceCallbackData:
+    """Parsed trace callback data."""
+
+    action: str
+    turn_id: UUID | None = None
+    step: str | None = None
+    page: int | None = None
+
 _STEP_DISPLAY_NAMES: dict[str, str] = {
     "analyst": "Analyst",
     "planner": "Planner",
@@ -209,11 +220,11 @@ def encode_trace_json(turn_id: UUID) -> str:
     return data
 
 
-def parse_trace_callback(data: str) -> dict | None:
-    """Parse trace callback data into a structured dict.
+def parse_trace_callback(data: str) -> TraceCallbackData | None:
+    """Parse trace callback data into a typed dataclass.
 
     Returns ``None`` when the prefix is not a trace action.
-    Otherwise returns a dict with keys: action, turn_id, step, page.
+    Otherwise returns a ``TraceCallbackData`` with fields: action, turn_id, step, page.
     """
     if not data or ":" not in data:
         return None
@@ -224,29 +235,27 @@ def parse_trace_callback(data: str) -> dict | None:
     if code not in actions:
         return None
 
-    result: dict = {"action": code, "turn_id": None, "step": None, "page": None}
-
     if code == _ACTION_TRACE_PAGE:
         try:
-            result["page"] = int(parts[1])
+            return TraceCallbackData(action=code, page=int(parts[1]))
         except (ValueError, IndexError):
             return None
-        return result
 
     if code == _ACTION_TRACE_DETAIL:
         try:
-            result["turn_id"] = UUID(parts[1])
-            result["step"] = parts[2] if len(parts) > 2 else None
+            return TraceCallbackData(
+                action=code,
+                turn_id=UUID(parts[1]),
+                step=parts[2] if len(parts) > 2 else None,
+            )
         except (ValueError, IndexError):
             return None
-        return result
 
     # vt or tj
     try:
-        result["turn_id"] = UUID(parts[1])
+        return TraceCallbackData(action=code, turn_id=UUID(parts[1]))
     except (ValueError, IndexError):
         return None
-    return result
 
 
 def trace_list_keyboard(
@@ -364,6 +373,7 @@ def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
 
 
 __all__ = [
+    "TraceCallbackData",
     "doctrine_keyboard",
     "draft_keyboard",
     "encode_callback",
