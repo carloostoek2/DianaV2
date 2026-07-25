@@ -289,19 +289,24 @@ def _engine(
     clock: ImmediateClock | None = None,
     initial: float = 0.05,
     typing: float = 0.02,
+    feature_advanced_behavior: bool = False,
+    quirk_probability: float = 0.0,
 ) -> tuple[BehaviorEngine, FakeTelegramActuator | FlakySendActuator, InMemoryPendingDeliveryStore, ImmediateClock]:
     act = actuator or FakeTelegramActuator()
     st = store or InMemoryPendingDeliveryStore()
     ck = clock or ImmediateClock()
-    engine = BehaviorEngine(
-        act,
-        st,
-        clock=ck,
-        delay_policy=FixedDelayPolicy(initial=initial, typing=typing),
-        turn_status=turn_status if turn_status is not None else AlwaysLiveTurnStatusReader(),
-        max_send_attempts=max_send_attempts,
-        retry_backoff_seconds=retry_backoff_seconds,
-    )
+    kwargs: dict = {
+        "clock": ck,
+        "delay_policy": FixedDelayPolicy(initial=initial, typing=typing),
+        "turn_status": turn_status if turn_status is not None else AlwaysLiveTurnStatusReader(),
+        "max_send_attempts": max_send_attempts,
+        "retry_backoff_seconds": retry_backoff_seconds,
+    }
+    # Pass advanced kwargs only when requested so pre-GREEN suite stays green.
+    if feature_advanced_behavior or quirk_probability:
+        kwargs["feature_advanced_behavior"] = feature_advanced_behavior
+        kwargs["quirk_probability"] = quirk_probability
+    engine = BehaviorEngine(act, st, **kwargs)
     return engine, act, st, ck
 
 
@@ -429,3 +434,164 @@ async def test_fake_delivery_presend_abort() -> None:
     assert actuator.calls == []
     rows = await store.list_all()
     assert rows and rows[0].status == "cancelled"
+
+
+# --- Item4 Task2: split + light quirks dual advanced gate ---
+
+
+def test_split_text_no_mid_word_on_long_token() -> None:
+    from diana.behavior.split import split_text
+
+    # Long token without punctuation/whitespace — hard cut at max_chars.
+    text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    parts = split_text(text, max_chars=10)
+    assert parts == ["ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ"]
+    assert all(parts)
+    # Whitespace fallback prefers last space inside window.
+    spaced = "hello beautiful world and more"
+    parts2 = split_text(spaced, max_chars=16)
+    joined = " ".join(parts2)
+    assert "beautiful" in joined
+    assert all(" " not in p or p == p.strip() for p in parts2)
+    for p in parts2:
+        # No mid-word cut when whitespace is available inside window.
+        assert p == p.strip()
+
+
+@pytest.mark.asyncio
+async def test_dual_gate_off_forged_allow_split_single_send() -> None:
+    """Flag-off: forged allow_split=True must NOT split (C2)."""
+    long_text = "Hello world. This is fine, really.\nMore here."
+    engine, actuator, _, _ = _engine(
+        feature_advanced_behavior=False,
+        initial=0.0,
+        typing=0.0,
+    )
+    result = await engine.deliver(
+        [long_text],
+        _ctx(allow_split=True, split_chars=20, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == long_text
+
+
+@pytest.mark.asyncio
+async def test_split_on_expands_long_text() -> None:
+    text = "Hello world. This is fine, really.\nMore here."
+    engine, actuator, store, _ = _engine(
+        feature_advanced_behavior=True,
+        initial=0.0,
+        typing=0.0,
+    )
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_split=True, split_chars=20, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) >= 2
+    joined = "".join(s["text"] for s in sends)
+    # Words preserved (no mid-word cuts of known tokens).
+    for word in ("Hello", "world", "This", "fine", "really", "More", "here"):
+        assert word in joined
+    assert all(s["text"].strip() for s in sends)
+    rows = await store.list_all()
+    assert rows and len(rows[0].texts) >= 2
+
+
+@pytest.mark.asyncio
+async def test_split_short_text_still_one_send() -> None:
+    engine, actuator, _, _ = _engine(
+        feature_advanced_behavior=True,
+        initial=0.0,
+        typing=0.0,
+    )
+    result = await engine.deliver(
+        ["short ok"],
+        _ctx(allow_split=True, split_chars=20, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == "short ok"
+
+
+@pytest.mark.asyncio
+async def test_split_expand_adds_inter_message_gap() -> None:
+    text = "Hello world. This is fine, really.\nMore here."
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        initial=0.05,
+        typing=0.02,
+    )
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_split=True, split_chars=20),
+        uuid4(),
+    )
+    assert result.success is True
+    typing_actions = [c for c in actuator.calls if c["op"] == "send_chat_action"]
+    # Baseline single-text has 1 typing; split expand needs typing for subsequent bubbles.
+    assert len(typing_actions) >= 2
+    # More sleeps than baseline initial+one typing (0.05, 0.02).
+    assert len(clock.sleeps) > 2
+
+
+@pytest.mark.asyncio
+async def test_quirks_off_no_extra_pause() -> None:
+    engine, _, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        initial=0.05,
+        typing=0.02,
+    )
+    result = await engine.deliver(
+        ["hola"],
+        _ctx(allow_human_quirks=False, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    # Baseline: initial + typing only (no quirk pause).
+    assert clock.sleeps == [0.05, 0.02]
+
+
+@pytest.mark.asyncio
+async def test_quirks_on_extra_pause() -> None:
+    engine, _, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        initial=0.05,
+        typing=0.02,
+    )
+    result = await engine.deliver(
+        ["hola"],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    # Baseline [0.05, 0.02] plus one quirk pause.
+    assert len(clock.sleeps) >= 3
+    assert 0.05 in clock.sleeps
+    assert 0.02 in clock.sleeps
+
+
+@pytest.mark.asyncio
+async def test_quirks_dual_gate_flag_off_no_extra() -> None:
+    engine, _, _, clock = _engine(
+        feature_advanced_behavior=False,
+        quirk_probability=1.0,
+        initial=0.05,
+        typing=0.02,
+    )
+    result = await engine.deliver(
+        ["hola"],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    assert clock.sleeps == [0.05, 0.02]
