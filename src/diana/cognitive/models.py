@@ -3,8 +3,8 @@
 Product vision (AGENTS.md) defines Decision actions as:
   send | approve | escalate | consult_doctrine | regenerate
 
-F2 runtime exposes: approve | escalate | consult_doctrine.
-send and regenerate are reserved for F3+.
+F3 runtime exposes: approve | escalate | consult_doctrine | send.
+regenerate remains reserved / out of scope (still rejected by the Literal).
 
 EvaluationProfile is a 7-dimension vector. Never collapse it to a single
 score (no confidence field, no overall_score, no mean() helper).
@@ -238,19 +238,21 @@ class Policy(BaseModel):
 
 
 class Decision(BaseModel):
-    """F2 runtime decision — approve | escalate | consult_doctrine.
+    """F3 runtime decision — approve | escalate | consult_doctrine | send.
 
     F1 actions: approve, escalate.
     F2 extension: consult_doctrine (gray zone doctrine query).
+    F3 extension: send (autonomous delivery path; constructible here,
+    Decider emission and orchestrator branch are later items).
 
     Maps Anexo F DecisorOutput: action←accion, reason←razon,
     mode_restriction_applied←restriccion_de_modo_aplicada.
-    F2+ actions (send, regenerate) remain out of scope.
+    regenerate remains residual / out of scope.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve", "escalate", "consult_doctrine"]
+    action: Literal["approve", "escalate", "consult_doctrine", "send"]
     reason: str
     evaluation: EvaluationProfile
     draft_text: str | None = None

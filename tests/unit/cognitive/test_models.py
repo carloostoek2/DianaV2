@@ -70,10 +70,15 @@ def test_decision_approve_and_escalate_ok() -> None:
     assert escalate.draft_text == "maybe"
 
 
-def test_decision_action_literal_is_exactly_approve_escalate() -> None:
+def test_decision_action_literal_is_exactly_f3_public() -> None:
     from diana.cognitive.models import Decision
 
-    assert get_args(Decision.model_fields["action"].annotation) == ("approve", "escalate", "consult_doctrine")
+    assert get_args(Decision.model_fields["action"].annotation) == (
+        "approve",
+        "escalate",
+        "consult_doctrine",
+        "send",
+    )
 
 
 def test_decision_requires_evaluation() -> None:
@@ -96,8 +101,21 @@ def test_decision_requires_action_and_reason() -> None:
         assert Decision.model_fields[name].is_required() is True
 
 
-@pytest.mark.parametrize("bad_action", ["send", "regenerate", "wait"])
-def test_decision_rejects_non_f1_actions(bad_action: str) -> None:
+def test_decision_accepts_send_action() -> None:
+    from diana.cognitive.models import Decision
+
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_profile(),
+    )
+    assert decision.action == "send"
+    assert decision.draft_text is None
+
+
+@pytest.mark.parametrize("bad_action", ["regenerate", "wait"])
+def test_decision_rejects_non_public_actions(bad_action: str) -> None:
+    """Residual/unknown actions stay outside the public Decision.action set."""
     from diana.cognitive.models import Decision
 
     with pytest.raises(ValidationError):
