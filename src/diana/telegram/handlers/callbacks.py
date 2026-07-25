@@ -9,7 +9,7 @@ from typing import Any, Callable
 from uuid import UUID
 
 from aiogram import Router
-from aiogram.types import CallbackQuery, FSInputFile, InputFile
+from aiogram.types import BufferedInputFile, CallbackQuery
 
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
@@ -311,7 +311,6 @@ def build_callback_router(
                     return
                 json_str = await admin_trace.export_trace_json(turn_id)
                 if query.message:
-                    from aiogram.types import BufferedInputFile
                     buf = BufferedInputFile(json_str.encode("utf-8"), filename=f"trace_{turn_id}.json")
                     await query.message.answer_document(buf, caption=f"Trace {turn_id}")
                 await query.answer()
