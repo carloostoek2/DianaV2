@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.recovery_startup import (
     DEFAULT_STALE_AFTER,
@@ -37,6 +38,7 @@ from diana.cognitive.generator import Generator
 from diana.cognitive.planner import Planner
 from diana.cognitive.policy_distiller import PolicyDistiller
 from diana.cognitive.registry import build_default_registry
+from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 from diana.config import Settings
 from diana.infrastructure.db.repositories.gray_zone import GrayZoneQueryRepo
 from diana.infrastructure.db.repositories.staging import StagingCandidateRepo
@@ -228,6 +230,7 @@ def build_app(
     # are not implemented in F2 (load_feature_flags removed per review).
     feature_gray_zone_enabled = settings.feature_gray_zone_enabled
     feature_sandbox_enabled = settings.feature_sandbox_enabled
+    feature_autonomous_mode = settings.feature_autonomous_mode
 
     # GrayZoneService — created only when the feature is enabled.
     # When disabled, TurnOrchestrator receives None (dead-code guard).
@@ -247,8 +250,22 @@ def build_app(
     # SandboxService — minimal F2 sandbox (profiles + trace isolation)
     sandbox = SandboxService() if feature_sandbox_enabled else None
 
-    # Decider with gray zone feature flag (must be before Director)
-    decider = Decider(feature_gray_zone_enabled=feature_gray_zone_enabled)
+    # Decider with gray zone + autonomous flags (must be before Director).
+    # Defaults false → F2 parity; L3 send only when flag true and dims meet mins.
+    decider = Decider(
+        feature_gray_zone_enabled=feature_gray_zone_enabled,
+        feature_autonomous_mode=feature_autonomous_mode,
+        autonomous_thresholds=dict(DEFAULT_AUTONOMOUS_THRESHOLDS),
+    )
+
+    # AMS L2 gate — always constructed; with L1 false is_autonomous_enabled → False.
+    ams = AutonomousModeService(
+        feature_autonomous_mode=feature_autonomous_mode,
+        global_mode=settings.global_mode,
+        vip_store=vips,
+        notifier=notifier,
+        autonomous_thresholds=dict(DEFAULT_AUTONOMOUS_THRESHOLDS),
+    )
 
     registry = build_default_registry(
         history,
@@ -283,6 +300,11 @@ def build_app(
         history=history,
         gray_zone=gray_zone,
         feature_gray_zone_enabled=feature_gray_zone_enabled,
+        behavior=behavior,
+        autonomous_mode=ams,
+        vip_store=vips,
+        traces=traces,
+        delivery_mode=settings.global_mode,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
