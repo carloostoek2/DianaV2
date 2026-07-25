@@ -15,10 +15,12 @@ async def test_add_then_is_allowed_true() -> None:
     rec = await store.add(1001, display_name="Alice")
     assert rec.telegram_user_id == 1001
     assert rec.is_active is True
+    assert rec.auto_send is False
     assert await store.is_allowed(1001) is True
     loaded = await store.get_by_telegram_user_id(1001)
     assert loaded is not None
     assert loaded.id == rec.id
+    assert loaded.auto_send is False
 
 
 @pytest.mark.asyncio

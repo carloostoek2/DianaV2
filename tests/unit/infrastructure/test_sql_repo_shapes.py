@@ -21,6 +21,7 @@ def test_vip_orm_to_record_mapper() -> None:
         is_active=True,
         paused_until=paused,
         frozen_until=None,
+        auto_send=False,
     )
     rec = vip_orm_to_record(orm)  # type: ignore[arg-type]
     assert rec.id == vip_id
@@ -29,6 +30,22 @@ def test_vip_orm_to_record_mapper() -> None:
     assert rec.is_active is True
     assert rec.paused_until == paused
     assert rec.frozen_until is None
+    assert rec.auto_send is False
+
+
+def test_vip_orm_to_record_maps_auto_send_true() -> None:
+    vip_id = uuid4()
+    orm = SimpleNamespace(
+        id=vip_id,
+        telegram_user_id=99,
+        display_name=None,
+        is_active=True,
+        paused_until=None,
+        frozen_until=None,
+        auto_send=True,
+    )
+    rec = vip_orm_to_record(orm)  # type: ignore[arg-type]
+    assert rec.auto_send is True
 
 
 def test_vip_is_allowed_respects_pause() -> None:
@@ -41,6 +58,7 @@ def test_vip_is_allowed_respects_pause() -> None:
             is_active=True,
             paused_until=now + timedelta(hours=1),
             frozen_until=None,
+            auto_send=False,
         )  # type: ignore[arg-type]
     )
     assert vip_is_allowed(rec, now=now) is False
@@ -56,6 +74,7 @@ def test_vip_inactive_not_allowed() -> None:
             is_active=False,
             paused_until=None,
             frozen_until=None,
+            auto_send=False,
         )  # type: ignore[arg-type]
     )
     assert vip_is_allowed(rec) is False
