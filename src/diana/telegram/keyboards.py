@@ -13,6 +13,10 @@ _ACTION_ESCALATE = "e"
 _ACTION_DOCTRINE_RESPOND = "dr"
 _ACTION_DOCTRINE_RESOLVE = "dx"
 _ACTION_DOCTRINE_ESCALATE = "de"
+_ACTION_VIEW_TRACE = "vt"
+_ACTION_TRACE_DETAIL = "td"
+_ACTION_TRACE_PAGE = "tp"
+_ACTION_TRACE_JSON = "tj"
 
 
 def encode_callback(action: str, turn_id: UUID) -> str:
@@ -158,6 +162,207 @@ def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
     )
 
 
+# ---- Trace callback helpers ----
+
+_STEP_DISPLAY_NAMES: dict[str, str] = {
+    "analyst": "Analyst",
+    "planner": "Planner",
+    "memory_retriever": "MemoryRetriever",
+    "policy_retriever": "PolicyRetriever",
+    "examples_retriever": "ExamplesRetriever",
+    "context_builder": "ContextBuilder",
+    "generator": "Generator",
+    "evaluator": "Evaluator",
+    "decider": "Decider",
+}
+
+
+def encode_trace_view(turn_id: UUID) -> str:
+    """Build callback_data for viewing a trace: vt:<uuid>."""
+    data = f"{_ACTION_VIEW_TRACE}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_trace_detail(turn_id: UUID, step_name: str) -> str:
+    """Build callback_data for a step detail: td:<uuid>:<step>."""
+    data = f"{_ACTION_TRACE_DETAIL}:{turn_id}:{step_name}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_trace_page(page: int) -> str:
+    """Build callback_data for pagination: tp:<page>."""
+    data = f"{_ACTION_TRACE_PAGE}:{page}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_trace_json(turn_id: UUID) -> str:
+    """Build callback_data for JSON export: tj:<uuid>."""
+    data = f"{_ACTION_TRACE_JSON}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_trace_callback(data: str) -> dict | None:
+    """Parse trace callback data into a structured dict.
+
+    Returns ``None`` when the prefix is not a trace action.
+    Otherwise returns a dict with keys: action, turn_id, step, page.
+    """
+    if not data or ":" not in data:
+        return None
+    parts = data.split(":", 2)
+    code = parts[0]
+
+    actions = {_ACTION_VIEW_TRACE, _ACTION_TRACE_DETAIL, _ACTION_TRACE_PAGE, _ACTION_TRACE_JSON}
+    if code not in actions:
+        return None
+
+    result: dict = {"action": code, "turn_id": None, "step": None, "page": None}
+
+    if code == _ACTION_TRACE_PAGE:
+        try:
+            result["page"] = int(parts[1])
+        except (ValueError, IndexError):
+            return None
+        return result
+
+    if code == _ACTION_TRACE_DETAIL:
+        try:
+            result["turn_id"] = UUID(parts[1])
+            result["step"] = parts[2] if len(parts) > 2 else None
+        except (ValueError, IndexError):
+            return None
+        return result
+
+    # vt or tj
+    try:
+        result["turn_id"] = UUID(parts[1])
+    except (ValueError, IndexError):
+        return None
+    return result
+
+
+def trace_list_keyboard(
+    turns: list[tuple[UUID, str]], page: int, total_pages: int,
+) -> InlineKeyboardMarkup:
+    """Keyboard for the /turnos list with turn buttons + pagination."""
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    # One button per turn.
+    for turn_id, short_id in turns:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"Trace {short_id}",
+                callback_data=encode_trace_view(turn_id),
+            ),
+        ])
+
+    # Pagination row.
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Previous",
+                callback_data=encode_trace_page(page - 1),
+            )
+        )
+    if page < total_pages - 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Next",
+                callback_data=encode_trace_page(page + 1),
+            )
+        )
+    if nav_row:
+        buttons.append(nav_row)
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def trace_detail_keyboard(
+    turn_id: UUID,
+    timings: dict[str, float] | None = None,
+) -> InlineKeyboardMarkup:
+    """Keyboard with per-step buttons and export/back actions."""
+    timings = timings or {}
+    buttons: list[list[InlineKeyboardButton]] = []
+
+    step_order = [
+        "analyst",
+        "planner",
+        "memory_retriever",
+        "policy_retriever",
+        "examples_retriever",
+        "context_builder",
+        "generator",
+        "evaluator",
+        "decider",
+    ]
+
+    for step_key in step_order:
+        display = _STEP_DISPLAY_NAMES.get(step_key, step_key)
+        ms = timings.get(f"{step_key}_ms")
+        label = f"{display}" + (f" ({int(ms)}ms)" if ms is not None else "")
+        buttons.append([
+            InlineKeyboardButton(
+                text=label,
+                callback_data=encode_trace_detail(turn_id, step_key),
+            ),
+        ])
+
+    # Bottom row: export JSON + back to turns.
+    buttons.append([
+        InlineKeyboardButton(
+            text="Export JSON",
+            callback_data=encode_trace_json(turn_id),
+        ),
+        InlineKeyboardButton(
+            text="Back to turns",
+            callback_data=encode_trace_page(0),
+        ),
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def step_detail_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+    """Keyboard with a single "Back to trace" button."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Back to trace",
+                    callback_data=encode_trace_view(turn_id),
+                ),
+            ],
+        ]
+    )
+
+
+# ---- Patch draft_keyboard with Trace button ----
+_draft_base = draft_keyboard
+
+
+def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+    """Approve / Correct / Escalate / Trace inline keyboard for owner DM."""
+    base = _draft_base(turn_id)
+    trace_row = [
+        InlineKeyboardButton(
+            text="Trace",
+            callback_data=f"{_ACTION_VIEW_TRACE}:{turn_id}",
+        ),
+    ]
+    base.inline_keyboard.append(trace_row)
+    return base
+
+
 __all__ = [
     "doctrine_keyboard",
     "draft_keyboard",
@@ -165,6 +370,14 @@ __all__ = [
     "encode_doctrine_callback",
     "encode_doctrine_resolve_callback",
     "encode_doctrine_escalate_callback",
+    "encode_trace_view",
+    "encode_trace_detail",
+    "encode_trace_page",
+    "encode_trace_json",
     "parse_callback",
     "parse_doctrine_callback",
+    "parse_trace_callback",
+    "step_detail_keyboard",
+    "trace_detail_keyboard",
+    "trace_list_keyboard",
 ]
