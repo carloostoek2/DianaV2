@@ -48,7 +48,11 @@ def _eval_summary(decision: Decision) -> str:
 
 
 class AdminService:
-    """Owner-facing draft queue and the only gate that may call Behavior.deliver."""
+    """Owner-facing draft queue and owner resolve path that may call Behavior.deliver.
+
+    Autonomous TurnOrchestrator send path may also call Behavior.deliver when
+    AMS L1/L2 enablement allows it (feature flag + global/VIP gate).
+    """
 
     def __init__(
         self,

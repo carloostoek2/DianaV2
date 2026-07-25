@@ -1,14 +1,26 @@
-"""TurnOrchestrator — VIP message use-case wiring (supervised F1)."""
+"""TurnOrchestrator — VIP message use-case wiring (supervised + autonomous send)."""
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
 from diana.application.admin_service import AdminService
+from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.gray_zone_service import GrayZoneService
-from diana.application.ports import MessageHistoryWriter, VipInboundMessage
+from diana.application.ports import (
+    BehaviorDeliverer,
+    DeliveryContext,
+    DeliveryMode,
+    DeliveryResult,
+    DeliveryResultWriter,
+    MessageHistoryWriter,
+    VipInboundMessage,
+    VipStore,
+)
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.exceptions import (
     AnalystSchemaInvalidError,
@@ -34,12 +46,21 @@ class LearningPort(Protocol):
     async def run_post_turn(self, turn_id: UUID) -> object: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _AutonomousDeliverJob:
+    """Prepared autonomous deliver payload — executed outside chat_scope."""
+
+    text: str
+    ctx: DeliveryContext
+    decision: Decision
+
+
 class TurnOrchestrator:
     """Application entry for VIP business messages.
 
-    Mints ``turn_id`` before Director. Never calls Behavior.deliver on approve.
-    Holds the per-chat lock for the full use-case so a mid-pipeline supersede
-    cannot interleave (zombie-pipeline guard). Terminal latch still applies.
+    Supervised approve never auto-delivers. Autonomous ``action=="send"``
+    delivers via BehaviorEngine **outside** the per-chat lock so
+    cancel_pending can interrupt mid-flight (Admin pattern).
     """
 
     def __init__(
@@ -52,6 +73,11 @@ class TurnOrchestrator:
         history: MessageHistoryWriter,
         gray_zone: GrayZoneService | None = None,
         feature_gray_zone_enabled: bool = False,
+        behavior: BehaviorDeliverer | None = None,
+        autonomous_mode: AutonomousModeService | None = None,
+        vip_store: VipStore | None = None,
+        traces: DeliveryResultWriter | None = None,
+        delivery_mode: DeliveryMode = "supervised",
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -60,16 +86,64 @@ class TurnOrchestrator:
         self._history = history
         self._gray_zone = gray_zone
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
+        self._behavior = behavior
+        self._autonomous_mode = autonomous_mode
+        self._vip_store = vip_store
+        self._traces = traces
+        self._delivery_mode = delivery_mode
 
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
         chat_id = incoming.chat_id
+        pending_deliver: _AutonomousDeliverJob | None
         async with self._coordinator.chat_scope(chat_id):
-            return await self._handle_vip_message_locked(incoming)
+            turn_id, pending_deliver = await self._handle_vip_message_locked(
+                incoming
+            )
+            if pending_deliver is None:
+                await self._learning.run_post_turn(turn_id)
+                return turn_id
+
+        # OUTSIDE lock — cancel_pending can interrupt delays (Admin pattern).
+        assert self._behavior is not None
+        logger.info(
+            "autonomous_send_start",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": chat_id,
+                "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
+            },
+        )
+        result = await self._behavior.deliver(
+            [pending_deliver.text],
+            pending_deliver.ctx,
+            turn_id,
+            decision=pending_deliver.decision,
+        )
+        async with self._coordinator.chat_scope(chat_id):
+            await self._finalize_autonomous_delivery(turn_id, chat_id, result)
+
+        if self._autonomous_mode is not None and result.success:
+            await self._autonomous_mode.notify_if_needed(
+                turn_id,
+                pending_deliver.decision,
+                pending_deliver.decision.evaluation,
+            )
+
+        await self._learning.run_post_turn(turn_id)
+        logger.info(
+            "vip_message_handled",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": chat_id,
+                "action": "send",
+            },
+        )
+        return turn_id
 
     async def _handle_vip_message_locked(
         self, incoming: VipInboundMessage
-    ) -> UUID:
+    ) -> tuple[UUID, _AutonomousDeliverJob | None]:
         bc = incoming.business_connection_id
         if bc is None or not str(bc).strip():
             record = await self._coordinator.begin_turn_unlocked(
@@ -197,8 +271,7 @@ class TurnOrchestrator:
                     "status": None if live is None else live.status,
                 },
             )
-            await self._learning.run_post_turn(turn_id)
-            return turn_id
+            return turn_id, None
 
         if decision.action == "approve":
             await self._coordinator.transition(
@@ -247,6 +320,15 @@ class TurnOrchestrator:
         elif decision.action == "escalate":
             await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
             await self._admin.notify_escalation(turn_ctx, decision, turn_id)
+        elif decision.action == "send":
+            job = await self._prepare_autonomous_send(
+                turn_id=turn_id,
+                turn_ctx=turn_ctx,
+                decision=decision,
+                incoming=incoming,
+            )
+            if job is not None:
+                return turn_id, job
         else:
             logger.error(
                 "unexpected_f2_action",
@@ -261,7 +343,6 @@ class TurnOrchestrator:
             )
             raise ValueError(f"unexpected F2 action: {decision.action!r}")
 
-        await self._learning.run_post_turn(turn_id)
         logger.info(
             "vip_message_handled",
             extra={
@@ -270,4 +351,185 @@ class TurnOrchestrator:
                 "action": decision.action,
             },
         )
-        return turn_id
+        return turn_id, None
+
+    async def _prepare_autonomous_send(
+        self,
+        *,
+        turn_id: UUID,
+        turn_ctx: IncomingTurn,
+        decision: Decision,
+        incoming: VipInboundMessage,
+    ) -> _AutonomousDeliverJob | None:
+        """Gate AMS + frozen/empty; return deliver job or complete under lock."""
+        if self._autonomous_mode is None:
+            logger.error(
+                "autonomous_not_wired",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": incoming.chat_id,
+                },
+            )
+            await self._coordinator.mark_failed(
+                turn_id, error="autonomous_not_wired"
+            )
+            return None
+
+        enabled = await self._autonomous_mode.is_autonomous_enabled(
+            incoming.vip_id
+        )
+        if not enabled:
+            logger.info(
+                "autonomous_disabled_for_vip",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": incoming.chat_id,
+                    "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
+                },
+            )
+            await self._coordinator.transition(
+                turn_id, TurnStatus.PENDING_APPROVAL
+            )
+            await self._admin.send_draft_for_approval(
+                turn_ctx, decision, turn_id
+            )
+            return None
+
+        if self._vip_store is not None and incoming.vip_id is not None:
+            vip = await self._vip_store.get_by_id(incoming.vip_id)
+            if vip is not None and vip.frozen_until is not None:
+                now = datetime.now(UTC)
+                frozen = vip.frozen_until
+                if frozen.tzinfo is None:
+                    frozen = frozen.replace(tzinfo=UTC)
+                if frozen > now:
+                    logger.info(
+                        "autonomous_vip_frozen",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "vip_id": str(incoming.vip_id),
+                        },
+                    )
+                    await self._coordinator.mark_failed(
+                        turn_id, error="vip_frozen"
+                    )
+                    try:
+                        await self._admin.notify_info(
+                            f"Turn {turn_id} failed: vip_frozen",
+                            chat_id=incoming.chat_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_notify_failed_after_vip_frozen",
+                            extra={"turn_id": str(turn_id)},
+                        )
+                    return None
+
+        draft = (decision.draft_text or "").strip()
+        if not draft:
+            logger.info(
+                "autonomous_empty_draft",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+            await self._coordinator.mark_failed(turn_id, error="empty_draft")
+            try:
+                await self._admin.notify_info(
+                    f"Turn {turn_id} failed: empty_draft",
+                    chat_id=incoming.chat_id,
+                )
+            except Exception:
+                logger.exception(
+                    "owner_notify_failed_after_empty_draft",
+                    extra={"turn_id": str(turn_id)},
+                )
+            return None
+
+        if self._behavior is None:
+            logger.error(
+                "autonomous_behavior_not_wired",
+                extra={"turn_id": str(turn_id)},
+            )
+            await self._coordinator.mark_failed(
+                turn_id, error="autonomous_behavior_not_wired"
+            )
+            return None
+
+        ctx = DeliveryContext(
+            chat_id=incoming.chat_id,
+            business_connection_id=str(turn_ctx.business_connection_id).strip(),
+            vip_id=incoming.vip_id,
+            telegram_message_id=incoming.telegram_message_id,
+            mode=self._delivery_mode,
+        )
+        return _AutonomousDeliverJob(text=draft, ctx=ctx, decision=decision)
+
+    async def _finalize_autonomous_delivery(
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        result: DeliveryResult,
+    ) -> None:
+        """CAS triad after deliver (Admin I.5 parity, no approval row)."""
+        turn_after = await self._coordinator.get_turn(turn_id)
+        if turn_after is None or is_turn_status_terminal(turn_after.status):
+            logger.info(
+                "autonomous_aborted_terminal_after_deliver",
+                extra={
+                    "turn_id": str(turn_id),
+                    "status": None if turn_after is None else turn_after.status,
+                    "deliver_success": result.success,
+                },
+            )
+            return
+
+        if result.success:
+            await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
+            if self._traces is not None:
+                await self._traces.set_delivery_result(
+                    turn_id, result.to_trace_dict()
+                )
+            logger.info(
+                "autonomous_delivered",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
+
+        if result.cancelled:
+            await self._coordinator.mark_failed(
+                turn_id, error=result.error or "delivery_cancelled"
+            )
+            if self._traces is not None:
+                await self._traces.set_delivery_result(
+                    turn_id, result.to_trace_dict()
+                )
+            logger.info(
+                "autonomous_deliver_cancelled",
+                extra={
+                    "turn_id": str(turn_id),
+                    "error": result.error,
+                },
+            )
+            return
+
+        # Permanent deliver failure (I.5).
+        await self._coordinator.mark_failed(
+            turn_id, error=result.error or "delivery_failed"
+        )
+        try:
+            await self._admin.notify_info(
+                f"Turn {turn_id} failed: delivery_failed ({result.error})",
+                chat_id=chat_id,
+            )
+        except Exception:
+            logger.exception(
+                "owner_notify_failed_after_autonomous_deliver_fail",
+                extra={"turn_id": str(turn_id)},
+            )
+        if self._traces is not None:
+            await self._traces.set_delivery_result(
+                turn_id, result.to_trace_dict()
+            )
+        logger.info(
+            "autonomous_deliver_failed",
+            extra={"turn_id": str(turn_id), "error": result.error},
+        )
