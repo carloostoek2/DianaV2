@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, literal, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.cognitive.ports import TRACE_KEYS, TRACE_KEY_TO_COLUMN, to_jsonable
@@ -19,8 +19,9 @@ _TRACE_COLUMNS = frozenset(TRACE_KEY_TO_COLUMN.values())
 class SqlTraceStore:
     """TraceStore + DeliveryResultWriter + TraceReader against pipeline_traces."""
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], ttl_days: int = 30) -> None:
         self._sf = session_factory
+        self._ttl_days = ttl_days
 
     async def _ensure_row(
         self, session: AsyncSession, turn_id: UUID
@@ -82,7 +83,6 @@ class SqlTraceStore:
         offset: int = 0,
     ) -> list[dict]:
         """Return recent turns summary with VIP display_name, ordered by created_at DESC."""
-        ttl_days = 30  # caller should align with Settings; default matches trace_ttl_days
         cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
         stmt = (
             select(
@@ -90,10 +90,10 @@ class SqlTraceStore:
                 PipelineTrace.chat_id,
                 PipelineTrace.created_at,
                 PipelineTrace.decision,
-                Turn.status,
-                Turn.error,
+                PipelineTrace.prompt_text.label("message_text"),
                 Vip.display_name,
-                Turn.status.label("correction_applied"),
+                Turn.status,
+                literal(False).label("correction_applied"),
             )
             .outerjoin(Turn, PipelineTrace.turn_id == Turn.id)
             .outerjoin(Vip, PipelineTrace.vip_id == Vip.id)
@@ -103,7 +103,7 @@ class SqlTraceStore:
             .offset(offset)
         )
         # Bind ttl_days as a parameter to avoid SQL injection.
-        stmt = stmt.params(ttl_days=ttl_days)
+        stmt = stmt.params(ttl_days=self._ttl_days)
         async with self._sf() as session:
             result = await session.execute(stmt)
             rows = result.all()
@@ -147,14 +147,13 @@ class SqlTraceStore:
 
     async def count_recent(self) -> int:
         """Return count of pipeline_traces within TTL."""
-        ttl_days = 30
         cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
         stmt = (
             select(func.count())
             .select_from(PipelineTrace)
             .where(PipelineTrace.created_at >= cutoff)
         )
-        stmt = stmt.params(ttl_days=ttl_days)
+        stmt = stmt.params(ttl_days=self._ttl_days)
         async with self._sf() as session:
             result = await session.execute(stmt)
             return result.scalar_one()

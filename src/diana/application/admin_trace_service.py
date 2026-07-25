@@ -112,12 +112,13 @@ def _truncate(text: str | None, length: int = _PREVIEW_LENGTH) -> str:
 
 
 def _row_to_summary(row: dict) -> TurnSummary:
+    decision_raw = row.get("decision")
     return TurnSummary(
         turn_id=row["turn_id"],
         chat_id=row["chat_id"],
         vip_name=row.get("display_name"),
         message_preview=_truncate(row.get("message_text")),
-        decision=row.get("decision", ""),
+        decision=decision_raw.get("action", "") if isinstance(decision_raw, dict) else str(decision_raw or ""),
         status=row.get("status", ""),
         created_at=row.get("created_at"),
         correction_applied=bool(row.get("correction_applied", False)),
@@ -147,7 +148,7 @@ def _row_to_full_trace(row: dict) -> FullTrace:
 def _dataclass_to_dict(obj: Any) -> dict:
     """Recursively convert a dataclass to a plain dict."""
     if hasattr(obj, "__dataclass_fields__"):
-        return {f: _dataclass_to_dict(getattr(obj, f)) for f in vars(obj) if getattr(obj, f) is not None}
+        return {f: _dataclass_to_dict(getattr(obj, f)) for f in vars(obj)}
     if isinstance(obj, dict):
         return {k: _dataclass_to_dict(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):

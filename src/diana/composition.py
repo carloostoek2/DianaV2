@@ -167,7 +167,7 @@ def build_app(
     deliveries = SqlPendingDeliveryStore(sf)
     escalations = SqlEscalationStore(sf)
     history = SqlMessageHistoryRepo(sf)
-    traces = SqlTraceStore(sf)
+    traces = SqlTraceStore(sf, ttl_days=settings.trace_ttl_days)
     admin_trace = AdminTraceService(traces=traces, trace_ttl_days=settings.trace_ttl_days)
     vips = SqlVipStore(sf)
     config_store = SqlSystemConfigStore(sf)
