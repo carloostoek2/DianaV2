@@ -147,12 +147,14 @@ def _build(
     feature_gray_zone_enabled: bool = False,
     wire_autonomous: bool = False,
     feature_autonomous_mode: bool = False,
+    feature_advanced_behavior: bool = False,
     global_mode: str = "supervised",
     delivery_mode: str = "supervised",
     vip_store: InMemoryVipStore | None = None,
     actuator: FakeTelegramActuator | None = None,
     clock: object | None = None,
     delay_policy: FixedDelayPolicy | None = None,
+    behavior_override: object | None = None,
 ) -> dict:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -162,24 +164,28 @@ def _build(
     history = InMemoryMessageHistoryWriter()
     notifier = FakeOwnerNotifier()
     act = actuator or FakeTelegramActuator()
-    behavior = BehaviorEngine(
+    behavior = behavior_override or BehaviorEngine(
         act,
         deliveries,
         clock=clock or ImmediateClock(),
         delay_policy=delay_policy or FixedDelayPolicy(),
+        feature_advanced_behavior=feature_advanced_behavior,
     )
-    coordinator = TurnCoordinator(turns, approvals, behavior)
-    admin = AdminService(
-        notifier=notifier,
-        approvals=approvals,
-        escalations=escalations,
-        coordinator=coordinator,
-        behavior=behavior,
-        traces=traces,
-        turns=turns,
-        owner_telegram_id=OWNER_ID,
-        delivery_mode=delivery_mode,  # type: ignore[arg-type]
-    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)  # type: ignore[arg-type]
+    admin_kwargs: dict = {
+        "notifier": notifier,
+        "approvals": approvals,
+        "escalations": escalations,
+        "coordinator": coordinator,
+        "behavior": behavior,
+        "traces": traces,
+        "turns": turns,
+        "owner_telegram_id": OWNER_ID,
+        "delivery_mode": delivery_mode,
+    }
+    if feature_advanced_behavior:
+        admin_kwargs["feature_advanced_behavior"] = True
+    admin = AdminService(**admin_kwargs)  # type: ignore[arg-type]
     learn = learning or RecordingLearning(LearningService(traces))
     vips = vip_store or InMemoryVipStore()
     ams: AutonomousModeService | None = None
@@ -190,20 +196,23 @@ def _build(
             vip_store=vips,
             notifier=notifier,
         )
-    orch = TurnOrchestrator(
-        coordinator=coordinator,
-        director=director,  # type: ignore[arg-type]
-        admin=admin,
-        learning=learn,
-        history=history,
-        gray_zone=gray_zone,
-        feature_gray_zone_enabled=feature_gray_zone_enabled,
-        behavior=behavior if wire_autonomous else None,
-        autonomous_mode=ams,
-        vip_store=vips if wire_autonomous else None,
-        traces=traces if wire_autonomous else None,
-        delivery_mode=delivery_mode,  # type: ignore[arg-type]
-    )
+    orch_kwargs: dict = {
+        "coordinator": coordinator,
+        "director": director,
+        "admin": admin,
+        "learning": learn,
+        "history": history,
+        "gray_zone": gray_zone,
+        "feature_gray_zone_enabled": feature_gray_zone_enabled,
+        "behavior": behavior if wire_autonomous else None,
+        "autonomous_mode": ams,
+        "vip_store": vips if wire_autonomous else None,
+        "traces": traces if wire_autonomous else None,
+        "delivery_mode": delivery_mode,
+    }
+    if feature_advanced_behavior:
+        orch_kwargs["feature_advanced_behavior"] = True
+    orch = TurnOrchestrator(**orch_kwargs)  # type: ignore[arg-type]
     return {
         "orch": orch,
         "director": director,
@@ -637,6 +646,104 @@ async def test_director_exception_marks_failed_and_reraises() -> None:
     # Director never returned; turn was minted before fail.
     assert g["actuator"].send_count() == 0
     assert g["learning"].calls == []
+
+
+# --- Item4 Task4: advanced behavior builder wiring ---
+
+
+class _CapturingDeliverer:
+    """Spy BehaviorDeliverer that records DeliveryContext on deliver."""
+
+    def __init__(self) -> None:
+        self.ctxs: list = []
+        self.texts: list[list[str]] = []
+
+    async def deliver(
+        self,
+        texts: list[str],
+        ctx: object,
+        turn_id: UUID,
+        decision: object | None = None,
+    ) -> object:
+        from diana.application.ports import DeliveryResult
+
+        self.ctxs.append(ctx)
+        self.texts.append(list(texts))
+        return DeliveryResult(success=True, message_ids=[1])
+
+
+@pytest.mark.asyncio
+async def test_orch_advanced_flag_on_sets_allow_on_deliver_ctx() -> None:
+    spy = _CapturingDeliverer()
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        feature_advanced_behavior=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        behavior_override=spy,
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert len(spy.ctxs) == 1
+    ctx = spy.ctxs[0]
+    assert ctx.allow_split is True
+    assert ctx.allow_human_quirks is True
+    assert ctx.split_chars == 4096
+
+
+@pytest.mark.asyncio
+async def test_orch_advanced_flag_off_allow_defaults_false() -> None:
+    spy = _CapturingDeliverer()
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        feature_advanced_behavior=False,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        behavior_override=spy,
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert len(spy.ctxs) == 1
+    ctx = spy.ctxs[0]
+    assert ctx.allow_split is False
+    assert ctx.allow_human_quirks is False
+    assert ctx.split_chars == 4096
+
+
+@pytest.mark.asyncio
+async def test_orch_autonomous_send_still_works_flag_off_regression() -> None:
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        feature_advanced_behavior=False,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert g["actuator"].send_count() >= 1
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
     # Reconstruct: only failed terminal exists for chat — probe by creating nothing
     # and checking list_non_terminal already empty; also try get via coordinator
     # history of transitions is not stored; use internal store scan:

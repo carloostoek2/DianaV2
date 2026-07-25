@@ -52,8 +52,11 @@ def _decision(action: str = "approve", draft: str = "hola VIP") -> Decision:
     )
 
 
-@pytest.fixture
-def admin_graph() -> dict:
+def _admin_graph(
+    *,
+    feature_advanced_behavior: bool = False,
+    behavior_override: object | None = None,
+) -> dict:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
@@ -61,24 +64,28 @@ def admin_graph() -> dict:
     traces = InMemoryTraceReaderWriter()
     notifier = FakeOwnerNotifier()
     actuator = FakeTelegramActuator()
-    behavior = BehaviorEngine(
+    behavior = behavior_override or BehaviorEngine(
         actuator,
         deliveries,
         clock=ImmediateClock(),
         delay_policy=FixedDelayPolicy(),
         turn_status=AlwaysLiveTurnStatusReader(),
+        feature_advanced_behavior=feature_advanced_behavior,
     )
-    coordinator = TurnCoordinator(turns, approvals, behavior)
-    admin = AdminService(
-        notifier=notifier,
-        approvals=approvals,
-        escalations=escalations,
-        coordinator=coordinator,
-        behavior=behavior,
-        traces=traces,
-        turns=turns,
-        owner_telegram_id=OWNER_ID,
-    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)  # type: ignore[arg-type]
+    admin_kwargs: dict = {
+        "notifier": notifier,
+        "approvals": approvals,
+        "escalations": escalations,
+        "coordinator": coordinator,
+        "behavior": behavior,
+        "traces": traces,
+        "turns": turns,
+        "owner_telegram_id": OWNER_ID,
+    }
+    if feature_advanced_behavior:
+        admin_kwargs["feature_advanced_behavior"] = True
+    admin = AdminService(**admin_kwargs)  # type: ignore[arg-type]
     return {
         "admin": admin,
         "turns": turns,
@@ -92,6 +99,11 @@ def admin_graph() -> dict:
         "deliveries": deliveries,
         "owner_id": OWNER_ID,
     }
+
+
+@pytest.fixture
+def admin_graph() -> dict:
+    return _admin_graph()
 
 
 def _incoming(turn_id, **kw) -> IncomingTurn:
@@ -453,3 +465,74 @@ async def test_send_doctrine_query_omits_query_id_when_none(admin_graph: dict) -
     spec = g["notifier"].doctrines[0].reply_markup_spec
     assert spec is not None
     assert "query_id" not in spec
+
+
+# --- Item4 Task4: advanced behavior builder wiring ---
+
+
+class _CapturingDeliverer:
+    def __init__(self) -> None:
+        self.ctxs: list = []
+
+    async def deliver(
+        self,
+        texts: list[str],
+        ctx: object,
+        turn_id: object,
+        decision: object | None = None,
+    ) -> object:
+        from diana.application.ports import DeliveryResult
+
+        self.ctxs.append(ctx)
+        return DeliveryResult(success=True, message_ids=[1])
+
+
+@pytest.mark.asyncio
+async def test_admin_advanced_flag_on_sets_allow_on_deliver_ctx() -> None:
+    spy = _CapturingDeliverer()
+    g = _admin_graph(feature_advanced_behavior=True, behavior_override=spy)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="send me"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success is True
+    assert len(spy.ctxs) == 1
+    ctx = spy.ctxs[0]
+    assert ctx.allow_split is True
+    assert ctx.allow_human_quirks is True
+    assert ctx.split_chars == 4096
+
+
+@pytest.mark.asyncio
+async def test_admin_advanced_flag_off_allow_defaults_false() -> None:
+    spy = _CapturingDeliverer()
+    g = _admin_graph(feature_advanced_behavior=False, behavior_override=spy)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="send me"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success is True
+    assert len(spy.ctxs) == 1
+    ctx = spy.ctxs[0]
+    assert ctx.allow_split is False
+    assert ctx.allow_human_quirks is False
+    assert ctx.split_chars == 4096
+
+
+@pytest.mark.asyncio
+async def test_admin_short_text_one_send_flag_off_regression(admin_graph: dict) -> None:
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="short"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success is True
+    sends = [c for c in g["actuator"].calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == "short"
