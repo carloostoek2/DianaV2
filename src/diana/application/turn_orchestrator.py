@@ -105,7 +105,41 @@ class TurnOrchestrator:
                 return turn_id
 
         # OUTSIDE lock — cancel_pending can interrupt delays (Admin pattern).
+        # Re-check freeze after lock release (race: freeze applied mid-pipeline).
+        if await self._is_vip_frozen(incoming.vip_id):
+            async with self._coordinator.chat_scope(chat_id):
+                live = await self._coordinator.get_turn(turn_id)
+                if live is not None and not is_turn_status_terminal(live.status):
+                    await self._coordinator.mark_failed(
+                        turn_id, error="vip_frozen"
+                    )
+                    try:
+                        await self._admin.notify_info(
+                            f"Turn {turn_id} failed: vip_frozen",
+                            chat_id=chat_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_notify_failed_after_vip_frozen",
+                            extra={"turn_id": str(turn_id)},
+                        )
+            await self._learning.run_post_turn(turn_id)
+            logger.info(
+                "autonomous_vip_frozen_pre_deliver",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
+                },
+            )
+            return turn_id
+
         assert self._behavior is not None
+        # Defense for item4 engine hard-check: job only exists when VIP was
+        # unfrozen at prepare; re-check above already failed-closed if frozen.
+        deliver_ctx = pending_deliver.ctx.model_copy(
+            update={"is_frozen": False}
+        )
         logger.info(
             "autonomous_send_start",
             extra={
@@ -116,14 +150,21 @@ class TurnOrchestrator:
         )
         result = await self._behavior.deliver(
             [pending_deliver.text],
-            pending_deliver.ctx,
+            deliver_ctx,
             turn_id,
             decision=pending_deliver.decision,
         )
         async with self._coordinator.chat_scope(chat_id):
-            await self._finalize_autonomous_delivery(turn_id, chat_id, result)
+            delivered = await self._finalize_autonomous_delivery(
+                turn_id, chat_id, result
+            )
 
-        if self._autonomous_mode is not None and result.success:
+        # Near-threshold notify only when finalize confirmed DELIVERED
+        # (not raw actuator success — mid-flight supersede must not notify).
+        if (
+            delivered
+            and self._autonomous_mode is not None
+        ):
             await self._autonomous_mode.notify_if_needed(
                 turn_id,
                 pending_deliver.decision,
@@ -387,43 +428,41 @@ class TurnOrchestrator:
                     "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
                 },
             )
+            # Demote send → approve with explicit reason (not autonomous_ok).
+            demoted = decision.model_copy(
+                update={
+                    "action": "approve",
+                    "reason": "autonomous_mode_disabled",
+                }
+            )
             await self._coordinator.transition(
                 turn_id, TurnStatus.PENDING_APPROVAL
             )
             await self._admin.send_draft_for_approval(
-                turn_ctx, decision, turn_id
+                turn_ctx, demoted, turn_id
             )
             return None
 
-        if self._vip_store is not None and incoming.vip_id is not None:
-            vip = await self._vip_store.get_by_id(incoming.vip_id)
-            if vip is not None and vip.frozen_until is not None:
-                now = datetime.now(UTC)
-                frozen = vip.frozen_until
-                if frozen.tzinfo is None:
-                    frozen = frozen.replace(tzinfo=UTC)
-                if frozen > now:
-                    logger.info(
-                        "autonomous_vip_frozen",
-                        extra={
-                            "turn_id": str(turn_id),
-                            "vip_id": str(incoming.vip_id),
-                        },
-                    )
-                    await self._coordinator.mark_failed(
-                        turn_id, error="vip_frozen"
-                    )
-                    try:
-                        await self._admin.notify_info(
-                            f"Turn {turn_id} failed: vip_frozen",
-                            chat_id=incoming.chat_id,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "owner_notify_failed_after_vip_frozen",
-                            extra={"turn_id": str(turn_id)},
-                        )
-                    return None
+        if await self._is_vip_frozen(incoming.vip_id):
+            logger.info(
+                "autonomous_vip_frozen",
+                extra={
+                    "turn_id": str(turn_id),
+                    "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
+                },
+            )
+            await self._coordinator.mark_failed(turn_id, error="vip_frozen")
+            try:
+                await self._admin.notify_info(
+                    f"Turn {turn_id} failed: vip_frozen",
+                    chat_id=incoming.chat_id,
+                )
+            except Exception:
+                logger.exception(
+                    "owner_notify_failed_after_vip_frozen",
+                    extra={"turn_id": str(turn_id)},
+                )
+            return None
 
         draft = (decision.draft_text or "").strip()
         if not draft:
@@ -454,22 +493,42 @@ class TurnOrchestrator:
             )
             return None
 
+        # is_frozen=False: prepare only builds a job when VIP is not frozen.
+        # Engine hard-check of is_frozen is item4 residual; orch re-checks
+        # after lock release before deliver.
         ctx = DeliveryContext(
             chat_id=incoming.chat_id,
             business_connection_id=str(turn_ctx.business_connection_id).strip(),
             vip_id=incoming.vip_id,
             telegram_message_id=incoming.telegram_message_id,
             mode=self._delivery_mode,
+            is_frozen=False,
         )
         return _AutonomousDeliverJob(text=draft, ctx=ctx, decision=decision)
+
+    async def _is_vip_frozen(self, vip_id: UUID | None) -> bool:
+        """True if vip_store says frozen_until > now(UTC). Missing store/id → False."""
+        if self._vip_store is None or vip_id is None:
+            return False
+        vip = await self._vip_store.get_by_id(vip_id)
+        if vip is None or vip.frozen_until is None:
+            return False
+        now = datetime.now(UTC)
+        frozen = vip.frozen_until
+        if frozen.tzinfo is None:
+            frozen = frozen.replace(tzinfo=UTC)
+        return frozen > now
 
     async def _finalize_autonomous_delivery(
         self,
         turn_id: UUID,
         chat_id: int,
         result: DeliveryResult,
-    ) -> None:
-        """CAS triad after deliver (Admin I.5 parity, no approval row)."""
+    ) -> bool:
+        """CAS triad after deliver (Admin I.5 parity, no approval row).
+
+        Returns True only when the turn was transitioned to DELIVERED.
+        """
         turn_after = await self._coordinator.get_turn(turn_id)
         if turn_after is None or is_turn_status_terminal(turn_after.status):
             logger.info(
@@ -480,7 +539,7 @@ class TurnOrchestrator:
                     "deliver_success": result.success,
                 },
             )
-            return
+            return False
 
         if result.success:
             await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
@@ -492,7 +551,7 @@ class TurnOrchestrator:
                 "autonomous_delivered",
                 extra={"turn_id": str(turn_id), "chat_id": chat_id},
             )
-            return
+            return True
 
         if result.cancelled:
             await self._coordinator.mark_failed(
@@ -509,7 +568,7 @@ class TurnOrchestrator:
                     "error": result.error,
                 },
             )
-            return
+            return False
 
         # Permanent deliver failure (I.5).
         await self._coordinator.mark_failed(
@@ -533,3 +592,4 @@ class TurnOrchestrator:
             "autonomous_deliver_failed",
             extra={"turn_id": str(turn_id), "error": result.error},
         )
+        return False

@@ -398,6 +398,7 @@ async def test_send_ams_disabled_falls_back_to_approve() -> None:
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "pending_approval"
     assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "autonomous_mode_disabled"
     assert g["learning"].calls == [turn_id]
 
 
@@ -422,6 +423,80 @@ async def test_send_ams_supervised_without_auto_send_falls_back_to_approve() -> 
     assert g["actuator"].send_count() == 0
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "pending_approval"
+    appr = await g["approvals"].get_by_turn(turn_id)
+    assert appr is not None
+    # SUG-2: demote reason must not keep autonomous_ok
+    assert appr.cognitive_summary == "autonomous_mode_disabled"
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "autonomous_mode_disabled"
+
+
+@pytest.mark.asyncio
+async def test_send_supervised_with_auto_send_delivers() -> None:
+    """SUG-1: L1 on + supervised + vip.auto_send → deliver path."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="per-vip auto",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(5100, display_name="AutoVIP")
+    updated = vip.model_copy(update={"auto_send": True})
+    await store._upsert(updated)  # noqa: SLF001 — test seed
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip.id))
+    assert g["actuator"].send_count() >= 1
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_send_frozen_after_prepare_no_deliver() -> None:
+    """BUG-1: freeze between prepare and deliver fails closed, no VIP send."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="race freeze",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(5200)
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        vip_store=store,
+    )
+    # Second _is_vip_frozen call is the post-lock re-check → treat as frozen.
+    calls = {"n": 0}
+    real_is_frozen = g["orch"]._is_vip_frozen  # noqa: SLF001
+
+    async def freeze_on_second_check(vip_id: UUID | None) -> bool:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            return True
+        return await real_is_frozen(vip_id)
+
+    g["orch"]._is_vip_frozen = freeze_on_second_check  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip.id))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error == "vip_frozen"
+    assert g["learning"].calls == [turn_id]
 
 
 @pytest.mark.asyncio
