@@ -210,6 +210,72 @@ async def test_whitespace_business_connection_id_fail_closed(
     assert actuator.send_count() == 0
 
 
+# --- Item4 Task1: DeliveryContext advanced fields + is_frozen hard-check ---
+
+
+def test_delivery_context_advanced_defaults_fail_closed() -> None:
+    ctx = DeliveryContext(chat_id=1, business_connection_id="bc")
+    assert ctx.allow_split is False
+    assert ctx.allow_human_quirks is False
+    assert ctx.split_chars == 4096
+    assert ctx.is_frozen is False
+
+
+def test_delivery_context_split_chars_ge_one() -> None:
+    with pytest.raises(ValidationError):
+        DeliveryContext(chat_id=1, business_connection_id="bc", split_chars=0)
+    with pytest.raises(ValidationError):
+        DeliveryContext(chat_id=1, business_connection_id="bc", split_chars=-5)
+
+
+@pytest.mark.asyncio
+async def test_frozen_entry_aborts_without_send_or_insert(
+    engine_bundle: tuple,
+) -> None:
+    engine, actuator, store, _ = engine_bundle
+    result = await engine.deliver(["hola"], _ctx(is_frozen=True), uuid4())
+    assert result.success is False
+    assert result.cancelled is True
+    assert result.error == "vip_frozen"
+    assert actuator.send_count() == 0
+    assert await store.list_all() == []
+
+
+@pytest.mark.asyncio
+async def test_fake_delivery_frozen_not_success(
+    engine_bundle: tuple,
+) -> None:
+    engine, actuator, store, _ = engine_bundle
+    result = await engine.deliver(
+        ["hola"],
+        _ctx(mode="fake_delivery", is_frozen=True),
+        uuid4(),
+    )
+    assert result.success is False
+    assert result.cancelled is True
+    assert result.error == "vip_frozen"
+    assert actuator.calls == []
+    rows = await store.list_all()
+    assert not any(r.status == "done" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_bc_empty_still_fails_when_not_frozen(
+    engine_bundle: tuple,
+) -> None:
+    """BC check stays first; frozen false does not bypass empty BC."""
+    engine, actuator, store, _ = engine_bundle
+    result = await engine.deliver(
+        ["x"],
+        DeliveryContext(chat_id=1, business_connection_id="", is_frozen=False),
+        uuid4(),
+    )
+    assert result.success is False
+    assert result.error == "business_connection_id is required"
+    assert actuator.send_count() == 0
+    assert await store.list_all() == []
+
+
 # --- I.4 pre-send gate / retries / I.2 fake_delivery (Task 2) ---
 
 
