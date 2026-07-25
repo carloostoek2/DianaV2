@@ -78,6 +78,7 @@ class TurnOrchestrator:
         vip_store: VipStore | None = None,
         traces: DeliveryResultWriter | None = None,
         delivery_mode: DeliveryMode = "supervised",
+        feature_advanced_behavior: bool = False,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -91,6 +92,7 @@ class TurnOrchestrator:
         self._vip_store = vip_store
         self._traces = traces
         self._delivery_mode = delivery_mode
+        self._feature_advanced_behavior = bool(feature_advanced_behavior)
 
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
@@ -509,8 +511,9 @@ class TurnOrchestrator:
             return None
 
         # is_frozen=False: prepare only builds a job when VIP is not frozen.
-        # Engine hard-check of is_frozen is item4 residual; orch re-checks
+        # Engine hard-check of is_frozen is defense-in-depth; orch re-checks
         # after lock release before deliver.
+        advanced = self._feature_advanced_behavior
         ctx = DeliveryContext(
             chat_id=incoming.chat_id,
             business_connection_id=str(turn_ctx.business_connection_id).strip(),
@@ -518,6 +521,9 @@ class TurnOrchestrator:
             telegram_message_id=incoming.telegram_message_id,
             mode=self._delivery_mode,
             is_frozen=False,
+            allow_split=advanced,
+            allow_human_quirks=advanced,
+            split_chars=4096,
         )
         return _AutonomousDeliverJob(text=draft, ctx=ctx, decision=decision)
 

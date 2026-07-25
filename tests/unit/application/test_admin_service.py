@@ -73,19 +73,17 @@ def _admin_graph(
         feature_advanced_behavior=feature_advanced_behavior,
     )
     coordinator = TurnCoordinator(turns, approvals, behavior)  # type: ignore[arg-type]
-    admin_kwargs: dict = {
-        "notifier": notifier,
-        "approvals": approvals,
-        "escalations": escalations,
-        "coordinator": coordinator,
-        "behavior": behavior,
-        "traces": traces,
-        "turns": turns,
-        "owner_telegram_id": OWNER_ID,
-    }
-    if feature_advanced_behavior:
-        admin_kwargs["feature_advanced_behavior"] = True
-    admin = AdminService(**admin_kwargs)  # type: ignore[arg-type]
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,  # type: ignore[arg-type]
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+        feature_advanced_behavior=feature_advanced_behavior,
+    )
     return {
         "admin": admin,
         "turns": turns,

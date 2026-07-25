@@ -186,6 +186,7 @@ def build_app(
         initial_min=settings.delivery_initial_delay_min,
         initial_max=settings.delivery_initial_delay_max,
     )
+    feature_advanced_behavior = settings.feature_advanced_behavior
     behavior = BehaviorEngine(
         actuator,
         deliveries,
@@ -194,6 +195,8 @@ def build_app(
         turn_status=TurnStoreStatusReader(turns),
         max_send_attempts=settings.delivery_max_send_attempts,
         retry_backoff_seconds=settings.delivery_retry_backoff_seconds,
+        feature_advanced_behavior=feature_advanced_behavior,
+        quirk_probability=0.05 if feature_advanced_behavior else 0.0,
     )
     coordinator = TurnCoordinator(turns, approvals, behavior)
     admin = AdminService(
@@ -206,6 +209,7 @@ def build_app(
         turns=turns,
         owner_telegram_id=settings.owner_telegram_id,
         delivery_mode=settings.global_mode,
+        feature_advanced_behavior=feature_advanced_behavior,
     )
 
     if llm is not None:
@@ -305,6 +309,7 @@ def build_app(
         vip_store=vips,
         traces=traces,
         delivery_mode=settings.global_mode,
+        feature_advanced_behavior=feature_advanced_behavior,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).

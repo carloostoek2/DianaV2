@@ -172,20 +172,18 @@ def _build(
         feature_advanced_behavior=feature_advanced_behavior,
     )
     coordinator = TurnCoordinator(turns, approvals, behavior)  # type: ignore[arg-type]
-    admin_kwargs: dict = {
-        "notifier": notifier,
-        "approvals": approvals,
-        "escalations": escalations,
-        "coordinator": coordinator,
-        "behavior": behavior,
-        "traces": traces,
-        "turns": turns,
-        "owner_telegram_id": OWNER_ID,
-        "delivery_mode": delivery_mode,
-    }
-    if feature_advanced_behavior:
-        admin_kwargs["feature_advanced_behavior"] = True
-    admin = AdminService(**admin_kwargs)  # type: ignore[arg-type]
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,  # type: ignore[arg-type]
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+        delivery_mode=delivery_mode,  # type: ignore[arg-type]
+        feature_advanced_behavior=feature_advanced_behavior,
+    )
     learn = learning or RecordingLearning(LearningService(traces))
     vips = vip_store or InMemoryVipStore()
     ams: AutonomousModeService | None = None
@@ -196,23 +194,21 @@ def _build(
             vip_store=vips,
             notifier=notifier,
         )
-    orch_kwargs: dict = {
-        "coordinator": coordinator,
-        "director": director,
-        "admin": admin,
-        "learning": learn,
-        "history": history,
-        "gray_zone": gray_zone,
-        "feature_gray_zone_enabled": feature_gray_zone_enabled,
-        "behavior": behavior if wire_autonomous else None,
-        "autonomous_mode": ams,
-        "vip_store": vips if wire_autonomous else None,
-        "traces": traces if wire_autonomous else None,
-        "delivery_mode": delivery_mode,
-    }
-    if feature_advanced_behavior:
-        orch_kwargs["feature_advanced_behavior"] = True
-    orch = TurnOrchestrator(**orch_kwargs)  # type: ignore[arg-type]
+    orch = TurnOrchestrator(
+        coordinator=coordinator,
+        director=director,  # type: ignore[arg-type]
+        admin=admin,
+        learning=learn,
+        history=history,
+        gray_zone=gray_zone,
+        feature_gray_zone_enabled=feature_gray_zone_enabled,
+        behavior=behavior if wire_autonomous else None,  # type: ignore[arg-type]
+        autonomous_mode=ams,
+        vip_store=vips if wire_autonomous else None,
+        traces=traces if wire_autonomous else None,
+        delivery_mode=delivery_mode,  # type: ignore[arg-type]
+        feature_advanced_behavior=feature_advanced_behavior,
+    )
     return {
         "orch": orch,
         "director": director,
@@ -646,6 +642,18 @@ async def test_director_exception_marks_failed_and_reraises() -> None:
     # Director never returned; turn was minted before fail.
     assert g["actuator"].send_count() == 0
     assert g["learning"].calls == []
+    failed_ids = [
+        t.id
+        for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await g["turns"].get(failed_ids[0])
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error == "llm down"
+    # Generic director errors do not use the Analyst schema-fail notify path.
+    assert g["notifier"].infos == []
 
 
 # --- Item4 Task4: advanced behavior builder wiring ---
@@ -744,21 +752,6 @@ async def test_orch_autonomous_send_still_works_flag_off_regression() -> None:
     assert g["actuator"].send_count() >= 1
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "delivered"
-    # Reconstruct: only failed terminal exists for chat — probe by creating nothing
-    # and checking list_non_terminal already empty; also try get via coordinator
-    # history of transitions is not stored; use internal store scan:
-    failed_ids = [
-        t.id
-        for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
-        if t.chat_id == 100
-    ]
-    assert len(failed_ids) == 1
-    failed = await g["turns"].get(failed_ids[0])
-    assert failed is not None
-    assert failed.status == "failed"
-    assert failed.error == "llm down"
-    # Generic director errors do not use the Analyst schema-fail notify path.
-    assert g["notifier"].infos == []
 
 
 @pytest.mark.asyncio

@@ -66,6 +66,7 @@ class AdminService:
         turns: TurnStore,
         owner_telegram_id: int,
         delivery_mode: DeliveryMode = "supervised",
+        feature_advanced_behavior: bool = False,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -76,6 +77,7 @@ class AdminService:
         self._turns = turns
         self._owner_telegram_id = owner_telegram_id
         self._delivery_mode = delivery_mode
+        self._feature_advanced_behavior = bool(feature_advanced_behavior)
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -350,12 +352,16 @@ class AdminService:
                 claimed.trigger_message_id or turn.trigger_message_id
             )
 
+        advanced = self._feature_advanced_behavior
         ctx = DeliveryContext(
             chat_id=claimed.chat_id,
             business_connection_id=claimed.business_connection_id,
             vip_id=claimed.vip_id,
             telegram_message_id=trigger_message_id,
             mode=self._delivery_mode,
+            allow_split=advanced,
+            allow_human_quirks=advanced,
+            split_chars=4096,
         )
         # Deliver outside the chat lock so cancel_pending can interrupt mid-flight.
         result = await self._behavior.deliver(
