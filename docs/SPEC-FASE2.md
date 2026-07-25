@@ -160,11 +160,14 @@ Nota: Si un bloque devuelve null o lista vacía, la sección correspondiente no 
 
 Se añade una nueva regla de acción, evaluada en el siguiente orden (prioridad de arriba a abajo):
 
-Prioridad Condición Acción bruta Filtro de modo Acción final
-1 perfil.seguridad < umbral_seguridad Escalar No se filtra Escalar
-2 comprension.needs_policy == true Y policy_retrieval_result == vacío Y FEATURE_GRAY_ZONE_ENABLED Consultar doctrina No se filtra Consultar doctrina
-3 perfil.naturalidad < umbral_naturalidad Regenerar No se filtra Regenerar (si implementado)
-4 Ninguna de las anteriores Enviar supervisado → Aprobar Aprobar
+Prioridad Condición Acción Nota
+1 perfil.seguridad < umbral_seguridad Escalar Prioridad absoluta (seguridad)
+2 comprension.needs_policy == true Y policy_retrieval_result == vacío Y FEATURE_GRAY_ZONE_ENABLED Consultar doctrina Puede resolver el riesgo raíz
+3 comprension.risk == "alto" Escalar Riesgo semántico, pero solo si no hay doctrina pendiente
+4 perfil.naturalidad < umbral_naturalidad Regenerar (si implementado)
+5 Ninguna de las anteriores Aprobar 
+
+Aclaración: La escalación por riesgo semántico (paso 3) solo se alcanza si no se activó la zona gris (paso 2). Si el riesgo alto va acompañado de falta de política, gana la zona gris. Si el riesgo alto va acompañado de seguridad baja, gana la escalación por seguridad (paso 1).
 
 Nota: La condición de zona gris usa policy_retrieval_result == vacío como disparador principal. Esto evita que la decisión dependa de umbrales numéricos de doctrina que podrían descalibrarse. El Evaluador, en caso de needs_policy=true y sin políticas, asigna doctrina = 0.2 (bajo) como señal complementaria.
 
