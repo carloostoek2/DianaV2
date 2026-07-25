@@ -195,6 +195,9 @@ action: Literal["send", "approve", "escalate", "consult_doctrine", "regenerate"]
 
 Los modos (supervisado/autónomo) son **filtros externos**. El Decisor propone; el modo restringe.
 
+Nota sobre BR-02: La regla "escalación gana sobre zona gris" aplica estrictamente para seguridad (safety baja). Para riesgo semántico (risk=alto), la zona gris tiene prioridad cuando falta doctrina, porque es la vía para resolver la causa raíz del riesgo. Ver SPEC-FASE2 §5.4.
+
+
 ### 5.4 BehaviorEngine
 
 ```python
