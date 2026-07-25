@@ -105,6 +105,43 @@ class TestGetRecentTurns:
         assert results[0].message_preview == "X" * 50 + "..."
         assert len(results[0].message_preview) == 53
 
+    async def test_get_recent_turns_filters_by_chat_id(
+        self, svc: AdminTraceService, reader: FakeTraceabilityReader
+    ) -> None:
+        """Verify chat_id filter returns only matching turns."""
+        reader.seed_turns([
+            {
+                "turn_id": uuid4(), "chat_id": 1, "display_name": "A",
+                "message_text": "hi", "decision": "a", "status": "d",
+                "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+                "correction_applied": False,
+            },
+            {
+                "turn_id": uuid4(), "chat_id": 2, "display_name": "B",
+                "message_text": "hey", "decision": "a", "status": "d",
+                "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+                "correction_applied": False,
+            },
+        ])
+        results = await svc.get_recent_turns(limit=10, offset=0, chat_id=1)
+        assert len(results) == 1
+        assert results[0].chat_id == 1
+
+    async def test_get_recent_turns_filter_by_chat_id_returns_empty_when_no_match(
+        self, svc: AdminTraceService, reader: FakeTraceabilityReader
+    ) -> None:
+        """Verify chat_id filter returns empty list when no turns match."""
+        reader.seed_turns([
+            {
+                "turn_id": uuid4(), "chat_id": 1, "display_name": "A",
+                "message_text": "hi", "decision": "a", "status": "d",
+                "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+                "correction_applied": False,
+            },
+        ])
+        results = await svc.get_recent_turns(limit=10, offset=0, chat_id=99)
+        assert results == []
+
 
 class TestGetFullTrace:
     async def test_get_full_trace_found(
@@ -169,6 +206,37 @@ class TestCountRecent:
         self, svc: AdminTraceService, _unused_reader: object = None
     ) -> None:
         count = await svc.count_recent()
+        assert count == 0
+
+    async def test_count_recent_filters_by_chat_id(
+        self, svc: AdminTraceService, reader: FakeTraceabilityReader
+    ) -> None:
+        """Verify count_recent with chat_id returns only matching rows."""
+        reader.seed_turns([
+            {
+                "turn_id": uuid4(), "chat_id": 1, "display_name": "A",
+                "message_text": "hi", "decision": "a", "status": "d",
+                "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+                "correction_applied": False,
+            },
+            {
+                "turn_id": uuid4(), "chat_id": 1, "display_name": "B",
+                "message_text": "hey", "decision": "a", "status": "d",
+                "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+                "correction_applied": False,
+            },
+            {
+                "turn_id": uuid4(), "chat_id": 2, "display_name": "C",
+                "message_text": "hello", "decision": "a", "status": "d",
+                "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+                "correction_applied": False,
+            },
+        ])
+        count = await svc.count_recent(chat_id=1)
+        assert count == 2
+        count = await svc.count_recent(chat_id=2)
+        assert count == 1
+        count = await svc.count_recent(chat_id=99)
         assert count == 0
 
 
