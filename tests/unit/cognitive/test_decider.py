@@ -75,6 +75,33 @@ def test_custom_safety_threshold() -> None:
     )
 
 
+def test_default_autonomous_thresholds_not_drop_in_for_f1_decider() -> None:
+    """Item2 landmine: Decider reads thresholds['safety'], not safety_min.
+
+    DEFAULT_AUTONOMOUS_THRESHOLDS uses safety_min=0.9. Passing that dict
+    unchanged leaves the gate at F1 default 0.3 (get("safety", 0.3)).
+    safety=0.5 would escalate under a real 0.9 gate but approves today —
+    proving DEFAULT_* is NOT a drop-in for Decider until item2 maps keys.
+    """
+    from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
+
+    profile = _profile(safety=0.5)
+    comp = _comprehension(risk="bajo")
+
+    # Correct F1-shaped wiring of the autonomous min → escalate.
+    mapped = Decider(
+        thresholds={"safety": float(DEFAULT_AUTONOMOUS_THRESHOLDS["safety_min"])}
+    )
+    assert mapped.decide(profile, comp).action == "escalate"
+    assert mapped.decide(profile, comp).reason == "safety_below_threshold"
+
+    # Drop-in of F3 DEFAULT_* shape is a silent no-op for the safety gate.
+    drop_in = Decider(thresholds=dict(DEFAULT_AUTONOMOUS_THRESHOLDS))
+    decision = drop_in.decide(profile, comp)
+    assert decision.action == "approve"
+    assert decision.reason == "ok_for_human_review"
+
+
 def test_safety_equal_threshold_approves() -> None:
     decision = Decider().decide(_profile(safety=0.3), _comprehension(risk="bajo"))
     assert decision.action == "approve"
