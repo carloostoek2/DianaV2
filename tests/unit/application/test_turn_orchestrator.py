@@ -293,6 +293,32 @@ async def test_escalate_path_no_deliver() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_action_fail_closed_marks_failed() -> None:
+    """Item1: Decision(action=send) is constructible; orchestrator stays fail-closed."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="would deliver",
+    )
+    g = _build(FakeDirector(decision))
+    with pytest.raises(ValueError, match="unexpected F2 action: 'send'"):
+        await g["orch"].handle_vip_message(_vip())
+    assert g["actuator"].send_count() == 0
+    assert g["learning"].calls == []
+    failed_ids = [
+        t.id
+        for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await g["turns"].get(failed_ids[0])
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error == "unexpected F2 action: 'send'"
+
+
+@pytest.mark.asyncio
 async def test_director_exception_marks_failed_and_reraises() -> None:
     g = _build(FakeDirector(RuntimeError("llm down")))
     with pytest.raises(RuntimeError, match="llm down"):

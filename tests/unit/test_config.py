@@ -255,20 +255,35 @@ def test_settings_feature_flag_defaults_are_false(
     assert settings.feature_advanced_behavior is False
 
 
-def test_settings_feature_autonomous_mode_env_override_true(
+@pytest.mark.parametrize(
+    ("env_key", "attr"),
+    [
+        ("FEATURE_AUTONOMOUS_MODE", "feature_autonomous_mode"),
+        ("FEATURE_RECONTACT_ENABLED", "feature_recontact_enabled"),
+    ],
+)
+def test_settings_f3_flag_env_override_true(
     clear_settings_env: None,
     monkeypatch: pytest.MonkeyPatch,
+    env_key: str,
+    attr: str,
 ) -> None:
     from diana.config import Settings
 
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("FEATURE_AUTONOMOUS_MODE", "true")
+    monkeypatch.setenv(env_key, "true")
     settings = Settings()
-    assert settings.feature_autonomous_mode is True
-    assert settings.feature_recontact_enabled is False
-    assert settings.feature_promo_enabled is False
-    assert settings.feature_calibration_enabled is False
-    assert settings.feature_advanced_behavior is False
+    assert getattr(settings, attr) is True
+    # Sibling F3 flags remain false when only one env is set.
+    for other in (
+        "feature_autonomous_mode",
+        "feature_recontact_enabled",
+        "feature_promo_enabled",
+        "feature_calibration_enabled",
+        "feature_advanced_behavior",
+    ):
+        if other != attr:
+            assert getattr(settings, other) is False
 
 
 def test_random_delay_policy_rejects_zero_initial_min() -> None:
