@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     feature_staging_enabled: bool = False
     feature_sandbox_enabled: bool = False
 
+    # F3 feature flag static defaults (runtime DB merge is a later item).
+    feature_autonomous_mode: bool = False
+    feature_recontact_enabled: bool = False
+    feature_promo_enabled: bool = False
+    feature_calibration_enabled: bool = False
+    feature_advanced_behavior: bool = False
+
     @field_validator("telegram_bot_token", "database_url", mode="after")
     @classmethod
     def reject_empty_required_secrets(cls, value: SecretStr) -> SecretStr:

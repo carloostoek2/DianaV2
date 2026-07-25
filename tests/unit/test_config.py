@@ -237,15 +237,38 @@ def test_settings_feature_flag_defaults_are_false(
     clear_settings_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F2 Item 1: 4 feature flags default to False."""
+    """F2 + F3: all 9 feature flags default to False."""
     from diana.config import Settings
 
     _set_required_env(monkeypatch)
     settings = Settings()
+    # F2
     assert settings.feature_memory_enabled is False
     assert settings.feature_gray_zone_enabled is False
     assert settings.feature_staging_enabled is False
     assert settings.feature_sandbox_enabled is False
+    # F3
+    assert settings.feature_autonomous_mode is False
+    assert settings.feature_recontact_enabled is False
+    assert settings.feature_promo_enabled is False
+    assert settings.feature_calibration_enabled is False
+    assert settings.feature_advanced_behavior is False
+
+
+def test_settings_feature_autonomous_mode_env_override_true(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("FEATURE_AUTONOMOUS_MODE", "true")
+    settings = Settings()
+    assert settings.feature_autonomous_mode is True
+    assert settings.feature_recontact_enabled is False
+    assert settings.feature_promo_enabled is False
+    assert settings.feature_calibration_enabled is False
+    assert settings.feature_advanced_behavior is False
 
 
 def test_random_delay_policy_rejects_zero_initial_min() -> None:
