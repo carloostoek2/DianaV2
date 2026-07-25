@@ -92,7 +92,7 @@
 
 ## Docs commit
 
-`<pending>`
+`48de7bf` -- `docs(trace): close trazabilidad pool (Anexo T)`
 
 ## Next Steps
 
