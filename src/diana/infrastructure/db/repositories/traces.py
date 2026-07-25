@@ -81,6 +81,7 @@ class SqlTraceStore:
         self,
         limit: int = 10,
         offset: int = 0,
+        chat_id: int | None = None,
     ) -> list[dict]:
         """Return recent turns summary with VIP display_name, ordered by created_at DESC."""
         cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
@@ -102,6 +103,8 @@ class SqlTraceStore:
             .limit(limit)
             .offset(offset)
         )
+        if chat_id is not None:
+            stmt = stmt.where(PipelineTrace.chat_id == chat_id)
         # Bind ttl_days as a parameter to avoid SQL injection.
         stmt = stmt.params(ttl_days=self._ttl_days)
         async with self._sf() as session:
@@ -145,7 +148,7 @@ class SqlTraceStore:
             }
             return data
 
-    async def count_recent(self) -> int:
+    async def count_recent(self, chat_id: int | None = None) -> int:
         """Return count of pipeline_traces within TTL."""
         cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
         stmt = (
@@ -153,6 +156,8 @@ class SqlTraceStore:
             .select_from(PipelineTrace)
             .where(PipelineTrace.created_at >= cutoff)
         )
+        if chat_id is not None:
+            stmt = stmt.where(PipelineTrace.chat_id == chat_id)
         stmt = stmt.params(ttl_days=self._ttl_days)
         async with self._sf() as session:
             result = await session.execute(stmt)

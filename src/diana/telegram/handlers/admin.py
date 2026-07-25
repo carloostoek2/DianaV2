@@ -159,8 +159,17 @@ def build_admin_router(
             await message.answer("Trace module not available.")
             return
 
+        filter_chat_id: int | None = None
+        parts = (message.text or "").strip().split()
+        if len(parts) >= 2:
+            try:
+                filter_chat_id = int(parts[1])
+            except ValueError:
+                await message.answer("Usage: /turnos [chat_id]")
+                return
+
         try:
-            turns = await admin_trace.get_recent_turns(limit=10, offset=0)
+            turns = await admin_trace.get_recent_turns(limit=10, offset=0, chat_id=filter_chat_id)
         except Exception:
             logger.exception("Error querying traces")
             await message.answer("System error: unable to query traces. Try again later.")
@@ -170,7 +179,7 @@ def build_admin_router(
             return
 
         try:
-            total = await admin_trace.count_recent()
+            total = await admin_trace.count_recent(chat_id=filter_chat_id)
         except Exception:
             logger.exception("Error counting traces")
             await message.answer("System error: unable to query traces. Try again later.")

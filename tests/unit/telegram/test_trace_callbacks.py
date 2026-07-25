@@ -33,13 +33,13 @@ class FakeTraceabilityReader:
     def seed_trace(self, turn_id, data: dict) -> None:
         self._traces[str(turn_id)] = dict(data)
 
-    async def get_recent_turns(self, limit: int = 10, offset: int = 0) -> list[dict]:
+    async def get_recent_turns(self, limit: int = 10, offset: int = 0, chat_id: int | None = None) -> list[dict]:
         return []
 
     async def get_full_trace(self, turn_id) -> dict | None:
         return self._traces.get(str(turn_id))
 
-    async def count_recent(self) -> int:
+    async def count_recent(self, chat_id: int | None = None) -> int:
         return 0
 
 

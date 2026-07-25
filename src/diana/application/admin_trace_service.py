@@ -74,9 +74,10 @@ class AdminTraceService:
         self,
         limit: int = 10,
         offset: int = 0,
+        chat_id: int | None = None,
     ) -> list[TurnSummary]:
         """Return a list of recent turn summaries (newest first)."""
-        rows = await self._traces.get_recent_turns(limit=limit, offset=offset)
+        rows = await self._traces.get_recent_turns(limit=limit, offset=offset, chat_id=chat_id)
         return [_row_to_summary(r) for r in rows]
 
     async def get_full_trace(self, turn_id: UUID) -> FullTrace | None:
@@ -86,9 +87,9 @@ class AdminTraceService:
             return None
         return _row_to_full_trace(row)
 
-    async def count_recent(self) -> int:
+    async def count_recent(self, chat_id: int | None = None) -> int:
         """Return the number of recent turns (within TTL)."""
-        return await self._traces.count_recent()
+        return await self._traces.count_recent(chat_id=chat_id)
 
     async def export_trace_json(self, turn_id: UUID) -> str:
         """Export full trace as a JSON string."""
