@@ -75,7 +75,7 @@
 
 ## Docs commit
 
-To be determined -- will be created at end of this documentation session.
+`c5d16f1` -- `docs(trace): close trazabilidad-polish pool`
 
 ## Next Steps
 
