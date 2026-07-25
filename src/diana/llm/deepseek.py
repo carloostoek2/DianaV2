@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import re
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, SecretStr
+
+logger = logging.getLogger(__name__)
 
 _FENCE_RE = re.compile(
     r"^\s*```(?:json|JSON)?\s*\n?(.*?)\n?\s*```\s*$",
@@ -99,7 +102,7 @@ class DeepSeekProvider:
         *,
         api_key: SecretStr,
         base_url: str = "https://api.deepseek.com",
-        model: str = "deepseek-chat",
+        model: str = "deepseek-v4-flash",
         client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
     ) -> None:
@@ -153,8 +156,17 @@ class DeepSeekProvider:
             "Respond with a single JSON object only (no markdown fences) that "
             f"matches this JSON Schema:\n{schema_hint}"
         )
-        # Prefer leading system instruction (more reliable than trailing system).
-        augmented = [{"role": "system", "content": instruction}, *messages]
+        # Merge with existing system message to avoid consecutive system roles.
+        augmented: list[dict[str, Any]] = []
+        if messages and messages[0].get("role") == "system":
+            first = messages[0]
+            augmented.append({
+                "role": "system",
+                "content": f"{instruction}\n\n{first['content']}",
+            })
+            augmented.extend(messages[1:])
+        else:
+            augmented = [{"role": "system", "content": instruction}, *messages]
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": augmented,
@@ -187,7 +199,15 @@ class DeepSeekProvider:
     async def _chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self._base_url}/chat/completions"
         response = await self._client.post(url, json=payload)
-        response.raise_for_status()
+        if response.is_error:
+            detail = response.text
+            logger.error(
+                "deepseek http %s %s — response: %s",
+                response.status_code,
+                url,
+                detail[:2000],
+            )
+            response.raise_for_status()
         return response.json()
 
     @staticmethod
