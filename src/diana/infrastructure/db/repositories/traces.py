@@ -1,15 +1,16 @@
-"""SqlTraceStore — TRACE_KEYS upsert + delivery_result UPDATE."""
+"""SqlTraceStore — TRACE_KEYS upsert + delivery_result UPDATE + trace reader."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.cognitive.ports import TRACE_KEYS, TRACE_KEY_TO_COLUMN, to_jsonable
-from diana.infrastructure.db.models import PipelineTrace, Turn
+from diana.infrastructure.db.models import PipelineTrace, Turn, Vip
 
 # Columns that accept TRACE_KEYS values.
 _TRACE_COLUMNS = frozenset(TRACE_KEY_TO_COLUMN.values())
@@ -73,6 +74,90 @@ class SqlTraceStore:
                 if getattr(row, col, None) is not None:
                     present.add(key)
             return present
+
+
+    async def get_recent_turns(
+        self,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Return recent turns summary with VIP display_name, ordered by created_at DESC."""
+        ttl_days = 30  # caller should align with Settings; default matches trace_ttl_days
+        cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
+        stmt = (
+            select(
+                PipelineTrace.turn_id,
+                PipelineTrace.chat_id,
+                PipelineTrace.created_at,
+                PipelineTrace.decision,
+                Turn.status,
+                Turn.error,
+                Vip.display_name,
+                Turn.status.label("correction_applied"),
+            )
+            .outerjoin(Turn, PipelineTrace.turn_id == Turn.id)
+            .outerjoin(Vip, PipelineTrace.vip_id == Vip.id)
+            .where(PipelineTrace.created_at >= cutoff)
+            .order_by(PipelineTrace.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        # Bind ttl_days as a parameter to avoid SQL injection.
+        stmt = stmt.params(ttl_days=ttl_days)
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+            return [dict(r._mapping) for r in rows]
+
+    async def get_full_trace(self, turn_id: UUID) -> dict | None:
+        """Return the full pipeline_trace row joined with turn status/error."""
+        stmt = (
+            select(
+                PipelineTrace,
+                Turn.status,
+                Turn.error,
+            )
+            .outerjoin(Turn, PipelineTrace.turn_id == Turn.id)
+            .where(PipelineTrace.turn_id == turn_id)
+        )
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            row = result.one_or_none()
+            if row is None:
+                return None
+            pt, status, error = row
+            data: dict[str, Any] = {
+                "turn_id": pt.turn_id,
+                "chat_id": pt.chat_id,
+                "vip_id": pt.vip_id,
+                "created_at": pt.created_at,
+                "comprehension": pt.comprehension,
+                "plan": pt.plan,
+                "retrieved": pt.retrieved,
+                "prompt_text": pt.prompt_text,
+                "generated_text": pt.generated_text,
+                "evaluation": pt.evaluation,
+                "decision": pt.decision,
+                "delivery_result": pt.delivery_result,
+                "timings": pt.timings,
+                "status": status,
+                "error": error,
+            }
+            return data
+
+    async def count_recent(self) -> int:
+        """Return count of pipeline_traces within TTL."""
+        ttl_days = 30
+        cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
+        stmt = (
+            select(func.count())
+            .select_from(PipelineTrace)
+            .where(PipelineTrace.created_at >= cutoff)
+        )
+        stmt = stmt.params(ttl_days=ttl_days)
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return result.scalar_one()
 
 
 __all__ = ["SqlTraceStore"]

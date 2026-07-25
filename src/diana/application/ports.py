@@ -369,6 +369,20 @@ class BehaviorDeliverer(Protocol):
     ) -> Any: ...
 
 
+@runtime_checkable
+class TraceabilityReader(Protocol):
+    """Read-only trace access for the AdminTraceService.
+
+    Implementations retrieve pipeline trace data from the underlying store
+    without modifying it. Returns plain dicts to avoid coupling the protocol
+    to ORM or DTO types.
+    """
+
+    async def get_recent_turns(self, limit: int = 10, offset: int = 0) -> list[dict]: ...
+    async def get_full_trace(self, turn_id: UUID) -> dict | None: ...
+    async def count_recent(self) -> int: ...
+
+
 __all__ = [
     "ApprovalRecord",
     "BehaviorCanceller",
@@ -388,6 +402,7 @@ __all__ = [
     "OwnerNotifierPort",
     "PendingApprovalStore",
     "PendingDeliveryStore",
+    "TraceabilityReader",
     "TraceReader",
     "TurnRecord",
     "TurnStore",
