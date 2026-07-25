@@ -15,6 +15,7 @@ from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from diana.application.admin_service import AdminService
+from diana.application.admin_trace_service import AdminTraceService
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.recovery_startup import (
     DEFAULT_STALE_AFTER,
@@ -144,6 +145,7 @@ class AppContainer:
     wiring: TelegramWiring
     gray_zone: GrayZoneService | None = None
     sandbox: SandboxService | None = None
+    admin_trace: AdminTraceService | None = None
 
 
 def build_app(
@@ -166,6 +168,7 @@ def build_app(
     escalations = SqlEscalationStore(sf)
     history = SqlMessageHistoryRepo(sf)
     traces = SqlTraceStore(sf)
+    admin_trace = AdminTraceService(traces=traces, trace_ttl_days=settings.trace_ttl_days)
     vips = SqlVipStore(sf)
     config_store = SqlSystemConfigStore(sf)
 
@@ -304,6 +307,7 @@ def build_app(
         forbidden_keywords=forbidden_keywords,
         correct_sessions=sessions,
         doctrine_router=doctrine_router,
+        admin_trace=admin_trace,
     )
 
     return AppContainer(
@@ -326,6 +330,7 @@ def build_app(
         wiring=wiring,
         gray_zone=gray_zone,
         sandbox=sandbox,
+        admin_trace=admin_trace,
     )
 
 
