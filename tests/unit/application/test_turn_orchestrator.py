@@ -992,7 +992,9 @@ async def test_orchestrator_happy_path_real_director_fake_llm() -> None:
     report = await learning.run_post_turn(turn_id)
     assert report.complete is True
     assert report.missing == []
-    assert await traces.get_trace_keys(turn_id) == set(TRACE_KEYS)
+    trace_keys = await traces.get_trace_keys(turn_id)
+    assert set(TRACE_KEYS).issubset(trace_keys)
+    assert "timings" in trace_keys
 
     methods = [name for name, _ in llm.calls]
     assert methods == [

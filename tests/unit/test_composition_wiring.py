@@ -41,3 +41,9 @@ def test_composition_decider_receives_feature_flag(_comp_src: str) -> None:
 def test_composition_load_feature_flags_removed(_comp_src: str) -> None:
     """load_feature_flags was removed per BUG-1 (option b)."""
     assert "def load_feature_flags" not in _comp_src
+
+
+def test_composition_admin_trace_wired(_comp_src: str) -> None:
+    """admin_trace is instantiated and passed to build_dispatcher."""
+    assert "admin_trace = AdminTraceService(" in _comp_src
+    assert "admin_trace=admin_trace" in _comp_src

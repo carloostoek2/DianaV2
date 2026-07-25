@@ -199,7 +199,7 @@ _STUB_CAPS = (
 
 
 @pytest.mark.asyncio
-async def test_tac04_trace_contains_all_seven_keys() -> None:
+async def test_tac04_trace_contains_all_keys_including_timings() -> None:
     llm = FakeLLM(
         structured_responses=[_comprehension(), _profile()],
         text_responses=["draft"],
@@ -209,7 +209,8 @@ async def test_tac04_trace_contains_all_seven_keys() -> None:
     await director.handle_turn(turn)
 
     keys = trace.keys_for(turn.turn_id)
-    assert keys == set(TRACE_KEYS)
+    assert set(TRACE_KEYS).issubset(keys)
+    assert "timings" in keys
     assert set(TRACE_KEYS) == {
         "comprehension",
         "plan",
