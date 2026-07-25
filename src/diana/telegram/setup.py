@@ -115,7 +115,12 @@ def build_dispatcher(
     if doctrine_router is not None:
         root.include_router(doctrine_router)
     root.include_router(
-        build_callback_router(admin=admin, correct_sessions=sessions, admin_trace=admin_trace)
+        build_callback_router(
+            admin=admin,
+            correct_sessions=sessions,
+            admin_trace=admin_trace,
+            owner_telegram_id=owner_telegram_id,
+        )
     )
     root.include_router(
         build_admin_router(
