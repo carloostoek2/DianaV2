@@ -204,6 +204,38 @@ class TestBackwardCompat:
         )
         assert status == "ignored"
 
+    async def test_td_no_admin_trace_returns_ignored(self) -> None:
+        turn_id = uuid4()
+        status = await dispatch_owner_callback(
+            admin=None,  # type: ignore[arg-type]
+            correct_sessions=CorrectSessionStore(),
+            callback_data=encode_trace_detail(turn_id, "analyst"),
+            actor_id=OWNER,
+            admin_trace=None,
+        )
+        assert status == "ignored"
+
+    async def test_tp_no_admin_trace_returns_ignored(self) -> None:
+        status = await dispatch_owner_callback(
+            admin=None,  # type: ignore[arg-type]
+            correct_sessions=CorrectSessionStore(),
+            callback_data=encode_trace_page(1),
+            actor_id=OWNER,
+            admin_trace=None,
+        )
+        assert status == "ignored"
+
+    async def test_tj_no_admin_trace_returns_ignored(self) -> None:
+        turn_id = uuid4()
+        status = await dispatch_owner_callback(
+            admin=None,  # type: ignore[arg-type]
+            correct_sessions=CorrectSessionStore(),
+            callback_data=encode_trace_json(turn_id),
+            actor_id=OWNER,
+            admin_trace=None,
+        )
+        assert status == "ignored"
+
     async def test_standard_callbacks_work_with_admin_trace(
         self, standard_admin: AdminService
     ) -> None:

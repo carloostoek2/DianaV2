@@ -67,6 +67,6 @@ class TestTimingContextBasic:
         assert second > first
 
     def test_timing_step_name_preserved(self) -> None:
-        """Step name should be accessible (for debug)."""
+        """Step name should be accessible via public property."""
         tc = TimingContext("my_step")
-        assert tc._step_name == "my_step"
+        assert tc.step_name == "my_step"
