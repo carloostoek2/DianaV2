@@ -38,6 +38,7 @@ TRACE_KEY_TO_COLUMN: dict[str, str] = {
     "generated_text": "generated_text",
     "evaluation": "evaluation",
     "decision": "decision",
+    "timings": "timings",
 }
 
 

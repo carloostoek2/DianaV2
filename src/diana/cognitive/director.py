@@ -20,6 +20,7 @@ from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
+from diana.cognitive.timing import TimingContext
 from diana.cognitive.models import (
     AnalystInput,
     Decision,
@@ -108,73 +109,108 @@ class CognitiveDirector:
 
     async def _run_pipeline(self, turn: IncomingTurn) -> Decision:
         turn_id = turn.turn_id
+        timings: dict[str, float] = {}
 
         await self._status.transition(turn_id, TurnStatus.ANALYZING)
         analyst_input = await self._build_analyst_input(turn)
         # On AnalystSchemaInvalidError: do not store partial comprehension; re-raise.
-        comprehension = await self._analyst.analyze(analyst_input)
+        with TimingContext("analyst") as tc:
+            comprehension = await self._analyst.analyze(analyst_input)
+        timings["analyst_ms"] = tc.elapsed_ms
         await self._store(turn_id, "comprehension", comprehension)
 
         await self._status.transition(turn_id, TurnStatus.PLANNING)
-        plan = self._planner.plan(comprehension)
+        with TimingContext("planner") as tc:
+            plan = self._planner.plan(comprehension)
+        timings["planner_ms"] = tc.elapsed_ms
         await self._store(turn_id, "plan", plan)
 
         await self._status.transition(turn_id, TurnStatus.RETRIEVING)
         retrieved: dict[str, Any | None] = {}
+        retriever_timings: dict[str, float] = {}
         try:
             for cap in plan.capabilities:
                 retriever = self._registry.resolve(cap)
-                retrieved[cap] = await retriever.fetch(turn, comprehension)
+                with TimingContext(cap) as tc:
+                    retrieved[cap] = await retriever.fetch(turn, comprehension)
+                retriever_timings[cap] = tc.elapsed_ms
         finally:
             # Persist the retrieved map unconditionally — even an empty dict
             # signals "retrieval ran with no capabilities" vs "retrieval had
             # a pre-loop exception" (in which case the turn is failed anyway).
             await self._store(turn_id, "retrieved", retrieved)
 
+        # Aggregate retriever timings by type (only when no exception occurred).
+        if retriever_timings:
+            memory_ms = 0.0
+            policy_ms = 0.0
+            examples_ms = 0.0
+            for cap, elapsed in retriever_timings.items():
+                if "memory" in cap:
+                    memory_ms += elapsed
+                elif "policy" in cap:
+                    policy_ms += elapsed
+                elif "examples" in cap:
+                    examples_ms += elapsed
+            timings["memory_retriever_ms"] = memory_ms
+            timings["policy_retriever_ms"] = policy_ms
+            timings["examples_retriever_ms"] = examples_ms
+
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
         # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).
         # On ContextExceedsLimitError: do not store partial prompt_text; re-raise.
-        built = self._context_builder.build(
-            turn,
-            comprehension,
-            knowledge=retrieved,
-            persona=self._persona,
-        )
+        with TimingContext("context_builder") as tc:
+            built = self._context_builder.build(
+                turn,
+                comprehension,
+                knowledge=retrieved,
+                persona=self._persona,
+            )
+        timings["context_builder_ms"] = tc.elapsed_ms
         await self._store(turn_id, "prompt_text", built.prompt_final)
 
         await self._status.transition(turn_id, TurnStatus.GENERATING)
         # On GeneratorEmptyOutputError: do not store generated_text/evaluation/decision.
-        draft = await self._generator.generate(built.prompt_final)
+        with TimingContext("generator") as tc:
+            draft = await self._generator.generate(built.prompt_final)
+        timings["generator_ms"] = tc.elapsed_ms
         await self._store(turn_id, "generated_text", draft)
 
         await self._status.transition(turn_id, TurnStatus.EVALUATING)
         # On EvaluatorSchemaInvalidError: do not store synthetic evaluation/decision.
-        evaluation = await self._evaluator.evaluate(
-            EvaluatorInput(
-                draft=draft,
-                comprehension=comprehension,
-                included_blocks=built.included_blocks,
-                current_turn=turn.text,
+        with TimingContext("evaluator") as tc:
+            evaluation = await self._evaluator.evaluate(
+                EvaluatorInput(
+                    draft=draft,
+                    comprehension=comprehension,
+                    included_blocks=built.included_blocks,
+                    current_turn=turn.text,
+                )
             )
-        )
+        timings["evaluator_ms"] = tc.elapsed_ms
         await self._store(turn_id, "evaluation", evaluation)
 
         await self._status.transition(turn_id, TurnStatus.DECIDING)
         # Generator guarantees non-empty draft on success; Decider owns action choice.
-        base = self._decider.decide(
-            evaluation,
-            comprehension,
-            retrieved=retrieved,
-            mode="supervised",
-        )
-        decision = Decision(
-            action=base.action,
-            reason=base.reason,
-            evaluation=base.evaluation,
-            draft_text=draft,
-            mode_restriction_applied=base.mode_restriction_applied,
-        )
+        with TimingContext("decider") as tc:
+            base = self._decider.decide(
+                evaluation,
+                comprehension,
+                retrieved=retrieved,
+                mode="supervised",
+            )
+            decision = Decision(
+                action=base.action,
+                reason=base.reason,
+                evaluation=base.evaluation,
+                draft_text=draft,
+                mode_restriction_applied=base.mode_restriction_applied,
+            )
+        timings["decider_ms"] = tc.elapsed_ms
         await self._store(turn_id, "decision", decision)
+
+        timings["total_ms"] = sum(timings.values())
+        await self._store(turn_id, "timings", timings)
         return decision
 
     async def _build_analyst_input(self, turn: IncomingTurn) -> AnalystInput:
