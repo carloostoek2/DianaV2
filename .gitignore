@@ -8,6 +8,8 @@
 venv/
 .python-version
 
+.planning
+.grok
 # Python bytecode / caches
 __pycache__/
 *.py[cod]
