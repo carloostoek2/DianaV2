@@ -41,24 +41,6 @@ async def handle_admin_text(
     if not stripped:
         return "ignored"
 
-    # Trace commands (checked before correct session to avoid false positives).
-    if stripped.startswith("/turnos"):
-        return "trace_list"
-
-    if stripped.startswith("/traza"):
-        parts = stripped.split(None, 1)
-        if len(parts) < 2:
-            return "trace_invalid_id"
-        raw_id = parts[1].strip()
-        if not raw_id:
-            return "trace_invalid_id"
-        # Support full UUID or first 8+ hex chars prefix match.
-        try:
-            turn_id = UUID(raw_id) if len(raw_id) == 36 else UUID(raw_id)
-        except ValueError:
-            return "trace_invalid_id"
-        return "trace_detail"
-
     # Free-text correct follow-up takes priority when session is open.
     pending_turn = correct_sessions.get(actor_id)
     if pending_turn is not None and not stripped.startswith("/"):
@@ -176,12 +158,22 @@ def build_admin_router(
             await message.answer("Trace module not available.")
             return
 
-        turns = await admin_trace.get_recent_turns(limit=10, offset=0)
+        try:
+            turns = await admin_trace.get_recent_turns(limit=10, offset=0)
+        except Exception:
+            logger.exception("Error querying traces")
+            await message.answer("System error: unable to query traces. Try again later.")
+            return
         if not turns:
             await message.answer("No recent turns found.")
             return
 
-        total = await admin_trace.count_recent()
+        try:
+            total = await admin_trace.count_recent()
+        except Exception:
+            logger.exception("Error counting traces")
+            await message.answer("System error: unable to query traces. Try again later.")
+            return
         total_pages = max(1, (total + 9) // 10)
         page = 0
         lines: list[str] = [f"Recent turns (page {page + 1}/{total_pages}):", ""]
@@ -189,7 +181,7 @@ def build_admin_router(
             sid = str(t.turn_id)[:8]
             name = t.vip_name or "Unknown"
             ts = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else ""
-            preview = (t.message_preview[:47] + "...") if len(t.message_preview) > 50 else t.message_preview
+            preview = t.message_preview
             lines.append(f"{i}. [{sid}] {name} (chat {t.chat_id}): \"{preview}\" -> {t.decision} ({ts})")
 
         turns_data = [(t.turn_id, str(t.turn_id)[:8]) for t in turns]
@@ -215,7 +207,12 @@ def build_admin_router(
             await message.answer(f"Invalid turn ID: {raw_id}")
             return
 
-        trace = await admin_trace.get_full_trace(turn_id)
+        try:
+            trace = await admin_trace.get_full_trace(turn_id)
+        except Exception:
+            logger.exception("Error querying trace")
+            await message.answer("System error: unable to query traces. Try again later.")
+            return
         if trace is None:
             await message.answer("Turn not found.")
             return
