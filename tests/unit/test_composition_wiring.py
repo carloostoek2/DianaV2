@@ -33,9 +33,31 @@ def test_composition_gray_zone_service_conditional(_comp_src: str) -> None:
     assert "gray_zone = GrayZoneService(" in _comp_src
 
 
-def test_composition_decider_receives_feature_flag(_comp_src: str) -> None:
-    """Decider is wired with feature_gray_zone_enabled."""
-    assert "Decider(feature_gray_zone_enabled=feature_gray_zone_enabled)" in _comp_src
+def test_composition_decider_receives_feature_flags(_comp_src: str) -> None:
+    """Decider is wired with gray-zone + autonomous flags and thresholds."""
+    assert "feature_gray_zone_enabled=" in _comp_src
+    assert "feature_autonomous_mode=" in _comp_src
+    assert "autonomous_thresholds=" in _comp_src
+    assert "Decider(" in _comp_src
+    # Ensure gray-zone kw still present on Decider construction path.
+    assert "feature_gray_zone_enabled=feature_gray_zone_enabled" in _comp_src
+    assert "feature_autonomous_mode=feature_autonomous_mode" in _comp_src
+
+
+def test_composition_ams_wired_to_orchestrator(_comp_src: str) -> None:
+    """AutonomousModeService is constructed and injected into TurnOrchestrator."""
+    assert "AutonomousModeService(" in _comp_src
+    assert "autonomous_mode=" in _comp_src
+    assert "from diana.application.autonomous_mode_service import AutonomousModeService" in _comp_src
+    assert "DEFAULT_AUTONOMOUS_THRESHOLDS" in _comp_src
+
+
+def test_composition_orchestrator_receives_autonomous_deps(_comp_src: str) -> None:
+    """Orch gets behavior, vip_store, traces, delivery_mode for send path."""
+    assert "behavior=behavior" in _comp_src
+    assert "vip_store=vips" in _comp_src
+    assert "traces=traces" in _comp_src
+    assert "delivery_mode=" in _comp_src
 
 
 def test_composition_load_feature_flags_removed(_comp_src: str) -> None:
