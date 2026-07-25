@@ -13,6 +13,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery
 
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
+from diana.telegram.helpers import _format_relative_time
 from diana.telegram.keyboards import (
     parse_callback,
     parse_trace_callback,
@@ -243,7 +244,7 @@ def build_callback_router(
                         await query.answer("Turn not found", show_alert=True)
                         return
                     sid = str(trace.turn_id)[:8]
-                    ts = trace.created_at.strftime("%Y-%m-%d %H:%M:%S") if trace.created_at else ""
+                    ts = _format_relative_time(trace.created_at)
                     action_label = trace.decision.get("action", "N/A") if trace.decision else "N/A"
                     total_ms = 0
                     if trace.timings:
@@ -304,7 +305,7 @@ def build_callback_router(
                     for i, t in enumerate(turns, 1):
                         sid = str(t.turn_id)[:8]
                         name = t.vip_name or "Unknown"
-                        ts = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else ""
+                        ts = _format_relative_time(t.created_at)
                         preview = t.message_preview
                         lines.append(f"{i}. [{sid}] {name} (chat {t.chat_id}): \"{preview}\" -> {t.decision} ({ts})")
                     turns_data = [(t.turn_id, str(t.turn_id)[:8]) for t in turns]

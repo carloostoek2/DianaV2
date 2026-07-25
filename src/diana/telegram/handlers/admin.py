@@ -15,6 +15,7 @@ from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import VipStore
 from diana.telegram.handlers.callbacks import CorrectSessionStore
+from diana.telegram.helpers import _format_relative_time
 from diana.telegram.keyboards import trace_detail_keyboard, trace_list_keyboard
 
 logger = logging.getLogger("diana.telegram")
@@ -180,7 +181,7 @@ def build_admin_router(
         for i, t in enumerate(turns, 1):
             sid = str(t.turn_id)[:8]
             name = t.vip_name or "Unknown"
-            ts = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else ""
+            ts = _format_relative_time(t.created_at)
             preview = t.message_preview
             lines.append(f"{i}. [{sid}] {name} (chat {t.chat_id}): \"{preview}\" -> {t.decision} ({ts})")
 
@@ -218,7 +219,7 @@ def build_admin_router(
             return
 
         sid = str(trace.turn_id)[:8]
-        ts = trace.created_at.strftime("%Y-%m-%d %H:%M:%S") if trace.created_at else ""
+        ts = _format_relative_time(trace.created_at)
         vip_name = trace.vip_id and str(trace.vip_id)[:8] or "N/A"
         original = (trace.prompt_text or "")[:200]
         draft = (trace.generated_text or "")[:80]
