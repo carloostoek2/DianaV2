@@ -220,7 +220,7 @@ def build_admin_router(
         sid = str(trace.turn_id)[:8]
         ts = trace.created_at.strftime("%Y-%m-%d %H:%M:%S") if trace.created_at else ""
         vip_name = trace.vip_id and str(trace.vip_id)[:8] or "N/A"
-        original = (trace.comprehension or {}).get("intent", "N/A")
+        original = (trace.prompt_text or "")[:200]
         draft = (trace.generated_text or "")[:80]
         decision_action = "N/A"
         if trace.decision:

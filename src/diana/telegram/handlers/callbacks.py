@@ -248,10 +248,8 @@ def build_callback_router(
                     total_ms = 0
                     if trace.timings:
                         total_ms = int(sum(v for v in trace.timings.values() if isinstance(v, (int, float))))
-                    original = ""
+                    original = (trace.prompt_text or "")[:200]
                     draft = (trace.generated_text or "")[:80]
-                    if trace.comprehension:
-                        original = trace.comprehension.get("intent", "")
                     lines = [
                         f"Trace {sid}",
                         f"Date: {ts}",
