@@ -5,11 +5,13 @@
 **Effort:** 5  
 **Created:** 2026-07-26
 
-| # | Item | Status | Path |
-|---|------|--------|------|
-| 1 | docs-sync | done | `.planning/quick/residuals-polish/item1-docs-sync/` |
-| 2 | owner-fp-ui | pending | `.planning/quick/residuals-polish/item2-owner-fp-ui/` |
-| 3 | naturalness-mvp | pending | `.planning/quick/residuals-polish/item3-naturalness-mvp/` |
-| 4 | profile-real | pending | `.planning/quick/residuals-polish/item4-profile-real/` |
+| # | Item | Status | Path | Commits |
+|---|------|--------|------|---------|
+| 1 | docs-sync | **done** | `item1-docs-sync/` | `311fe39`, `9d9ff22` |
+| 2 | owner-fp-ui | **done** | `item2-owner-fp-ui/` | `4a8d9ee`, `338ac3c` |
+| 3 | naturalness-mvp | pending | `item3-naturalness-mvp/` | — |
+| 4 | profile-real | pending | `item4-profile-real/` | — |
 
-**RESIDUALS:** `.grok/agent-memory/residuals/residuals-polish.md`
+**Review item1:** effort 5, 2 rounds, 0 open final · `.grok/agent-memory/review/residuals-polish-item1-docs-sync.md`
+
+**RESIDUALS:** Sunday cron OOS; items 3–4 open (item2 owner `/fp` closed)

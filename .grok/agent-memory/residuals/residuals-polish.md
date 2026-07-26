@@ -11,9 +11,15 @@
 | # | Item | Status | Path / notes |
 |---|------|--------|--------------|
 | 1 | docs-sync | **done** | `.planning/quick/residuals-polish/item1-docs-sync/` — README, ANEXO_T, F3-PHASE-STATUS, this index |
-| 2 | owner-fp-ui | open | Telegram `/fp` (or equiv.) → `AdminService.mark_false_positive`; F3-PHASE-STATUS follow-up R5 UI |
+| 2 | owner-fp-ui | **done** | Telegram `/fp <turn_id>` → `AdminService.mark_false_positive`; pure dispatcher + `Command("fp")`; `4a8d9ee` |
 | 3 | naturalness-mvp | open | Director 1× re-generate + re-eval when naturalidad low; no new Decision.action |
 | 4 | profile-real | open | ProfileRetriever REAL mínimo (SQL `profiles`); Schedule stays seat `no_implementado` |
+
+## Closed by item2 (owner FP UI)
+
+| Residual | Notes |
+|----------|-------|
+| Telegram `/fp` UI (R5 surface) | Owner DM `/fp <turn_id>`; status tokens `fp_marked` / `fp_usage` / `fp_unavailable`; dual owner gate; no escalate-action validation (accepted residual); no keyboard FP |
 
 ## Closed by item1 (docs only)
 

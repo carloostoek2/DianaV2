@@ -123,15 +123,15 @@ Plan: `.planning/quick/f3-residuals/PLAN.md` · Summary: `.planning/quick/f3-res
 | Residual | Status | Evidence |
 |----------|--------|----------|
 | Load calibrated thresholds from DB at boot (`RuntimeThresholds`) | **done** | `src/diana/composition.py` — `load_runtime_thresholds`; `src/diana/main.py` — boot `await load_runtime_thresholds(app)`; tests: `tests/unit/application/test_load_runtime_thresholds.py` |
+| Telegram `/fp <turn_id>` UI | **done** | `src/diana/telegram/handlers/admin.py` — `Command("fp")` + pure `handle_admin_text` branch; `ADMIN_MENU_TEXT` line; tests: `tests/unit/telegram/test_admin_commands.py` (`test_fp_*`) · pool `residuals-polish` item 2 · commit `4a8d9ee` |
 
 ### Follow-ups still open (not in residual pack)
 
 | Residual | Priority | Origin |
 |----------|----------|--------|
 | Exact Sunday 03:00 UTC cron (v1 = hourly + internal gates) | low | Pool3 |
-| Telegram `/fp <turn_id>` UI (API exists) | low | R5 · pool `residuals-polish` item 2 |
 
-Polish pool `residuals-polish` in progress (item1 docs-sync **done**; remaining open: `/fp`, naturalness MVP, profile REAL) — see `.planning/quick/residuals-polish/`.
+Polish pool `residuals-polish` in progress (item1 docs-sync **done**, item2 owner-fp-ui **done**; remaining open: naturalness MVP, profile REAL) — see `.planning/quick/residuals-polish/`.
 
 ### Documented out-of-scope (do not expand without product ask)
 
