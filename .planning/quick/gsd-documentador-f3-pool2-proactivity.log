@@ -34,5 +34,5 @@ Residuals to document:
 Next pool handoff:
 - Pool 3: calibration + metrics + drift + dashboard DM (H3.5 / H3.7 / H3.9)
 
-Docs commit: (pending)
+Docs commit: `2455b52` — docs(f3): close pool2 proactivity summary
 Paths: POOL-SUMMARY.md, POOL.md, documentador report, MEMORY.md, this log.

@@ -90,7 +90,7 @@
 
 ## Docs commit
 
-`(pending commit hash)` — `docs(f3): close pool2 proactivity summary`
+`2455b52` — `docs(f3): close pool2 proactivity summary`
 
 ## Next Steps
 
