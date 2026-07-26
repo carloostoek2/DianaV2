@@ -1,8 +1,9 @@
-"""SqlSystemConfigStore — read forbidden_keywords and optional thresholds."""
+"""SqlSystemConfigStore — read/write system_config keys (flags, thresholds, blobs)."""
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +22,18 @@ class SqlSystemConfigStore:
         async with self._sf() as session:
             row = await session.get(SystemConfig, key)
             return row.value if row else None
+
+    async def set(self, key: str, value: Any) -> None:
+        """Upsert a system_config row (INSERT or update value + updated_at)."""
+        async with self._sf() as session:
+            row = await session.get(SystemConfig, key)
+            now = datetime.now(UTC)
+            if row is None:
+                session.add(SystemConfig(key=key, value=value, updated_at=now))
+            else:
+                row.value = value
+                row.updated_at = now
+            await session.commit()
 
     async def get_forbidden_keywords(self) -> list[str]:
         value = await self.get("forbidden_keywords")
@@ -50,6 +63,22 @@ class SqlSystemConfigStore:
         Returns ``{}`` when missing or non-dict; caller applies pure defaults.
         """
         value = await self.get("supervised_thresholds")
+        return dict(value) if isinstance(value, dict) else {}
+
+    async def set_autonomous_thresholds(self, value: dict) -> None:
+        """Persist autonomous dual-threshold dict under ``autonomous_thresholds``."""
+        await self.set("autonomous_thresholds", dict(value))
+
+    async def set_supervised_thresholds(self, value: dict) -> None:
+        """Persist supervised dual-threshold dict under ``supervised_thresholds``."""
+        await self.set("supervised_thresholds", dict(value))
+
+    async def get_calibration_config(self) -> dict[str, Any]:
+        """Read calibration JSON blob from system_config.
+
+        Returns ``{}`` when missing or non-dict; caller applies pure defaults.
+        """
+        value = await self.get("calibration")
         return dict(value) if isinstance(value, dict) else {}
 
     async def get_recontact_config(self) -> dict[str, Any]:

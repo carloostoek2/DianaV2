@@ -41,13 +41,6 @@ __all__ = [
     "DEFAULT_CALIBRATION_CONFIG",
 ]
 
-# Evaluation profile field → dual-threshold key
-_EVAL_TO_THRESHOLD: Mapping[str, str] = {
-    "safety": "safety_min",
-    "doctrine": "doctrine_min",
-    "naturalness": "naturalness_min",
-}
-
 DEFAULT_CALIBRATION_CONFIG: dict[str, Any] = {
     "window_days": 30,
     "min_samples": 50,
@@ -59,7 +52,6 @@ DEFAULT_CALIBRATION_CONFIG: dict[str, Any] = {
 
 _BASELINE_CACHE_KEY = "calibration.style_baseline_embedding"
 _LAST_RUN_KEY = "calibration.last_run"
-_EXPECTED_EMBED_DIM = 384  # sentence-transformers MiniLM; cache only if matches
 
 
 class EmbeddingPort(Protocol):
