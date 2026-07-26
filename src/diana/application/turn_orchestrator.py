@@ -108,7 +108,8 @@ class TurnOrchestrator:
 
         # OUTSIDE lock — cancel_pending can interrupt delays (Admin pattern).
         # Re-check freeze after lock release (race: freeze applied mid-pipeline).
-        if await self._is_vip_frozen(incoming.vip_id):
+        vip_frozen = await self._is_vip_frozen(incoming.vip_id)
+        if vip_frozen:
             async with self._coordinator.chat_scope(chat_id):
                 live = await self._coordinator.get_turn(turn_id)
                 if live is not None and not is_turn_status_terminal(live.status):
@@ -152,10 +153,10 @@ class TurnOrchestrator:
             )
             return turn_id
 
-        # Defense for item4 engine hard-check: job only exists when VIP was
-        # unfrozen at prepare; re-check above already failed-closed if frozen.
+        # SEC-F2: pass actual freeze snapshot from re-check (False after gate).
+        # Mid-delay FreezePort re-query remains residual (engine uses ctx only).
         deliver_ctx = pending_deliver.ctx.model_copy(
-            update={"is_frozen": False}
+            update={"is_frozen": vip_frozen}
         )
         logger.info(
             "autonomous_send_start",

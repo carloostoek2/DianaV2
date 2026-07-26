@@ -56,7 +56,10 @@ def _admin_graph(
     *,
     feature_advanced_behavior: bool = False,
     behavior_override: object | None = None,
+    vip_store: object | None = None,
 ) -> dict:
+    from diana.application.memory import InMemoryVipStore
+
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
@@ -64,6 +67,7 @@ def _admin_graph(
     traces = InMemoryTraceReaderWriter()
     notifier = FakeOwnerNotifier()
     actuator = FakeTelegramActuator()
+    vips = vip_store if vip_store is not None else InMemoryVipStore()
     behavior = behavior_override or BehaviorEngine(
         actuator,
         deliveries,
@@ -83,6 +87,7 @@ def _admin_graph(
         turns=turns,
         owner_telegram_id=OWNER_ID,
         feature_advanced_behavior=feature_advanced_behavior,
+        vip_store=vips,  # type: ignore[arg-type]
     )
     return {
         "admin": admin,
@@ -96,6 +101,7 @@ def _admin_graph(
         "escalations": escalations,
         "deliveries": deliveries,
         "owner_id": OWNER_ID,
+        "vip_store": vips,
     }
 
 
@@ -534,3 +540,56 @@ async def test_admin_short_text_one_send_flag_off_regression(admin_graph: dict) 
     sends = [c for c in g["actuator"].calls if c["op"] == "send_message"]
     assert len(sends) == 1
     assert sends[0]["text"] == "short"
+
+
+@pytest.mark.asyncio
+async def test_admin_approve_frozen_vip_skips_deliver() -> None:
+    """SEC-F1: frozen VIP → no send, turn failed, approval cancelled."""
+    from datetime import UTC, datetime, timedelta
+
+    from diana.application.memory import InMemoryVipStore
+
+    store = InMemoryVipStore()
+    vip = await store.add(42001, display_name="FrozenVIP")
+    await store.freeze_vip(vip.id, datetime.now(UTC) + timedelta(hours=2))
+    spy = _CapturingDeliverer()
+    g = _admin_graph(behavior_override=spy, vip_store=store)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, vip_id=vip.id),
+        _decision(draft="should not send"),
+        turn.id,
+    )
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None and appr.vip_id == vip.id
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None
+    assert result.success is False
+    assert result.cancelled is True
+    assert result.error == "vip_frozen"
+    assert spy.ctxs == []  # never called deliver
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error == "vip_frozen"
+    appr_after = await g["approvals"].get_by_turn(turn.id)
+    assert appr_after is not None
+    assert appr_after.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_admin_deliver_ctx_is_frozen_false_when_unfrozen() -> None:
+    """SEC-F2: unfrozen path sets DeliveryContext.is_frozen=False."""
+    spy = _CapturingDeliverer()
+    g = _admin_graph(behavior_override=spy)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="ok"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success is True
+    assert len(spy.ctxs) == 1
+    assert spy.ctxs[0].is_frozen is False

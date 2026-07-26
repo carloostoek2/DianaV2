@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,6 +22,7 @@ from diana.application.ports import (
     OwnerNotifierPort,
     PendingApprovalStore,
     TurnStore,
+    VipStore,
 )
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.models import (
@@ -67,6 +69,7 @@ class AdminService:
         owner_telegram_id: int,
         delivery_mode: DeliveryMode = "supervised",
         feature_advanced_behavior: bool = False,
+        vip_store: VipStore | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -78,6 +81,7 @@ class AdminService:
         self._owner_telegram_id = owner_telegram_id
         self._delivery_mode = delivery_mode
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
+        self._vip_store = vip_store
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -352,13 +356,52 @@ class AdminService:
                 claimed.trigger_message_id or turn.trigger_message_id
             )
 
+        # SEC-F1: freeze gate before VIP write (mirror orch autonomous re-check).
+        # Fail closed: no deliver when frozen; mark turn failed + cancel claim.
+        is_frozen = await self._is_vip_frozen(claimed.vip_id)
+        if is_frozen:
+            async with self._coordinator.chat_scope(chat_id):
+                turn_after = await self._turns.get(turn_id)
+                if turn_after is not None and not is_turn_status_terminal(
+                    turn_after.status
+                ):
+                    await self._approvals.mark_status(turn_id, "cancelled")
+                    await self._coordinator.mark_failed(
+                        turn_id, error="vip_frozen"
+                    )
+                    try:
+                        await self._notifier.notify_info(
+                            f"Turn {turn_id} failed: vip_frozen",
+                            chat_id=chat_id,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_notify_failed_after_vip_frozen",
+                            extra={"turn_id": str(turn_id)},
+                        )
+            logger.info(
+                "admin_deliver_vip_frozen",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "vip_id": str(claimed.vip_id) if claimed.vip_id else None,
+                },
+            )
+            return DeliveryResult(
+                success=False,
+                cancelled=True,
+                error="vip_frozen",
+            )
+
         advanced = self._feature_advanced_behavior
+        # SEC-F2: is_frozen reflects gate result (False here; True never reaches deliver).
         ctx = DeliveryContext(
             chat_id=claimed.chat_id,
             business_connection_id=claimed.business_connection_id,
             vip_id=claimed.vip_id,
             telegram_message_id=trigger_message_id,
             mode=self._delivery_mode,
+            is_frozen=False,
             allow_split=advanced,
             allow_human_quirks=advanced,
             split_chars=4096,
@@ -434,3 +477,16 @@ class AdminService:
                     },
                 )
         return result
+
+    async def _is_vip_frozen(self, vip_id: UUID | None) -> bool:
+        """True if vip_store says frozen_until > now(UTC). Missing store/id → False."""
+        if self._vip_store is None or vip_id is None:
+            return False
+        vip = await self._vip_store.get_by_id(vip_id)
+        if vip is None or vip.frozen_until is None:
+            return False
+        now = datetime.now(UTC)
+        frozen = vip.frozen_until
+        if frozen.tzinfo is None:
+            frozen = frozen.replace(tzinfo=UTC)
+        return frozen > now

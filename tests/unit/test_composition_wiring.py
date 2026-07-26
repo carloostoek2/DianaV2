@@ -83,3 +83,5 @@ def test_composition_advanced_behavior_wired(_comp_src: str) -> None:
     assert "TurnOrchestrator(" in _comp_src
     # Count assignments into the three consumers (engine, admin, orch).
     assert _comp_src.count("feature_advanced_behavior=feature_advanced_behavior") >= 3
+    # SEC-F1: Admin freeze gate needs vip_store wired.
+    assert "vip_store=vips" in _comp_src

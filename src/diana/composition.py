@@ -210,6 +210,7 @@ def build_app(
         owner_telegram_id=settings.owner_telegram_id,
         delivery_mode=settings.global_mode,
         feature_advanced_behavior=feature_advanced_behavior,
+        vip_store=vips,
     )
 
     if llm is not None:

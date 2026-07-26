@@ -38,11 +38,8 @@ def split_text(text: str, max_chars: int) -> list[str]:
         segment = remaining[:cut].strip()
         if segment:
             parts.append(segment)
+        # cut is always >= 1 for non-empty window (_find_cut); remaining shrinks.
         remaining = remaining[cut:].lstrip()
-        if not remaining and not segment:
-            # Safety: hard-progress if strip emptied both sides.
-            remaining = remaining  # pragma: no cover
-            break
 
     return [p for p in parts if p]
 
