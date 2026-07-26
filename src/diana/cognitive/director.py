@@ -254,7 +254,7 @@ class CognitiveDirector:
             with TimingContext("generator_redraft") as tc:
                 draft = await self._generator.generate(built.prompt_final)
             timings["generator_redraft_ms"] = tc.elapsed_ms
-            await self._store(turn_id, "generated_text", draft)
+            # Store second draft only after second eval succeeds (paired artifacts).
 
             await self._status.transition(turn_id, TurnStatus.EVALUATING)
             with TimingContext("evaluator_redraft") as tc:
@@ -267,6 +267,7 @@ class CognitiveDirector:
                     )
                 )
             timings["evaluator_redraft_ms"] = tc.elapsed_ms
+            await self._store(turn_id, "generated_text", draft)
             await self._store(turn_id, "evaluation", evaluation)
             timings["naturalness_redraft"] = 1.0
 
@@ -289,7 +290,10 @@ class CognitiveDirector:
         timings["decider_ms"] = tc.elapsed_ms
         await self._store(turn_id, "decision", decision)
 
-        timings["total_ms"] = sum(timings.values())
+        # Sum only duration keys (*_ms); exclude audit flags like naturalness_redraft.
+        timings["total_ms"] = sum(
+            v for k, v in timings.items() if k.endswith("_ms")
+        )
         await self._store(turn_id, "timings", timings)
         return decision
 

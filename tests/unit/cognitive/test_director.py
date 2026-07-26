@@ -1123,10 +1123,19 @@ async def test_naturalness_below_min_redrafts_once() -> None:
 
     generate_calls = [c for c in llm.calls if c[0] == "generate"]
     assert len(generate_calls) == 2
+    # Same prompt_final on both generates (byte-identical user content).
+    assert generate_calls[0][1]["messages"] == generate_calls[1][1]["messages"]
 
     timings = trace.get(turn.turn_id, "timings")
     assert isinstance(timings, dict)
     assert timings.get("naturalness_redraft") == 1.0
+    # Audit flag must not inflate total_ms (sum only *_ms duration keys).
+    ms_sum = sum(
+        v for k, v in timings.items() if k.endswith("_ms") and k != "total_ms"
+    )
+    assert timings["total_ms"] == pytest.approx(ms_sum)
+    assert "generator_redraft_ms" in timings
+    assert "evaluator_redraft_ms" in timings
 
 
 @pytest.mark.asyncio
