@@ -576,7 +576,7 @@ async def test_calibrate_report_type() -> None:
 @pytest.mark.asyncio
 async def test_calibrate_applies_runtime_thresholds() -> None:
     """R2: after successful calibrate, RuntimeThresholds gets final_auto."""
-    from diana.application.runtime_thresholds import RuntimeThresholds
+    from diana.cognitive.runtime_thresholds import RuntimeThresholds
 
     # Enough samples with corrections for ok path
     samples = [

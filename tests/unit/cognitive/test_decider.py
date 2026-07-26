@@ -644,7 +644,7 @@ def test_policy_empty_dict_triggers_consult_doctrine() -> None:
 
 def test_decider_reads_runtime_thresholds_live() -> None:
     """R2: Decider picks up autonomous mins updated after construction."""
-    from diana.application.runtime_thresholds import RuntimeThresholds
+    from diana.cognitive.runtime_thresholds import RuntimeThresholds
 
     rt = RuntimeThresholds(
         autonomous={

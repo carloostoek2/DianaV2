@@ -56,7 +56,7 @@ from diana.cognitive.models import Comprehension, Decision, EvaluationProfile
 from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 
 if TYPE_CHECKING:
-    from diana.application.runtime_thresholds import RuntimeThresholds
+    from diana.cognitive.runtime_thresholds import RuntimeThresholds
 
 _DEFAULT_SAFETY_THRESHOLD = 0.3
 
@@ -81,7 +81,7 @@ class Decider:
         autonomous_thresholds: Mapping[str, float] | None = None,
         runtime_thresholds: RuntimeThresholds | None = None,
     ) -> None:
-        from diana.application.runtime_thresholds import RuntimeThresholds as _RT
+        from diana.cognitive.runtime_thresholds import RuntimeThresholds as _RT
 
         thresholds = thresholds or {}
         safety = float(thresholds.get("safety", _DEFAULT_SAFETY_THRESHOLD))

@@ -23,7 +23,7 @@ from diana.application.calibration_math import (
     style_drift_score,
 )
 from diana.application.ports import OwnerNotifierPort
-from diana.application.runtime_thresholds import RuntimeThresholds
+from diana.cognitive.runtime_thresholds import RuntimeThresholds
 from diana.cognitive.thresholds import (
     DEFAULT_AUTONOMOUS_THRESHOLDS,
     DEFAULT_SUPERVISED_THRESHOLDS,

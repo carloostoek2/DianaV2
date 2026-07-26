@@ -26,7 +26,7 @@ from diana.application.recontact_service import (
     ApprovalsDeliveriesRouteResolver,
     RecontactService,
 )
-from diana.application.runtime_thresholds import RuntimeThresholds
+from diana.cognitive.runtime_thresholds import RuntimeThresholds
 from diana.infrastructure.db.repositories.owner_marks import SqlOwnerMarkStore
 from diana.application.recovery_startup import (
     DEFAULT_STALE_AFTER,
