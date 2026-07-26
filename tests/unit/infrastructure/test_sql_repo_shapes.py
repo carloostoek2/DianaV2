@@ -177,3 +177,21 @@ def test_profile_to_dict_mapper() -> None:
     assert out["content"] == {"fact": "prefers morning"}
     assert out["created_at"] == created.isoformat()
     assert out["updated_at"] == updated.isoformat()
+
+
+def test_profiles_repo_source_scopes_by_vip_id() -> None:
+    """BR-15 source lock: sole read method filters Profile.vip_id == vip_id."""
+    from pathlib import Path
+
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    source = (
+        root / "infrastructure" / "db" / "repositories" / "profiles.py"
+    ).read_text(encoding="utf-8")
+    assert "async def get_by_vip_id" in source
+    assert "Profile.vip_id == vip_id" in source
+    assert "select(Profile)" in source
+    # No unscoped list-all helper in this residual.
+    assert "def find_all" not in source
+    assert "select(Profile).where" in source or ".where(Profile.vip_id == vip_id)" in source

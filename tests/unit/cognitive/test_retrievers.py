@@ -852,19 +852,22 @@ async def test_profile_retriever_returns_tipo_content_on_hit() -> None:
 
 @pytest.mark.asyncio
 async def test_profile_retriever_returns_none_on_empty_content() -> None:
-    """Null-like content (None / {}) → None so ContextBuilder omits block (D.5)."""
+    """Null-like content (PLAN A4 / D.5) → None so ContextBuilder omits block.
+
+    Covers None, {}, whitespace/empty str, and empty list (ContextBuilder parity).
+    """
     from unittest.mock import AsyncMock
 
     vip_id = uuid4()
-    repo = AsyncMock()
-    repo.get_by_vip_id = AsyncMock(
-        return_value={"tipo": "summary", "content": {}, "vip_id": str(vip_id)}
-    )
-    retriever = ProfileRetriever(repo=repo)
+    retriever = ProfileRetriever(repo=AsyncMock())
     turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
-    assert await retriever.fetch(turn, _comprehension()) is None
 
-    repo.get_by_vip_id = AsyncMock(
-        return_value={"tipo": "summary", "content": None, "vip_id": str(vip_id)}
-    )
-    assert await retriever.fetch(turn, _comprehension()) is None
+    for empty_content in (None, {}, "", "   ", [], ()):
+        retriever._repo.get_by_vip_id = AsyncMock(
+            return_value={
+                "tipo": "summary",
+                "content": empty_content,
+                "vip_id": str(vip_id),
+            }
+        )
+        assert await retriever.fetch(turn, _comprehension()) is None, empty_content

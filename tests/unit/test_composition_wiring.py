@@ -252,11 +252,17 @@ def test_composition_persona_catalog_wired(_comp_src: str) -> None:
 
 def test_composition_profiles_repo_wired(_comp_src: str) -> None:
     """Item4: ProfilesRepo constructed and passed as profile_repo= to registry."""
-    assert "ProfilesRepo" in _comp_src
-    assert "profile_repo=" in _comp_src
-    assert "from diana.infrastructure.db.repositories.profiles import ProfilesRepo" in (
-        _comp_src
+    assert (
+        "from diana.infrastructure.db.repositories.profiles import ProfilesRepo"
+        in _comp_src
     )
+    assert "profiles_repo = ProfilesRepo(sf)" in _comp_src
+    assert "profile_repo=profiles_repo" in _comp_src
+    # Not injected into SandboxService (writer residual / PLAN OOS).
+    sandbox_idx = _comp_src.find("SandboxService(")
+    if sandbox_idx != -1:
+        sandbox_block = _comp_src[sandbox_idx : sandbox_idx + 200]
+        assert "profile" not in sandbox_block.lower()
 
 def test_composition_repetition_guard_wired(_comp_src: str) -> None:
     """H4/H5: Director receives recent_intents=traces + RepetitionGuard(3)."""

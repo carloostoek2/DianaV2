@@ -18,9 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 def _is_null_like_content(content: Any) -> bool:
+    """Mirror ContextBuilder null-like rules for the content payload only.
+
+    Outer hit shape is always ``{"tipo", "content"}``; empty content must
+    collapse to fetch ``None`` so D.5 does not emit a hollow profile envelope.
+    """
     if content is None:
         return True
-    if isinstance(content, dict) and len(content) == 0:
+    if isinstance(content, (list, dict, tuple, set)) and len(content) == 0:
         return True
     if isinstance(content, str) and not content.strip():
         return True
