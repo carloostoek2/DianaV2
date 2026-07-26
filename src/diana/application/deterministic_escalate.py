@@ -100,11 +100,20 @@ async def handle_deterministic_template_escalate(
     keywords_hit: list[str],
     template: str = IA_TEMPLATE,
     tipo: str = TIPO_IDENTIDAD_IA,
+    is_frozen: bool = False,
+    reason: str | None = None,
 ) -> UUID:
-    """Deliver fixed VIP template (if business connection present), then escalate.
+    """Deliver fixed VIP product template (if business connection present), then escalate.
 
     Still no Director/LLM. Soft deliver failure (success=False) and exceptions
     are logged; escalate still proceeds so the owner always sees the event.
+
+    ``template`` is intentionally the product IA constant (``IA_TEMPLATE``).
+    Empty/whitespace overrides fall back to ``IA_TEMPLATE`` — free-form product
+    copy is not a supported public API surface for J.4 identity.
+
+    ``is_frozen`` is honored on DeliveryContext. Production stack drops frozen
+    VIPs in FreezeCheckMiddleware before this path; pass-through remains safe.
     """
     record = await coordinator.begin_turn(
         chat_id=chat_id,
@@ -112,6 +121,7 @@ async def handle_deterministic_template_escalate(
         vip_id=vip_id,
     )
     turn_id = record.id
+    deliver_text = template.strip() if template and template.strip() else IA_TEMPLATE
 
     if business_connection_id:
         ctx = DeliveryContext(
@@ -119,10 +129,10 @@ async def handle_deterministic_template_escalate(
             business_connection_id=str(business_connection_id),
             vip_id=vip_id,
             telegram_message_id=message_id,
-            is_frozen=False,
+            is_frozen=is_frozen,
         )
         try:
-            result = await behavior.deliver([template], ctx, turn_id)
+            result = await behavior.deliver([deliver_text], ctx, turn_id)
             success = getattr(result, "success", None)
             if success is False:
                 logger.warning(
@@ -154,11 +164,12 @@ async def handle_deterministic_template_escalate(
 
     motivo = ",".join(keywords_hit) if keywords_hit else tipo
     await escalations.create(turn_id, tipo=tipo, motivo=motivo)
+    notify_reason = reason or f"{tipo}: {motivo}"
     await notifier.notify_escalation(
         EscalationNotification(
             turn_id=turn_id,
             chat_id=chat_id,
-            reason=f"{tipo}: {motivo}",
+            reason=notify_reason,
             vip_text=text,
             tipo=tipo,
             business_connection_id=business_connection_id,

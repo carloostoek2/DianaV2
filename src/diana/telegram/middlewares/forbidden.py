@@ -18,7 +18,12 @@ from diana.application.deterministic_escalate import (
     handle_deterministic_escalation,
     handle_deterministic_template_escalate,
 )
-from diana.application.j4_triggers import classify_j4_text, match_keywords
+from diana.application.j4_triggers import (
+    IA_TEMPLATE,
+    classify_j4_text,
+    format_j4_motivo,
+    match_keywords,
+)
 from diana.application.ports import (
     BehaviorDeliverer,
     EscalationStore,
@@ -131,6 +136,7 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                     "j4_ia_no_behavior_fail_closed",
                     extra={"chat_id": chat_id, "keywords": j4.keywords_hit},
                 )
+                motivo = format_j4_motivo(j4)
                 await handle_deterministic_escalation(
                     coordinator=self._coordinator,
                     escalations=self._escalations,
@@ -142,8 +148,10 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                     message_id=event.message_id,
                     keywords_hit=j4.keywords_hit,
                     tipo=j4.tipo,
+                    reason=f"{j4.tipo}: {motivo}",
                 )
             else:
+                motivo = format_j4_motivo(j4)
                 await handle_deterministic_template_escalate(
                     coordinator=self._coordinator,
                     escalations=self._escalations,
@@ -155,8 +163,9 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                     business_connection_id=str(bc),
                     message_id=event.message_id,
                     keywords_hit=j4.keywords_hit,
-                    template=j4.template or "",
+                    template=IA_TEMPLATE,
                     tipo=j4.tipo,
+                    reason=f"{j4.tipo}: {motivo}",
                 )
             logger.info(
                 "j4_ia_short_circuit",

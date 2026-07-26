@@ -2,6 +2,9 @@
 
 Identifiers in English; match strings and IA template are Spanish product content
 (Anexo J.4). Classification priority: identidad_ia → pago_precio → compromiso_real.
+
+When identidad_ia wins but pago/compromiso also match, co-hit keywords are
+appended to ``keywords_hit`` so owner motivo is not blind to payment signals.
 """
 
 from __future__ import annotations
@@ -19,8 +22,12 @@ IA_TEMPLATE = "jsjsj si y sólo vivo en tu mente 😏"
 IDENTIDAD_IA_KEYWORDS = [
     "eres ia",
     "eres una ia",
+    "eres una ai",
+    "eres ai",
     "sos ia",
     "sos una ia",
+    "sos una ai",
+    "sos ai",
     "eres un bot",
     "sos un bot",
     "eres bot",
@@ -35,6 +42,10 @@ IDENTIDAD_IA_KEYWORDS = [
     "sos real",
     "eres real?",
     "sos real?",
+    "sos humano",
+    "eres humano",
+    "sos humano?",
+    "eres humano?",
     "chatgpt",
     "eres chatgpt",
     "sos chatgpt",
@@ -50,8 +61,16 @@ PAGO_KEYWORDS = [
     "pago",
     "pagos",
     "pagar",
+    "pagué",
+    "pague",
+    "pagó",
+    "pago",
     "pagado",
     "pagada",
+    "factura",
+    "facturas",
+    "descuento",
+    "descuentos",
     "suscripción",
     "suscripcion",
     "abono",
@@ -64,6 +83,8 @@ PAGO_KEYWORDS = [
     "costos",
     "cuánto sale",
     "cuanto sale",
+    "cuánto te sale",
+    "cuanto te sale",
     "cuánto cuesta",
     "cuanto cuesta",
     "cuánto vale",
@@ -74,6 +95,9 @@ PAGO_KEYWORDS = [
     "mercadopago",
     "mercado pago",
     "paypal",
+    "usd",
+    "mxn",
+    "ars",
     "reclamo",
     "reclamar",
     "cobrar",
@@ -81,7 +105,7 @@ PAGO_KEYWORDS = [
 ]
 
 # Commitment / real-world meet — tighten broad tokens (no bare "quedar").
-# Residual FP risk remains on short "cita"/"encuentro" (Anexo product terms).
+# Residual FP risk remains on short "cita"/"encuentro"/"nos vemos" (Anexo terms).
 COMPROMISO_KEYWORDS = [
     "cita",
     "citas",
@@ -105,12 +129,18 @@ COMPROMISO_KEYWORDS = [
 
 @dataclass(frozen=True)
 class J4Hit:
-    """Result of classify_j4_text."""
+    """Result of classify_j4_text.
+
+    ``keywords_hit`` may include co-category keywords when identidad_ia wins
+    but pago/compromiso also matched (hybrid motivo for owner notify).
+    ``also_matched`` lists secondary categories for explicit motivo labeling.
+    """
 
     category: J4Category
     tipo: str
     keywords_hit: list[str]
     template: str | None = None
+    also_matched: tuple[str, ...] = ()
 
 
 def match_keywords(text: str, keywords: list[str]) -> list[str]:
@@ -119,34 +149,52 @@ def match_keywords(text: str, keywords: list[str]) -> list[str]:
         return []
     lower = text.lower()
     hits: list[str] = []
+    seen: set[str] = set()
     for kw in keywords:
         k = (kw or "").strip().lower()
-        if not k:
+        if not k or k in seen:
             continue
         if " " in k:
             if k in lower:
                 hits.append(kw.strip())
+                seen.add(k)
         else:
             if re.search(rf"\b{re.escape(k)}\b", lower, flags=re.IGNORECASE):
                 hits.append(kw.strip())
+                seen.add(k)
     return hits
 
 
 def classify_j4_text(text: str) -> J4Hit | None:
-    """Classify VIP text into a J.4 category; first non-empty category wins."""
+    """Classify VIP text into a J.4 category; first non-empty category wins.
+
+    Identity wins over payment, but co-occurring pago/compromiso keywords are
+    folded into ``keywords_hit`` + ``also_matched`` for owner visibility.
+    """
     if not text or not str(text).strip():
         return None
 
     ia_hits = match_keywords(text, IDENTIDAD_IA_KEYWORDS)
+    pago_hits = match_keywords(text, PAGO_KEYWORDS)
+    compromiso_hits = match_keywords(text, COMPROMISO_KEYWORDS)
+
     if ia_hits:
+        keywords_hit = list(ia_hits)
+        also: list[str] = []
+        if pago_hits:
+            keywords_hit.extend(pago_hits)
+            also.append("pago_precio")
+        if compromiso_hits:
+            keywords_hit.extend(compromiso_hits)
+            also.append("compromiso_real")
         return J4Hit(
             category="identidad_ia",
             tipo="identidad_ia",
-            keywords_hit=ia_hits,
+            keywords_hit=keywords_hit,
             template=IA_TEMPLATE,
+            also_matched=tuple(also),
         )
 
-    pago_hits = match_keywords(text, PAGO_KEYWORDS)
     if pago_hits:
         return J4Hit(
             category="pago_precio",
@@ -155,7 +203,6 @@ def classify_j4_text(text: str) -> J4Hit | None:
             template=None,
         )
 
-    compromiso_hits = match_keywords(text, COMPROMISO_KEYWORDS)
     if compromiso_hits:
         return J4Hit(
             category="compromiso_real",
@@ -167,6 +214,14 @@ def classify_j4_text(text: str) -> J4Hit | None:
     return None
 
 
+def format_j4_motivo(hit: J4Hit) -> str:
+    """Build owner-facing motivo including co-matched categories when present."""
+    base = ",".join(hit.keywords_hit) if hit.keywords_hit else hit.tipo
+    if hit.also_matched:
+        return f"{base} [also: {','.join(hit.also_matched)}]"
+    return base
+
+
 __all__ = [
     "COMPROMISO_KEYWORDS",
     "IA_TEMPLATE",
@@ -175,5 +230,6 @@ __all__ = [
     "J4Hit",
     "PAGO_KEYWORDS",
     "classify_j4_text",
+    "format_j4_motivo",
     "match_keywords",
 ]

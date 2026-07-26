@@ -276,3 +276,51 @@ async def test_template_exception_still_escalates(escalate_graph: dict) -> None:
     assert rec is not None and rec.status == "escalated"
     assert g["escalations"].events[0]["tipo"] == "identidad_ia"
     assert len(g["notifier"].escalations) == 1
+
+
+@pytest.mark.asyncio
+async def test_template_empty_falls_back_to_ia_constant(escalate_graph: dict) -> None:
+    from diana.application.deterministic_escalate import (
+        handle_deterministic_template_escalate,
+    )
+    from diana.application.j4_triggers import IA_TEMPLATE
+
+    g = escalate_graph
+    await handle_deterministic_template_escalate(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        behavior=g["behavior"],
+        chat_id=42,
+        text="sos un bot?",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=40,
+        keywords_hit=["sos un bot"],
+        template="   ",
+    )
+    send_calls = [c for c in g["actuator"].calls if c["op"] == "send_message"]
+    assert send_calls[0]["text"] == IA_TEMPLATE
+
+
+@pytest.mark.asyncio
+async def test_template_hybrid_reason_passed(escalate_graph: dict) -> None:
+    from diana.application.deterministic_escalate import (
+        handle_deterministic_template_escalate,
+    )
+
+    g = escalate_graph
+    await handle_deterministic_template_escalate(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        behavior=g["behavior"],
+        chat_id=42,
+        text="eres bot y precio",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=41,
+        keywords_hit=["eres bot", "precio"],
+        reason="identidad_ia: eres bot,precio [also: pago_precio]",
+    )
+    assert "also: pago_precio" in g["notifier"].escalations[0].reason

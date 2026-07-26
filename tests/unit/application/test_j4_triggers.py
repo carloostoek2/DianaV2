@@ -84,3 +84,52 @@ def test_compromiso_quedemos_not_bare_quedar() -> None:
     # bare "quedar" alone is no longer a trigger (FP tighten)
     hit = classify_j4_text("no quiero quedar mal")
     assert hit is None or hit.category != "compromiso_real"
+
+
+def test_pago_pague_without_paypal() -> None:
+    """Past-tense pay verbs alone must escalate pago (not depend on paypal)."""
+    for text in (
+        "ya pagué",
+        "yo pagué ayer",
+        "me pagó el cliente",
+        "cuando pague te aviso",
+    ):
+        hit = classify_j4_text(text)
+        assert hit is not None, text
+        assert hit.category == "pago_precio", text
+
+
+def test_pago_cuanto_te_sale_and_factura() -> None:
+    for text in (
+        "cuánto te sale el pack?",
+        "cuanto te sale?",
+        "mandame la factura",
+        "hay descuento?",
+        "pago en usd",
+        "precio en mxn",
+    ):
+        hit = classify_j4_text(text)
+        assert hit is not None, text
+        assert hit.category == "pago_precio", text
+
+
+def test_ia_humano_and_eres_una_ai() -> None:
+    for text in ("sos humano?", "eres humano", "eres una ai?", "sos ai"):
+        hit = classify_j4_text(text)
+        assert hit is not None, text
+        assert hit.category == "identidad_ia", text
+        assert hit.template == IA_TEMPLATE
+
+
+def test_hybrid_ia_pago_includes_both_in_keywords() -> None:
+    from diana.application.j4_triggers import format_j4_motivo
+
+    hit = classify_j4_text("eres un bot y cuánto cuesta?")
+    assert hit is not None
+    assert hit.category == "identidad_ia"
+    assert "pago_precio" in hit.also_matched
+    # pago keyword must appear in keywords_hit for owner motivo
+    assert any("cuesta" in k or "cuánto cuesta" in k for k in hit.keywords_hit)
+    motivo = format_j4_motivo(hit)
+    assert "also: pago_precio" in motivo
+    assert any("bot" in k for k in hit.keywords_hit)
