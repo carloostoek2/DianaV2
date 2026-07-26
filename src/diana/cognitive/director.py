@@ -52,16 +52,17 @@ _ROLE_TO_AUTOR: dict[str, str] = {
     "owner": "dueña",
 }
 
-# Sentinel evaluation for Decision-only early exits (reason is source of truth).
-_EARLY_EXIT_EVAL = EvaluationProfile(
-    naturalness=0.0,
-    precision=0.0,
-    doctrine=0.0,
-    consistency=0.0,
-    safety=0.0,
-    coverage=0.0,
-    empathy=0.0,
-)
+def _early_exit_evaluation() -> EvaluationProfile:
+    """Fresh zero profile for Decision-only early exits (reason is source of truth)."""
+    return EvaluationProfile(
+        naturalness=0.0,
+        precision=0.0,
+        doctrine=0.0,
+        consistency=0.0,
+        safety=0.0,
+        coverage=0.0,
+        empathy=0.0,
+    )
 
 
 class CognitiveDirector:
@@ -151,7 +152,7 @@ class CognitiveDirector:
                 decision = Decision(
                     action="escalate",
                     reason="pregunta_repetida",
-                    evaluation=_EARLY_EXIT_EVAL,
+                    evaluation=_early_exit_evaluation(),
                     draft_text=None,
                     mode_restriction_applied=None,
                 )
