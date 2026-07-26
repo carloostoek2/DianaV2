@@ -388,6 +388,117 @@ class TraceabilityReader(Protocol):
     async def count_recent(self, chat_id: int | None = None) -> int: ...
 
 
+# --- F3 proactivity (recontact + promo) ports ---------------------------------
+
+
+class RecontactScheduleRecord(BaseModel):
+    """recontact_schedules row shape.
+
+    Status domain: pending | done | cancelled.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    vip_id: UUID
+    last_contact_at: datetime
+    next_contact_at: datetime | None = None
+    status: str
+
+
+class PromoTriggerRecord(BaseModel):
+    """promo_triggers row shape (exact-match text + sequence + re-intro)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    trigger_text: str
+    response_sequence: list[str]
+    repeat_first_message: str | None = None
+    is_active: bool = True
+
+
+class PromoExecutionRecord(BaseModel):
+    """promo_executions row shape.
+
+    Status domain: sent | failed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    chat_id: int
+    trigger_id: UUID
+    sent_at: datetime
+    sequence_sent: list[str] | dict | None = None
+    status: str
+
+
+@runtime_checkable
+class RecontactScheduleStore(Protocol):
+    """CRUD/query surface for VIP recontact schedules (no eligibility logic)."""
+
+    async def upsert_pending(
+        self,
+        vip_id: UUID,
+        last_contact_at: datetime,
+        next_contact_at: datetime | None,
+    ) -> RecontactScheduleRecord: ...
+
+    async def get_pending_by_vip(
+        self, vip_id: UUID
+    ) -> RecontactScheduleRecord | None: ...
+
+    async def list_due(self, now: datetime) -> list[RecontactScheduleRecord]:
+        """Pending rows with next_contact_at <= now."""
+        ...
+
+    async def cancel_pending(self, vip_id: UUID) -> bool:
+        """pending → cancelled for vip. False if none pending."""
+        ...
+
+    async def mark_done(self, schedule_id: UUID) -> bool:
+        """Mark schedule done by id. False if not found."""
+        ...
+
+
+@runtime_checkable
+class PromoTriggerStore(Protocol):
+    """Active promo trigger lookup.
+
+    Match is exact and case-insensitive (strip + lower) against trigger_text.
+    """
+
+    async def get_active_by_trigger_text(
+        self, text: str
+    ) -> PromoTriggerRecord | None: ...
+
+    async def list_active(self) -> list[PromoTriggerRecord]: ...
+
+
+@runtime_checkable
+class PromoExecutionStore(Protocol):
+    """Promo delivery history (thin insert/query only)."""
+
+    async def insert(
+        self,
+        chat_id: int,
+        trigger_id: UUID,
+        sequence_sent: list[str] | None,
+        status: str = "sent",
+    ) -> PromoExecutionRecord: ...
+
+    async def latest_for_chat_trigger(
+        self, chat_id: int, trigger_id: UUID
+    ) -> PromoExecutionRecord | None: ...
+
+    async def was_sent_since(
+        self, chat_id: int, trigger_id: UUID, since: datetime
+    ) -> bool:
+        """True if a status=sent execution exists with sent_at >= since."""
+        ...
+
+
 __all__ = [
     "ApprovalRecord",
     "BehaviorCanceller",
@@ -407,6 +518,12 @@ __all__ = [
     "OwnerNotifierPort",
     "PendingApprovalStore",
     "PendingDeliveryStore",
+    "PromoExecutionRecord",
+    "PromoExecutionStore",
+    "PromoTriggerRecord",
+    "PromoTriggerStore",
+    "RecontactScheduleRecord",
+    "RecontactScheduleStore",
     "TraceabilityReader",
     "TraceReader",
     "TurnRecord",

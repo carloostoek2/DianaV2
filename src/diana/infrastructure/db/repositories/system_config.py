@@ -52,6 +52,22 @@ class SqlSystemConfigStore:
         value = await self.get("supervised_thresholds")
         return dict(value) if isinstance(value, dict) else {}
 
+    async def get_recontact_config(self) -> dict[str, Any]:
+        """Read recontact JSON blob from system_config.
+
+        Returns ``{}`` when missing or non-dict; caller applies pure defaults.
+        """
+        value = await self.get("recontact")
+        return dict(value) if isinstance(value, dict) else {}
+
+    async def get_promo_config(self) -> dict[str, Any]:
+        """Read promo JSON blob from system_config.
+
+        Returns ``{}`` when missing or non-dict; caller applies pure defaults.
+        """
+        value = await self.get("promo")
+        return dict(value) if isinstance(value, dict) else {}
+
     async def get_feature_flags(self) -> dict[str, bool]:
         """Read all FEATURE_* keys from system_config. Returns {key: bool_value}.
 
