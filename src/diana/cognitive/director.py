@@ -25,15 +25,18 @@ from diana.cognitive.timing import TimingContext
 from diana.cognitive.models import (
     AnalystInput,
     Decision,
+    EvaluationProfile,
     EvaluatorInput,
     HistoryMessage,
     IncomingTurn,
     TurnStatus,
 )
+from diana.cognitive.repetition_guard import RepetitionGuard
 from diana.cognitive.planner import Planner
 from diana.cognitive.ports import (
     MessageHistoryPort,
     NoOpTurnStatusSink,
+    RecentIntentsPort,
     TraceStore,
     TurnStatusSink,
     to_jsonable,
@@ -48,6 +51,17 @@ _ROLE_TO_AUTOR: dict[str, str] = {
     "vip": "vip",
     "owner": "dueña",
 }
+
+# Sentinel evaluation for Decision-only early exits (reason is source of truth).
+_EARLY_EXIT_EVAL = EvaluationProfile(
+    naturalness=0.0,
+    precision=0.0,
+    doctrine=0.0,
+    consistency=0.0,
+    safety=0.0,
+    coverage=0.0,
+    empathy=0.0,
+)
 
 
 class CognitiveDirector:
@@ -69,6 +83,8 @@ class CognitiveDirector:
         analyst_history_limit: int = ANALYST_HISTORY_LIMIT,
         status_sink: TurnStatusSink | None = None,
         style_rules: list[str] | None = None,
+        recent_intents: RecentIntentsPort | None = None,
+        repetition_guard: RepetitionGuard | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -83,6 +99,8 @@ class CognitiveDirector:
         self._history = history
         self._analyst_history_limit = analyst_history_limit
         self._status = status_sink or NoOpTurnStatusSink()
+        self._recent_intents = recent_intents
+        self._repetition_guard = repetition_guard
 
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
         """Run the F1 cognitive pipeline for one inbound turn.
@@ -121,6 +139,24 @@ class CognitiveDirector:
             comprehension = await self._analyst.analyze(analyst_input)
         timings["analyst_ms"] = tc.elapsed_ms
         await self._store(turn_id, "comprehension", comprehension)
+
+        # H4: 3+ consecutive same intent → Decision-only escalate (no Planner+).
+        if self._recent_intents is not None and self._repetition_guard is not None:
+            recent = await self._recent_intents.get_recent_intents(
+                turn.chat_id,
+                limit=max(self._repetition_guard.threshold - 1, 0),
+                exclude_turn_id=turn.turn_id,
+            )
+            if self._repetition_guard.is_repeated(comprehension.intent, recent):
+                decision = Decision(
+                    action="escalate",
+                    reason="pregunta_repetida",
+                    evaluation=_EARLY_EXIT_EVAL,
+                    draft_text=None,
+                    mode_restriction_applied=None,
+                )
+                await self._store(turn_id, "decision", decision)
+                return decision
 
         await self._status.transition(turn_id, TurnStatus.PLANNING)
         with TimingContext("planner") as tc:

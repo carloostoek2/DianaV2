@@ -163,6 +163,51 @@ class SqlTraceStore:
             result = await session.execute(stmt)
             return result.scalar_one()
 
+
+    async def get_recent_intents(
+        self,
+        chat_id: int,
+        *,
+        limit: int = 2,
+        exclude_turn_id: UUID | None = None,
+    ) -> list[str]:
+        """Return prior-turn comprehension intents for chat (newest first).
+
+        Skips rows with missing/empty intent. Optional ``exclude_turn_id`` drops
+        the current turn after comprehension was stored.
+        """
+        if limit <= 0:
+            return []
+        stmt = (
+            select(PipelineTrace.turn_id, PipelineTrace.comprehension)
+            .where(
+                PipelineTrace.chat_id == chat_id,
+                PipelineTrace.comprehension.is_not(None),
+            )
+            .order_by(PipelineTrace.created_at.desc())
+        )
+        if exclude_turn_id is not None:
+            stmt = stmt.where(PipelineTrace.turn_id != exclude_turn_id)
+        # Oversample then filter empties so limit is on non-empty intents.
+        stmt = stmt.limit(max(limit * 4, limit))
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+        out: list[str] = []
+        for _turn_id, comprehension in rows:
+            if not isinstance(comprehension, dict):
+                continue
+            intent = comprehension.get("intent")
+            if intent is None:
+                continue
+            intent_s = str(intent).strip()
+            if not intent_s:
+                continue
+            out.append(intent_s)
+            if len(out) >= limit:
+                break
+        return out
+
     async def purge_expired(self, ttl_days: int | None = None) -> int:
         """Delete pipeline_traces rows older than TTL, batched.
 

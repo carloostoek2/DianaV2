@@ -23,9 +23,12 @@ from diana.cognitive.planner import Planner
 from diana.cognitive.ports import (
     TRACE_KEYS,
     InMemoryMessageHistory,
+    InMemoryRecentIntents,
     InMemoryTraceStore,
     InMemoryTurnStatusSink,
 )
+from diana.cognitive.repetition_guard import RepetitionGuard
+from unittest.mock import AsyncMock, MagicMock
 from diana.cognitive.registry import build_default_registry
 from diana.llm.fake import FakeLLM
 
@@ -77,6 +80,8 @@ def make_director(
     analyst_history_limit: int = 8,
     context_builder: ContextBuilder | None = None,
     max_prompt_chars: int | None = None,
+    recent_intents: InMemoryRecentIntents | None = None,
+    repetition_guard: RepetitionGuard | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -99,6 +104,8 @@ def make_director(
         status_sink=status_sink,
         history=history,
         analyst_history_limit=analyst_history_limit,
+        recent_intents=recent_intents,
+        repetition_guard=repetition_guard,
     )
     return director, trace, history
 
@@ -930,3 +937,79 @@ async def test_style_rules_reach_prompt_text() -> None:
     assert distinctive in prompt
     assert "Máximo 2-3 líneas por mensaje." in prompt
     assert "vip-style-check" in prompt
+
+# ── H4 pregunta_repetida early-exit ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_repetition_early_exit_skips_generator_evaluator_planner() -> None:
+    """3× same intent → escalate pregunta_repetida; Planner/Gen/Eval not called."""
+    intents = InMemoryRecentIntents()
+    intents.seed(42, ["precio", "precio"])  # 2 prior; current makes streak 3
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="precio", risk="bajo"),
+            # Evaluator must NOT be called; if it is, structured queue empties
+            _profile(safety=0.9),
+        ],
+        text_responses=["should-not-generate"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        recent_intents=intents,
+        repetition_guard=RepetitionGuard(threshold=3),
+    )
+    # Spy collaborators after construction
+    director._planner.plan = MagicMock(side_effect=director._planner.plan)  # type: ignore[method-assign]
+    director._generator.generate = AsyncMock(side_effect=director._generator.generate)  # type: ignore[method-assign]
+    director._evaluator.evaluate = AsyncMock(side_effect=director._evaluator.evaluate)  # type: ignore[method-assign]
+
+    turn = _turn(chat_id=42, text="otra vez el precio")
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "escalate"
+    assert decision.reason == "pregunta_repetida"
+    assert decision.draft_text is None
+    assert trace.get(turn.turn_id, "comprehension") is not None
+    assert trace.get(turn.turn_id, "decision") is not None
+    assert trace.get(turn.turn_id, "plan") is None
+    assert trace.get(turn.turn_id, "generated_text") is None
+    director._planner.plan.assert_not_called()  # type: ignore[attr-defined]
+    director._generator.generate.assert_not_called()  # type: ignore[attr-defined]
+    director._evaluator.evaluate.assert_not_called()  # type: ignore[attr-defined]
+    # Analyst only: one structured call
+    methods = [name for name, _ in llm.calls]
+    assert methods == ["generate_structured"]
+
+
+@pytest.mark.asyncio
+async def test_repetition_not_triggered_with_two_total() -> None:
+    """1 prior same intent → full pipeline continues (approve path)."""
+    intents = InMemoryRecentIntents()
+    intents.seed(42, ["precio"])  # streak would be 2 < 3
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="precio", risk="bajo"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Full path draft"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        recent_intents=intents,
+        repetition_guard=RepetitionGuard(threshold=3),
+    )
+    turn = _turn(chat_id=42, text="precio de nuevo")
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "approve"
+    assert decision.draft_text == "Full path draft"
+    assert trace.get(turn.turn_id, "plan") is not None
+    assert trace.get(turn.turn_id, "generated_text") == "Full path draft"
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+

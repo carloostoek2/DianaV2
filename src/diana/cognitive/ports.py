@@ -119,6 +119,24 @@ class TraceStore(Protocol):
 
     async def store(self, turn_id: UUID, key: str, value: Any) -> None: ...
 
+@runtime_checkable
+class RecentIntentsPort(Protocol):
+    """Prior-turn intents for repetition detection (H4).
+
+    Returns intent strings newest-first (DESC). Implementations MUST skip
+    missing/empty intent rows. ``exclude_turn_id`` drops the current turn when
+    comprehension was already stored.
+    """
+
+    async def get_recent_intents(
+        self,
+        chat_id: int,
+        *,
+        limit: int = 2,
+        exclude_turn_id: UUID | None = None,
+    ) -> list[str]: ...
+
+
 
 @runtime_checkable
 class TurnStatusSink(Protocol):
@@ -163,6 +181,49 @@ class InMemoryMessageHistory:
         self._messages[chat_id] = list(messages)
 
 
+
+class InMemoryRecentIntents:
+    """Test double for RecentIntentsPort.
+
+    Seeds store ``(turn_id|None, intent)`` newest-first per chat_id.
+    """
+
+    def __init__(self) -> None:
+        self._by_chat: dict[int, list[tuple[UUID | None, str]]] = {}
+
+    def seed(
+        self,
+        chat_id: int,
+        intents: list[str] | list[tuple[UUID | None, str]],
+    ) -> None:
+        rows: list[tuple[UUID | None, str]] = []
+        for item in intents:
+            if isinstance(item, tuple):
+                rows.append(item)
+            else:
+                rows.append((None, item))
+        self._by_chat[chat_id] = rows
+
+    async def get_recent_intents(
+        self,
+        chat_id: int,
+        *,
+        limit: int = 2,
+        exclude_turn_id: UUID | None = None,
+    ) -> list[str]:
+        rows = self._by_chat.get(chat_id, [])
+        out: list[str] = []
+        for turn_id, intent in rows:
+            if exclude_turn_id is not None and turn_id == exclude_turn_id:
+                continue
+            if not intent or not str(intent).strip():
+                continue
+            out.append(str(intent))
+            if len(out) >= limit:
+                break
+        return out
+
+
 class NoOpTurnStatusSink:
     """Discard status transitions."""
 
@@ -185,11 +246,13 @@ __all__ = [
     "TRACE_KEYS",
     "TRACE_KEY_TO_COLUMN",
     "InMemoryMessageHistory",
+    "InMemoryRecentIntents",
     "InMemoryTraceStore",
     "InMemoryTurnStatusSink",
     "LLMProvider",
     "MessageHistoryPort",
     "NoOpTurnStatusSink",
+    "RecentIntentsPort",
     "Retriever",
     "TraceStore",
     "TurnContext",
