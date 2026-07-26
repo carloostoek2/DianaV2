@@ -134,6 +134,13 @@ class AdminMetricsService:
             status=status,
         )
 
+    async def render_week_summary(
+        self, week_start: date | None = None
+    ) -> tuple[str, str]:
+        """Return (body_text, status) where status is MetricsSummary.status."""
+        summary = await self.get_week_summary(week_start)
+        return self.format_summary_text(summary), summary.status
+
     def format_summary_text(self, summary: MetricsSummary) -> str:
         start_lbl, end_lbl = format_week_range_label(
             summary.week_start, summary.week_end

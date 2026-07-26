@@ -232,6 +232,25 @@ class TestFormatSummaryText:
         assert "- Falsos positivos de escalación: 2 (↓ 50%)" in text
 
 
+class TestRenderWeekSummary:
+    async def test_seeded_week_returns_ok_and_matches_format(
+        self, svc: AdminMetricsService, store: FakeLearningMetricsStore
+    ) -> None:
+        week = date(2026, 7, 20)
+        store.seed(week, _full_values())
+        body, status = await svc.render_week_summary(week)
+        summary = await svc.get_week_summary(week)
+        assert status == "ok"
+        assert body == svc.format_summary_text(summary)
+
+    async def test_empty_week_returns_empty_status(
+        self, svc: AdminMetricsService
+    ) -> None:
+        body, status = await svc.render_week_summary(date(2026, 7, 20))
+        assert status == "empty"
+        assert "Sin métricas" in body
+
+
 class TestExportWeekJson:
     async def test_export_includes_week_and_values(
         self, svc: AdminMetricsService, store: FakeLearningMetricsStore
