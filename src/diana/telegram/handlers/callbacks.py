@@ -11,15 +11,28 @@ from uuid import UUID
 from aiogram import Router
 from aiogram.types import BufferedInputFile, CallbackQuery
 
+from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.telegram.helpers import _format_relative_time
 from diana.telegram.keyboards import (
     parse_callback,
+    parse_metrics_callback,
     parse_trace_callback,
     step_detail_keyboard,
     trace_detail_keyboard,
     trace_list_keyboard,
+)
+
+ADMIN_MENU_TEXT = (
+    "Diana F1 admin\n"
+    "/add_vip <telegram_user_id> [name]\n"
+    "/remove_vip <telegram_user_id>\n"
+    "Draft buttons: Approve / Correct / Escalate\n"
+    "/turnos — recent turns\n"
+    "/traza <id> — trace detail\n"
+    "/resumen — weekly learning metrics\n"
+    "/metricas — alias of /resumen"
 )
 
 logger = logging.getLogger("diana.telegram")
@@ -98,8 +111,23 @@ async def dispatch_owner_callback(
     callback_data: str,
     actor_id: int | None,
     admin_trace: AdminTraceService | None = None,
+    admin_metrics: AdminMetricsService | None = None,
+    owner_telegram_id: int | None = None,
 ) -> str:
     """Domain dispatch for unit tests. Returns honest status token."""
+
+    # Metrics dashboard callbacks (mx:e / mx:b).
+    metrics_action = parse_metrics_callback(callback_data)
+    if metrics_action is not None:
+        if owner_telegram_id is not None and actor_id != owner_telegram_id:
+            return "forbidden"
+        if metrics_action == "back":
+            return "metrics_back"
+        if admin_metrics is None:
+            return "metrics_unavailable"
+        if metrics_action == "export":
+            return "metrics_export"
+        return "ignored"
 
     # Check trace callbacks first (vt, td, tp, tj).
     trace_parsed = parse_trace_callback(callback_data)
@@ -214,6 +242,7 @@ def build_callback_router(
     admin: AdminService,
     correct_sessions: CorrectSessionStore | None = None,
     admin_trace: AdminTraceService | None = None,
+    admin_metrics: AdminMetricsService | None = None,
     owner_telegram_id: int | None = None,
 ) -> Router:
     router = Router(name="callbacks")
@@ -223,6 +252,32 @@ def build_callback_router(
     async def on_callback(query: CallbackQuery, **_: Any) -> None:
         actor_id = query.from_user.id if query.from_user else None
         data = query.data or ""
+
+        # ---- Metrics dashboard callbacks (mx:e / mx:b) ----
+        metrics_action = parse_metrics_callback(data)
+        if metrics_action is not None:
+            if owner_telegram_id is not None and actor_id != owner_telegram_id:
+                await query.answer("Not authorized", show_alert=True)
+                return
+            if metrics_action == "back":
+                if query.message:
+                    await query.message.answer(ADMIN_MENU_TEXT)
+                await query.answer()
+                return
+            if metrics_action == "export":
+                if admin_metrics is None:
+                    await query.answer("Métricas no disponibles", show_alert=True)
+                    return
+                try:
+                    payload = await admin_metrics.export_week_json()
+                except Exception:
+                    logger.exception("Error exporting metrics JSON")
+                    await query.answer("Error al exportar", show_alert=True)
+                    return
+                if query.message:
+                    await query.message.answer(payload)
+                await query.answer()
+                return
 
         # ---- Trace callbacks (handled before standard dispatch) ----
         trace_parsed = parse_trace_callback(data)
@@ -370,6 +425,7 @@ def build_callback_router(
 
 
 __all__ = [
+    "ADMIN_MENU_TEXT",
     "DEFAULT_CORRECT_TTL",
     "CorrectSessionStore",
     "build_callback_router",
