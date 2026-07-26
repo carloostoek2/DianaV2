@@ -29,6 +29,7 @@ from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 from diana.telegram.middlewares import F2_MIDDLEWARE_ORDER
 from diana.telegram.middlewares.auth import AuthMiddleware
 from diana.telegram.middlewares.business_connection import BusinessConnectionMiddleware
+from diana.telegram.middlewares.error_handler import ErrorHandlerMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
@@ -86,7 +87,7 @@ def build_dispatcher(
     sessions = correct_sessions or CorrectSessionStore()
 
     # first registered = outermost (aiogram wraps with reversed()).
-    # F2 execution order: Logging → BC → Owner → FreezeCheck → Forbidden → Auth → handler.
+    # Order: ErrorHandler → Logging → BC → Owner → FreezeCheck → Forbidden → Auth → handler.
     forbidden_mw = ForbiddenKeywordsMiddleware(
         keywords=forbidden_keywords,
         coordinator=coordinator,
@@ -95,6 +96,7 @@ def build_dispatcher(
         vips=vips,
     )
     middlewares: list[Any] = [
+        ErrorHandlerMiddleware(),
         LoggingMiddleware(),
         BusinessConnectionMiddleware(),
         OwnerDetectionMiddleware(
@@ -155,7 +157,7 @@ def build_dispatcher(
 
 
 def registered_middleware_names() -> tuple[str, ...]:
-    """F2 ordered middleware names (FreezeCheck at position 4)."""
+    """Ordered middleware names (ErrorHandler@0, FreezeCheck@4)."""
     return F2_MIDDLEWARE_ORDER
 
 

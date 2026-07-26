@@ -1,4 +1,4 @@
-"""F2 middleware registration order — live Dispatcher + FreezeCheck at position 4."""
+"""F2 middleware registration order — live Dispatcher + ErrorHandler outermost."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ from diana.telegram.setup import (
 def test_f2_middleware_order_constant() -> None:
     assert registered_middleware_names() == F2_MIDDLEWARE_ORDER
     assert registered_middleware_names() == (
+        "ErrorHandlerMiddleware",
         "LoggingMiddleware",
         "BusinessConnectionMiddleware",
         "OwnerDetectionMiddleware",
@@ -38,7 +39,7 @@ def test_f2_middleware_order_constant() -> None:
 
 def test_f2_middleware_includes_freeze_check() -> None:
     names = registered_middleware_names()
-    assert names[3] == "FreezeCheckMiddleware"
+    assert names[4] == "FreezeCheckMiddleware"
 
 
 def _fake_orchestrator() -> MagicMock:
@@ -86,6 +87,12 @@ def test_build_dispatcher_registers_f2_order_on_business_message() -> None:
     assert live == F2_MIDDLEWARE_ORDER
     live_msg = extract_observer_middleware_names(wiring.dispatcher.message)
     assert live_msg == F2_MIDDLEWARE_ORDER
+    assert live[0] == "ErrorHandlerMiddleware"
+    assert live_msg[0] == "ErrorHandlerMiddleware"
     assert "FreezeCheckMiddleware" in live
-    # Verify position 4 (index 3) is FreezeCheck
-    assert live[3] == "FreezeCheckMiddleware"
+    # Verify position 5 (index 4) is FreezeCheck after ErrorHandler prepend
+    assert live[4] == "FreezeCheckMiddleware"
+
+    live_cb = extract_observer_middleware_names(wiring.dispatcher.callback_query)
+    assert live_cb[0] == "ErrorHandlerMiddleware"
+    assert "FreezeCheckMiddleware" not in live_cb

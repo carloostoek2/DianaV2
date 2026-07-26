@@ -301,8 +301,8 @@ def test_f1_middleware_order_acceptance() -> None:
     )
 
     names = registered_middleware_names()
-    assert names[0] == "LoggingMiddleware"
-    assert names[3] == "FreezeCheckMiddleware"
+    assert names[0] == "ErrorHandlerMiddleware"
+    assert names[4] == "FreezeCheckMiddleware"
     assert names[-1] == "AuthMiddleware"
 
     deliveries = InMemoryPendingDeliveryStore()
