@@ -133,7 +133,9 @@ class AnalystInput(BaseModel):
 class Comprehension(BaseModel):
     """Analyst output: what is happening in this turn (contrato A.3).
 
-    All six needs_* flags are required — no partial comprehension.
+    Six needs_* flags are required — no partial comprehension for the original
+    capability set. Two optional flags (persona_facts / voice_patterns) default
+    to False for historical JSONB and constructor compatibility.
     Optional internal raw capture field is excluded from LLM required set.
     """
 
@@ -150,6 +152,8 @@ class Comprehension(BaseModel):
     needs_examples: bool
     needs_history: bool
     needs_context: bool
+    needs_persona_facts: bool = False
+    needs_voice_patterns: bool = False
     raw_llm_output: dict | None = None
 
 

@@ -281,6 +281,42 @@ def test_comprehension_requires_all_needs_flags(missing_need: str) -> None:
         Comprehension(**data)
 
 
+
+def test_comprehension_optional_persona_voice_needs_default_false() -> None:
+    """H0: needs_persona_facts / needs_voice_patterns default False when omitted."""
+    from diana.cognitive.models import Comprehension
+
+    c = Comprehension(
+        intent="saludo",
+        topics=[],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        **_NEEDS,
+    )
+    assert c.needs_persona_facts is False
+    assert c.needs_voice_patterns is False
+
+
+def test_comprehension_persona_voice_needs_round_trip_true() -> None:
+    """H0: explicit True values round-trip on new optional needs flags."""
+    from diana.cognitive.models import Comprehension
+
+    c = Comprehension(
+        intent="bio",
+        topics=["familia"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        **_NEEDS,
+        needs_persona_facts=True,
+        needs_voice_patterns=True,
+    )
+    assert c.needs_persona_facts is True
+    assert c.needs_voice_patterns is True
+
+
+
 def test_analyst_input_and_history_message_shape() -> None:
     from diana.cognitive.models import AnalystInput, HistoryMessage
 
