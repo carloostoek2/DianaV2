@@ -91,7 +91,7 @@
 
 ## Docs commit
 
-_(filled after git commit)_
+`f8f0ecd` — `docs(f3): close pool3 metrics and phase status`
 
 ## Next Steps
 
