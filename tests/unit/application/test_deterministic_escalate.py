@@ -206,3 +206,73 @@ async def test_template_helper_has_no_director_param() -> None:
     assert "director" not in names
     assert "llm" not in names
 
+
+
+@pytest.mark.asyncio
+async def test_template_soft_fail_still_escalates(escalate_graph: dict, caplog) -> None:
+    """DeliveryResult(success=False) logs and still escalates (never silent)."""
+    from unittest.mock import AsyncMock
+
+    from diana.application.deterministic_escalate import (
+        handle_deterministic_template_escalate,
+    )
+    from diana.application.ports import DeliveryResult
+
+    g = escalate_graph
+    soft = AsyncMock(
+        return_value=DeliveryResult(success=False, error="vip_frozen", cancelled=True)
+    )
+    behavior = AsyncMock()
+    behavior.deliver = soft
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="diana.application"):
+        turn_id = await handle_deterministic_template_escalate(
+            coordinator=g["coordinator"],
+            escalations=g["escalations"],
+            notifier=g["notifier"],
+            behavior=behavior,
+            chat_id=42,
+            text="sos un bot?",
+            vip_id=None,
+            business_connection_id="bc-1",
+            message_id=30,
+            keywords_hit=["sos un bot"],
+        )
+    rec = await g["turns"].get(turn_id)
+    assert rec is not None and rec.status == "escalated"
+    assert g["escalations"].events
+    assert g["notifier"].escalations
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("soft_fail" in m for m in msgs), msgs
+
+
+@pytest.mark.asyncio
+async def test_template_exception_still_escalates(escalate_graph: dict) -> None:
+    from unittest.mock import AsyncMock
+
+    from diana.application.deterministic_escalate import (
+        handle_deterministic_template_escalate,
+    )
+
+    g = escalate_graph
+    behavior = AsyncMock()
+    behavior.deliver = AsyncMock(side_effect=RuntimeError("send down"))
+
+    turn_id = await handle_deterministic_template_escalate(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        behavior=behavior,
+        chat_id=42,
+        text="sos un bot?",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=31,
+        keywords_hit=["sos un bot"],
+    )
+    rec = await g["turns"].get(turn_id)
+    assert rec is not None and rec.status == "escalated"
+    assert g["escalations"].events[0]["tipo"] == "identidad_ia"
+    assert len(g["notifier"].escalations) == 1

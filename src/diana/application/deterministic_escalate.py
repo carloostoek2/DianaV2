@@ -7,11 +7,11 @@ IA path may deliver a fixed VIP template before escalating.
 from __future__ import annotations
 
 import logging
-from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from diana.application.j4_triggers import IA_TEMPLATE
 from diana.application.ports import (
+    BehaviorDeliverer,
     DeliveryContext,
     EscalationNotification,
     EscalationStore,
@@ -26,19 +26,6 @@ FORBIDDEN_TIPO = "palabra_prohibida"
 TIPO_PAGO_PRECIO = "pago_precio"
 TIPO_IDENTIDAD_IA = "identidad_ia"
 TIPO_COMPROMISO_REAL = "compromiso_real"
-
-
-@runtime_checkable
-class BehaviorDeliverer(Protocol):
-    """Minimal deliver surface for IA template path (avoids deep behavior import)."""
-
-    async def deliver(
-        self,
-        texts: list[str],
-        ctx: DeliveryContext,
-        turn_id: UUID,
-        decision: object | None = None,
-    ) -> object: ...
 
 
 async def handle_deterministic_escalation(
@@ -116,8 +103,8 @@ async def handle_deterministic_template_escalate(
 ) -> UUID:
     """Deliver fixed VIP template (if business connection present), then escalate.
 
-    Still no Director/LLM. Deliver failure is logged; escalate still proceeds
-    so the owner always sees the event.
+    Still no Director/LLM. Soft deliver failure (success=False) and exceptions
+    are logged; escalate still proceeds so the owner always sees the event.
     """
     record = await coordinator.begin_turn(
         chat_id=chat_id,
@@ -135,7 +122,19 @@ async def handle_deterministic_template_escalate(
             is_frozen=False,
         )
         try:
-            await behavior.deliver([template], ctx, turn_id)
+            result = await behavior.deliver([template], ctx, turn_id)
+            success = getattr(result, "success", None)
+            if success is False:
+                logger.warning(
+                    "deterministic_template_deliver_soft_fail",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": chat_id,
+                        "tipo": tipo,
+                        "error": getattr(result, "error", None),
+                        "cancelled": getattr(result, "cancelled", False),
+                    },
+                )
         except Exception:
             logger.exception(
                 "deterministic_template_deliver_failed",
@@ -179,7 +178,6 @@ async def handle_deterministic_template_escalate(
 
 
 __all__ = [
-    "BehaviorDeliverer",
     "FORBIDDEN_TIPO",
     "TIPO_COMPROMISO_REAL",
     "TIPO_IDENTIDAD_IA",

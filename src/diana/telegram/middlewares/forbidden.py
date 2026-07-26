@@ -15,12 +15,16 @@ from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
 from diana.application.deterministic_escalate import (
-    BehaviorDeliverer,
     handle_deterministic_escalation,
     handle_deterministic_template_escalate,
 )
 from diana.application.j4_triggers import classify_j4_text, match_keywords
-from diana.application.ports import EscalationStore, OwnerNotifierPort, VipStore
+from diana.application.ports import (
+    BehaviorDeliverer,
+    EscalationStore,
+    OwnerNotifierPort,
+    VipStore,
+)
 from diana.application.turn_coordinator import TurnCoordinator
 
 logger = logging.getLogger("diana.telegram")
@@ -36,6 +40,10 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
 
     Does **not** run on private (non-business) traffic — owner free-text correct
     and non-owner DMs must not short-circuit or supersede VIP chats.
+
+    When ``vips`` is injected, only allowlisted VIP users escalate (defense in
+    depth if stack order is Auth → Forbidden). Non-VIP business continues to
+    the next middleware/handler (promo/drop).
     """
 
     def __init__(
@@ -79,6 +87,23 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         if data.get("is_owner"):
             return await handler(event, data)
 
+        # VIP allowlist gate when store present (non-VIP → pass; no owner spam).
+        chat_id = event.chat.id if event.chat else 0
+        user = event.from_user
+        if self._vips is not None:
+            if user is None:
+                return await handler(event, data)
+            allowed = await self._vips.is_allowed(user.id)
+            if not allowed:
+                logger.info(
+                    "j4_forbidden_skip_non_vip",
+                    extra={
+                        "chat_id": chat_id,
+                        "telegram_user_id": user.id,
+                    },
+                )
+                return await handler(event, data)
+
         text = event.text or event.caption or ""
         j4 = classify_j4_text(text)
         forbidden_hits = (
@@ -87,7 +112,6 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         if j4 is None and not forbidden_hits:
             return await handler(event, data)
 
-        chat_id = event.chat.id if event.chat else 0
         vip_id = data.get("vip_id")
         if vip_id is not None and not isinstance(vip_id, UUID):
             try:
@@ -95,13 +119,11 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
             except ValueError:
                 vip_id = None
 
-        # Auth runs after Forbidden — resolve VIP by telegram user when missing.
-        if vip_id is None and self._vips is not None:
-            user = event.from_user
-            if user is not None:
-                rec = await self._vips.get_by_telegram_user_id(user.id)
-                if rec is not None:
-                    vip_id = rec.id
+        # Resolve VIP by telegram user when Auth has not set vip_id yet.
+        if vip_id is None and self._vips is not None and user is not None:
+            rec = await self._vips.get_by_telegram_user_id(user.id)
+            if rec is not None:
+                vip_id = rec.id
 
         if j4 is not None and j4.category == "identidad_ia":
             if self._behavior is None:
