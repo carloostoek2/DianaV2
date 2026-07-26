@@ -19,6 +19,10 @@
 - [f3-item2-decider](impact-analyzer/f3-item2-decider.md) — 2026-07-25 — F3 Pool1 item2: Decider autonomous rules H3.1 (send iff flag+*_min; no orchestrator/AutonomousModeService)
 - [f3-item3-ams](impact-analyzer/f3-item3-ams.md) — 2026-07-25 — F3 Pool1 item3: AMS + orch send→Behavior.deliver + composition wire; auto_send schema gap; deliver-outside-lock
 - [f3-item4-behavior](impact-analyzer/f3-item4-behavior.md) — 2026-07-25 — F3 Pool1 item4: Behavior is_frozen hard-check + DeliveryContext allow_split/quirks + deliver_with_sequence + FEATURE_ADVANCED_BEHAVIOR wiring (H3.6 parcial)
+- [telegram-hardener-3w-item1-error-safety](impact-analyzer/telegram-hardener-3w-item1-error-safety.md) — 2026-07-26 — ErrorHandler outermost + callback/business guards + FreezeCheck fail-CLOSED on lookup error
+- [telegram-hardener-3w-item2-ops-surface](impact-analyzer/telegram-hardener-3w-item2-ops-surface.md) — 2026-07-26 — GET /health + RateLimitMiddleware + DedupMiddleware (telegram/ops edge only; ErrorHandler stays outermost)
+- [telegram-hardener-3w-item3-thin-handlers](impact-analyzer/telegram-hardener-3w-item3-thin-handlers.md) — 2026-07-26 — Extract trace/metrics presentation from thick handlers into AdminTraceService/AdminMetricsService (plain text/DTOs; no aiogram in application)
+- [telegram-hardener-3w-item4-scale-debt](impact-analyzer/telegram-hardener-3w-item4-scale-debt.md) — 2026-07-26 — Single-instance docs + CorrectSession UX/logging + modest orch extract + log_swallowed (no Redis)
 
 ## Arch Enforcer
 
@@ -42,6 +46,12 @@
 - [f3-item4b-rich-quirks](arch-enforcer/f3-item4b-rich-quirks.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; three kinds pause|natural_split|typo_correct under dual gate; pure quirks.py; no LLM; composition p=0.05
 - [f3-p2-item1-schema](arch-enforcer/f3-p2-item1-schema.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; 008 recontact/promo schema+ORM+thin repos; zero runtime; flags stay false
 - [f3-pool2-proactivity](arch-enforcer/f3-pool2-proactivity.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; pool items 1–4: no LLM recontact/promo, promo exact match, TC BR-07 cancel, Behavior acts-only, flags default false, layers OK; medium residual claimed approvals in is_blocked
+- [f3-pool3-metrics](arch-enforcer/f3-pool3-metrics.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical; calibration jobs-only + flag-gated threshold writes; metrics observational; dashboard pure; margin 0.05; EAV; residuals: hourly cal job / baseline cache / no hot-reload
+- [f3-residuals](arch-enforcer/f3-residuals.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical (re-audit); RuntimeThresholds in cognitive; App→Cog only; AMS mins still ctor-frozen (medium); handoff test-guardian
+- [telegram-hardener-3w-item1-error-safety](arch-enforcer/telegram-hardener-3w-item1-error-safety.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; ErrorHandler outermost + Freeze fail-closed + callback/business edge guards; telegram-only scope
+- [telegram-hardener-3w-item2-ops-surface](arch-enforcer/telegram-hardener-3w-item2-ops-surface.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Dedup+RateLimit order + health stdlib at telegram edge; F3 flags intact; no cognitive
+- [telegram-hardener-3w-item3-thin-handlers](arch-enforcer/telegram-hardener-3w-item3-thin-handlers.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; no aiogram in application; keyboards only telegram; handlers thin; no cognitive
+- [telegram-hardener-3w-item4-scale-debt](arch-enforcer/telegram-hardener-3w-item4-scale-debt.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; single-instance docs honest; learning post-turn; deliver outside lock; log_swallowed purity
 
 ## Test Guardian
 
@@ -65,6 +75,11 @@
 - [f3-item4b-rich-quirks](test-guardian/f3-item4b-rich-quirks.md) — 2026-07-26 — **suite protege adecuadamente**, three quirk kinds (pause/natural_split/typo) + dual-gate + purity, 0 mocks prohibidos; primary 124 (executor) → run-tests orchestrator
 - [f3-p2-item1-schema](test-guardian/f3-p2-item1-schema.md) — 2026-07-26 — **suite protege adecuadamente**, migration 008+ORM19+ports/repos surface+seeds, 0 mocks prohibidos; executor 68 passed → run-tests + review
 - [f3-pool2-proactivity](test-guardian/f3-pool2-proactivity.md) — 2026-07-26 — **suite protege adecuadamente**, pool2 items1–4 (schema+recontact matrix+BR-07 cancel+promo re-intro), 0 mocks prohibidos; executor packages 68/133/113/139 → run-tests + review/documentador
+- [f3-pool3-metrics](test-guardian/f3-pool3-metrics.md) — 2026-07-26 — **suite protege adecuadamente**, pool3 items1–4 (calibrate margin/drift, §7.1 EAV, /resumen, composition+main jobs flags), 0 mocks prohibidos; executor packs ~90/24/20+/113 → documentador/review
+- [telegram-hardener-3w-item1-error-safety](test-guardian/telegram-hardener-3w-item1-error-safety.md) — 2026-07-26 — **suite protege adecuadamente**, freeze fail-closed + ErrorHandler + callback/business guards; 0 mocks prohibidos; item 32 + telegram 134 + full unit 987 → paso 6 / commit gate
+- [telegram-hardener-3w-item2-ops-surface](test-guardian/telegram-hardener-3w-item2-ops-surface.md) — 2026-07-26 — **suite protege adecuadamente**, Dedup+RateLimit+health+Freeze@6; 0 mocks prohibidos; focused 62 + telegram 153 + full unit 1011 → paso 6 / item3 gate
+- [telegram-hardener-3w-item3-thin-handlers](test-guardian/telegram-hardener-3w-item3-thin-handlers.md) — 2026-07-26 — **suite protege adecuadamente**, format goldens list/summary/step + caps 200/80/1800; thin handlers; 0 mocks prohibidos; focused 121 → paso 6 / item4 gate
+- [telegram-hardener-3w-item4-scale-debt](test-guardian/telegram-hardener-3w-item4-scale-debt.md) — 2026-07-26 — **suite protege adecuadamente**, log_swallowed + CorrectSession resolve/expired UX + orch/TC counters + OPS docs; 0 mocks prohibidos; item bundle 109 → paso 6 / pool close
 
 ## Documentador
 
@@ -83,3 +98,6 @@
 - [f3-pool3-metrics](documentador/f3-pool3-metrics.md) — 2026-07-26 — Pool f3-pool3-metrics CLOSED: items 1–4 (H3.5 calibration + H3.7 metrics/drift + H3.9 /resumen); migration 009; A2 detect_drift observational when flag off; flags default false; **F3 Pools 1–3 complete** → ops gradual flag enable
 - Consolidated SUMMARY: `.planning/quick/f3-pool3-metrics/POOL-SUMMARY.md`
 - Master phase status: `.planning/quick/F3-PHASE-STATUS.md`
+- [telegram-hardener-3w](documentador/pool-2026-07-26-telegram-hardener-3w.md) — 2026-07-26 — Pool telegram-hardener-3w CLOSED: items 1–4 (error-safety + ops-surface + thin-handlers + scale-debt); arch 0 critical; review 0 open; single-instance OPS; residuals → Redis multi-replica, health disable flag, full orch split, recontact log_swallowed
+- Consolidated SUMMARY: `.planning/quick/telegram-hardener-3w/POOL-SUMMARY.md`
+- Residuals: `.grok/agent-memory/residuals/telegram-hardener-3w.md`
