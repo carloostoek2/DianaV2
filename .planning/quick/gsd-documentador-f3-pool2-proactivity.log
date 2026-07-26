@@ -1,0 +1,38 @@
+## gsd-documentador log — quick/f3-pool2-proactivity
+
+### 2026-07-26
+
+**Pool f3-pool2-proactivity close documentation.**
+
+Read sources:
+- `.planning/quick/f3-pool2-proactivity/POOL.md`
+- item SUMMARYs: item1-schema, item2-recontact, item3-cancel-hook, item4-promo
+- gsd logs: gsd-f3-p2-item1-schema, gsd-f3-p2-item2-recontact, gsd-f3-p2-item3-cancel, gsd-f3-p2-item4-promo
+- arch-enforcer: `.grok/agent-memory/arch-enforcer/f3-pool2-proactivity.md` (PASS WITH NOTES, 0 critical)
+- test-guardian: `.grok/agent-memory/test-guardian/f3-pool2-proactivity.md` (suite protege adecuadamente)
+- pool1 close pattern: `.planning/quick/f3-pool1-autonomous-core/POOL-SUMMARY.md`
+- docs/SPEC-FASE3.md H3.3 / H3.4 / H3.8 (reference only; no SPEC edit)
+
+Actions planned:
+1. Write `.planning/quick/f3-pool2-proactivity/POOL-SUMMARY.md`
+2. Write `.grok/agent-memory/documentador/f3-pool2-proactivity.md`
+3. Update `.grok/agent-memory/MEMORY.md` Documentador section
+4. Mark POOL.md closed
+5. Docs-only commit (`docs(f3): close pool2 proactivity summary`)
+
+Commit themes (from item SUMMARYs):
+- Item1: migration 008 + ORM + ports/repos (`b87c82e`, `96a5f88`)
+- Item2: RecontactService core / execute AMS / job+main + composition test lock (`795ceba`, `909032e`, `2eb2b20`, `7004248`; co-wire in `57ebf15`)
+- Item3: TC BR-07 cancel hook + composition order (`7955ee7`, `1c6c680`)
+- Item4: PromoService + AuthMiddleware + composition (`79e5def`, `d297212`, `57ebf15`)
+
+Residuals to document:
+- **in-scope-followup:** `is_blocked` claimed approvals not covered by `list_waiting()` (medium, arch note)
+- **out-of-scope:** auto-`schedule_recontact` on VIP message (cancel-only BR-07)
+- Other OOS documented: promo rate-limit, vips.is_sandbox column, empty-sequence no execution row
+
+Next pool handoff:
+- Pool 3: calibration + metrics + drift + dashboard DM (H3.5 / H3.7 / H3.9)
+
+Docs commit: (pending)
+Paths: POOL-SUMMARY.md, POOL.md, documentador report, MEMORY.md, this log.

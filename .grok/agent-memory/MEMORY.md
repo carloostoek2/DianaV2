@@ -40,6 +40,8 @@
 - [f3-item3-ams](arch-enforcer/f3-item3-ams.md) — 2026-07-25 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; AMS L2 + orch deliver outside lock + composition; learning post-turn; flags default false
 - [f3-item4-behavior](arch-enforcer/f3-item4-behavior.md) — 2026-07-25 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; engine is_frozen hard-check + dual-gate split/quirks + deliver_with_sequence + FEATURE_ADVANCED_BEHAVIOR wiring; Behavior purity OK
 - [f3-item4b-rich-quirks](arch-enforcer/f3-item4b-rich-quirks.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; three kinds pause|natural_split|typo_correct under dual gate; pure quirks.py; no LLM; composition p=0.05
+- [f3-p2-item1-schema](arch-enforcer/f3-p2-item1-schema.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; 008 recontact/promo schema+ORM+thin repos; zero runtime; flags stay false
+- [f3-pool2-proactivity](arch-enforcer/f3-pool2-proactivity.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; pool items 1–4: no LLM recontact/promo, promo exact match, TC BR-07 cancel, Behavior acts-only, flags default false, layers OK; medium residual claimed approvals in is_blocked
 
 ## Test Guardian
 
@@ -61,6 +63,8 @@
 - [f3-item3-ams](test-guardian/f3-item3-ams.md) — 2026-07-25 — **suite protege adecuadamente**, AMS L1/L2 + orch send outside lock + composition wire + auto_send schema, 0 mocks prohibidos; primary 171 / full unit 686 (executor) → run-tests orchestrator
 - [f3-item4-behavior](test-guardian/f3-item4-behavior.md) — 2026-07-25 — **suite protege adecuadamente**, C1–C6 frozen hard-check + dual-gate split/quirks + deliver_with_sequence + FEATURE_ADVANCED_BEHAVIOR wiring, 0 mocks prohibidos; primary 135 / full unit 713 (executor) → run-tests orchestrator
 - [f3-item4b-rich-quirks](test-guardian/f3-item4b-rich-quirks.md) — 2026-07-26 — **suite protege adecuadamente**, three quirk kinds (pause/natural_split/typo) + dual-gate + purity, 0 mocks prohibidos; primary 124 (executor) → run-tests orchestrator
+- [f3-p2-item1-schema](test-guardian/f3-p2-item1-schema.md) — 2026-07-26 — **suite protege adecuadamente**, migration 008+ORM19+ports/repos surface+seeds, 0 mocks prohibidos; executor 68 passed → run-tests + review
+- [f3-pool2-proactivity](test-guardian/f3-pool2-proactivity.md) — 2026-07-26 — **suite protege adecuadamente**, pool2 items1–4 (schema+recontact matrix+BR-07 cancel+promo re-intro), 0 mocks prohibidos; executor packages 68/133/113/139 → run-tests + review/documentador
 
 ## Documentador
 
@@ -74,3 +78,5 @@
 - [trazabilidad-polish](documentador/pool-2026-07-25-trazabilidad-polish.md) — 2026-07-25 — Pool trazabilidad-polish closed: 3 improvements (fechas relativas, filtro VIP, purge job), 4 commits, 62 new tests, 628 unit, effort 3, 0 plan issues, 0 regressions
 - [f3-pool1-autonomous-core](documentador/f3-pool1-autonomous-core.md) — 2026-07-26 — Pool f3-pool1-autonomous-core CLOSED: items 1–4 + 4b rich quirks (H3.1/H3.2/H3.6); HARD 15fa8330·e78885f2·b3ee6a75·74d2f5d5·e4a192c5 all 0 open; flag sole enablement; AMS L1/L2; deliver outside lock; full FEATURE_ADVANCED quirks; CLARIFY tone 1ª persona amigable femenino; residuals → pool2 recontact/promo, pool3 calibration/metrics/dashboard
 - Consolidated SUMMARY: `.planning/quick/f3-pool1-autonomous-core/POOL-SUMMARY.md`
+- [f3-pool2-proactivity](documentador/f3-pool2-proactivity.md) — 2026-07-26 — Pool f3-pool2-proactivity CLOSED: items 1–4 (H3.3 recontact + H3.4 promo + H3.8 BR-07 cancel); arch 0 critical; TG suite OK; no LLM; flags default false; residuals → is_blocked claimed approvals (follow-up), schedule-on-message OOS, pool3 calibration/metrics/dashboard
+- Consolidated SUMMARY: `.planning/quick/f3-pool2-proactivity/POOL-SUMMARY.md`
