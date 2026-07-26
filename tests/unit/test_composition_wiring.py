@@ -155,3 +155,62 @@ def test_composition_turn_coordinator_receives_recontact(_comp_src: str) -> None
     coord_block = _comp_src[coord_pos : coord_pos + 400]
     assert "recontact=recontact" in coord_block
     assert "feature_recontact_enabled=feature_recontact_enabled" in coord_block
+
+
+def test_composition_calibration_service_wired(_comp_src: str) -> None:
+    """CalibrationService + SQL data source; flag from settings."""
+    assert "from diana.application.calibration_service import CalibrationService" in _comp_src
+    assert "SqlCalibrationDataSource" in _comp_src
+    assert "CalibrationService(" in _comp_src
+    assert "feature_calibration_enabled" in _comp_src
+    assert "feature_calibration_enabled=settings.feature_calibration_enabled" in _comp_src or (
+        "feature_calibration_enabled=feature_calibration_enabled" in _comp_src
+    )
+    # Reuse EmbeddingService already constructed for registry.
+    assert "embeddings=embedding_svc" in _comp_src or "embeddings=embedding" in _comp_src
+
+
+def test_composition_metrics_aggregation_wired(_comp_src: str) -> None:
+    """MetricsAggregationService + SqlMetricsDataSource + learning metrics repo."""
+    assert (
+        "from diana.application.metrics_service import MetricsAggregationService"
+        in _comp_src
+    )
+    assert "SqlMetricsDataSource" in _comp_src
+    assert "SqlLearningMetricsRepo" in _comp_src
+    assert "MetricsAggregationService(" in _comp_src
+    # Drift detector is CalibrationService (detect_drift readable even if flag off).
+    assert "drift=calibration" in _comp_src
+
+
+def test_composition_admin_metrics_wired(_comp_src: str) -> None:
+    """AdminMetricsService built from learning metrics store and passed to dispatcher."""
+    assert (
+        "from diana.application.admin_metrics_service import AdminMetricsService"
+        in _comp_src
+    )
+    assert "AdminMetricsService(" in _comp_src
+    assert "admin_metrics=admin_metrics" in _comp_src
+
+
+def test_composition_app_container_has_pool3_fields() -> None:
+    from diana.composition import AppContainer
+
+    fields = AppContainer.__dataclass_fields__
+    assert "calibration" in fields
+    assert "metrics" in fields
+    assert "admin_metrics" in fields
+
+
+def test_setup_forwards_admin_metrics() -> None:
+    """build_dispatcher forwards admin_metrics into admin + callback routers."""
+    from pathlib import Path
+
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    setup_src = (root / "telegram" / "setup.py").read_text(encoding="utf-8")
+    assert "admin_metrics" in setup_src
+    assert "admin_metrics: AdminMetricsService | None = None" in setup_src
+    assert "admin_metrics=admin_metrics" in setup_src
+    assert setup_src.count("admin_metrics=admin_metrics") >= 2

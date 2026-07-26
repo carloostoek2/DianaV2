@@ -408,15 +408,42 @@ async def test_calibrate_missing_previous_uses_defaults() -> None:
 
 
 @pytest.mark.asyncio
-async def test_detect_drift_disabled_returns_empty() -> None:
-    svc, _, cfg, emb, _ = _build_service(
+async def test_detect_drift_runs_when_calibration_flag_disabled() -> None:
+    """Flag gates calibrate_thresholds only; detect_drift stays readable (A2)."""
+    texts = ["hola estilo natural"]
+    base = ["hola estilo base"]
+    emb = FakeEmbedder(dim=8)
+    emb.override(texts[0], [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    emb.override(base[0], [0.99, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    svc, _, _, emb, _ = _build_service(
         enabled=False,
-        drift_texts=FakeDriftTexts(recent=["a"], baseline=["b"]),
+        embeddings=emb,
+        drift_texts=FakeDriftTexts(recent=texts, baseline=base),
+        notifier=None,
     )
     result = await svc.detect_drift()
-    assert result == {}
-    assert emb.calls == []
-    assert cfg.sets == []
+    assert "style_drift_score" in result
+    assert emb.calls  # embeddings used even when flag false
+
+
+@pytest.mark.asyncio
+async def test_detect_drift_no_alert_when_flag_disabled() -> None:
+    """Owner drift alerts only fire when calibration flag is on (A6)."""
+    emb = FakeEmbedder(dim=2)
+    emb.override("r1", [1.0, 0.0])
+    emb.override("b1", [0.0, 1.0])
+    notifier = FakeNotifier()
+    cfg = FakeConfigStore(calibration={"drift_alert_threshold": 0.1})
+    svc, _, _, _, _ = _build_service(
+        enabled=False,
+        embeddings=emb,
+        config=cfg,
+        drift_texts=FakeDriftTexts(recent=["r1"], baseline=["b1"]),
+        notifier=notifier,
+    )
+    result = await svc.detect_drift()
+    assert result["style_drift_score"] > 0.1
+    assert notifier.infos == []
 
 
 @pytest.mark.asyncio

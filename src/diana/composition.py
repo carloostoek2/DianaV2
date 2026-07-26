@@ -14,10 +14,13 @@ from typing import Any
 from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.autonomous_mode_service import AutonomousModeService
+from diana.application.calibration_service import CalibrationService
 from diana.application.gray_zone_service import GrayZoneService
+from diana.application.metrics_service import MetricsAggregationService
 from diana.application.promo_service import PromoService
 from diana.application.recontact_service import (
     ApprovalsDeliveriesRouteResolver,
@@ -45,7 +48,14 @@ from diana.cognitive.policy_distiller import PolicyDistiller
 from diana.cognitive.registry import build_default_registry
 from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 from diana.config import Settings
+from diana.infrastructure.db.repositories.calibration_data import (
+    SqlCalibrationDataSource,
+)
 from diana.infrastructure.db.repositories.gray_zone import GrayZoneQueryRepo
+from diana.infrastructure.db.repositories.learning_metrics import (
+    SqlLearningMetricsRepo,
+)
+from diana.infrastructure.db.repositories.metrics_data import SqlMetricsDataSource
 from diana.infrastructure.db.repositories.staging import StagingCandidateRepo
 from diana.infrastructure.db.repositories.approvals import SqlPendingApprovalStore
 from diana.infrastructure.db.repositories.deliveries import SqlPendingDeliveryStore
@@ -161,6 +171,9 @@ class AppContainer:
     trace_store: SqlTraceStore | None = None
     recontact: RecontactService | None = None
     promo: PromoService | None = None
+    calibration: CalibrationService | None = None
+    metrics: MetricsAggregationService | None = None
+    admin_metrics: AdminMetricsService | None = None
 
 
 def build_app(
@@ -388,6 +401,29 @@ def build_app(
         delivery_mode=settings.global_mode,
     )
 
+    # F3 Pool 3 — calibration / metrics / admin dashboard (glue only).
+    # calibrate_thresholds is flag-gated inside CalibrationService; detect_drift
+    # remains readable so MetricsAggregationService can score style_drift.
+    feature_calibration_enabled = settings.feature_calibration_enabled
+    cal_data = SqlCalibrationDataSource(sf)
+    learning_metrics = SqlLearningMetricsRepo(sf)
+    metrics_data = SqlMetricsDataSource(sf)
+    calibration = CalibrationService(
+        feature_calibration_enabled=feature_calibration_enabled,
+        traces=cal_data,
+        config=config_store,
+        embeddings=embedding_svc,
+        drift_texts=cal_data,
+        notifier=notifier if feature_calibration_enabled else None,
+    )
+    metrics = MetricsAggregationService(
+        traces=metrics_data,
+        sides=metrics_data,
+        store=learning_metrics,
+        drift=calibration,
+    )
+    admin_metrics = AdminMetricsService(store=learning_metrics)
+
     wiring = build_dispatcher(
         orchestrator=orchestrator,
         admin=admin,
@@ -401,6 +437,7 @@ def build_app(
         correct_sessions=sessions,
         doctrine_router=doctrine_router,
         admin_trace=admin_trace,
+        admin_metrics=admin_metrics,
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
     )
@@ -429,6 +466,9 @@ def build_app(
         trace_store=traces,
         recontact=recontact,
         promo=promo,
+        calibration=calibration,
+        metrics=metrics,
+        admin_metrics=admin_metrics,
     )
 
 

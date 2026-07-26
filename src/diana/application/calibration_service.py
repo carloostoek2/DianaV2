@@ -227,11 +227,12 @@ class CalibrationService:
         )
 
     async def detect_drift(self) -> dict[str, float]:
-        """Return float scores only (status goes to logs)."""
-        if not self._enabled:
-            logger.info("calibration_skipped_disabled", extra={"op": "detect_drift"})
-            return {}
+        """Return float scores only (status goes to logs).
 
+        Read-only for metrics even when ``feature_calibration_enabled`` is false.
+        Threshold mutation stays in ``calibrate_thresholds`` only. Owner drift
+        alerts fire only when the calibration flag is on **and** a notifier is set.
+        """
         cal_cfg = await self._load_calibration_config()
         sample_size = int(cal_cfg["drift_sample_size"])
         baseline_weeks = int(cal_cfg["baseline_weeks"])
@@ -264,7 +265,12 @@ class CalibrationService:
             extra={"style_drift_score": score},
         )
 
-        if score > alert_threshold and self._notifier is not None:
+        # A6: alert only when calibration flag is on (avoids surprise DMs).
+        if (
+            self._enabled
+            and score > alert_threshold
+            and self._notifier is not None
+        ):
             try:
                 await self._notifier.notify_info(
                     f"Alerta de deriva de estilo: score={score:.3f} "

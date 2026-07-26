@@ -7,6 +7,7 @@ from typing import Any
 
 from aiogram import Dispatcher, Router
 
+from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import (
@@ -76,6 +77,7 @@ def build_dispatcher(
     correct_sessions: CorrectSessionStore | None = None,
     doctrine_router: Router | None = None,
     admin_trace: AdminTraceService | None = None,
+    admin_metrics: AdminMetricsService | None = None,
     promo: PromoService | None = None,
     feature_promo_enabled: bool = False,
 ) -> TelegramWiring:
@@ -126,6 +128,7 @@ def build_dispatcher(
             admin=admin,
             correct_sessions=sessions,
             admin_trace=admin_trace,
+            admin_metrics=admin_metrics,
             owner_telegram_id=owner_telegram_id,
         )
     )
@@ -136,6 +139,7 @@ def build_dispatcher(
             admin=admin,
             correct_sessions=sessions,
             admin_trace=admin_trace,
+            admin_metrics=admin_metrics,
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))
