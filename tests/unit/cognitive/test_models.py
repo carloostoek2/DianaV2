@@ -316,6 +316,37 @@ def test_comprehension_persona_voice_needs_round_trip_true() -> None:
     assert c.needs_voice_patterns is True
 
 
+def test_comprehension_optional_needs_profile_default_false() -> None:
+    """Option B: needs_profile defaults False when omitted (historical constructors)."""
+    from diana.cognitive.models import Comprehension
+
+    c = Comprehension(
+        intent="saludo",
+        topics=[],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        **_NEEDS,
+    )
+    assert c.needs_profile is False
+
+
+def test_comprehension_needs_profile_round_trip_true() -> None:
+    """Option B: needs_profile=True round-trips."""
+    from diana.cognitive.models import Comprehension
+
+    c = Comprehension(
+        intent="preferencias",
+        topics=["preferencias"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        **_NEEDS,
+        needs_profile=True,
+    )
+    assert c.needs_profile is True
+
+
 
 def test_analyst_input_and_history_message_shape() -> None:
     from diana.cognitive.models import AnalystInput, HistoryMessage

@@ -249,6 +249,15 @@ def test_composition_persona_catalog_wired(_comp_src: str) -> None:
     # Lazy: no bare load_persona_catalog() at module import path for catalog
     assert "_PERSONA_CATALOG = load_persona_catalog()" not in _comp_src
 
+
+def test_composition_profiles_repo_wired(_comp_src: str) -> None:
+    """Item4: ProfilesRepo constructed and passed as profile_repo= to registry."""
+    assert "ProfilesRepo" in _comp_src
+    assert "profile_repo=" in _comp_src
+    assert "from diana.infrastructure.db.repositories.profiles import ProfilesRepo" in (
+        _comp_src
+    )
+
 def test_composition_repetition_guard_wired(_comp_src: str) -> None:
     """H4/H5: Director receives recent_intents=traces + RepetitionGuard(3)."""
     assert "from diana.cognitive.repetition_guard import RepetitionGuard" in _comp_src

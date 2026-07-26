@@ -255,10 +255,12 @@ def test_system_prompt_mentions_persona_voice_needs() -> None:
     system = analyst_mod._SYSTEM
     assert "needs_persona_facts" in system
     assert "needs_voice_patterns" in system
-    # usage hints (bio / voice / policy) + catalog tema tokens
+    assert "needs_profile" in system
+    # usage hints (bio / voice / policy / permanent profile) + catalog tema tokens
     low = system.lower()
     assert "persona" in low or "bio" in low or "biogr" in low
     assert "voice" in low or "muletilla" in low
+    assert "permanent" in low or "prefer" in low or "standing" in low
     assert "needs_policy" in system
     assert "familia" in low
     assert "contenido" in low

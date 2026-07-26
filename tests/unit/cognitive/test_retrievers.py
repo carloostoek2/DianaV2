@@ -788,3 +788,83 @@ async def test_policy_malformed_db_rows_preserve_static() -> None:
     )
     result = await retriever.fetch(_turn(), c)
     assert result == ["Trigger: s1 | Rule: static keep"]
+
+
+# ── Profile REAL mínimo (residuals-polish item4) ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_returns_none_without_repo() -> None:
+    """Stub compat: no-arg / no-repo ProfileRetriever always returns None."""
+    result = await ProfileRetriever().fetch(_turn(), _comprehension())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_returns_none_when_vip_id_none() -> None:
+    """BR-15: unidentified VIP → None and repo not called."""
+    from unittest.mock import AsyncMock
+
+    repo = AsyncMock()
+    retriever = ProfileRetriever(repo=repo)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=None)
+    result = await retriever.fetch(turn, _comprehension())
+    assert result is None
+    repo.get_by_vip_id.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_returns_none_on_miss() -> None:
+    """Miss: repo returns None → fetch None."""
+    from unittest.mock import AsyncMock
+
+    repo = AsyncMock()
+    repo.get_by_vip_id = AsyncMock(return_value=None)
+    vip_id = uuid4()
+    retriever = ProfileRetriever(repo=repo)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    result = await retriever.fetch(turn, _comprehension())
+    assert result is None
+    repo.get_by_vip_id.assert_awaited_once_with(vip_id)
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_returns_tipo_content_on_hit() -> None:
+    """Hit: repo row → {"tipo", "content"} only (no embedding)."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    row = {
+        "vip_id": str(vip_id),
+        "tipo": "summary",
+        "content": {"fact": "prefers morning"},
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    repo = AsyncMock()
+    repo.get_by_vip_id = AsyncMock(return_value=row)
+    retriever = ProfileRetriever(repo=repo)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    result = await retriever.fetch(turn, _comprehension())
+    assert result == {"tipo": "summary", "content": {"fact": "prefers morning"}}
+    repo.get_by_vip_id.assert_awaited_once_with(vip_id)
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_returns_none_on_empty_content() -> None:
+    """Null-like content (None / {}) → None so ContextBuilder omits block (D.5)."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    repo = AsyncMock()
+    repo.get_by_vip_id = AsyncMock(
+        return_value={"tipo": "summary", "content": {}, "vip_id": str(vip_id)}
+    )
+    retriever = ProfileRetriever(repo=repo)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    assert await retriever.fetch(turn, _comprehension()) is None
+
+    repo.get_by_vip_id = AsyncMock(
+        return_value={"tipo": "summary", "content": None, "vip_id": str(vip_id)}
+    )
+    assert await retriever.fetch(turn, _comprehension()) is None

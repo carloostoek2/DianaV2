@@ -155,3 +155,25 @@ def test_infrastructure_has_no_aiogram_imports() -> None:
                 if node.module == "aiogram" or node.module.startswith("aiogram."):
                     violations.append(f"{path.name}: {node.module}")
     assert violations == []
+
+
+def test_profile_to_dict_mapper() -> None:
+    """Pure mapper: Profile ORM-like row → dict with tipo/content (no live DB)."""
+    from diana.infrastructure.db.repositories.profiles import profile_to_dict
+
+    vip_id = uuid4()
+    created = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    updated = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
+    row = SimpleNamespace(
+        vip_id=vip_id,
+        tipo="summary",
+        content={"fact": "prefers morning"},
+        created_at=created,
+        updated_at=updated,
+    )
+    out = profile_to_dict(row)  # type: ignore[arg-type]
+    assert out["vip_id"] == str(vip_id)
+    assert out["tipo"] == "summary"
+    assert out["content"] == {"fact": "prefers morning"}
+    assert out["created_at"] == created.isoformat()
+    assert out["updated_at"] == updated.isoformat()

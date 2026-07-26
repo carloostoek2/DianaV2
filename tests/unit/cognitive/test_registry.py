@@ -111,10 +111,34 @@ async def test_memory_policy_examples_registered_stubs() -> None:
 
 @pytest.mark.asyncio
 async def test_profile_f2_seat_still_registered() -> None:
-    """Profile F2 seat remains registered STUB (not in H.3 table, not removed)."""
+    """Profile remains registered; without profile_repo still stubs to None."""
     registry = build_default_registry(InMemoryMessageHistory())
     retriever = registry.resolve("knowledge.profile")
     assert await retriever.fetch(_turn(), _comprehension()) is None
+
+
+@pytest.mark.asyncio
+async def test_profile_real_when_profile_repo_injected() -> None:
+    """When profile_repo is injected, profile fetch returns tipo/content on hit."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    repo = AsyncMock()
+    repo.get_by_vip_id = AsyncMock(
+        return_value={
+            "vip_id": str(vip_id),
+            "tipo": "summary",
+            "content": {"pref": "morning"},
+        }
+    )
+    registry = build_default_registry(
+        InMemoryMessageHistory(),
+        profile_repo=repo,
+    )
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=1, text="hola", vip_id=vip_id)
+    result = await registry.resolve("knowledge.profile").fetch(turn, _comprehension())
+    assert result == {"tipo": "summary", "content": {"pref": "morning"}}
+    repo.get_by_vip_id.assert_awaited_once_with(vip_id)
 
 
 @pytest.mark.asyncio
@@ -152,11 +176,17 @@ async def test_build_default_registry_without_repos_still_stubs() -> None:
 
 
 
-def test_planner_universe_has_eight_capabilities() -> None:
-    """H2: 6 original + persona_facts + voice_patterns."""
-    assert len(PLANNER_CAPABILITY_UNIVERSE) == 8
+def test_planner_universe_has_nine_capabilities() -> None:
+    """H2: 6 original + persona_facts + voice_patterns + profile."""
+    assert len(PLANNER_CAPABILITY_UNIVERSE) == 9
     assert "knowledge.persona_facts" in PLANNER_CAPABILITY_UNIVERSE
     assert "knowledge.voice_patterns" in PLANNER_CAPABILITY_UNIVERSE
+    assert "knowledge.profile" in PLANNER_CAPABILITY_UNIVERSE
+    # Profile sits after voice_patterns, before memory (planner map order).
+    idx = list(PLANNER_CAPABILITY_UNIVERSE).index
+    assert idx("knowledge.voice_patterns") < idx("knowledge.profile") < idx(
+        "knowledge.memory"
+    )
 
 
 @pytest.mark.asyncio
@@ -253,7 +283,12 @@ async def test_build_default_registry_accepts_catalog_kwargs() -> None:
 
 
 def test_planner_universe_matches_planner_and_emission_supersequence() -> None:
-    """Cross-lock: planner map caps == universe; emission is supersequence of both."""
+    """Cross-lock: planner map caps == universe; emission includes every planner cap.
+
+    Profile emission position is intentionally last (ContextBuilder D.4) while
+    Planner map places profile after voice_patterns / before memory — relative
+    order check therefore excludes knowledge.profile only.
+    """
     from diana.cognitive.context_builder import _KNOWLEDGE_EMISSION_ORDER
     from diana.cognitive.planner import _NEED_TO_CAPABILITY
     from diana.cognitive.registry import PLANNER_CAPABILITY_UNIVERSE
@@ -261,11 +296,13 @@ def test_planner_universe_matches_planner_and_emission_supersequence() -> None:
     planner_caps = tuple(cap for _, cap in _NEED_TO_CAPABILITY)
     assert planner_caps == PLANNER_CAPABILITY_UNIVERSE
 
-    # Emission order must include every planner cap (may also include profile, etc.).
     emission = list(_KNOWLEDGE_EMISSION_ORDER)
     for cap in planner_caps:
         assert cap in emission, f"{cap} missing from emission order"
 
-    # Relative order among planner caps preserved in emission (supersequence).
-    positions = [emission.index(cap) for cap in planner_caps]
+    # Relative order among planner caps preserved in emission, except profile
+    # which is emitted last by design (independent of planner request order).
+    order_caps = [c for c in planner_caps if c != "knowledge.profile"]
+    positions = [emission.index(cap) for cap in order_caps]
     assert positions == sorted(positions)
+    assert emission.index("knowledge.profile") == len(emission) - 1

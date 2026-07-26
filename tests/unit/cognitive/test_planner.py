@@ -138,12 +138,13 @@ def test_planner_has_no_llm_dependency() -> None:
 
 
 def test_planner_persona_voice_order_between_context_and_memory() -> None:
-    """H2: persona_facts and voice_patterns sit after context, before memory."""
+    """H2: persona_facts, voice_patterns, profile sit after context, before memory."""
     expected = [
         "knowledge.history",
         "knowledge.context",
         "knowledge.persona_facts",
         "knowledge.voice_patterns",
+        "knowledge.profile",
         "knowledge.memory",
         "knowledge.policy",
         "knowledge.examples",
@@ -152,3 +153,9 @@ def test_planner_persona_voice_order_between_context_and_memory() -> None:
     assert _STABLE_CAPS == expected
     plan = Planner().plan(_comprehension(**_all_needs(True)))
     assert plan.capabilities == expected
+
+
+def test_planner_needs_profile_alone_maps_to_profile() -> None:
+    """Option B: needs_profile=True alone → [knowledge.profile]."""
+    plan = Planner().plan(_comprehension(**_all_needs(False), needs_profile=True))
+    assert plan.capabilities == ["knowledge.profile"]
