@@ -1,4 +1,4 @@
-"""SQLAlchemy 2.0 ORM models for Fase 1 tables only (8 tables)."""
+"""SQLAlchemy 2.0 ORM models for F1 + F2 knowledge + F3 proactivity tables."""
 
 from __future__ import annotations
 
@@ -417,4 +417,82 @@ class LearningMetric(Base):
     value: Mapped[float] = mapped_column(Float, nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class RecontactSchedule(Base):
+    """Scheduled recontact for a VIP after inactivity (F3 proactivity)."""
+
+    __tablename__ = "recontact_schedules"
+    __table_args__ = (
+        Index("ix_recontact_schedules_next_status", "next_contact_at", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("vips.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    last_contact_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    next_contact_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class PromoTrigger(Base):
+    """Exact-match promo trigger with multi-message sequence (F3 proactivity)."""
+
+    __tablename__ = "promo_triggers"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    trigger_text: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    response_sequence: Mapped[list[Any]] = mapped_column(JSONB, nullable=False)
+    repeat_first_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class PromoExecution(Base):
+    """Record of a promo sequence delivery to a chat (F3 proactivity)."""
+
+    __tablename__ = "promo_executions"
+    __table_args__ = (
+        Index(
+            "ix_promo_executions_chat_trigger_sent",
+            "chat_id",
+            "trigger_id",
+            text("sent_at DESC"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    trigger_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("promo_triggers.id"), nullable=False,
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    sequence_sent: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'sent'"),
     )
