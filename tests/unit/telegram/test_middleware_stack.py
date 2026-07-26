@@ -34,8 +34,8 @@ def test_f2_middleware_order_constant() -> None:
         "BusinessConnectionMiddleware",
         "OwnerDetectionMiddleware",
         "FreezeCheckMiddleware",
-        "ForbiddenKeywordsMiddleware",
         "AuthMiddleware",
+        "ForbiddenKeywordsMiddleware",
     )
 
 

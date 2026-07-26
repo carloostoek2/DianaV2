@@ -280,3 +280,33 @@ async def test_j4_ia_delivers_template_then_escalates() -> None:
     assert send_calls[0]["text"] == IA_TEMPLATE
     assert g["escalations"].events[0]["tipo"] == "identidad_ia"
 
+
+
+@pytest.mark.asyncio
+async def test_non_vip_business_j4_does_not_escalate() -> None:
+    """VIP store present but user not allowlisted → no escalate/notify."""
+    g = _graph()
+    # no VIP added for user 100
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["zzz"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=40,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="cuál es el precio?",
+        business_connection_id="bc-1",
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, {"business_connection_id": "bc-1"})
+    assert result == "next"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+    assert g["notifier"].escalations == []

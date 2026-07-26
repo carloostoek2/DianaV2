@@ -92,7 +92,8 @@ def build_dispatcher(
     sessions = correct_sessions or CorrectSessionStore()
 
     # first registered = outermost (aiogram wraps with reversed()).
-    # Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Owner → Freeze → Forbidden → Auth.
+    # Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Owner → Freeze → Auth → Forbidden.
+    # Auth before Forbidden: VIP allowlist gates J.4/forbidden escalate.
     forbidden_mw = ForbiddenKeywordsMiddleware(
         keywords=forbidden_keywords,
         coordinator=coordinator,
@@ -115,12 +116,12 @@ def build_dispatcher(
             owner_telegram_id=owner_telegram_id, coordinator=coordinator
         ),
         FreezeCheckMiddleware(vips=vips),
-        forbidden_mw,
         AuthMiddleware(
             vips=vips,
             promo=promo,
             feature_promo_enabled=feature_promo_enabled,
         ),
+        forbidden_mw,
     ]
 
     # Apply to business messages (VIP path) and private messages/callbacks.
