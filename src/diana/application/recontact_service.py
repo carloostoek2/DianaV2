@@ -9,16 +9,18 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.ports import (
     BehaviorDeliverer,
+    DeliveryContext,
     DeliveryMode,
     OwnerNotifierPort,
     PendingApprovalStore,
     RecontactScheduleRecord,
     RecontactScheduleStore,
+    TurnRecord,
     TurnStore,
     VipStore,
 )
@@ -171,14 +173,122 @@ class RecontactService:
         """Return status: disabled|blocked|no_route|supervised_skipped|delivered|failed."""
         if not self._enabled:
             return "disabled"
-        # Task 2 implements full path; skeleton keeps flag-off + blocked safe.
+
         if await self.is_blocked(vip_id):
             logger.info(
                 "recontact_blocked",
                 extra={"vip_id": str(vip_id), "status": "blocked"},
             )
             return "blocked"
-        return "disabled"
+
+        days, templates = await self._load_config()
+        now = self._clock.now()
+
+        route = await self._route_resolver.resolve(vip_id)
+        if route is None:
+            next_at = now + timedelta(days=days)
+            await self._schedules.upsert_pending(
+                vip_id, last_contact_at=now, next_contact_at=next_at
+            )
+            logger.info(
+                "recontact_no_route",
+                extra={"vip_id": str(vip_id), "status": "no_route"},
+            )
+            return "no_route"
+
+        chat_id, business_connection_id = route
+        text = await self._render_for_vip(vip_id, templates)
+
+        if not await self._ams.is_autonomous_enabled(vip_id):
+            vip = await self._vips.get_by_id(vip_id)
+            nombre = vip.display_name if vip and vip.display_name else "vos"
+            try:
+                await self._notifier.notify_info(
+                    "Recontacto supervisado (sin auto-envío): "
+                    f"VIP {nombre} — borrador: {text}"
+                )
+            except Exception:
+                logger.exception(
+                    "recontact_supervised_notify_failed",
+                    extra={"vip_id": str(vip_id)},
+                )
+            await self._complete_and_reschedule(vip_id, now=now, days=days)
+            logger.info(
+                "recontact_supervised_skipped",
+                extra={"vip_id": str(vip_id), "status": "supervised_skipped"},
+            )
+            return "supervised_skipped"
+
+        turn = await self._turns.create(
+            TurnRecord(
+                id=uuid4(),
+                chat_id=chat_id,
+                status="received",
+                vip_id=vip_id,
+            )
+        )
+        ctx = DeliveryContext(
+            chat_id=chat_id,
+            business_connection_id=business_connection_id,
+            vip_id=vip_id,
+            mode=self._delivery_mode,
+            is_frozen=False,
+        )
+        try:
+            result = await self._behavior.deliver([text], ctx, turn.id)
+        except Exception as exc:
+            logger.exception(
+                "recontact_deliver_error",
+                extra={"vip_id": str(vip_id), "turn_id": str(turn.id)},
+            )
+            await self._turns.transition(
+                turn.id, "failed", error=str(exc)[:500]
+            )
+            return "failed"
+
+        if getattr(result, "success", False):
+            await self._turns.transition(turn.id, "delivered")
+            await self._complete_and_reschedule(vip_id, now=now, days=days)
+            logger.info(
+                "recontact_delivered",
+                extra={
+                    "vip_id": str(vip_id),
+                    "turn_id": str(turn.id),
+                    "status": "delivered",
+                },
+            )
+            return "delivered"
+
+        err = getattr(result, "error", None) or "deliver_failed"
+        await self._turns.transition(turn.id, "failed", error=str(err)[:500])
+        logger.info(
+            "recontact_failed",
+            extra={
+                "vip_id": str(vip_id),
+                "turn_id": str(turn.id),
+                "status": "failed",
+            },
+        )
+        return "failed"
+
+    async def _render_for_vip(self, vip_id: UUID, templates: list[str]) -> str:
+        vip = await self._vips.get_by_id(vip_id)
+        nombre = "vos"
+        if vip is not None and vip.display_name:
+            nombre = vip.display_name
+        idx = vip_id.int % len(templates)
+        return render_template(templates[idx], nombre=nombre, producto="")
+
+    async def _complete_and_reschedule(
+        self, vip_id: UUID, *, now: datetime, days: int
+    ) -> None:
+        pending = await self._schedules.get_pending_by_vip(vip_id)
+        if pending is not None:
+            await self._schedules.mark_done(pending.id)
+        next_at = now + timedelta(days=days)
+        await self._schedules.upsert_pending(
+            vip_id, last_contact_at=now, next_contact_at=next_at
+        )
 
     async def _load_config(self) -> tuple[int, list[str]]:
         try:

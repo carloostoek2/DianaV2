@@ -482,3 +482,202 @@ async def test_get_due_vips_ignores_future_schedules() -> None:
     future = clock.now() + timedelta(days=3)
     await schedules.upsert_pending(vip.id, clock.now(), future)
     assert await svc.get_due_vips() == []
+
+
+# ---------------------------------------------------------------------------
+# execute_recontact — AMS deliver vs supervised skip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_ams_on_delivers_and_reschedules() -> None:
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    vips = InMemoryVipStore()
+    vip = await _seed_vip(vips, display_name="Ana")
+    past = clock.now() - timedelta(days=1)
+    await schedules.upsert_pending(vip.id, past, past)
+    route = FakeRouteResolver({vip.id: (42_001, "bc-vip")})
+    behavior = FakeBehavior(success=True)
+    ams = _ams(feature=True, global_mode="autonomous", vip_store=vips)
+    svc, deps = _make_service(
+        schedules=schedules,
+        vips=vips,
+        ams=ams,
+        behavior=behavior,
+        route_resolver=route,
+        clock=clock,
+        config=FakeConfig(
+            inactivity_days=7,
+            templates=["Hola {nombre}, ¿cómo andás?"],
+        ),
+        delivery_mode="autonomous",
+    )
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "delivered"
+    assert len(behavior.deliver_calls) == 1
+    texts, ctx, turn_id = behavior.deliver_calls[0]
+    assert texts == ["Hola Ana, ¿cómo andás?"]
+    assert ctx.chat_id == 42_001
+    assert ctx.business_connection_id == "bc-vip"
+    assert ctx.vip_id == vip.id
+    assert ctx.mode == "autonomous"
+    assert ctx.is_frozen is False
+
+    turn = await deps["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "delivered"
+    assert turn.vip_id == vip.id
+
+    # old schedule done; next pending created
+    pending = await schedules.get_pending_by_vip(vip.id)
+    assert pending is not None
+    assert pending.next_contact_at == clock.now() + timedelta(days=7)
+    done_rows = [r for r in schedules.rows.values() if r.status == "done"]
+    assert len(done_rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_ams_off_skips_deliver_and_notifies() -> None:
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    vips = InMemoryVipStore()
+    notifier = FakeOwnerNotifier()
+    vip = await _seed_vip(vips, display_name="Lucía", auto_send=False)
+    past = clock.now() - timedelta(hours=2)
+    await schedules.upsert_pending(vip.id, past, past)
+    route = FakeRouteResolver({vip.id: (55, "bc-x")})
+    behavior = FakeBehavior()
+    # L1 on but supervised + auto_send false → L2 off
+    ams = _ams(
+        feature=True,
+        global_mode="supervised",
+        vip_store=vips,
+        notifier=notifier,
+    )
+    svc, _ = _make_service(
+        schedules=schedules,
+        vips=vips,
+        ams=ams,
+        behavior=behavior,
+        route_resolver=route,
+        notifier=notifier,
+        clock=clock,
+        config=FakeConfig(templates=["Hola {nombre}"]),
+    )
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "supervised_skipped"
+    assert behavior.deliver_calls == []
+    assert len(notifier.infos) == 1
+    info_text = notifier.infos[0][0]
+    assert "Lucía" in info_text or "Hola Lucía" in info_text
+    assert "Hola Lucía" in info_text
+
+    pending = await schedules.get_pending_by_vip(vip.id)
+    assert pending is not None
+    assert pending.next_contact_at == clock.now() + timedelta(days=7)
+
+
+@pytest.mark.asyncio
+async def test_execute_blocked_no_deliver_schedule_stays_pending() -> None:
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    vips = InMemoryVipStore()
+    vip = await _seed_vip(
+        vips,
+        frozen_until=clock.now() + timedelta(days=2),
+    )
+    past = clock.now() - timedelta(hours=1)
+    await schedules.upsert_pending(vip.id, past, past)
+    behavior = FakeBehavior()
+    svc, _ = _make_service(
+        schedules=schedules,
+        vips=vips,
+        behavior=behavior,
+        clock=clock,
+        route_resolver=FakeRouteResolver({vip.id: (1, "bc")}),
+        ams=_ams(feature=True, global_mode="autonomous", vip_store=vips),
+    )
+    status = await svc.execute_recontact(vip.id)
+    assert status == "blocked"
+    assert behavior.deliver_calls == []
+    pending = await schedules.get_pending_by_vip(vip.id)
+    assert pending is not None
+    assert pending.status == "pending"
+    assert pending.next_contact_at == past
+
+
+@pytest.mark.asyncio
+async def test_execute_no_route_pushes_next_contact() -> None:
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    vips = InMemoryVipStore()
+    vip = await _seed_vip(vips)
+    past = clock.now() - timedelta(hours=1)
+    await schedules.upsert_pending(vip.id, past, past)
+    behavior = FakeBehavior()
+    svc, _ = _make_service(
+        schedules=schedules,
+        vips=vips,
+        behavior=behavior,
+        clock=clock,
+        route_resolver=FakeRouteResolver({}),  # no route
+        ams=_ams(feature=True, global_mode="autonomous", vip_store=vips),
+        config=FakeConfig(inactivity_days=5),
+    )
+    status = await svc.execute_recontact(vip.id)
+    assert status == "no_route"
+    assert behavior.deliver_calls == []
+    pending = await schedules.get_pending_by_vip(vip.id)
+    assert pending is not None
+    assert pending.status == "pending"
+    assert pending.next_contact_at == clock.now() + timedelta(days=5)
+
+
+@pytest.mark.asyncio
+async def test_execute_deliver_failure_marks_turn_failed() -> None:
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    vips = InMemoryVipStore()
+    vip = await _seed_vip(vips)
+    past = clock.now() - timedelta(hours=1)
+    await schedules.upsert_pending(vip.id, past, past)
+    behavior = FakeBehavior(success=False)
+    svc, deps = _make_service(
+        schedules=schedules,
+        vips=vips,
+        behavior=behavior,
+        clock=clock,
+        route_resolver=FakeRouteResolver({vip.id: (9, "bc")}),
+        ams=_ams(feature=True, global_mode="autonomous", vip_store=vips),
+    )
+    status = await svc.execute_recontact(vip.id)
+    assert status == "failed"
+    assert len(behavior.deliver_calls) == 1
+    _, _, turn_id = behavior.deliver_calls[0]
+    turn = await deps["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "failed"
+    # schedule remains pending (or pushed — leave pending per A5 failure path)
+    pending = await schedules.get_pending_by_vip(vip.id)
+    assert pending is not None
+
+
+@pytest.mark.asyncio
+async def test_recontact_service_source_has_no_cognitive_pipeline_imports() -> None:
+    from pathlib import Path
+
+    import diana.application.recontact_service as mod
+
+    src = Path(mod.__file__).read_text(encoding="utf-8")
+    forbidden = (
+        "diana.cognitive.analyst",
+        "diana.cognitive.planner",
+        "diana.cognitive.generator",
+        "diana.cognitive.director",
+        "diana.llm",
+    )
+    for token in forbidden:
+        assert token not in src, f"forbidden import surface: {token}"
