@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
@@ -14,7 +13,6 @@ from aiogram.types import BufferedInputFile, CallbackQuery
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
-from diana.telegram.helpers import _format_relative_time
 from diana.telegram.keyboards import (
     parse_callback,
     parse_metrics_callback,
@@ -186,57 +184,6 @@ async def dispatch_owner_callback(
     return "ignored"
 
 
-def _format_step_input(step_name: str, trace: Any) -> str:
-    """Format step input for display, truncated to ~1800 chars."""
-    step_input_map = {
-        "analyst": trace.comprehension,
-        "planner": trace.plan,
-        "memory_retriever": trace.retrieved,
-        "policy_retriever": trace.retrieved,
-        "examples_retriever": trace.retrieved,
-        "context_builder": trace.prompt_text,
-        "generator": trace.prompt_text,
-        "evaluator": trace.evaluation,
-        "decider": trace.decision,
-    }
-    result = json.dumps(step_input_map.get(step_name, {}), indent=2, default=str, ensure_ascii=False)
-    if len(result) > 1800:
-        result = result[:1800] + "\n... (truncated)"
-    return result
-
-
-def _format_step_output(step_name: str, trace: Any) -> str:
-    """Format step output for display, truncated to ~1800 chars."""
-    step_output_map = {
-        "analyst": trace.comprehension,
-        "planner": trace.plan,
-        "memory_retriever": trace.retrieved,
-        "policy_retriever": trace.retrieved,
-        "examples_retriever": trace.retrieved,
-        "context_builder": trace.prompt_text,
-        "generator": trace.generated_text,
-        "evaluator": trace.evaluation,
-        "decider": trace.decision,
-    }
-    result = json.dumps(step_output_map.get(step_name, {}), indent=2, default=str, ensure_ascii=False)
-    if len(result) > 1800:
-        result = result[:1800] + "\n... (truncated)"
-    return result
-
-
-_STEP_TIMING_KEY: dict[str, str] = {
-    "analyst": "analyst_ms",
-    "planner": "planner_ms",
-    "memory_retriever": "memory_retriever_ms",
-    "policy_retriever": "policy_retriever_ms",
-    "examples_retriever": "examples_retriever_ms",
-    "context_builder": "context_builder_ms",
-    "generator": "generator_ms",
-    "evaluator": "evaluator_ms",
-    "decider": "decider_ms",
-}
-
-
 def build_callback_router(
     *,
     admin: AdminService,
@@ -294,29 +241,13 @@ def build_callback_router(
                     if turn_id is None:
                         await query.answer("Invalid trace data")
                         return
-                    trace = await admin_trace.get_full_trace(turn_id)
-                    if trace is None:
+                    view = await admin_trace.render_trace_summary(turn_id)
+                    if view is None:
                         await query.answer("Turn not found", show_alert=True)
                         return
-                    sid = str(trace.turn_id)[:8]
-                    ts = _format_relative_time(trace.created_at)
-                    action_label = trace.decision.get("action", "N/A") if trace.decision else "N/A"
-                    total_ms = 0
-                    if trace.timings:
-                        total_ms = int(sum(v for v in trace.timings.values() if isinstance(v, (int, float))))
-                    original = (trace.prompt_text or "")[:200]
-                    draft = (trace.generated_text or "")[:80]
-                    lines = [
-                        f"Trace {sid}",
-                        f"Date: {ts}",
-                        f"Original: \"{original}\"",
-                        f"Draft: \"{draft}...\"",
-                        f"Decision: {action_label}",
-                        f"Total time: {total_ms}ms",
-                    ]
-                    kb = trace_detail_keyboard(turn_id, timings=trace.timings)
+                    kb = trace_detail_keyboard(view.turn_id, timings=view.timings)
                     if query.message:
-                        await query.message.answer("\n".join(lines), reply_markup=kb)
+                        await query.message.answer(view.text, reply_markup=kb)
                     await query.answer()
                     return
 
@@ -326,47 +257,30 @@ def build_callback_router(
                     if turn_id is None or not step:
                         await query.answer("Invalid trace data")
                         return
-                    trace = await admin_trace.get_full_trace(turn_id)
-                    if trace is None:
+                    view = await admin_trace.render_step_detail(turn_id, step)
+                    if view is None:
                         await query.answer("Turn not found", show_alert=True)
                         return
-                    timing_key = _STEP_TIMING_KEY.get(step, f"{step}_ms")
-                    ms = (trace.timings or {}).get(timing_key, "N/A")
-                    ms_label = f"{int(ms)}ms" if isinstance(ms, (int, float)) else "N/A"
-                    step_display = step.replace("_", " ").title()
-                    inp = _format_step_input(step, trace)
-                    out = _format_step_output(step, trace)
-                    msg = (
-                        f"Step: {step_display}\n"
-                        f"Duration: {ms_label}\n\n"
-                        f"Input:\n{inp}\n\n"
-                        f"Output:\n{out}"
-                    )
-                    kb = step_detail_keyboard(turn_id)
+                    kb = step_detail_keyboard(view.turn_id)
                     if query.message:
-                        await query.message.answer(msg, reply_markup=kb)
+                        await query.message.answer(view.text, reply_markup=kb)
                     await query.answer()
                     return
 
                 if action == "tp":
                     page = trace_parsed.page or 0
-                    turns = await admin_trace.get_recent_turns(limit=10, offset=page * 10)
-                    total = await admin_trace.count_recent()
-                    total_pages = max(1, (total + 9) // 10)
-                    if not turns:
+                    # Global pagination (no chat_id filter) — residual vs /turnos filter.
+                    view = await admin_trace.render_turns_page(page)
+                    if view.empty:
                         await query.answer("No turns on this page")
                         return
-                    lines: list[str] = [f"Recent turns (page {page + 1}/{total_pages}):", ""]
-                    for i, t in enumerate(turns, 1):
-                        sid = str(t.turn_id)[:8]
-                        name = t.vip_name or "Unknown"
-                        ts = _format_relative_time(t.created_at)
-                        preview = t.message_preview
-                        lines.append(f"{i}. [{sid}] {name} (chat {t.chat_id}): \"{preview}\" -> {t.decision} ({ts})")
-                    turns_data = [(t.turn_id, str(t.turn_id)[:8]) for t in turns]
-                    kb = trace_list_keyboard(turns_data, page=page, total_pages=total_pages)
+                    kb = trace_list_keyboard(
+                        view.turns_data,
+                        page=view.page,
+                        total_pages=view.total_pages,
+                    )
                     if query.message:
-                        await query.message.edit_text("\n".join(lines), reply_markup=kb)
+                        await query.message.edit_text(view.text, reply_markup=kb)
                     await query.answer()
                     return
 

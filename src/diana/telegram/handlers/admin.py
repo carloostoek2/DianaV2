@@ -16,7 +16,6 @@ from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import VipStore
 from diana.telegram.handlers.callbacks import ADMIN_MENU_TEXT, CorrectSessionStore
-from diana.telegram.helpers import _format_relative_time
 from diana.telegram.keyboards import (
     metrics_keyboard,
     trace_detail_keyboard,
@@ -178,34 +177,20 @@ def build_admin_router(
                 return
 
         try:
-            turns = await admin_trace.get_recent_turns(limit=10, offset=0, chat_id=filter_chat_id)
+            view = await admin_trace.render_turns_page(0, chat_id=filter_chat_id)
         except Exception:
             logger.exception("Error querying traces")
-            await message.answer("System error: unable to query traces. Try again later.")
+            await message.answer(
+                "System error: unable to query traces. Try again later."
+            )
             return
-        if not turns:
+        if view.empty:
             await message.answer("No recent turns found.")
             return
-
-        try:
-            total = await admin_trace.count_recent(chat_id=filter_chat_id)
-        except Exception:
-            logger.exception("Error counting traces")
-            await message.answer("System error: unable to query traces. Try again later.")
-            return
-        total_pages = max(1, (total + 9) // 10)
-        page = 0
-        lines: list[str] = [f"Recent turns (page {page + 1}/{total_pages}):", ""]
-        for i, t in enumerate(turns, 1):
-            sid = str(t.turn_id)[:8]
-            name = t.vip_name or "Unknown"
-            ts = _format_relative_time(t.created_at)
-            preview = t.message_preview
-            lines.append(f"{i}. [{sid}] {name} (chat {t.chat_id}): \"{preview}\" -> {t.decision} ({ts})")
-
-        turns_data = [(t.turn_id, str(t.turn_id)[:8]) for t in turns]
-        kb = trace_list_keyboard(turns_data, page=page, total_pages=total_pages)
-        await message.answer("\n".join(lines), reply_markup=kb)
+        kb = trace_list_keyboard(
+            view.turns_data, page=view.page, total_pages=view.total_pages
+        )
+        await message.answer(view.text, reply_markup=kb)
 
     @router.message(Command("traza"))
     async def on_traza(message: Message, **_: Any) -> None:
@@ -227,67 +212,35 @@ def build_admin_router(
             return
 
         try:
-            trace = await admin_trace.get_full_trace(turn_id)
+            view = await admin_trace.render_trace_summary(turn_id)
         except Exception:
             logger.exception("Error querying trace")
-            await message.answer("System error: unable to query traces. Try again later.")
+            await message.answer(
+                "System error: unable to query traces. Try again later."
+            )
             return
-        if trace is None:
+        if view is None:
             await message.answer("Turn not found.")
             return
-
-        sid = str(trace.turn_id)[:8]
-        ts = _format_relative_time(trace.created_at)
-        vip_name = trace.vip_id and str(trace.vip_id)[:8] or "N/A"
-        original = (trace.prompt_text or "")[:200]
-        draft = (trace.generated_text or "")[:80]
-        decision_action = "N/A"
-        if trace.decision:
-            decision_action = trace.decision.get("action", "N/A")
-        total_ms = 0
-        if trace.timings:
-            total_ms = int(sum(v for v in trace.timings.values() if isinstance(v, (int, float))))
-        status = trace.status or "N/A"
-
-        lines = [
-            f"Trace {sid}",
-            f"Date: {ts}",
-            f"Status: {status}",
-            f"Original intent: {original}",
-            f"Draft: \"{draft}...\"",
-            f"Decision: {decision_action}",
-            f"Total time: {total_ms}ms",
-        ]
-        kb = trace_detail_keyboard(trace.turn_id, timings=trace.timings)
-        await message.answer("\n".join(lines), reply_markup=kb)
+        kb = trace_detail_keyboard(view.turn_id, timings=view.timings)
+        await message.answer(view.text, reply_markup=kb)
 
     @router.message(Command("resumen", "metricas"))
     async def on_resumen(message: Message, **_: Any) -> None:
         if not _is_owner(message):
             return
-        status = await handle_admin_text(
-            text=message.text or "/resumen",
-            actor_id=message.from_user.id if message.from_user else None,
-            owner_telegram_id=owner_telegram_id,
-            vips=vips,
-            admin=admin,
-            correct_sessions=sessions,
-            admin_metrics=admin_metrics,
-        )
-        if status == "metrics_unavailable":
-            await message.answer("Métricas no disponibles todavía.")
-            return
         if admin_metrics is None:
             await message.answer("Métricas no disponibles todavía.")
             return
         try:
-            summary = await admin_metrics.get_week_summary()
-            body = admin_metrics.format_summary_text(summary)
+            body, status = await admin_metrics.render_week_summary()
         except Exception:
             logger.exception("Error loading metrics summary")
-            await message.answer("Error del sistema al cargar métricas. Reintentá más tarde.")
+            await message.answer(
+                "Error del sistema al cargar métricas. Reintentá más tarde."
+            )
             return
-        kb = metrics_keyboard() if status == "metrics_ok" else None
+        kb = metrics_keyboard() if status == "ok" else None
         await message.answer(body, reply_markup=kb)
 
     @router.message()
