@@ -29,6 +29,7 @@ F3 matrix (first match wins)
 1. safety < P1 threshold -> escalate (reason=safety_below_threshold)
 2. feature_gray_zone_enabled AND needs_policy AND no policy retrieved
    -> consult_doctrine (reason=doctrine_not_found)
+2b. emotion == "molesta" -> escalate (reason=frustracion_directa)
 3. risk == "alto" -> escalate (reason=risk_high)
 4. (residual) naturalness -> re-draft loop — not implemented
 5. feature_autonomous_mode AND all dims >= *_min
@@ -136,6 +137,16 @@ class Decider:
                     draft_text=None,
                     mode_restriction_applied=None,
                 )
+
+        # 2b. Direct frustration — escalate without waiting for risk accumulation.
+        if comprehension.emotion == "molesta":
+            return Decision(
+                action="escalate",
+                reason="frustracion_directa",
+                evaluation=evaluation,
+                draft_text=None,
+                mode_restriction_applied=None,
+            )
 
         # 3. High risk (unchanged from F1).
         if comprehension.risk == "alto":

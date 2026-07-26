@@ -44,11 +44,11 @@ def _high_profile(**overrides: float) -> EvaluationProfile:
     return EvaluationProfile(**data)
 
 
-def _comprehension(*, risk: str = "bajo") -> Comprehension:
+def _comprehension(*, risk: str = "bajo", emotion: str = "neutral") -> Comprehension:
     return Comprehension(
         intent="chat",
         topics=["x"],
-        emotion="neutral",
+        emotion=emotion,  # type: ignore[arg-type]
         urgency="baja",
         risk=risk,  # type: ignore[arg-type]
         needs_memory=False,
@@ -667,3 +667,75 @@ def test_decider_reads_runtime_thresholds_live() -> None:
     decision = d.decide(profile, comp)
     assert decision.action == "send"
     assert decision.reason == "autonomous_ok"
+
+# ── H3 frustracion_directa (emotion molesta) ───────────────────────────
+
+
+def test_molesta_escalates_frustracion_directa() -> None:
+    """High safety, risk bajo, emotion molesta → escalate / frustracion_directa."""
+    decision = Decider().decide(
+        _profile(safety=0.9),
+        _comprehension(risk="bajo", emotion="molesta"),
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "frustracion_directa"
+    assert decision.draft_text is None
+    assert decision.mode_restriction_applied is None
+
+
+def test_doctrine_wins_over_molesta() -> None:
+    """Gray zone on + needs_policy + empty policy + molesta → consult_doctrine."""
+    decider = Decider(feature_gray_zone_enabled=True)
+    comp = Comprehension(
+        intent="consulta_comercial",
+        topics=["precios"],
+        emotion="molesta",
+        urgency="media",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
+    )
+    decision = decider.decide(
+        _profile(safety=0.9),
+        comp,
+        retrieved={"knowledge.policy": None},
+    )
+    assert decision.action == "consult_doctrine"
+    assert decision.reason == "doctrine_not_found"
+
+
+def test_molesta_wins_over_risk_alto() -> None:
+    """Molesta + risk alto + high safety → frustracion_directa (not risk_high)."""
+    decision = Decider().decide(
+        _profile(safety=0.9),
+        _comprehension(risk="alto", emotion="molesta"),
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "frustracion_directa"
+
+
+def test_molesta_beats_autonomous_send() -> None:
+    """Flag on + high dims + molesta → escalate / frustracion_directa, not send."""
+    decider = Decider(feature_autonomous_mode=True)
+    decision = decider.decide(
+        _high_profile(),
+        _comprehension(risk="bajo", emotion="molesta"),
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "frustracion_directa"
+    assert decision.action != "send"
+
+
+def test_safety_wins_over_molesta() -> None:
+    """Safety 0.1 + molesta → safety_below_threshold (priority 1)."""
+    decision = Decider().decide(
+        _profile(safety=0.1),
+        _comprehension(risk="bajo", emotion="molesta"),
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "safety_below_threshold"
+
