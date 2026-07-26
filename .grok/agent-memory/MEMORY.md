@@ -15,6 +15,10 @@
 - [turn-coordinator-contract](impact-analyzer/turn-coordinator-contract.md) — 2026-07-23 — Align TurnCoordinator to docs/contratos_restantes.md Anexo G (G.2/G.3.1 owner discard gap; G.4 in-process OK; G.5 lock timeout residual)
 - [registry-retrievers-contract](impact-analyzer/registry-retrievers-contract.md) — 2026-07-23 — Align Registry+Retrievers to docs/contratos_restantes.md Anexo H (Context H.3 fields; History empty []; schedule half-register; stubs null; no cross-retriever)
 - [behavior-engine-contract](impact-analyzer/behavior-engine-contract.md) — 2026-07-23 — Align BehaviorEngine to docs/contratos_restantes.md Anexo I (I.3 sequence OK; I.4 pre-send supersede + bounded retries missing; mode enum; I.5 fail surface)
+- [f3-item1-foundation](impact-analyzer/f3-item1-foundation.md) — 2026-07-25 — F3 Pool1 item1: flags + thresholds + Decision.action `send` (type/config only; no Decider/orchestrator send path)
+- [f3-item2-decider](impact-analyzer/f3-item2-decider.md) — 2026-07-25 — F3 Pool1 item2: Decider autonomous rules H3.1 (send iff flag+*_min; no orchestrator/AutonomousModeService)
+- [f3-item3-ams](impact-analyzer/f3-item3-ams.md) — 2026-07-25 — F3 Pool1 item3: AMS + orch send→Behavior.deliver + composition wire; auto_send schema gap; deliver-outside-lock
+- [f3-item4-behavior](impact-analyzer/f3-item4-behavior.md) — 2026-07-25 — F3 Pool1 item4: Behavior is_frozen hard-check + DeliveryContext allow_split/quirks + deliver_with_sequence + FEATURE_ADVANCED_BEHAVIOR wiring (H3.6 parcial)
 
 ## Arch Enforcer
 
@@ -31,6 +35,11 @@
 - [turn-coordinator-contract](arch-enforcer/turn-coordinator-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; G.2/G.3 matrix + owner MW supersede + G.5 lock timeout; no cognitive/alembic
 - [registry-retrievers-contract](arch-enforcer/registry-retrievers-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; H.1–H.4 bare resultado + schedule half-register + no cross-retriever; D.5 intact
 - [behavior-engine-contract](arch-enforcer/behavior-engine-contract.md) — 2026-07-23 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; I.4 pre-send + no cognitive import + I.5 Admin fail path; fake_delivery record-only
+- [f3-item1-foundation](arch-enforcer/f3-item1-foundation.md) — 2026-07-25 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; type/config only; Decider matrix untouched; flags default false; migration 006 chain OK
+- [f3-item2-decider](arch-enforcer/f3-item2-decider.md) — 2026-07-25 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; AGENTS priority + dual thresholds + flag-gated send; composition/orchestrator fail-closed until item3
+- [f3-item3-ams](arch-enforcer/f3-item3-ams.md) — 2026-07-25 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; AMS L2 + orch deliver outside lock + composition; learning post-turn; flags default false
+- [f3-item4-behavior](arch-enforcer/f3-item4-behavior.md) — 2026-07-25 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; engine is_frozen hard-check + dual-gate split/quirks + deliver_with_sequence + FEATURE_ADVANCED_BEHAVIOR wiring; Behavior purity OK
+- [f3-item4b-rich-quirks](arch-enforcer/f3-item4b-rich-quirks.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; three kinds pause|natural_split|typo_correct under dual gate; pure quirks.py; no LLM; composition p=0.05
 
 ## Test Guardian
 
@@ -47,6 +56,11 @@
 - [turn-coordinator-contract](test-guardian/turn-coordinator-contract.md) — 2026-07-23 — **suite protege adecuadamente**, G.3 matrix + owner supersede + G.5 timeout + concurrency, 0 mocks prohibidos; 17 coordinator + 5 owner MW + 70 related / 414 full unit → paso 6
 - [registry-retrievers-contract](test-guardian/registry-retrievers-contract.md) — 2026-07-23 — **suite protege adecuadamente**, H.1–H.4 bare resultado + schedule half-register + Context H.3 + empty history [] + H.4 AST gates, 0 mocks prohibidos; primary 81 / wiring 26 / full unit 425 → paso 6
 - [behavior-engine-contract](test-guardian/behavior-engine-contract.md) — 2026-07-23 — **suite protege adecuadamente**, I.4 pre-send+retries + fake_delivery + I.5 Admin fail, 0 mocks prohibidos; behavior 23 / full unit 443 / TAC 8 → paso 6
+- [f3-item1-foundation](test-guardian/f3-item1-foundation.md) — 2026-07-25 — **suite protege adecuadamente**, Decision.send + 5 F3 flags false + dual thresholds SPEC + migration 006 seeds + Decider no-send, 0 mocks prohibidos; item suite 149 (executor) → run-tests orchestrator
+- [f3-item2-decider](test-guardian/f3-item2-decider.md) — 2026-07-25 — **suite protege adecuadamente**, F3 Decider autonomous matrix (flag/mins/fallback/priorities/boundary/dual surfaces), 0 mocks prohibidos; 45 primary (executor) → run-tests orchestrator
+- [f3-item3-ams](test-guardian/f3-item3-ams.md) — 2026-07-25 — **suite protege adecuadamente**, AMS L1/L2 + orch send outside lock + composition wire + auto_send schema, 0 mocks prohibidos; primary 171 / full unit 686 (executor) → run-tests orchestrator
+- [f3-item4-behavior](test-guardian/f3-item4-behavior.md) — 2026-07-25 — **suite protege adecuadamente**, C1–C6 frozen hard-check + dual-gate split/quirks + deliver_with_sequence + FEATURE_ADVANCED_BEHAVIOR wiring, 0 mocks prohibidos; primary 135 / full unit 713 (executor) → run-tests orchestrator
+- [f3-item4b-rich-quirks](test-guardian/f3-item4b-rich-quirks.md) — 2026-07-26 — **suite protege adecuadamente**, three quirk kinds (pause/natural_split/typo) + dual-gate + purity, 0 mocks prohibidos; primary 124 (executor) → run-tests orchestrator
 
 ## Documentador
 
@@ -58,3 +72,5 @@
 - [remaining-contracts-app](documentador/remaining-contracts-app.md) — 2026-07-23 — Pool remaining-contracts-app (2/2) closed: 3 items Anexos G–I (turn-coordinator, registry-retrievers, behavior-engine); 0 critical arch; HARD CLEAN all; full unit 443; **C–I complete across both pools**
 - [trazabilidad](documentador/pool-2026-07-25-trazabilidad.md) — 2026-07-25 — Pool trazabilidad closed: 1 item (modulo de trazabilidad Anexo T, 17 commits, 43 new tests, 566 unit, 0 critical arch, 6 reviewers effort 5, 2 review rounds 0 open final)
 - [trazabilidad-polish](documentador/pool-2026-07-25-trazabilidad-polish.md) — 2026-07-25 — Pool trazabilidad-polish closed: 3 improvements (fechas relativas, filtro VIP, purge job), 4 commits, 62 new tests, 628 unit, effort 3, 0 plan issues, 0 regressions
+- [f3-pool1-autonomous-core](documentador/f3-pool1-autonomous-core.md) — 2026-07-26 — Pool f3-pool1-autonomous-core CLOSED: items 1–4 + 4b rich quirks (H3.1/H3.2/H3.6); HARD 15fa8330·e78885f2·b3ee6a75·74d2f5d5·e4a192c5 all 0 open; flag sole enablement; AMS L1/L2; deliver outside lock; full FEATURE_ADVANCED quirks; CLARIFY tone 1ª persona amigable femenino; residuals → pool2 recontact/promo, pool3 calibration/metrics/dashboard
+- Consolidated SUMMARY: `.planning/quick/f3-pool1-autonomous-core/POOL-SUMMARY.md`

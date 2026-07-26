@@ -1,0 +1,32 @@
+## gsd-documentador log — quick/f3-pool1-autonomous-core
+
+### 2026-07-26
+
+**Pool f3-pool1-autonomous-core close documentation.**
+
+Read sources:
+- `.planning/quick/f3-pool1-autonomous-core/POOL.md`
+- `.planning/quick/f3-pool1-autonomous-core/CLARIFY.md`
+- item SUMMARYs: item1-foundation, item2-decider, item3-ams, item4-behavior, item4b-rich-quirks
+- gsd logs: gsd-f3-item1-foundation, item2-decider, item3-ams, item4-behavior, item4b-rich-quirks
+- arch-enforcer / test-guardian MEMORY index + f3 item reports
+- review finals: HARD 15fa8330, e78885f2, b3ee6a75, 74d2f5d5, e4a192c5 (all final open 0)
+- docs/SPEC-FASE3.md H3.1–H3.10 roadmap table (reference only; no SPEC edit)
+
+Actions planned:
+1. Write `.planning/quick/f3-pool1-autonomous-core/POOL-SUMMARY.md`
+2. Write `.grok/agent-memory/documentador/f3-pool1-autonomous-core.md`
+3. Update `.grok/agent-memory/MEMORY.md` Documentador section
+4. Mark POOL.md closed
+5. Docs-only commit (`docs(f3): close pool1 autonomous-core summary`)
+
+Decisions to document (from CLARIFY + item SUMMARYs):
+- Flag sole enablement for Decider send
+- AMS L1/L2 enablement model
+- Orchestrator deliver outside chat lock
+- Full FEATURE_ADVANCED quirks (item4 + item4b)
+- User-facing tone: 1st person, friendly feminine Spanish (end-user); ops tone for owner DMs
+
+Residuals for next pools:
+- Pool 2: recontact + cancel hook; promo + re-intro amigable
+- Pool 3: calibration + metrics + dashboard DM
