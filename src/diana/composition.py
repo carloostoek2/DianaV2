@@ -81,6 +81,7 @@ from diana.infrastructure.db.session import create_engine, create_session_factor
 from diana.infrastructure.db.repositories.examples import ExamplesRepo
 from diana.infrastructure.db.repositories.memories import MemoriesRepo
 from diana.infrastructure.db.repositories.policies import PoliciesRepo
+from diana.infrastructure.db.repositories.profiles import ProfilesRepo
 from diana.learning.post_turn import LearningService
 from diana.llm.deepseek import DeepSeekProvider
 from diana.llm.fake import FakeLLM
@@ -254,6 +255,7 @@ def build_app(
     memories_repo = MemoriesRepo(sf)
     policies_repo = PoliciesRepo(sf)
     examples_repo = ExamplesRepo(sf)
+    profiles_repo = ProfilesRepo(sf)
 
     # ---- F2 Item 3: feature flags, gray zone, sandbox ----
     # Feature flags come from Settings (source of truth). DB-side overrides
@@ -364,6 +366,7 @@ def build_app(
         memory_repo=memories_repo,
         policy_repo=policies_repo,
         examples_repo=examples_repo,
+        profile_repo=profiles_repo,
         embedding_service=embedding_svc,
         persona_facts=catalog["persona_facts"],
         voice_patterns=catalog["voice_patterns"],

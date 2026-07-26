@@ -26,6 +26,7 @@ PLANNER_CAPABILITY_UNIVERSE: tuple[str, ...] = (
     "knowledge.context",
     "knowledge.persona_facts",
     "knowledge.voice_patterns",
+    "knowledge.profile",
     "knowledge.memory",
     "knowledge.policy",
     "knowledge.examples",
@@ -59,6 +60,7 @@ def build_default_registry(
     memory_repo: Any = None,
     policy_repo: Any = None,
     examples_repo: Any = None,
+    profile_repo: Any = None,
     embedding_service: Any = None,
     persona_facts: list | None = None,
     voice_patterns: list | None = None,
@@ -69,9 +71,10 @@ def build_default_registry(
     Seats: history/context REAL; persona_facts/voice_patterns from static
     catalogs (empty → always None); memory/policy/examples REAL when their
     ``*_repo`` and ``embedding_service`` are provided, STUB otherwise (policy
-    may still match static_policies); schedule half-registered
-    (``fuente=no_implementado``, fetch always None). Profile is an F2 seat
-    outside the planner universe but remains registered.
+    may still match static_policies); profile REAL when ``profile_repo`` is
+    provided (PK VIP lookup), STUB otherwise; schedule half-registered
+    (``fuente=no_implementado``, fetch always None). Profile is always
+    registered (stub or real).
     """
     registry = CapabilityRegistry()
     registry.register(
@@ -82,7 +85,10 @@ def build_default_registry(
         "knowledge.context",
         ContextRetriever(history_port, limit=history_limit),
     )
-    registry.register("knowledge.profile", ProfileRetriever())
+    registry.register(
+        "knowledge.profile",
+        ProfileRetriever(repo=profile_repo),
+    )
     registry.register(
         "knowledge.persona_facts",
         PersonaFactsRetriever(persona_facts or []),
