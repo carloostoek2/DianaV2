@@ -320,15 +320,28 @@ async def test_chat_scope_lock_timeout_raises() -> None:
 
 
 class FakeRecontactCanceller:
-    def __init__(self, *, raise_on_cancel: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        raise_on_cancel: bool = False,
+        raise_on_schedule: bool = False,
+    ) -> None:
         self.calls: list[UUID] = []
+        self.schedule_calls: list[UUID] = []
         self._raise = raise_on_cancel
+        self._raise_schedule = raise_on_schedule
 
     async def cancel_recontact(self, vip_id: UUID) -> bool:
         self.calls.append(vip_id)
         if self._raise:
             raise RuntimeError("cancel boom")
         return True
+
+    async def schedule_recontact(self, vip_id: UUID) -> object | None:
+        self.schedule_calls.append(vip_id)
+        if self._raise_schedule:
+            raise RuntimeError("schedule boom")
+        return object()
 
 
 def _coord_with_recontact(
@@ -360,6 +373,7 @@ async def test_vip_coordinate_cancels_recontact_when_flag_on() -> None:
     assert result.action == "create"
     assert result.turn_id is not None
     assert recontact.calls == [vip_id]
+    assert recontact.schedule_calls == [vip_id]
     assert len(await turns.list_non_terminal(300)) == 1
 
 
@@ -376,6 +390,7 @@ async def test_vip_coordinate_unlocked_cancels_recontact_when_flag_on() -> None:
         )
     assert result.action == "create"
     assert recontact.calls == [vip_id]
+    assert recontact.schedule_calls == [vip_id]
     assert len(await turns.list_non_terminal(301)) == 1
 
 
@@ -423,6 +438,8 @@ async def test_vip_coordinate_fail_soft_when_cancel_raises() -> None:
     assert result.action == "create"
     assert result.turn_id is not None
     assert recontact.calls == [vip_id]
+    # Schedule still attempted after cancel failure (independent fail-soft).
+    assert recontact.schedule_calls == [vip_id]
     rec = await turns.get(result.turn_id)
     assert rec is not None
     assert rec.status == TurnStatus.RECEIVED.value
@@ -438,3 +455,60 @@ async def test_owner_coordinate_does_not_cancel_recontact() -> None:
     result = await coord.coordinate(chat_id=306, autor="owner", vip_id=vip_id)
     assert result.action == "discard_owner_message"
     assert recontact.calls == []
+
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_schedules_recontact_after_cancel() -> None:
+    """R3: VIP path cancels then schedules recontact (seed inactivity clock)."""
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller()
+    coord, turns, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    result = await coord.coordinate(chat_id=310, autor="vip", vip_id=vip_id)
+    assert result.action == "create"
+    assert recontact.calls == [vip_id]
+    assert recontact.schedule_calls == [vip_id]
+    assert len(await turns.list_non_terminal(310)) == 1
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_no_schedule_when_flag_off() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller()
+    coord, _, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=False
+    )
+    await coord.coordinate(chat_id=311, autor="vip", vip_id=vip_id)
+    assert recontact.calls == []
+    assert recontact.schedule_calls == []
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_fail_soft_when_schedule_raises() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller(raise_on_schedule=True)
+    coord, turns, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    result = await coord.coordinate(chat_id=312, autor="vip", vip_id=vip_id)
+    assert result.action == "create"
+    assert recontact.calls == [vip_id]
+    assert recontact.schedule_calls == [vip_id]
+    assert result.turn_id is not None
+    rec = await turns.get(result.turn_id)
+    assert rec is not None
+    assert rec.status == TurnStatus.RECEIVED.value
+
+
+@pytest.mark.asyncio
+async def test_owner_coordinate_does_not_schedule_recontact() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller()
+    coord, _, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    result = await coord.coordinate(chat_id=313, autor="owner", vip_id=vip_id)
+    assert result.action == "discard_owner_message"
+    assert recontact.schedule_calls == []

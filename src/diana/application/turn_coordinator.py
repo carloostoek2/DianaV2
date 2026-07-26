@@ -46,10 +46,16 @@ LOCK_ACQUIRE_RETRIES = 2
 _LOCK_BACKOFF_BASE_S = 0.05
 
 
-class RecontactCanceller(Protocol):
-    """Minimal cancel surface for VIP recontact schedules (BR-07)."""
+class RecontactLifecycle(Protocol):
+    """Cancel + re-seed recontact schedule on VIP activity (BR-07 / R3)."""
 
     async def cancel_recontact(self, vip_id: UUID) -> bool: ...
+
+    async def schedule_recontact(self, vip_id: UUID) -> object | None: ...
+
+
+# Backward-compatible alias (cancel-only callers still type-check loosely).
+RecontactCanceller = RecontactLifecycle
 
 
 class ChatLockTimeoutError(TimeoutError):
@@ -90,7 +96,7 @@ class TurnCoordinator:
         locks: ChatLockProvider | None = None,
         lock_acquire_timeout_s: float = LOCK_ACQUIRE_TIMEOUT_S,
         lock_acquire_retries: int = LOCK_ACQUIRE_RETRIES,
-        recontact: RecontactCanceller | None = None,
+        recontact: RecontactLifecycle | None = None,
         feature_recontact_enabled: bool = False,
     ) -> None:
         self._turns = turns
@@ -189,7 +195,7 @@ class TurnCoordinator:
             )
             return result
 
-        # VIP path: BR-07 cancel pending recontact before create/replace.
+        # VIP path: BR-07 cancel pending recontact, then re-seed inactivity window.
         if (
             self._feature_recontact_enabled
             and self._recontact is not None
@@ -205,6 +211,18 @@ class TurnCoordinator:
             except Exception:
                 logger.exception(
                     "recontact_cancel_on_vip_message_failed",
+                    extra={"vip_id": str(vip_id), "chat_id": chat_id},
+                )
+            try:
+                scheduled = await self._recontact.schedule_recontact(vip_id)
+                if scheduled is not None:
+                    logger.info(
+                        "recontact_scheduled_on_vip_message",
+                        extra={"vip_id": str(vip_id), "chat_id": chat_id},
+                    )
+            except Exception:
+                logger.exception(
+                    "recontact_schedule_on_vip_message_failed",
                     extra={"vip_id": str(vip_id), "chat_id": chat_id},
                 )
 
@@ -370,5 +388,6 @@ __all__ = [
     "LOCK_ACQUIRE_RETRIES",
     "LOCK_ACQUIRE_TIMEOUT_S",
     "RecontactCanceller",
+    "RecontactLifecycle",
     "TurnCoordinator",
 ]
