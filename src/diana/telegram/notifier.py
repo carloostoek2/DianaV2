@@ -12,6 +12,7 @@ from diana.application.ports import (
     DraftNotification,
     EscalationNotification,
 )
+from diana.application.escalation_labels import label_es_for_tipo
 from diana.telegram.keyboards import doctrine_keyboard, draft_keyboard
 
 logger = logging.getLogger("diana.telegram")
@@ -42,8 +43,9 @@ class AiogramOwnerNotifier:
         return int(msg.message_id)
 
     async def notify_escalation(self, payload: EscalationNotification) -> None:
+        label = label_es_for_tipo(payload.tipo)
         text = (
-            f"Escalation ({payload.tipo}) turn={payload.turn_id}\n"
+            f"Escalación: {label} [{payload.tipo}] turn={payload.turn_id}\n"
             f"chat={payload.chat_id}\n"
             f"reason={payload.reason}"
         )

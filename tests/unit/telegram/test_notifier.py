@@ -62,3 +62,28 @@ async def test_notify_escalation_sends_dm() -> None:
         )
     )
     bot.send_message.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_notify_escalation_includes_spanish_label() -> None:
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=1))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    turn_id = uuid4()
+    await notifier.notify_escalation(
+        EscalationNotification(
+            turn_id=turn_id,
+            chat_id=42,
+            reason="frustracion_directa",
+            tipo="frustracion_directa",
+            vip_text="estoy molesta",
+        )
+    )
+    kwargs = bot.send_message.await_args.kwargs
+    body = kwargs["text"]
+    assert "Escalación:" in body
+    assert "Frustración directa (VIP molesta)" in body
+    assert "[frustracion_directa]" in body
+    assert "chat=42" in body
+    assert "VIP: estoy molesta" in body
+    assert str(turn_id) in body
+

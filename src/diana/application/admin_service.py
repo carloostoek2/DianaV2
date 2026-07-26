@@ -24,6 +24,7 @@ from diana.application.ports import (
     TurnStore,
     VipStore,
 )
+from diana.application.escalation_labels import tipo_from_reason
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.models import (
     Decision,
@@ -147,7 +148,7 @@ class AdminService:
         decision: Decision,
         turn_id: UUID,
     ) -> None:
-        tipo = "semantica"
+        tipo = tipo_from_reason(decision.reason)
         await self._escalations.create(
             turn_id, tipo=tipo, motivo=decision.reason
         )

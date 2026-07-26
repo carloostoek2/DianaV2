@@ -627,3 +627,32 @@ async def test_mark_false_positive_noop_without_store() -> None:
     # no fp_marks wired
     ok = await g["admin"].mark_false_positive(uuid4(), actor_id=OWNER_ID)
     assert ok is False
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason,expected_tipo",
+    [
+        ("frustracion_directa", "frustracion_directa"),
+        ("pregunta_repetida", "pregunta_repetida"),
+        ("pago_precio", "pago_precio"),
+        ("compromiso_real", "compromiso_real"),
+        ("identidad_ia", "identidad_ia"),
+        ("palabra_prohibida", "palabra_prohibida"),
+        ("safety_below_threshold", "semantica"),
+    ],
+)
+async def test_notify_escalation_maps_system_reason_to_tipo(
+    admin_graph: dict, reason: str, expected_tipo: str
+) -> None:
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42)
+    decision = Decision(
+        action="escalate",
+        reason=reason,
+        evaluation=_eval(),
+        draft_text="",
+    )
+    await g["admin"].notify_escalation(_incoming(turn.id), decision, turn.id)
+    assert g["escalations"].events[0]["tipo"] == expected_tipo
+    assert g["notifier"].escalations[0].tipo == expected_tipo
+
