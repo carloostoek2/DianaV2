@@ -234,3 +234,15 @@ def test_composition_passes_ops_middleware_knobs(_comp_src: str) -> None:
     assert "rate_limit_max_events=settings.rate_limit_max_events" in _comp_src
     assert "rate_limit_window_s=settings.rate_limit_window_s" in _comp_src
     assert "dedup_ttl_s=settings.dedup_ttl_s" in _comp_src
+
+
+
+def test_composition_persona_catalog_wired(_comp_src: str) -> None:
+    """J.1/H2: composition loads catalog and wires style_rules + catalogs."""
+    assert "load_persona_catalog" in _comp_src
+    assert "style_rules=" in _comp_src
+    assert "persona_facts=" in _comp_src
+    assert "voice_patterns=" in _comp_src
+    assert "static_policies=" in _comp_src
+    # English placeholder must not be used as production persona assignment.
+    assert "warm and professional VIP chat assistant" not in _comp_src

@@ -68,6 +68,7 @@ class CognitiveDirector:
         history: MessageHistoryPort,
         analyst_history_limit: int = ANALYST_HISTORY_LIMIT,
         status_sink: TurnStatusSink | None = None,
+        style_rules: list[str] | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -78,6 +79,7 @@ class CognitiveDirector:
         self._decider = decider
         self._trace = trace
         self._persona = persona
+        self._style_rules = style_rules
         self._history = history
         self._analyst_history_limit = analyst_history_limit
         self._status = status_sink or NoOpTurnStatusSink()
@@ -166,6 +168,7 @@ class CognitiveDirector:
                 comprehension,
                 knowledge=retrieved,
                 persona=self._persona,
+                style_rules=self._style_rules,
             )
         timings["context_builder_ms"] = tc.elapsed_ms
         await self._store(turn_id, "prompt_text", built.prompt_final)

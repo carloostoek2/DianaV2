@@ -47,6 +47,7 @@ from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
 from diana.cognitive.planner import Planner
 from diana.cognitive.policy_distiller import PolicyDistiller
+from diana.cognitive.persona_catalog import load_persona_catalog
 from diana.cognitive.registry import build_default_registry
 from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 from diana.config import Settings
@@ -87,10 +88,9 @@ from diana.telegram.setup import TelegramWiring, build_dispatcher
 
 logger = logging.getLogger("diana.composition")
 
-DEFAULT_PERSONA = (
-    "You are Diana, a warm and professional VIP chat assistant. "
-    "Write natural, concise replies in the owner's voice."
-)
+# Production persona from Anexo J.1 static catalog (not English placeholder).
+_PERSONA_CATALOG = load_persona_catalog()
+DEFAULT_PERSONA = str(_PERSONA_CATALOG["voz_configurada"]["persona"])
 
 
 class SystemClock:
@@ -346,12 +346,17 @@ def build_app(
         fp_marks=owner_marks,
     )
 
+    catalog = _PERSONA_CATALOG
+    voz = catalog["voz_configurada"]
     registry = build_default_registry(
         history,
         memory_repo=memories_repo,
         policy_repo=policies_repo,
         examples_repo=examples_repo,
         embedding_service=embedding_svc,
+        persona_facts=catalog["persona_facts"],
+        voice_patterns=catalog["voice_patterns"],
+        static_policies=catalog["policies"],
     )
     director = CognitiveDirector(
         analyst=Analyst(provider),
@@ -362,7 +367,8 @@ def build_app(
         evaluator=Evaluator(provider),
         decider=decider,
         trace=traces,
-        persona=DEFAULT_PERSONA,
+        persona=str(voz["persona"]),
+        style_rules=list(voz["reglas_estilo"]),
         # Same history port as registry — Analyst window is chat-scoped only (R1).
         history=history,
         analyst_history_limit=ANALYST_HISTORY_LIMIT,

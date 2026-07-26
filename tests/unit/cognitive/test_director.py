@@ -73,6 +73,7 @@ def make_director(
     status_sink: InMemoryTurnStatusSink | None = None,
     thresholds: dict | None = None,
     persona: str = "You are Diana.",
+    style_rules: list[str] | None = None,
     analyst_history_limit: int = 8,
     context_builder: ContextBuilder | None = None,
     max_prompt_chars: int | None = None,
@@ -94,6 +95,7 @@ def make_director(
         decider=Decider(thresholds=thresholds),
         trace=trace,
         persona=persona,
+        style_rules=style_rules,
         status_sink=status_sink,
         history=history,
         analyst_history_limit=analyst_history_limit,
@@ -904,3 +906,27 @@ async def test_director_evaluator_schema_fail_no_decision_trace() -> None:
     assert TurnStatus.EVALUATING.value in statuses
     assert TurnStatus.DECIDING.value not in statuses
     assert statuses[-1] == TurnStatus.FAILED.value
+
+
+
+@pytest.mark.asyncio
+async def test_style_rules_reach_prompt_text() -> None:
+    """J.1: Director passes style_rules into ContextBuilder persona section."""
+    distinctive = "Preguntas: solo cierre '?', nunca abre con '¿'. Regla inquebrantable."
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        persona="Eres Diana, 27 años.",
+        style_rules=[distinctive, "Máximo 2-3 líneas por mensaje."],
+    )
+    turn = _turn(text="vip-style-check")
+    await director.handle_turn(turn)
+    prompt = trace.get(turn.turn_id, "prompt_text")
+    assert isinstance(prompt, str)
+    assert "Eres Diana, 27 años." in prompt
+    assert distinctive in prompt
+    assert "Máximo 2-3 líneas por mensaje." in prompt
+    assert "vip-style-check" in prompt
