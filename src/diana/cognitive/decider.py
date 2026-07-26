@@ -31,7 +31,7 @@ F3 matrix (first match wins)
    -> consult_doctrine (reason=doctrine_not_found)
 2b. emotion == "molesta" -> escalate (reason=frustracion_directa)
 3. risk == "alto" -> escalate (reason=risk_high)
-4. (residual) naturalness -> re-draft loop — not implemented
+4. naturalness redraft is Director pre-step (1×); Decider never owns redraft
 5. feature_autonomous_mode AND all dims >= *_min
    -> send (reason=autonomous_ok)
 6a. feature_autonomous_mode AND any dim below *_min
@@ -44,8 +44,10 @@ separate ``autonomous_thresholds`` keys ``safety_min`` / ``doctrine_min`` /
 ``naturalness_min`` (defaults from DEFAULT_AUTONOMOUS_THRESHOLDS; partial
 maps merge over defaults). Never mix shapes in one dict for P1.
 
-Residual: F.3 rule 2 (naturalness re-draft loop) is not implemented;
-low naturalness under autonomous only blocks send (approve fallback).
+Naturalness redraft MVP is owned by CognitiveDirector (exactly one extra
+draft + re-eval when first naturalness < supervised min). Decider never
+emits a redraft action; multi-retry remains deferred. Low naturalness under
+autonomous only blocks send (approve fallback) at this matrix step.
 """
 
 from __future__ import annotations
@@ -158,7 +160,7 @@ class Decider:
                 mode_restriction_applied=None,
             )
 
-        # 4. Residual: naturalness re-draft loop — not implemented.
+        # 4. Naturalness redraft is Director pre-step (1×); Decider never owns redraft.
 
         # 5–6a. Autonomous send / threshold-miss fallback (flag only; mode audit).
         if self._feature_autonomous_mode:
