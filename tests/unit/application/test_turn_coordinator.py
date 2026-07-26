@@ -314,3 +314,127 @@ async def test_chat_scope_lock_timeout_raises() -> None:
         assert await turns.list_non_terminal(208) == []
     finally:
         lock.release()
+
+
+# --- BR-07: cancel pending recontact on VIP coordinate ---
+
+
+class FakeRecontactCanceller:
+    def __init__(self, *, raise_on_cancel: bool = False) -> None:
+        self.calls: list[UUID] = []
+        self._raise = raise_on_cancel
+
+    async def cancel_recontact(self, vip_id: UUID) -> bool:
+        self.calls.append(vip_id)
+        if self._raise:
+            raise RuntimeError("cancel boom")
+        return True
+
+
+def _coord_with_recontact(
+    *,
+    recontact: FakeRecontactCanceller | None,
+    feature_recontact_enabled: bool,
+) -> tuple[TurnCoordinator, InMemoryTurnStore, FakeRecontactCanceller | None]:
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    behavior = FakeCanceller()
+    coord = TurnCoordinator(
+        turns,
+        approvals,
+        behavior,
+        recontact=recontact,
+        feature_recontact_enabled=feature_recontact_enabled,
+    )
+    return coord, turns, recontact
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_cancels_recontact_when_flag_on() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller()
+    coord, turns, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    result = await coord.coordinate(chat_id=300, autor="vip", vip_id=vip_id)
+    assert result.action == "create"
+    assert result.turn_id is not None
+    assert recontact.calls == [vip_id]
+    assert len(await turns.list_non_terminal(300)) == 1
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_unlocked_cancels_recontact_when_flag_on() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller()
+    coord, turns, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    async with coord.chat_scope(301):
+        result = await coord.coordinate_unlocked(
+            chat_id=301, autor="vip", vip_id=vip_id
+        )
+    assert result.action == "create"
+    assert recontact.calls == [vip_id]
+    assert len(await turns.list_non_terminal(301)) == 1
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_no_cancel_when_flag_off() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller()
+    coord, _, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=False
+    )
+    await coord.coordinate(chat_id=302, autor="vip", vip_id=vip_id)
+    assert recontact.calls == []
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_no_cancel_when_recontact_none() -> None:
+    vip_id = uuid4()
+    coord, turns, _ = _coord_with_recontact(
+        recontact=None, feature_recontact_enabled=True
+    )
+    result = await coord.coordinate(chat_id=303, autor="vip", vip_id=vip_id)
+    assert result.action == "create"
+    assert result.turn_id is not None
+    assert len(await turns.list_non_terminal(303)) == 1
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_no_cancel_when_vip_id_none() -> None:
+    recontact = FakeRecontactCanceller()
+    coord, _, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    await coord.coordinate(chat_id=304, autor="vip", vip_id=None)
+    assert recontact.calls == []
+
+
+@pytest.mark.asyncio
+async def test_vip_coordinate_fail_soft_when_cancel_raises() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller(raise_on_cancel=True)
+    coord, turns, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    result = await coord.coordinate(chat_id=305, autor="vip", vip_id=vip_id)
+    assert result.action == "create"
+    assert result.turn_id is not None
+    assert recontact.calls == [vip_id]
+    rec = await turns.get(result.turn_id)
+    assert rec is not None
+    assert rec.status == TurnStatus.RECEIVED.value
+
+
+@pytest.mark.asyncio
+async def test_owner_coordinate_does_not_cancel_recontact() -> None:
+    vip_id = uuid4()
+    recontact = FakeRecontactCanceller()
+    coord, _, _ = _coord_with_recontact(
+        recontact=recontact, feature_recontact_enabled=True
+    )
+    result = await coord.coordinate(chat_id=306, autor="owner", vip_id=vip_id)
+    assert result.action == "discard_owner_message"
+    assert recontact.calls == []

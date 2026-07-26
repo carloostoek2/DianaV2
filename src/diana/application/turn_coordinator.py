@@ -25,7 +25,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
 from diana.application.ports import (
@@ -44,6 +44,12 @@ CoordinateAction = Literal["create", "replace", "discard_owner_message"]
 LOCK_ACQUIRE_TIMEOUT_S = 5.0
 LOCK_ACQUIRE_RETRIES = 2
 _LOCK_BACKOFF_BASE_S = 0.05
+
+
+class RecontactCanceller(Protocol):
+    """Minimal cancel surface for VIP recontact schedules (BR-07)."""
+
+    async def cancel_recontact(self, vip_id: UUID) -> bool: ...
 
 
 class ChatLockTimeoutError(TimeoutError):
@@ -84,6 +90,8 @@ class TurnCoordinator:
         locks: ChatLockProvider | None = None,
         lock_acquire_timeout_s: float = LOCK_ACQUIRE_TIMEOUT_S,
         lock_acquire_retries: int = LOCK_ACQUIRE_RETRIES,
+        recontact: RecontactCanceller | None = None,
+        feature_recontact_enabled: bool = False,
     ) -> None:
         self._turns = turns
         self._approvals = approvals
@@ -91,6 +99,8 @@ class TurnCoordinator:
         self._locks = locks or ChatLockProvider()
         self._lock_acquire_timeout_s = lock_acquire_timeout_s
         self._lock_acquire_retries = lock_acquire_retries
+        self._recontact = recontact
+        self._feature_recontact_enabled = feature_recontact_enabled
 
     @asynccontextmanager
     async def chat_scope(self, chat_id: int) -> AsyncIterator[None]:
@@ -178,6 +188,25 @@ class TurnCoordinator:
                 },
             )
             return result
+
+        # VIP path: BR-07 cancel pending recontact before create/replace.
+        if (
+            self._feature_recontact_enabled
+            and self._recontact is not None
+            and vip_id is not None
+        ):
+            try:
+                cancelled = await self._recontact.cancel_recontact(vip_id)
+                if cancelled:
+                    logger.info(
+                        "recontact_cancelled_on_vip_message",
+                        extra={"vip_id": str(vip_id), "chat_id": chat_id},
+                    )
+            except Exception:
+                logger.exception(
+                    "recontact_cancel_on_vip_message_failed",
+                    extra={"vip_id": str(vip_id), "chat_id": chat_id},
+                )
 
         # VIP path: create or replace.
         new_id = turn_id or uuid4()
@@ -340,5 +369,6 @@ __all__ = [
     "CoordinateResult",
     "LOCK_ACQUIRE_RETRIES",
     "LOCK_ACQUIRE_TIMEOUT_S",
+    "RecontactCanceller",
     "TurnCoordinator",
 ]
