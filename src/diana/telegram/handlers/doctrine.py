@@ -135,16 +135,27 @@ def build_doctrine_router(
     *,
     gray_zone: GrayZoneServicePort,
     coordinator: TurnCoordinator,
+    owner_telegram_id: int | None = None,
 ) -> Router:
     """Build a Router with doctrine callback handlers.
 
     The router is included BEFORE the catch-all callback router so that
     doctrine-specific callbacks (dr:*, dx:*, de:*) are handled first.
+    Owner auth mirrors metrics/trace: non-owner answers ``Not authorized``.
     """
     router = Router(name="doctrine")
 
+    def _is_owner(callback: CallbackQuery) -> bool:
+        if owner_telegram_id is None:
+            return False
+        actor = callback.from_user.id if callback.from_user else None
+        return actor == owner_telegram_id
+
     @router.callback_query(lambda c: c.data and c.data.startswith("dr:"))
     async def on_doctrine_respond(callback: CallbackQuery, **_: Any) -> None:
+        if not _is_owner(callback):
+            await callback.answer("Not authorized", show_alert=True)
+            return
         turn_id = parse_doctrine_callback(callback.data or "")
         if turn_id is None:
             await callback.answer("Invalid callback", show_alert=True)
@@ -161,6 +172,9 @@ def build_doctrine_router(
     async def on_doctrine_resolve_with_draft(
         callback: CallbackQuery, **_: Any
     ) -> None:
+        if not _is_owner(callback):
+            await callback.answer("Not authorized", show_alert=True)
+            return
         turn_id = parse_doctrine_callback(callback.data or "")
         if turn_id is None:
             await callback.answer("Invalid callback", show_alert=True)
@@ -176,6 +190,9 @@ def build_doctrine_router(
 
     @router.callback_query(lambda c: c.data and c.data.startswith("de:"))
     async def on_doctrine_escalate(callback: CallbackQuery, **_: Any) -> None:
+        if not _is_owner(callback):
+            await callback.answer("Not authorized", show_alert=True)
+            return
         turn_id = parse_doctrine_callback(callback.data or "")
         if turn_id is None:
             await callback.answer("Invalid callback", show_alert=True)

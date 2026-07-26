@@ -393,7 +393,11 @@ def build_app(
 
     # Doctrine router — only wired when gray zone feature is enabled.
     doctrine_router = (
-        build_doctrine_router(gray_zone=gray_zone, coordinator=coordinator)
+        build_doctrine_router(
+            gray_zone=gray_zone,
+            coordinator=coordinator,
+            owner_telegram_id=settings.owner_telegram_id,
+        )
         if gray_zone is not None
         else None
     )

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from aiogram.types import CallbackQuery, User
 
 from diana.application.memory import (
     InMemoryPendingApprovalStore,
@@ -13,10 +15,19 @@ from diana.application.memory import (
 )
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.telegram.handlers.doctrine import (
+    build_doctrine_router,
     handle_doctrine_escalate,
     handle_doctrine_respond,
     handle_doctrine_resolve_with_draft,
 )
+from diana.telegram.keyboards import (
+    encode_doctrine_callback,
+    encode_doctrine_escalate_callback,
+    encode_doctrine_resolve_callback,
+)
+
+OWNER = 999001
+OTHER = 111222
 
 
 @dataclass
@@ -296,6 +307,102 @@ async def test_escalate_discard_error() -> None:
     assert len(gray_zone.discard_calls) == 1
     # Transition was called first (MED-6 order), so it should be recorded.
     assert len(coordinator.transitions) == 1
+
+
+# --- Router owner auth (SEC-AUTH-01) ---
+
+
+def _callback(data: str, *, user_id: int) -> CallbackQuery:
+    cq = CallbackQuery(
+        id="cq-doc",
+        from_user=User(id=user_id, is_bot=False, first_name="U"),
+        chat_instance="inst",
+        data=data,
+    )
+    object.__setattr__(cq, "answer", AsyncMock(return_value=True))
+    return cq
+
+
+def _handler_for_prefix(router, prefix: str):
+    # Registration order in build_doctrine_router: dr, dx, de
+    by_prefix = {
+        "dr:": router.callback_query.handlers[0].callback,
+        "dx:": router.callback_query.handlers[1].callback,
+        "de:": router.callback_query.handlers[2].callback,
+    }
+    return by_prefix[prefix]
+
+
+@pytest.mark.asyncio
+async def test_doctrine_router_non_owner_forbidden_all_actions() -> None:
+    """Non-owner must not mutate gray-zone / escalate via doctrine callbacks."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id)
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        owner_telegram_id=OWNER,
+    )
+    cases = [
+        ("dr:", encode_doctrine_callback(turn_id)),
+        ("dx:", encode_doctrine_resolve_callback(turn_id)),
+        ("de:", encode_doctrine_escalate_callback(turn_id)),
+    ]
+    for prefix, data in cases:
+        handler = _handler_for_prefix(router, prefix)
+        query = _callback(data, user_id=OTHER)
+        await handler(query)
+        query.answer.assert_awaited()
+        args, kwargs = query.answer.await_args
+        assert kwargs.get("show_alert") is True
+        text = args[0] if args else kwargs.get("text", "")
+        assert "Not authorized" in text
+
+    assert gray_zone.resolve_calls == []
+    assert gray_zone.discard_calls == []
+    assert coordinator.transitions == []
+
+
+@pytest.mark.asyncio
+async def test_doctrine_router_missing_owner_id_fail_closed() -> None:
+    """Without owner_telegram_id, all doctrine callbacks are forbidden."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id)
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        owner_telegram_id=None,
+    )
+    handler = _handler_for_prefix(router, "dx:")
+    query = _callback(encode_doctrine_resolve_callback(turn_id), user_id=OWNER)
+    await handler(query)
+    args, kwargs = query.answer.await_args
+    assert "Not authorized" in (args[0] if args else kwargs.get("text", ""))
+    assert gray_zone.resolve_calls == []
+
+
+@pytest.mark.asyncio
+async def test_doctrine_router_owner_resolve_allowed() -> None:
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id, draft="draft-ok")
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        owner_telegram_id=OWNER,
+    )
+    handler = _handler_for_prefix(router, "dx:")
+    query = _callback(encode_doctrine_resolve_callback(turn_id), user_id=OWNER)
+    await handler(query)
+    assert len(gray_zone.resolve_calls) == 1
+    args, kwargs = query.answer.await_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert "Resolved" in text
 
 
 # --- parse_doctrine_callback tests (TEST-1) ---
