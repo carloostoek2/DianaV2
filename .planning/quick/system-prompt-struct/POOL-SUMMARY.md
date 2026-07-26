@@ -157,3 +157,19 @@ Full log: `.grok/agent-memory/residuals/system-prompt-struct.md`
 ---
 
 **Pool close:** Pool `system-prompt-struct` cerrado — 2 ítems completados, tests passing, commits hechos, documentación actualizada.
+
+---
+
+## Residual close pack (2026-07-26)
+
+Actionable residuals R1–R4 closed. Evidence: `.planning/quick/system-prompt-struct/RESIDUALS-CLOSED.md` · `.grok/agent-memory/residuals/system-prompt-struct.md`.
+
+| ID | Commit | Message |
+|----|--------|---------|
+| R1 | `16b69f5` | Evaluator payload `needs_persona_facts` / `needs_voice_patterns` |
+| R2 | `92f5cdb` | Index `pipeline_traces (chat_id, created_at DESC)` |
+| R3 | `3306b15` | Director timings `persona_facts_ms` / `voice_patterns_ms` |
+| R4 | `3e68176` | Spanish owner labels + tipo map for system escalate reasons |
+
+Accepted closed without code: compromiso short-token FPs, fuzzy J.4, admin hot-edit catalog, VIP repetition threshold, embedding env fails.
+

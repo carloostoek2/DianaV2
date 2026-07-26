@@ -2,32 +2,30 @@
 
 **Pool:** system-prompt-struct  
 **Closed:** 2026-07-26  
-**Status:** pool COMPLETE; residuals deferred / documented only / accepted wontfix  
+**Status:** pool COMPLETE; actionable residuals R1–R4 **RESOLVED** (2026-07-26); remaining items accepted wontfix / out-of-scope  
 
-**Sources:** item1–2 SUMMARYs under `.planning/quick/system-prompt-struct/` · CLARIFY.md · impact/arch/test-guardian · hardener review R1–R2 · gsd logs.
+**Sources:** item1–2 SUMMARYs under `.planning/quick/system-prompt-struct/` · CLARIFY.md · impact/arch/test-guardian · hardener review R1–R2 · gsd logs · residual close pack.
+
+---
+
+## Resolved (residual close pack 2026-07-26)
+
+| Residual | Class | Commit | Notes |
+|----------|-------|--------|-------|
+| R1 Evaluator `needs_*` payload parity | in-scope-followup | `16b69f5` | `needs_persona_facts` / `needs_voice_patterns` in evaluator user JSON |
+| R2 Alembic index `(chat_id, created_at DESC)` on `pipeline_traces` | out-of-scope→done | `92f5cdb` | Migration `011_pipeline_traces_chat_intents_idx` + ORM Index |
+| R3 Director timing buckets persona/voice | out-of-scope→done | `3306b15` | `persona_facts_ms` / `voice_patterns_ms` always set with other buckets |
+| R4 Owner Spanish copy for H3/H4/J.4 tipos | out-of-scope→done | `3e68176` | `escalation_labels.py`; admin maps reason→tipo; notifier Spanish label |
 
 ---
 
 ## Open / deferred
 
-### Evaluator LLM payload parity for new `needs_*`
+*(none actionable — residual close pack complete)*
 
-| Field | Value |
-|-------|--------|
-| **Class** | in-scope-followup |
-| **Why** | Evaluator hardcodes `needs_*` list for LLM payload; new `needs_persona_facts` / `needs_voice_patterns` omitted. Scoring unaffected this pool (Evaluator was no-touch). |
-| **Where** | `src/diana/cognitive/evaluator.py` (payload assembly) |
-| **Notes** | Promote only if Analyst routinely sets the new flags and Evaluator prompt should mirror them. |
-| **Source** | item1 SUMMARY residual · arch-enforcer item1 observation |
+---
 
-### Alembic index `(chat_id, created_at DESC)` on `pipeline_traces`
-
-| Field | Value |
-|-------|--------|
-| **Class** | out-of-scope |
-| **Why** | H4 `get_recent_intents` filters by chat + created_at; current volume low. PLAN left index as residual. |
-| **Where** | `alembic/`, `pipeline_traces` table, `SqlTraceStore.get_recent_intents` |
-| **Source** | item2 SUMMARY · CLARIFY assumptions · arch-enforcer item2 |
+## Accepted wontfix / out-of-scope (do not implement)
 
 ### Compromiso short-token false positives
 
@@ -37,24 +35,6 @@
 | **Why** | Short tokens `cita` / `encuentro` / `nos vemos` are Anexo J.4 product terms. Further tightening raises FN risk on real commitment probes. Bare `quedar` already removed in R1. |
 | **Where** | `src/diana/application/j4_triggers.py` (compromiso catalog) |
 | **Source** | hardener review item2 R2 issue 6 (wontfix) |
-
-### Director timing buckets for persona_facts / voice_patterns
-
-| Field | Value |
-|-------|--------|
-| **Class** | out-of-scope |
-| **Why** | Observability only; buckets still aggregate memory/policy/examples. Does not affect retrieval or decisions. |
-| **Where** | `src/diana/cognitive/director.py` timing map |
-| **Source** | item1 SUMMARY · arch-enforcer item1 |
-
-### Owner-facing Spanish copy polish for new `tipo` / reasons
-
-| Field | Value |
-|-------|--------|
-| **Class** | out-of-scope |
-| **Why** | Product copy for notifier payloads (`frustracion_directa`, `pregunta_repetida`, J.4 tipos). Functional escalate path works. |
-| **Where** | notifier payloads / owner messages |
-| **Source** | item2 SUMMARY residual |
 
 ### Fuzzy J.4 / admin-editable keyword lists
 
@@ -94,7 +74,7 @@
 
 ---
 
-## Resolved during this pool (fix rounds)
+## Resolved during this pool (fix rounds — historical)
 
 | Residual | Resolution | Evidence |
 |----------|------------|----------|
@@ -111,9 +91,8 @@
 
 ## Suggested next work (not auto-created tickets)
 
-1. **Small follow-up:** Evaluator payload list parity for `needs_persona_facts` / `needs_voice_patterns` (docs + one unit).
-2. **Ops when volume rises:** Alembic index on `pipeline_traces (chat_id, created_at DESC)`.
-3. **Product:** owner Spanish copy for new escalate `tipo`/reasons; optional keyboard labels for new capabilities.
-4. **Do not reopen** compromiso short tokens unless product accepts higher FN rate.
+1. **Do not reopen** compromiso short tokens unless product accepts higher FN rate.
+2. Optional product polish: keyboard labels for persona/voice capabilities.
+3. Env: install optional `sentence_transformers` if embedding unit tests are desired in CI.
 
 No auto-created implementation items were opened by this documentador pass.
