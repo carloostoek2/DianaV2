@@ -190,12 +190,15 @@ El Decisor debe evaluar las condiciones en este orden exacto:
 Prioridad Condición Acción
 1 perfil.seguridad < umbral_seguridad Escalar
 2 comprension.needs_policy == true Y policy_retrieval_result == vacío Y FEATURE_GRAY_ZONE_ENABLED Consultar doctrina
+2b comprension.emotion == "molesta" Escalar (frustracion_directa)
 3 comprension.risk == "alto" Escalar
 4 perfil.naturalidad < umbral_naturalidad Regenerar (si implementado)
 5 Modo autónomo activo Y umbrales superados Enviar
 6 Ninguna de las anteriores Aprobar
 
 Justificación de la prioridad 2 sobre la 3 (BR-02 modificado): La zona gris se evalúa antes que risk=alto porque la falta de doctrina es una causa tratable que, una vez resuelta, elimina la necesidad de escalación futura. La escalación por risk=alto solo se ejecuta cuando no hay doctrina pendiente.
+
+Justificación de 2b (frustracion_directa): emotion molesta escala sin esperar acumulación de risk; se evalúa después de zona gris (doctrina tratable gana) y antes de risk=alto / send autónomo.
 
 4.2 BehaviorEngine (extensión Fase 3)
 
