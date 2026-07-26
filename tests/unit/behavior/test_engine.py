@@ -291,6 +291,7 @@ def _engine(
     typing: float = 0.02,
     feature_advanced_behavior: bool = False,
     quirk_probability: float = 0.0,
+    quirk_force: str | None = None,
 ) -> tuple[BehaviorEngine, FakeTelegramActuator | FlakySendActuator, InMemoryPendingDeliveryStore, ImmediateClock]:
     act = actuator or FakeTelegramActuator()
     st = store or InMemoryPendingDeliveryStore()
@@ -305,6 +306,7 @@ def _engine(
         retry_backoff_seconds=retry_backoff_seconds,
         feature_advanced_behavior=feature_advanced_behavior,
         quirk_probability=quirk_probability,
+        quirk_force=quirk_force,
     )
     return engine, act, st, ck
 
@@ -566,6 +568,7 @@ async def test_quirks_off_no_extra_pause() -> None:
     engine, _, _, clock = _engine(
         feature_advanced_behavior=True,
         quirk_probability=1.0,
+        quirk_force="pause",
         initial=0.05,
         typing=0.02,
     )
@@ -584,6 +587,7 @@ async def test_quirks_on_extra_pause() -> None:
     engine, actuator, _, clock = _engine(
         feature_advanced_behavior=True,
         quirk_probability=1.0,
+        quirk_force="pause",
         initial=0.05,
         typing=0.02,
     )
@@ -596,7 +600,7 @@ async def test_quirks_on_extra_pause() -> None:
     assert result.success is True
     # Baseline [0.05, 0.02] plus fixed quirk pause 0.03 (C4).
     assert clock.sleeps == [0.05, 0.03, 0.02]
-    # SUG-2/3: quirks never rewrite message content.
+    # Pause quirk does not rewrite message content.
     sends = [c for c in actuator.calls if c["op"] == "send_message"]
     assert len(sends) == 1
     assert sends[0]["text"] == text
@@ -607,6 +611,7 @@ async def test_quirks_dual_gate_flag_off_no_extra() -> None:
     engine, _, _, clock = _engine(
         feature_advanced_behavior=False,
         quirk_probability=1.0,
+        quirk_force="pause",
         initial=0.05,
         typing=0.02,
     )
@@ -617,6 +622,130 @@ async def test_quirks_dual_gate_flag_off_no_extra() -> None:
     )
     assert result.success is True
     assert clock.sleeps == [0.05, 0.02]
+
+
+@pytest.mark.asyncio
+async def test_quirks_probability_zero_no_effect() -> None:
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=0.0,
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "Hello there friend. How are you doing today?"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    assert clock.sleeps == [0.05, 0.02]
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == text
+
+
+@pytest.mark.asyncio
+async def test_quirks_force_typo_sends_correction_bubble() -> None:
+    engine, actuator, _, _ = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="typo_correct",
+        initial=0.0,
+        typing=0.0,
+    )
+    text = "Hello beautiful world"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) >= 2
+    assert sends[0]["text"] != text
+    assert sends[1]["text"].startswith("*")
+    fixed_word = sends[1]["text"][1:]
+    assert fixed_word in text
+    # Final corpus still carries original meaning (typo bubble + *word).
+    corpus = " ".join(s["text"] for s in sends)
+    assert fixed_word in corpus
+    for word in ("beautiful", "world"):
+        assert word in corpus
+
+
+@pytest.mark.asyncio
+async def test_quirks_force_natural_split_multi_bubble() -> None:
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="natural_split",
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "Hello there friend. How are you doing today?"
+    result = await engine.deliver(
+        [text],
+        _ctx(
+            allow_human_quirks=True,
+            allow_split=False,
+            telegram_message_id=None,
+        ),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) >= 2
+    joined = " ".join(s["text"] for s in sends)
+    for word in ("Hello", "there", "friend", "How", "are", "you", "doing", "today"):
+        assert word in joined
+    # Inter-message gap: more sleeps than single-bubble baseline.
+    assert len(clock.sleeps) > 2
+
+
+@pytest.mark.asyncio
+async def test_quirks_force_blocked_when_flag_off() -> None:
+    """Dual gate: forged force+ctx quirks with flag off must not typo/split."""
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=False,
+        quirk_probability=1.0,
+        quirk_force="typo_correct",
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "Hello beautiful world"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == text
+    assert clock.sleeps == [0.05, 0.02]
+
+
+@pytest.mark.asyncio
+async def test_quirks_typo_fallback_to_pause_when_no_candidate() -> None:
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="typo_correct",
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "hi ok me"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == text
+    assert clock.sleeps == [0.05, 0.03, 0.02]
 
 
 # --- Item4 Task3: deliver_with_sequence inter-message gaps ---

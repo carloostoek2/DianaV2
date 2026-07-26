@@ -8,7 +8,9 @@ English ↔ Anexo I:
 - Pre-send TurnStatusReader gate ↔ I.4 supersede abort
 - Bounded TransientSendError retries ↔ I.4 / REQ-NFR-04
 
-Never generates or rewrites message text. Never imports cognitive/LLM/aiogram.
+May apply mechanical human quirks (extra pause, natural split, typo+correction)
+under FEATURE_ADVANCED_BEHAVIOR dual gate. Never uses LLM. Never imports
+cognitive/aiogram.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from diana.behavior.ports import (
     TransientSendError,
     TurnStatusReader,
 )
+from diana.behavior.quirks import QuirkKind, apply_typo, natural_split_text, pick_quirk
 from diana.behavior.split import split_text
 from diana.behavior.timer_manager import TimerManager
 
@@ -38,7 +41,7 @@ logger = logging.getLogger("diana.behavior")
 _TERMINAL_SEND_ABORT: frozenset[str] = frozenset(
     {"superseded", "delivered", "failed", "escalated"}
 )
-# C4: light quirks = fixed extra pause only (never rewrites text).
+# C4: pause quirk = fixed extra sleep (no text rewrite).
 _QUIRK_EXTRA_PAUSE_SECONDS = 0.03
 
 
@@ -58,6 +61,8 @@ class BehaviorEngine:
         retry_backoff_seconds: float = 0.05,
         feature_advanced_behavior: bool = False,
         quirk_probability: float = 0.0,
+        quirk_force: str | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         self._actuator = actuator
         self._deliveries = deliveries
@@ -69,6 +74,8 @@ class BehaviorEngine:
         self._retry_backoff_seconds = retry_backoff_seconds
         self._advanced = bool(feature_advanced_behavior)
         self._quirk_probability = max(0.0, min(1.0, float(quirk_probability)))
+        self._quirk_force = quirk_force
+        self._rng = rng if rng is not None else random.Random()
 
     async def deliver(
         self,
@@ -86,13 +93,14 @@ class BehaviorEngine:
         dual-gate split expands a long text, inter-message delay+typing applies
         between expanded segments (SPEC §6.6 / A2).
         """
-        prepared, inter_gap = self._prepare_texts(list(texts), ctx)
+        prepared, inter_gap, quirk = self._prepare_delivery(list(texts), ctx)
         return await self._deliver_core(
             prepared,
             ctx,
             turn_id,
             decision=decision,
             inter_message_gap=inter_gap,
+            quirk=quirk,
         )
 
     async def deliver_with_sequence(
@@ -107,13 +115,14 @@ class BehaviorEngine:
         Always uses inter-message gaps. Honors ``is_frozen`` and advanced dual
         gates. Not part of ``BehaviorDeliverer`` protocol — concrete API only.
         """
-        prepared, _split_gap = self._prepare_texts(list(texts), ctx)
+        prepared, _split_gap, quirk = self._prepare_delivery(list(texts), ctx)
         return await self._deliver_core(
             prepared,
             ctx,
             turn_id,
             decision=decision,
             inter_message_gap=True,
+            quirk=quirk,
         )
 
     async def _deliver_core(
@@ -124,6 +133,7 @@ class BehaviorEngine:
         *,
         decision: Any | None = None,
         inter_message_gap: bool = False,
+        quirk: QuirkKind | None = None,
     ) -> DeliveryResult:
         bc = (ctx.business_connection_id or "").strip()
         if not bc:
@@ -175,7 +185,15 @@ class BehaviorEngine:
             initial = self._delay.initial_delay_seconds()
             await self._clock.sleep(initial)
 
-            await self._maybe_quirk_pause(ctx)
+            if quirk == "pause":
+                logger.info(
+                    "delivery_quirk_pause",
+                    extra={
+                        "chat_id": ctx.chat_id,
+                        "seconds": _QUIRK_EXTRA_PAUSE_SECONDS,
+                    },
+                )
+                await self._clock.sleep(_QUIRK_EXTRA_PAUSE_SECONDS)
 
             if ctx.mode == "fake_delivery":
                 return await self._deliver_fake(
@@ -278,13 +296,86 @@ class BehaviorEngine:
             await self._safe_mark(delivery_id, "error")
             return DeliveryResult(success=False, error=str(exc))
 
+    def _prepare_delivery(
+        self, texts: list[str], ctx: DeliveryContext
+    ) -> tuple[list[str], bool, QuirkKind | None]:
+        """Normalize, length-split, then apply at most one selected quirk.
+
+        Returns ``(texts, inter_message_gap, resolved_quirk)``.
+        Inter-gap is True when length-split, natural_split, or typo expansion
+        produced multi-segment delivery.
+        """
+        prepared, inter_gap = self._prepare_texts(texts, ctx)
+        quirk = self._select_quirk(ctx)
+        if quirk is None or not prepared:
+            return prepared, inter_gap, None
+
+        if quirk == "natural_split":
+            new_prepared, did = self._apply_natural_split_quirk(prepared)
+            if did:
+                logger.info(
+                    "delivery_quirk_natural_split",
+                    extra={"chat_id": ctx.chat_id, "segments": len(new_prepared)},
+                )
+                return new_prepared, True, "natural_split"
+            quirk = "pause"
+
+        if quirk == "typo_correct":
+            applied = self._apply_typo_quirk(prepared)
+            if applied is not None:
+                logger.info(
+                    "delivery_quirk_typo",
+                    extra={"chat_id": ctx.chat_id},
+                )
+                return applied, True, "typo_correct"
+            quirk = "pause"
+
+        # pause (selected or fallback) — applied as sleep in _deliver_core
+        return prepared, inter_gap, "pause" if quirk == "pause" else quirk
+
+    def _select_quirk(self, ctx: DeliveryContext) -> QuirkKind | None:
+        """Dual gate: advanced flag ∧ allow_human_quirks; then probability/force."""
+        if not (self._advanced and ctx.allow_human_quirks):
+            return None
+        return pick_quirk(
+            self._rng,
+            self._quirk_probability,
+            force=self._quirk_force,
+        )
+
+    def _apply_natural_split_quirk(
+        self, texts: list[str]
+    ) -> tuple[list[str], bool]:
+        """Split first eligible segment on sentence boundaries."""
+        expanded: list[str] = []
+        did = False
+        for t in texts:
+            if not did:
+                parts = natural_split_text(t)
+                if len(parts) > 1:
+                    expanded.extend(parts)
+                    did = True
+                    continue
+            expanded.append(t)
+        return expanded, did
+
+    def _apply_typo_quirk(self, texts: list[str]) -> list[str] | None:
+        """Rewrite first bubble with mild typo + insert ``*{word}`` correction."""
+        if not texts:
+            return None
+        result = apply_typo(texts[0], self._rng)
+        if result is None:
+            return None
+        typoed, correction = result
+        return [typoed, correction, *texts[1:]]
+
     def _prepare_texts(
         self, texts: list[str], ctx: DeliveryContext
     ) -> tuple[list[str], bool]:
-        """Normalize + optional dual-gate split. Returns (texts, inter_message_gap).
+        """Normalize + optional dual-gate length split. Returns (texts, inter_gap).
 
-        Inter-gap is True only when split expansion produced multi-segment from
-        dual-gate advanced split (A2). Caller multi-text without expand stays False.
+        Inter-gap is True only when length-split expansion produced multi-segment
+        (A2). Caller multi-text without expand stays False.
         """
         normalized = [t for t in (x.strip() if isinstance(x, str) else x for x in texts) if t]
         if not (self._advanced and ctx.allow_split):
@@ -311,20 +402,6 @@ class BehaviorEngine:
                 },
             )
         return expanded, did_expand
-
-    async def _maybe_quirk_pause(self, ctx: DeliveryContext) -> None:
-        """C4: dual-gate light quirk — extra pause only; never mutates text."""
-        if not (self._advanced and ctx.allow_human_quirks):
-            return
-        if self._quirk_probability <= 0.0:
-            return
-        if random.random() >= self._quirk_probability:
-            return
-        logger.info(
-            "delivery_quirk_pause",
-            extra={"chat_id": ctx.chat_id, "seconds": _QUIRK_EXTRA_PAUSE_SECONDS},
-        )
-        await self._clock.sleep(_QUIRK_EXTRA_PAUSE_SECONDS)
 
     def _frozen_abort(self, ctx: DeliveryContext) -> DeliveryResult | None:
         """C1: entry freeze hard-check (no pending row yet)."""
