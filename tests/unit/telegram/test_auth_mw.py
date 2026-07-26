@@ -1,24 +1,50 @@
-"""Auth allowlist — non-VIP never reaches next handler."""
+"""Auth allowlist — non-VIP never reaches next handler; promo path optional."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from aiogram.types import Chat, Message, User
 
 from diana.application.memory import InMemoryVipStore
+from diana.application.ports import PromoTriggerRecord
 from diana.telegram.middlewares.auth import AuthMiddleware
 
 
-def _biz_msg(user_id: int) -> Message:
+def _biz_msg(
+    user_id: int,
+    *,
+    text: str = "hola",
+    chat_id: int = 42,
+    caption: str | None = None,
+) -> Message:
     return Message(
         message_id=1,
         date=0,
-        chat=Chat(id=42, type="private"),
+        chat=Chat(id=chat_id, type="private"),
         from_user=User(id=user_id, is_bot=False, first_name="U"),
-        text="hola",
+        text=text,
+        caption=caption,
         business_connection_id="bc-1",
+    )
+
+
+def _promo_mock(*, trigger: PromoTriggerRecord | None = None) -> MagicMock:
+    promo = MagicMock()
+    promo.match_trigger = AsyncMock(return_value=trigger)
+    promo.execute_promo = AsyncMock(return_value="sent")
+    return promo
+
+
+def _trigger(text: str = "promos") -> PromoTriggerRecord:
+    return PromoTriggerRecord(
+        id=uuid4(),
+        trigger_text=text,
+        response_sequence=["a", "b"],
+        repeat_first_message="reintro",
+        is_active=True,
     )
 
 
@@ -91,3 +117,134 @@ async def test_owner_private_passes() -> None:
     result = await mw(handler, event, {"is_owner": True})
     assert result == "admin"
     handler.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# F3 promo path (non-VIP business + FEATURE_PROMO_ENABLED)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_non_vip_flag_on_match_executes_promo_handler_not_called() -> None:
+    vips = InMemoryVipStore()
+    trig = _trigger("promos")
+    promo = _promo_mock(trigger=trig)
+    mw = AuthMiddleware(
+        vips=vips, promo=promo, feature_promo_enabled=True
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    result = await mw(
+        handler,
+        _biz_msg(111, text="PROMOS", chat_id=555),
+        {"business_connection_id": "bc-1"},
+    )
+    assert result is None
+    handler.assert_not_awaited()
+    promo.match_trigger.assert_awaited_once_with("PROMOS")
+    promo.execute_promo.assert_awaited_once()
+    args, kwargs = promo.execute_promo.await_args
+    assert args[0] == 555
+    assert args[1] is trig
+    assert kwargs["business_connection_id"] == "bc-1"
+
+
+@pytest.mark.asyncio
+async def test_non_vip_flag_on_no_match_drops_no_execute() -> None:
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=None)
+    mw = AuthMiddleware(
+        vips=vips, promo=promo, feature_promo_enabled=True
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    result = await mw(
+        handler,
+        _biz_msg(111, text="random chatter"),
+        {"business_connection_id": "bc-1"},
+    )
+    assert result is None
+    handler.assert_not_awaited()
+    promo.match_trigger.assert_awaited_once_with("random chatter")
+    promo.execute_promo.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_vip_flag_off_legacy_drop_no_promo_calls() -> None:
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=_trigger())
+    mw = AuthMiddleware(
+        vips=vips, promo=promo, feature_promo_enabled=False
+    )
+    handler = AsyncMock(return_value="orch")
+    result = await mw(
+        handler,
+        _biz_msg(111, text="promos"),
+        {"business_connection_id": "bc-1"},
+    )
+    assert result is None
+    handler.assert_not_awaited()
+    promo.match_trigger.assert_not_awaited()
+    promo.execute_promo.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_vip_allowed_does_not_consult_promo() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(222, display_name="Vip")
+    promo = _promo_mock(trigger=_trigger())
+    mw = AuthMiddleware(
+        vips=vips, promo=promo, feature_promo_enabled=True
+    )
+    handler = AsyncMock(return_value="ok")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(222, text="promos"), data)
+    assert result == "ok"
+    handler.assert_awaited_once()
+    promo.match_trigger.assert_not_awaited()
+    promo.execute_promo.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_private_non_owner_no_promo_without_business_bc() -> None:
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=_trigger())
+    mw = AuthMiddleware(
+        vips=vips, promo=promo, feature_promo_enabled=True
+    )
+    event = Message(
+        message_id=2,
+        date=0,
+        chat=Chat(id=111, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="X"),
+        text="promos",
+        business_connection_id=None,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    result = await mw(handler, event, {})
+    assert result is None
+    handler.assert_not_awaited()
+    promo.match_trigger.assert_not_awaited()
+    promo.execute_promo.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_vip_flag_on_uses_caption_when_text_missing() -> None:
+    vips = InMemoryVipStore()
+    trig = _trigger("promos")
+    promo = _promo_mock(trigger=trig)
+    mw = AuthMiddleware(
+        vips=vips, promo=promo, feature_promo_enabled=True
+    )
+    handler = AsyncMock()
+    msg = Message(
+        message_id=1,
+        date=0,
+        chat=Chat(id=77, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="U"),
+        text=None,
+        caption="promos",
+        business_connection_id="bc-1",
+    )
+    result = await mw(handler, msg, {"business_connection_id": "bc-1"})
+    assert result is None
+    promo.match_trigger.assert_awaited_once_with("promos")
+    promo.execute_promo.assert_awaited_once()

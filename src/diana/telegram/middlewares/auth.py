@@ -1,24 +1,50 @@
-"""AuthMiddleware — VIP allowlist gate + drop non-owner private spam."""
+"""AuthMiddleware — VIP allowlist gate + drop non-owner private spam.
+
+F3: non-allowlisted business messages may hit PromoService when
+FEATURE_PROMO_ENABLED is on (exact match → execute → stop VIP pipeline).
+"""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
-from diana.application.ports import VipStore
+from diana.application.ports import PromoTriggerRecord, VipStore
 
 logger = logging.getLogger("diana.telegram")
 
 
-class AuthMiddleware(BaseMiddleware):
-    """Gate business VIP allowlist; drop non-owner private messages."""
+class PromoMatcher(Protocol):
+    """Minimal surface Auth needs from PromoService (no assembly logic)."""
 
-    def __init__(self, *, vips: VipStore) -> None:
+    async def match_trigger(self, text: str) -> PromoTriggerRecord | None: ...
+
+    async def execute_promo(
+        self,
+        chat_id: int,
+        trigger: PromoTriggerRecord,
+        *,
+        business_connection_id: str,
+    ) -> str: ...
+
+
+class AuthMiddleware(BaseMiddleware):
+    """Gate business VIP allowlist; optional promo for non-VIP business."""
+
+    def __init__(
+        self,
+        *,
+        vips: VipStore,
+        promo: PromoMatcher | None = None,
+        feature_promo_enabled: bool = False,
+    ) -> None:
         self._vips = vips
+        self._promo = promo
+        self._feature_promo_enabled = feature_promo_enabled
 
     async def __call__(
         self,
@@ -53,6 +79,48 @@ class AuthMiddleware(BaseMiddleware):
 
         allowed = await self._vips.is_allowed(user.id)
         if not allowed:
+            if (
+                self._feature_promo_enabled
+                and self._promo is not None
+                and bc
+            ):
+                text = event.text or event.caption or ""
+                trigger = await self._promo.match_trigger(text)
+                if trigger is not None:
+                    chat_id = event.chat.id if event.chat is not None else user.id
+                    logger.info(
+                        "promo_match",
+                        extra={
+                            "chat_id": chat_id,
+                            "telegram_user_id": user.id,
+                            "trigger_id": str(trigger.id),
+                        },
+                    )
+                    try:
+                        status = await self._promo.execute_promo(
+                            chat_id,
+                            trigger,
+                            business_connection_id=str(bc),
+                        )
+                        logger.info(
+                            "promo_executed",
+                            extra={
+                                "chat_id": chat_id,
+                                "trigger_id": str(trigger.id),
+                                "status": status,
+                            },
+                        )
+                    except Exception:
+                        logger.exception(
+                            "promo_failed",
+                            extra={
+                                "chat_id": chat_id,
+                                "trigger_id": str(trigger.id),
+                            },
+                        )
+                # Always stop VIP pipeline for non-allowlisted (match or not).
+                return None
+
             logger.info(
                 "auth_drop_not_allowed",
                 extra={"telegram_user_id": user.id},
@@ -71,4 +139,4 @@ class AuthMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-__all__ = ["AuthMiddleware"]
+__all__ = ["AuthMiddleware", "PromoMatcher"]
