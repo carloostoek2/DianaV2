@@ -338,3 +338,32 @@ def test_settings_ops_surface_defaults(
     assert settings.rate_limit_window_s == 10.0
     assert settings.dedup_ttl_s == 300.0
 
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "LocalHost"])
+def test_settings_accepts_loopback_health_hosts(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+) -> None:
+    """SEC-HEALTH-01: loopback hosts only."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("HEALTH_HOST", host)
+    settings = Settings()
+    assert settings.health_host.lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "1.2.3.4", "*", "example.com"])
+def test_settings_rejects_non_loopback_health_host(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("HEALTH_HOST", host)
+    with pytest.raises(ValidationError):
+        Settings()
+

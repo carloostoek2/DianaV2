@@ -75,14 +75,27 @@ async def async_main() -> None:
         session_factory=app.session_factory,
         bot=app.bot,
     )
-    await health.start()
+    # Outer finally always cancels jobs even if health bind or polling fails.
     try:
-        await app.dispatcher.start_polling(
-            app.bot,
-            allowed_updates=["message", "business_message", "callback_query"],
-        )
+        # Soft-fail health bind: bot polling continues if port is busy (G2-OPS-1).
+        try:
+            await health.start()
+        except OSError:
+            logger.exception(
+                "health_start_failed",
+                extra={
+                    "host": settings.health_host,
+                    "port": settings.health_port,
+                },
+            )
+        try:
+            await app.dispatcher.start_polling(
+                app.bot,
+                allowed_updates=["message", "business_message", "callback_query"],
+            )
+        finally:
+            await health.stop()
     finally:
-        await health.stop()
         # Stop new jobs first, then existing F2/F3 jobs.
         await _cancel_job(calibration_job, "calibration_job")
         await _cancel_job(metrics_job, "metrics_job")

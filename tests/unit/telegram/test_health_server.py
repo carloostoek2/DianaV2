@@ -127,3 +127,45 @@ def test_build_health_payload_status_matrix() -> None:
         bot_username="x",
     )
     assert fail["status"] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_health_start_raises_on_bind_failure() -> None:
+    """G2-OPS-1: start propagates OSError so main can soft-fail."""
+    factory, _ = _session_factory()
+    holder = HealthServer(
+        host="127.0.0.1",
+        port=0,
+        session_factory=factory,
+        bot=None,
+    )
+    await holder.start()
+    assert holder._server is not None
+    sockets = holder._server.sockets or []
+    port = sockets[0].getsockname()[1]
+    try:
+        conflict = HealthServer(
+            host="127.0.0.1",
+            port=port,
+            session_factory=factory,
+            bot=None,
+        )
+        with pytest.raises(OSError):
+            await conflict.start()
+    finally:
+        await holder.stop()
+
+
+@pytest.mark.asyncio
+async def test_health_start_stop_ephemeral_ok() -> None:
+    factory, _ = _session_factory()
+    server = HealthServer(
+        host="127.0.0.1",
+        port=0,
+        session_factory=factory,
+        bot=None,
+    )
+    await server.start()
+    assert server._server is not None
+    await server.stop()
+    assert server._server is None

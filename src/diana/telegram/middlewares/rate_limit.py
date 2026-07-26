@@ -2,13 +2,16 @@
 
 Owner is exempt via constructor ``owner_telegram_id`` (runs before OwnerDetection).
 Single-instance only; multi-replica needs a shared store (out of scope).
+
+Fail-closed when no user/chat key can be extracted (SEC-RL-02).
+Idle keys are deleted after window prune; map size is capped (SEC-RL-01).
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict, deque
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -17,11 +20,15 @@ from aiogram.types import CallbackQuery, TelegramObject
 
 logger = logging.getLogger("diana.telegram")
 
+# Soft cap on distinct rate-limit keys (pre-Auth surface).
+_DEFAULT_MAX_KEYS = 10_000
+
 
 class RateLimitMiddleware(BaseMiddleware):
     """Throttle noisy non-owner users; never raise on drop.
 
     Messages: silent drop + log. Callbacks: answer ``Slow down`` with show_alert.
+    Events without a user/chat key are dropped (fail-closed).
     """
 
     def __init__(
@@ -31,12 +38,14 @@ class RateLimitMiddleware(BaseMiddleware):
         window_s: float = 10.0,
         owner_telegram_id: int | None = None,
         time_fn: Callable[[], float] | None = None,
+        max_keys: int = _DEFAULT_MAX_KEYS,
     ) -> None:
         self._max_events = max_events
         self._window_s = window_s
         self._owner_telegram_id = owner_telegram_id
         self._time_fn = time_fn or time.monotonic
-        self._events: dict[int, deque[float]] = defaultdict(deque)
+        self._max_keys = max_keys
+        self._events: dict[int, deque[float]] = {}
 
     def _user_key(self, event: TelegramObject) -> int | None:
         from_user = getattr(event, "from_user", None)
@@ -63,6 +72,35 @@ class RateLimitMiddleware(BaseMiddleware):
         while q and q[0] <= cutoff:
             q.popleft()
 
+    def _window_for(self, user_id: int, now: float) -> deque[float]:
+        q = self._events.get(user_id)
+        if q is not None:
+            self._prune_window(q, now)
+            if not q:
+                del self._events[user_id]
+                q = None
+        if q is None:
+            if len(self._events) >= self._max_keys:
+                # Evict one idle-or-arbitrary key under pressure (FIFO popitem).
+                self._events.pop(next(iter(self._events)), None)
+            q = deque()
+            self._events[user_id] = q
+        return q
+
+    async def _drop_no_key(
+        self,
+        event: TelegramObject,
+    ) -> None:
+        logger.info(
+            "telegram_rate_limit_no_key",
+            extra={"event_type": type(event).__name__},
+        )
+        if isinstance(event, CallbackQuery):
+            try:
+                await event.answer("Slow down", show_alert=True)
+            except Exception:
+                logger.exception("telegram_rate_limit_answer_failed")
+
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
@@ -71,7 +109,8 @@ class RateLimitMiddleware(BaseMiddleware):
     ) -> Any:
         user_id = self._user_key(event)
         if user_id is None:
-            return await handler(event, data)
+            await self._drop_no_key(event)
+            return None
 
         if (
             self._owner_telegram_id is not None
@@ -80,8 +119,7 @@ class RateLimitMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         now = self._time_fn()
-        q = self._events[user_id]
-        self._prune_window(q, now)
+        q = self._window_for(user_id, now)
 
         if len(q) >= self._max_events:
             logger.info(

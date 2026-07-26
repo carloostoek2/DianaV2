@@ -227,3 +227,10 @@ def test_main_calls_load_runtime_thresholds() -> None:
     main = Path("src/diana/main.py").read_text(encoding="utf-8")
     assert "load_runtime_thresholds" in main
     assert "await load_runtime_thresholds(app)" in main
+
+
+def test_composition_passes_ops_middleware_knobs(_comp_src: str) -> None:
+    """SUG-1: Settings rate/dedup knobs reach build_dispatcher."""
+    assert "rate_limit_max_events=settings.rate_limit_max_events" in _comp_src
+    assert "rate_limit_window_s=settings.rate_limit_window_s" in _comp_src
+    assert "dedup_ttl_s=settings.dedup_ttl_s" in _comp_src

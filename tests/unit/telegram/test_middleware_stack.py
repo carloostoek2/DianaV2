@@ -102,3 +102,44 @@ def test_build_dispatcher_registers_f2_order_on_business_message() -> None:
     assert "DedupMiddleware" in live_cb
     assert "RateLimitMiddleware" in live_cb
     assert "FreezeCheckMiddleware" not in live_cb
+
+
+def test_build_dispatcher_applies_ops_knobs_to_middleware_instances() -> None:
+    """Custom rate/dedup kwargs reach live Dedup + RateLimit instances."""
+    from diana.telegram.middlewares.dedup import DedupMiddleware
+    from diana.telegram.middlewares.rate_limit import RateLimitMiddleware
+
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    notifier = FakeOwnerNotifier()
+    behavior = BehaviorEngine(
+        FakeTelegramActuator(),
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    wiring = build_dispatcher(
+        orchestrator=_fake_orchestrator(),
+        admin=_fake_admin(),
+        coordinator=coordinator,
+        escalations=escalations,
+        notifier=notifier,
+        behavior=behavior,
+        vips=InMemoryVipStore(),
+        owner_telegram_id=999001,
+        forbidden_keywords=["x"],
+        rate_limit_max_events=7,
+        rate_limit_window_s=3.5,
+        dedup_ttl_s=12.0,
+    )
+    dedup = next(m for m in wiring.registered_middlewares if isinstance(m, DedupMiddleware))
+    rate = next(
+        m for m in wiring.registered_middlewares if isinstance(m, RateLimitMiddleware)
+    )
+    assert dedup._ttl_s == 12.0
+    assert rate._max_events == 7
+    assert rate._window_s == 3.5
+    assert rate._owner_telegram_id == 999001
