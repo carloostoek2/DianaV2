@@ -429,6 +429,12 @@ async def test_vip_coordinate_no_cancel_when_vip_id_none() -> None:
 
 @pytest.mark.asyncio
 async def test_vip_coordinate_fail_soft_when_cancel_raises() -> None:
+    from diana.application.observability import (
+        get_swallowed_counts,
+        reset_swallowed_counts,
+    )
+
+    reset_swallowed_counts()
     vip_id = uuid4()
     recontact = FakeRecontactCanceller(raise_on_cancel=True)
     coord, turns, _ = _coord_with_recontact(
@@ -443,6 +449,9 @@ async def test_vip_coordinate_fail_soft_when_cancel_raises() -> None:
     rec = await turns.get(result.turn_id)
     assert rec is not None
     assert rec.status == TurnStatus.RECEIVED.value
+    assert get_swallowed_counts().get(
+        "recontact_cancel_on_vip_message_failed", 0
+    ) == 1
 
 
 @pytest.mark.asyncio
@@ -487,6 +496,12 @@ async def test_vip_coordinate_no_schedule_when_flag_off() -> None:
 
 @pytest.mark.asyncio
 async def test_vip_coordinate_fail_soft_when_schedule_raises() -> None:
+    from diana.application.observability import (
+        get_swallowed_counts,
+        reset_swallowed_counts,
+    )
+
+    reset_swallowed_counts()
     vip_id = uuid4()
     recontact = FakeRecontactCanceller(raise_on_schedule=True)
     coord, turns, _ = _coord_with_recontact(
@@ -500,6 +515,9 @@ async def test_vip_coordinate_fail_soft_when_schedule_raises() -> None:
     rec = await turns.get(result.turn_id)
     assert rec is not None
     assert rec.status == TurnStatus.RECEIVED.value
+    assert get_swallowed_counts().get(
+        "recontact_schedule_on_vip_message_failed", 0
+    ) == 1
 
 
 @pytest.mark.asyncio

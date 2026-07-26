@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
+from diana.application.observability import log_swallowed
 from diana.application.ports import (
     BehaviorCanceller,
     PendingApprovalStore,
@@ -71,7 +72,11 @@ class CoordinateResult:
 
 
 class ChatLockProvider:
-    """Per-chat asyncio locks for in-process concurrency control."""
+    """Per-chat asyncio locks — process-local, single-instance only.
+
+    Multi-process G.4 (Postgres advisory / SELECT FOR UPDATE) remains residual;
+    see docs/OPS_SINGLE_INSTANCE.md.
+    """
 
     def __init__(self) -> None:
         self._locks: dict[int, asyncio.Lock] = {}
@@ -209,9 +214,11 @@ class TurnCoordinator:
                         extra={"vip_id": str(vip_id), "chat_id": chat_id},
                     )
             except Exception:
-                logger.exception(
+                log_swallowed(
+                    logger,
                     "recontact_cancel_on_vip_message_failed",
-                    extra={"vip_id": str(vip_id), "chat_id": chat_id},
+                    vip_id=str(vip_id),
+                    chat_id=chat_id,
                 )
             try:
                 scheduled = await self._recontact.schedule_recontact(vip_id)
@@ -221,9 +228,11 @@ class TurnCoordinator:
                         extra={"vip_id": str(vip_id), "chat_id": chat_id},
                     )
             except Exception:
-                logger.exception(
+                log_swallowed(
+                    logger,
                     "recontact_schedule_on_vip_message_failed",
-                    extra={"vip_id": str(vip_id), "chat_id": chat_id},
+                    vip_id=str(vip_id),
+                    chat_id=chat_id,
                 )
 
         # VIP path: create or replace.

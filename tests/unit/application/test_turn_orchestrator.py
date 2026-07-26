@@ -1581,3 +1581,39 @@ async def test_consult_doctrine_raises_when_vip_id_none() -> None:
     )
     with pytest.raises(RuntimeError, match="consult_doctrine requires vip_id"):
         await g["orch"].handle_vip_message(_vip(vip_id=None))
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_notify_fail_soft_increments_swallowed_counter() -> None:
+    """Notify raise on schema-fail path still mark_failed + re-raise; counter +1."""
+    from diana.application.observability import (
+        get_swallowed_counts,
+        reset_swallowed_counts,
+    )
+    from diana.cognitive.exceptions import AnalystSchemaInvalidError
+
+    reset_swallowed_counts()
+    g = _build(FakeDirector(AnalystSchemaInvalidError()))
+
+    async def boom(text: str, *, chat_id: int | None = None) -> None:
+        raise RuntimeError("notify down")
+
+    g["notifier"].notify_info = boom  # type: ignore[method-assign]
+
+    with pytest.raises(AnalystSchemaInvalidError):
+        await g["orch"].handle_vip_message(_vip())
+
+    failed_ids = [
+        t.id
+        for t in g["turns"]._turns.values()  # noqa: SLF001
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await g["turns"].get(failed_ids[0])
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.error == "analista_schema_invalido"
+    assert get_swallowed_counts().get(
+        "owner_notify_failed_after_analyst_schema_invalid", 0
+    ) == 1
+    assert g["actuator"].send_count() == 0

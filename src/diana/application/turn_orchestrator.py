@@ -11,6 +11,7 @@ from uuid import UUID
 from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.gray_zone_service import GrayZoneService
+from diana.application.observability import log_swallowed
 from diana.application.ports import (
     BehaviorDeliverer,
     DeliveryContext,
@@ -94,6 +95,37 @@ class TurnOrchestrator:
         self._delivery_mode = delivery_mode
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
 
+    async def _safe_notify_info(
+        self,
+        message: str,
+        *,
+        chat_id: int,
+        event: str,
+        **extra: object,
+    ) -> None:
+        """Owner notify fail-soft: never mask the primary failure path."""
+        try:
+            await self._admin.notify_info(message, chat_id=chat_id)
+        except Exception:
+            log_swallowed(logger, event, chat_id=chat_id, **extra)
+
+    async def _fail_director_typed(
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        *,
+        error: str,
+        notify_event: str,
+    ) -> None:
+        """mark_failed then fail-soft owner notify (typed director errors)."""
+        await self._coordinator.mark_failed(turn_id, error=error)
+        await self._safe_notify_info(
+            f"Turn {turn_id} failed: {error}",
+            chat_id=chat_id,
+            event=notify_event,
+            turn_id=str(turn_id),
+        )
+
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
         chat_id = incoming.chat_id
@@ -116,16 +148,12 @@ class TurnOrchestrator:
                     await self._coordinator.mark_failed(
                         turn_id, error="vip_frozen"
                     )
-                    try:
-                        await self._admin.notify_info(
-                            f"Turn {turn_id} failed: vip_frozen",
-                            chat_id=chat_id,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "owner_notify_failed_after_vip_frozen",
-                            extra={"turn_id": str(turn_id)},
-                        )
+                    await self._safe_notify_info(
+                        f"Turn {turn_id} failed: vip_frozen",
+                        chat_id=chat_id,
+                        event="owner_notify_failed_after_vip_frozen",
+                        turn_id=str(turn_id),
+                    )
             await self._learning.run_post_turn(turn_id)
             logger.info(
                 "autonomous_vip_frozen_pre_deliver",
@@ -245,73 +273,33 @@ class TurnOrchestrator:
             # (should not happen under full chat_scope; still safe).
             # A.6 Analyst schema fail: stable reason + owner notify (no VIP send).
             if isinstance(exc, AnalystSchemaInvalidError):
-                error = "analista_schema_invalido"
-                await self._coordinator.mark_failed(turn_id, error=error)
-                # Never let notifier failures mask the typed schema error.
-                try:
-                    await self._admin.notify_info(
-                        f"Turn {turn_id} failed: analista_schema_invalido",
-                        chat_id=incoming.chat_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "owner_notify_failed_after_analyst_schema_invalid",
-                        extra={
-                            "turn_id": str(turn_id),
-                            "chat_id": incoming.chat_id,
-                        },
-                    )
+                await self._fail_director_typed(
+                    turn_id,
+                    incoming.chat_id,
+                    error="analista_schema_invalido",
+                    notify_event="owner_notify_failed_after_analyst_schema_invalid",
+                )
             elif isinstance(exc, EvaluatorSchemaInvalidError):
-                error = "evaluador_schema_invalido"
-                await self._coordinator.mark_failed(turn_id, error=error)
-                # Never let notifier failures mask the typed schema error.
-                try:
-                    await self._admin.notify_info(
-                        f"Turn {turn_id} failed: evaluador_schema_invalido",
-                        chat_id=incoming.chat_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "owner_notify_failed_after_evaluator_schema_invalid",
-                        extra={
-                            "turn_id": str(turn_id),
-                            "chat_id": incoming.chat_id,
-                        },
-                    )
+                await self._fail_director_typed(
+                    turn_id,
+                    incoming.chat_id,
+                    error="evaluador_schema_invalido",
+                    notify_event="owner_notify_failed_after_evaluator_schema_invalid",
+                )
             elif isinstance(exc, ContextExceedsLimitError):
-                error = "contexto_excede_limite"
-                await self._coordinator.mark_failed(turn_id, error=error)
-                # Never let notifier failures mask the typed size error.
-                try:
-                    await self._admin.notify_info(
-                        f"Turn {turn_id} failed: contexto_excede_limite",
-                        chat_id=incoming.chat_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "owner_notify_failed_after_context_exceeds_limit",
-                        extra={
-                            "turn_id": str(turn_id),
-                            "chat_id": incoming.chat_id,
-                        },
-                    )
+                await self._fail_director_typed(
+                    turn_id,
+                    incoming.chat_id,
+                    error="contexto_excede_limite",
+                    notify_event="owner_notify_failed_after_context_exceeds_limit",
+                )
             elif isinstance(exc, GeneratorEmptyOutputError):
-                error = "generador_salida_vacia"
-                await self._coordinator.mark_failed(turn_id, error=error)
-                # Never let notifier failures mask the typed empty-output error.
-                try:
-                    await self._admin.notify_info(
-                        f"Turn {turn_id} failed: generador_salida_vacia",
-                        chat_id=incoming.chat_id,
-                    )
-                except Exception:
-                    logger.exception(
-                        "owner_notify_failed_after_generator_empty_output",
-                        extra={
-                            "turn_id": str(turn_id),
-                            "chat_id": incoming.chat_id,
-                        },
-                    )
+                await self._fail_director_typed(
+                    turn_id,
+                    incoming.chat_id,
+                    error="generador_salida_vacia",
+                    notify_event="owner_notify_failed_after_generator_empty_output",
+                )
             else:
                 await self._coordinator.mark_failed(turn_id, error=str(exc))
             logger.exception(
@@ -470,16 +458,12 @@ class TurnOrchestrator:
                 },
             )
             await self._coordinator.mark_failed(turn_id, error="vip_frozen")
-            try:
-                await self._admin.notify_info(
-                    f"Turn {turn_id} failed: vip_frozen",
-                    chat_id=incoming.chat_id,
-                )
-            except Exception:
-                logger.exception(
-                    "owner_notify_failed_after_vip_frozen",
-                    extra={"turn_id": str(turn_id)},
-                )
+            await self._safe_notify_info(
+                f"Turn {turn_id} failed: vip_frozen",
+                chat_id=incoming.chat_id,
+                event="owner_notify_failed_after_vip_frozen",
+                turn_id=str(turn_id),
+            )
             return None
 
         draft = (decision.draft_text or "").strip()
@@ -489,16 +473,12 @@ class TurnOrchestrator:
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
             )
             await self._coordinator.mark_failed(turn_id, error="empty_draft")
-            try:
-                await self._admin.notify_info(
-                    f"Turn {turn_id} failed: empty_draft",
-                    chat_id=incoming.chat_id,
-                )
-            except Exception:
-                logger.exception(
-                    "owner_notify_failed_after_empty_draft",
-                    extra={"turn_id": str(turn_id)},
-                )
+            await self._safe_notify_info(
+                f"Turn {turn_id} failed: empty_draft",
+                chat_id=incoming.chat_id,
+                event="owner_notify_failed_after_empty_draft",
+                turn_id=str(turn_id),
+            )
             return None
 
         if self._behavior is None:
@@ -597,16 +577,12 @@ class TurnOrchestrator:
         await self._coordinator.mark_failed(
             turn_id, error=result.error or "delivery_failed"
         )
-        try:
-            await self._admin.notify_info(
-                f"Turn {turn_id} failed: delivery_failed ({result.error})",
-                chat_id=chat_id,
-            )
-        except Exception:
-            logger.exception(
-                "owner_notify_failed_after_autonomous_deliver_fail",
-                extra={"turn_id": str(turn_id)},
-            )
+        await self._safe_notify_info(
+            f"Turn {turn_id} failed: delivery_failed ({result.error})",
+            chat_id=chat_id,
+            event="owner_notify_failed_after_autonomous_deliver_fail",
+            turn_id=str(turn_id),
+        )
         if self._traces is not None:
             await self._traces.set_delivery_result(
                 turn_id, result.to_trace_dict()
