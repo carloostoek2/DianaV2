@@ -477,6 +477,46 @@ class TestFormatTraceSummaryText:
         assert "Decision: N/A" in text
         assert "Total time: 0ms" in text
 
+    def test_original_intent_truncated_at_200(self, svc: AdminTraceService) -> None:
+        """PLAN A8/M3: original intent cap is 200 chars (no ellipsis on intent)."""
+        long_intent = "I" * 250
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=uuid4(),
+                chat_id=1,
+                created_at=FROZEN_NOW,
+                prompt_text=long_intent,
+                generated_text="short",
+                decision={"action": "approve"},
+                status="delivered",
+            )
+        )
+        intent_line = next(
+            line for line in text.splitlines() if line.startswith("Original intent:")
+        )
+        value = intent_line.removeprefix("Original intent: ")
+        assert len(value) == 200
+        assert value == "I" * 200
+        assert "I" * 201 not in text
+
+    def test_draft_truncated_at_80(self, svc: AdminTraceService) -> None:
+        """PLAN A8/M3: draft cap is 80 chars + quoted trailing ..."""
+        long_draft = "D" * 120
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=uuid4(),
+                chat_id=1,
+                created_at=FROZEN_NOW,
+                prompt_text="intent",
+                generated_text=long_draft,
+                decision={"action": "approve"},
+                status="delivered",
+            )
+        )
+        draft_line = next(line for line in text.splitlines() if line.startswith("Draft:"))
+        assert draft_line == f'Draft: "{"D" * 80}..."'
+        assert "D" * 81 not in draft_line
+
 
 class TestRenderTraceSummary:
     async def test_render_found(
