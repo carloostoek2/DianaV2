@@ -387,39 +387,52 @@ def build_callback_router(
                 return
 
         # ---- Standard owner callbacks ----
-        status = await dispatch_owner_callback(
-            admin=admin,
-            correct_sessions=sessions,
-            callback_data=data,
-            actor_id=actor_id,
-            admin_trace=admin_trace,
-        )
-        if status == "forbidden":
-            await query.answer("Not authorized", show_alert=True)
-            return
-        if status == "awaiting_correct":
-            await query.answer()
-            if query.message:
-                await query.message.answer(
-                    f"Send corrected text for turn {data.split(':', 1)[-1]}"
-                )
-            return
-        if status == "approved":
-            await query.answer("Approved")
-            return
-        if status == "escalated":
-            await query.answer("Escalated")
-            return
-        if status == "stale":
-            await query.answer(
-                "Already handled or superseded — no action taken",
-                show_alert=True,
+        try:
+            status = await dispatch_owner_callback(
+                admin=admin,
+                correct_sessions=sessions,
+                callback_data=data,
+                actor_id=actor_id,
+                admin_trace=admin_trace,
             )
-            return
-        if status == "deliver_failed":
-            await query.answer("Delivery failed — try again", show_alert=True)
-            return
-        await query.answer()
+            if status == "forbidden":
+                await query.answer("Not authorized", show_alert=True)
+                return
+            if status == "awaiting_correct":
+                await query.answer()
+                if query.message:
+                    await query.message.answer(
+                        f"Send corrected text for turn {data.split(':', 1)[-1]}"
+                    )
+                return
+            if status == "approved":
+                await query.answer("Approved")
+                return
+            if status == "escalated":
+                await query.answer("Escalated")
+                return
+            if status == "stale":
+                await query.answer(
+                    "Already handled or superseded — no action taken",
+                    show_alert=True,
+                )
+                return
+            if status == "deliver_failed":
+                await query.answer("Delivery failed — try again", show_alert=True)
+                return
+            await query.answer()
+        except Exception:
+            logger.exception(
+                "owner_callback_error",
+                extra={"callback_data": data},
+            )
+            try:
+                await query.answer(
+                    "Error processing action. Try again.",
+                    show_alert=True,
+                )
+            except Exception:
+                logger.exception("owner_callback_answer_failed")
 
     return router
 
