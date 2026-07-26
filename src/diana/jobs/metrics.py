@@ -7,13 +7,21 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from diana.application.metrics_service import MetricsAggregationService
 
 logger = logging.getLogger("diana.jobs")
 
-__all__ = ["MetricsJob", "run_weekly_metrics"]
+__all__ = ["MetricsJob", "run_weekly_metrics", "METRICS_LAST_SUCCESS_WEEK_KEY"]
+
+METRICS_LAST_SUCCESS_WEEK_KEY = "metrics.last_success_week"
+
+
+class MetricsJobConfigStore(Protocol):
+    async def get(self, key: str) -> object | None: ...
+
+    async def set(self, key: str, value: object) -> None: ...
 
 
 async def run_weekly_metrics(
@@ -50,12 +58,31 @@ async def run_weekly_metrics(
     return out
 
 
+def _parse_week_marker(raw: object) -> date | None:
+    if raw is None:
+        return None
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, str):
+        try:
+            return date.fromisoformat(raw.strip()[:10])
+        except ValueError:
+            return None
+    return None
+
+
 class MetricsJob:
     """Periodically aggregate the previous complete ISO week.
 
     Each tick calls ``maybe_run()``: if UTC now is past Monday 03:00 and the
     last successful week_start is older than the previous Monday, run
-    ``aggregate_week(previous_monday)``. Last success is in-memory only (v1).
+    ``aggregate_week(previous_monday)``.
+
+    When ``config`` is provided, last success is durable under
+    ``metrics.last_success_week`` (ISO date string). Without config, state is
+    in-memory only (process-local).
 
     ``start()`` is one-shot — after ``stop()``, create a new instance to restart.
     """
@@ -66,12 +93,40 @@ class MetricsJob:
         *,
         interval_seconds: int = 3600,
         clock: Callable[[], datetime] | None = None,
+        config: MetricsJobConfigStore | None = None,
     ) -> None:
         self._service = service
         self._interval = interval_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._config = config
         self._stop_event = asyncio.Event()
         self._last_success_week: date | None = None
+        self._loaded_from_config = False
+
+    async def _ensure_loaded(self) -> None:
+        if self._loaded_from_config or self._config is None:
+            return
+        self._loaded_from_config = True
+        try:
+            raw = await self._config.get(METRICS_LAST_SUCCESS_WEEK_KEY)
+        except Exception:
+            logger.exception("metrics_last_success_week_load_failed")
+            return
+        parsed = _parse_week_marker(raw)
+        if parsed is not None:
+            self._last_success_week = parsed
+
+    async def _persist_success(self, week: date) -> None:
+        self._last_success_week = week
+        if self._config is None:
+            return
+        try:
+            await self._config.set(METRICS_LAST_SUCCESS_WEEK_KEY, week.isoformat())
+        except Exception:
+            logger.exception(
+                "metrics_last_success_week_persist_failed",
+                extra={"week_start": week.isoformat()},
+            )
 
     async def start(self) -> None:
         """Run the metrics loop until stop() is called."""
@@ -114,6 +169,7 @@ class MetricsJob:
 
     async def maybe_run(self) -> dict[str, Any] | None:
         """Run aggregation when past Monday 03:00 and week not yet done."""
+        await self._ensure_loaded()
         now = self._clock()
         if now.tzinfo is None:
             now = now.replace(tzinfo=UTC)
@@ -137,5 +193,5 @@ class MetricsJob:
 
         result = await run_weekly_metrics(self._service, prev_week)
         if result.get("status") != "error":
-            self._last_success_week = prev_week
+            await self._persist_success(prev_week)
         return result

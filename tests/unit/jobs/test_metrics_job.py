@@ -163,3 +163,67 @@ async def test_pre_stopped_job_does_not_run() -> None:
     await job.stop()
     await job.start()
     assert svc.calls == []
+
+
+
+class FakeConfigStore:
+    def __init__(self) -> None:
+        self.kv: dict[str, object] = {}
+        self.sets: list[tuple[str, object]] = []
+
+    async def get(self, key: str) -> object | None:
+        return self.kv.get(key)
+
+    async def set(self, key: str, value: object) -> None:
+        self.sets.append((key, value))
+        self.kv[key] = value
+
+
+@pytest.mark.asyncio
+async def test_job_persists_last_success_week_in_config() -> None:
+    """R4: successful maybe_run writes metrics.last_success_week ISO date."""
+    svc = FakeMetricsService()
+    cfg = FakeConfigStore()
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 4, 0, tzinfo=UTC),
+        config=cfg,  # type: ignore[arg-type]
+    )
+    out = await job.maybe_run()
+    assert out is not None
+    assert out["status"] == "ok"
+    assert cfg.kv.get("metrics.last_success_week") == "2026-07-13"
+
+
+@pytest.mark.asyncio
+async def test_job_loads_last_success_week_from_config_skips_rerun() -> None:
+    """R4: new job instance with durable marker skips already-done week."""
+    svc = FakeMetricsService()
+    cfg = FakeConfigStore()
+    cfg.kv["metrics.last_success_week"] = "2026-07-13"
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 4, 0, tzinfo=UTC),
+        config=cfg,  # type: ignore[arg-type]
+    )
+    out = await job.maybe_run()
+    assert out is None
+    assert svc.calls == []
+
+
+@pytest.mark.asyncio
+async def test_job_without_config_keeps_in_memory_behavior() -> None:
+    """R4: config=None remains in-memory only (backward compatible)."""
+    svc = FakeMetricsService()
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 4, 0, tzinfo=UTC),
+    )
+    out1 = await job.maybe_run()
+    assert out1 is not None
+    out2 = await job.maybe_run()
+    assert out2 is None
+    assert len(svc.calls) == 1
