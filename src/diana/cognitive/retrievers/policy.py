@@ -5,7 +5,7 @@ catalog is configured (stub backward compatibility with F1 callers).
 
 When ``static_policies`` is present, matches by tema ∩ (topics ∪ {intent}).
 DB/pgvector hits (when deps configured) are appended after static; de-duplicated
-by exact rule text. DB failures never drop already-matched static hits.
+by exact rule text. DB failures and malformed rows never drop static hits.
 
 Pure cognitive module: does NOT import from ``diana.infrastructure``.
 """
@@ -101,19 +101,28 @@ class PolicyRetriever:
                     scope=vip_segment,
                     limit=DEFAULT_POLICY_LIMIT,
                 )
+                for row in rows or []:
+                    if not isinstance(row, dict):
+                        continue
+                    trigger = row.get("trigger_description")
+                    rule = row.get("rule")
+                    if trigger is None or rule is None:
+                        logger.debug(
+                            "PolicyRetriever: skipping malformed DB row %r", row
+                        )
+                        continue
+                    line = f"Trigger: {trigger} | Rule: {rule}"
+                    rule_key = _rule_text_from_formatted(line)
+                    if rule_key in seen_rules:
+                        continue
+                    seen_rules.append(rule_key)
+                    out.append(line)
             except Exception:
                 logger.exception(
-                    "PolicyRetriever: DB/embed path failed; returning static results only"
+                    "PolicyRetriever: DB/embed/format path failed; "
+                    "returning static results only"
                 )
                 return out if has_static else None
-
-            for row in rows or []:
-                line = f"Trigger: {row['trigger_description']} | Rule: {row['rule']}"
-                rule_key = _rule_text_from_formatted(line)
-                if rule_key in seen_rules:
-                    continue
-                seen_rules.append(rule_key)
-                out.append(line)
 
         # Static present with no match → []; DB-only with no rows → []
         return out

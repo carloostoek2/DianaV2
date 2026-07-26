@@ -249,3 +249,23 @@ async def test_build_default_registry_accepts_catalog_kwargs() -> None:
     )
     pol = await registry.resolve("knowledge.policy").fetch(turn, c_pol)
     assert pol == ["Trigger: no_promesas | Rule: No prometo fechas"]
+
+
+
+def test_planner_universe_matches_planner_and_emission_supersequence() -> None:
+    """Cross-lock: planner map caps == universe; emission is supersequence of both."""
+    from diana.cognitive.context_builder import _KNOWLEDGE_EMISSION_ORDER
+    from diana.cognitive.planner import _NEED_TO_CAPABILITY
+    from diana.cognitive.registry import PLANNER_CAPABILITY_UNIVERSE
+
+    planner_caps = tuple(cap for _, cap in _NEED_TO_CAPABILITY)
+    assert planner_caps == PLANNER_CAPABILITY_UNIVERSE
+
+    # Emission order must include every planner cap (may also include profile, etc.).
+    emission = list(_KNOWLEDGE_EMISSION_ORDER)
+    for cap in planner_caps:
+        assert cap in emission, f"{cap} missing from emission order"
+
+    # Relative order among planner caps preserved in emission (supersequence).
+    positions = [emission.index(cap) for cap in planner_caps]
+    assert positions == sorted(positions)

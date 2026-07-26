@@ -147,3 +147,60 @@ async def test_production_catalog_emotion_positiva_recovers_pattern() -> None:
     )
     assert result is not None
     assert result["patron"]
+
+
+
+@pytest.mark.asyncio
+async def test_voice_prefers_largest_intersection_over_first_hit() -> None:
+    """Largest |signals ∩ tags| wins over earlier smaller matches."""
+    patterns = [
+        {
+            "id": "early_positiva",
+            "tags": ["positiva"],
+            "patron": "jsjs",
+            "uso": "early",
+        },
+        {
+            "id": "saludo_holis",
+            "tags": ["saludo", "apertura", "positiva"],
+            "patron": "Holis 😁",
+            "uso": "saludo",
+        },
+    ]
+    retriever = VoicePatternsRetriever(patterns)
+    result = await retriever.fetch(
+        _turn(),
+        _comp(emotion="positiva", intent="saludo", topics=["apertura"]),
+    )
+    assert result is not None
+    assert result["patron"] == "Holis 😁"
+
+
+@pytest.mark.asyncio
+async def test_production_multi_signal_saludo_positiva_prefers_holis() -> None:
+    """Production: emotion=positiva + saludo should beat early jsjs (score 1)."""
+    from diana.cognitive.persona_catalog import load_persona_catalog
+
+    catalog = load_persona_catalog()
+    retriever = VoicePatternsRetriever(catalog["voice_patterns"])
+    result = await retriever.fetch(
+        _turn(),
+        _comp(emotion="positiva", intent="saludo", topics=["apertura"]),
+    )
+    assert result is not None
+    assert "Holis" in result["patron"]
+
+
+@pytest.mark.asyncio
+async def test_production_multi_signal_carinosa_extranar_reencuentro() -> None:
+    """Production: cariñosa + extrañar → reencuentro (score 2 > apodo score 1)."""
+    from diana.cognitive.persona_catalog import load_persona_catalog
+
+    catalog = load_persona_catalog()
+    retriever = VoicePatternsRetriever(catalog["voice_patterns"])
+    result = await retriever.fetch(
+        _turn(),
+        _comp(emotion="cariñosa", intent="extrañar", topics=["extrañar"]),
+    )
+    assert result is not None
+    assert "aquí estoy" in result["patron"] or "Cariño pero" in result["patron"]

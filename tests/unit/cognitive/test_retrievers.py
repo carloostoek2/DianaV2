@@ -757,3 +757,34 @@ async def test_production_catalog_policy_contenido_gold() -> None:
     result = await retriever.fetch(_turn(), c)
     assert isinstance(result, list) and result
     assert any("no_promesas_contenido" in line or "peticion_fotos_video" in line for line in result)
+
+
+
+@pytest.mark.asyncio
+async def test_policy_malformed_db_rows_preserve_static() -> None:
+    """Malformed DB rows must not drop already-matched static hits."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    policies = [{"id": "s1", "tema": ["contenido"], "regla": "static keep"}]
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(return_value=[{}])
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, static_policies=policies
+    )
+    c = Comprehension(
+        intent="chat",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert result == ["Trigger: s1 | Rule: static keep"]
