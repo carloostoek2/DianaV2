@@ -13,7 +13,9 @@ from diana.composition import (
     run_app_startup_recovery,
 )
 from diana.config import Settings
+from diana.jobs.calibration import CalibrationJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
+from diana.jobs.metrics import MetricsJob
 from diana.jobs.recontact import RecontactJob
 from diana.jobs.trace_purge import TracePurgeJob
 
@@ -26,6 +28,19 @@ def configure_logging(level: str) -> None:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         stream=sys.stdout,
     )
+
+
+async def _cancel_job(task: asyncio.Task | None, name: str) -> None:
+    """Cancel a background job task and wait briefly for clean stop."""
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=10.0)
+    except TimeoutError:
+        logger.warning("%s_stop_timeout", name)
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 async def async_main() -> None:
@@ -47,6 +62,9 @@ async def async_main() -> None:
     expiration_job = _setup_expiration_job(app)
     purge_job = _setup_purge_job(app)
     recontact_job = _setup_recontact_job(app)
+    # F3 Pool 3: observational metrics always; calibration only if flag on.
+    metrics_job = _setup_metrics_job(app)
+    calibration_job = _setup_calibration_job(app)
 
     try:
         await app.dispatcher.start_polling(
@@ -54,30 +72,12 @@ async def async_main() -> None:
             allowed_updates=["message", "business_message", "callback_query"],
         )
     finally:
-        if recontact_job is not None:
-            recontact_job.cancel()
-            try:
-                await asyncio.wait_for(recontact_job, timeout=10.0)
-            except TimeoutError:
-                logger.warning("recontact_job_stop_timeout")
-            except (asyncio.CancelledError, Exception):
-                pass
-        if purge_job is not None:
-            purge_job.cancel()
-            try:
-                await asyncio.wait_for(purge_job, timeout=10.0)
-            except TimeoutError:
-                logger.warning("purge_job_stop_timeout")
-            except (asyncio.CancelledError, Exception):
-                pass
-        if expiration_job is not None:
-            expiration_job.cancel()
-            try:
-                await asyncio.wait_for(expiration_job, timeout=10.0)
-            except TimeoutError:
-                logger.warning("expiration_job_stop_timeout")
-            except (asyncio.CancelledError, Exception):
-                pass
+        # Stop new jobs first, then existing F2/F3 jobs.
+        await _cancel_job(calibration_job, "calibration_job")
+        await _cancel_job(metrics_job, "metrics_job")
+        await _cancel_job(recontact_job, "recontact_job")
+        await _cancel_job(purge_job, "purge_job")
+        await _cancel_job(expiration_job, "expiration_job")
 
 
 def _setup_expiration_job(app: AppContainer) -> asyncio.Task | None:
@@ -118,6 +118,30 @@ def _setup_recontact_job(app: AppContainer) -> asyncio.Task | None:
     job = RecontactJob(app.recontact, interval_seconds=3600)
     task = asyncio.create_task(job.start())
     logger.info("recontact_job_started", extra={"interval_seconds": 3600})
+    return task
+
+
+def _setup_metrics_job(app: AppContainer) -> asyncio.Task | None:
+    """Start weekly metrics aggregation when the service is wired."""
+    if app.metrics is None:
+        logger.info("metrics_job_skipped_no_service")
+        return None
+
+    job = MetricsJob(app.metrics, interval_seconds=3600)
+    task = asyncio.create_task(job.start())
+    logger.info("metrics_job_started", extra={"interval_seconds": 3600})
+    return task
+
+
+def _setup_calibration_job(app: AppContainer) -> asyncio.Task | None:
+    """Start calibration job only when FEATURE_CALIBRATION_ENABLED is on."""
+    if not app.settings.feature_calibration_enabled or app.calibration is None:
+        logger.info("calibration_job_skipped_flag_off")
+        return None
+
+    job = CalibrationJob(app.calibration, interval_seconds=3600)
+    task = asyncio.create_task(job.start())
+    logger.info("calibration_job_started", extra={"interval_seconds": 3600})
     return task
 
 
