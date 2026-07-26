@@ -20,7 +20,10 @@ class FreezeCheckMiddleware(BaseMiddleware):
 
     Self-sufficient: looks up VIP by ``event.from_user.id`` via injected
     ``VipStore``. Does NOT depend on AuthMiddleware.
-    Registered at position 4 per AGENTS.md middleware order.
+    Registered after ErrorHandler + Logging + BC + Owner (index 4).
+
+    Lookup failure is fail-CLOSED: log and drop (do not call handler).
+    ``vip_record is None`` still passes through (non-VIP / unknown).
     """
 
     def __init__(self, vips: VipStore) -> None:
@@ -46,7 +49,7 @@ class FreezeCheckMiddleware(BaseMiddleware):
                 "freeze_check_lookup_error",
                 extra={"telegram_user_id": user_id},
             )
-            return await handler(event, data)
+            return None
 
         if vip_record is None:
             return await handler(event, data)

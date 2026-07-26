@@ -132,3 +132,17 @@ async def test_message_without_from_user_passes_through() -> None:
     result = await mw(handler, msg, {})
     assert result == "next"
     handler.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_freeze_lookup_error_fail_closed() -> None:
+    """VIP lookup exception must drop the update (fail-closed)."""
+    vips = AsyncMock()
+    vips.get_by_telegram_user_id = AsyncMock(side_effect=RuntimeError("db down"))
+    mw = FreezeCheckMiddleware(vips=vips)
+    handler = AsyncMock(return_value="next")
+    data: dict = {}
+    result = await mw(handler, _biz_msg(555), data)
+    assert result is None
+    handler.assert_not_awaited()
+    assert "_vip_record" not in data
