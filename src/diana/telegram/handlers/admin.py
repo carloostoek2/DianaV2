@@ -15,7 +15,11 @@ from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import VipStore
-from diana.telegram.handlers.callbacks import ADMIN_MENU_TEXT, CorrectSessionStore
+from diana.telegram.handlers.callbacks import (
+    ADMIN_MENU_TEXT,
+    SESSION_EXPIRED_UX,
+    CorrectSessionStore,
+)
 from diana.telegram.keyboards import (
     metrics_keyboard,
     trace_detail_keyboard,
@@ -49,8 +53,11 @@ async def handle_admin_text(
         return "ignored"
 
     # Free-text correct follow-up takes priority when session is open.
-    pending_turn = correct_sessions.get(actor_id)
-    if pending_turn is not None and not stripped.startswith("/"):
+    # resolve distinguishes expired (UX) vs never-started (silent ignore).
+    state, pending_turn = correct_sessions.resolve(actor_id)
+    if state == "expired" and not stripped.startswith("/"):
+        return "session_expired"
+    if state == "live" and pending_turn is not None and not stripped.startswith("/"):
         try:
             result = await admin.handle_correct(
                 pending_turn, stripped, actor_id=actor_id
@@ -247,8 +254,13 @@ def build_admin_router(
     async def on_owner_text(message: Message, **_: Any) -> None:
         if not _is_owner(message):
             return
-        # Only handle free-text correct; ignore other private chatter.
-        if sessions.get(message.from_user.id if message.from_user else 0) is None:
+        actor_id = message.from_user.id if message.from_user else 0
+        # Only handle free-text correct; ignore never-started private chatter.
+        state, _ = sessions.resolve(actor_id)
+        if state == "none":
+            return
+        if state == "expired":
+            await message.answer(SESSION_EXPIRED_UX)
             return
         status = await handle_admin_text(
             text=message.text or "",
@@ -268,6 +280,8 @@ def build_admin_router(
             )
         elif status == "deliver_failed":
             await message.answer("Delivery failed — try again from the draft buttons")
+        elif status == "session_expired":
+            await message.answer(SESSION_EXPIRED_UX)
 
     return router
 

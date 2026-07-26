@@ -282,3 +282,114 @@ async def test_correct_session_timeout(graph: dict) -> None:
     assert sessions.get(OWNER) == turn.id
     clock_box["t"] = now + timedelta(minutes=16)
     assert sessions.get(OWNER) is None
+
+
+def test_correct_session_resolve_live_expired_none(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+    import logging
+
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    clock_box = {"t": now}
+
+    def clock() -> datetime:
+        return clock_box["t"]
+
+    sessions = CorrectSessionStore(ttl=timedelta(minutes=15), clock=clock)
+    turn_id = uuid4()
+
+    # never-started
+    assert sessions.resolve(OWNER) == ("none", None)
+
+    with caplog.at_level(logging.INFO, logger="diana.telegram"):
+        sessions.start(OWNER, turn_id)
+    assert any(
+        r.getMessage() == "correct_session_started" for r in caplog.records
+    )
+    state, tid = sessions.resolve(OWNER)
+    assert state == "live"
+    assert tid == turn_id
+    assert sessions.get(OWNER) == turn_id  # resolve live does not consume
+
+    clock_box["t"] = now + timedelta(minutes=16)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="diana.telegram"):
+        state, expired_id = sessions.resolve(OWNER)
+    assert state == "expired"
+    assert expired_id == turn_id
+    assert sum(1 for r in caplog.records if r.getMessage() == "correct_session_expired") == 1
+    # second resolve after expire consume
+    assert sessions.resolve(OWNER) == ("none", None)
+    assert sessions.get(OWNER) is None
+
+
+@pytest.mark.asyncio
+async def test_handle_admin_text_session_expired_after_ttl(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+    import logging
+    from diana.telegram.handlers.admin import handle_admin_text
+    from diana.application.memory import InMemoryVipStore
+
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    clock_box = {"t": now}
+
+    def clock() -> datetime:
+        return clock_box["t"]
+
+    sessions = CorrectSessionStore(ttl=timedelta(minutes=15), clock=clock)
+    turn_id = uuid4()
+    sessions.start(OWNER, turn_id)
+    clock_box["t"] = now + timedelta(minutes=16)
+
+    with caplog.at_level(logging.INFO, logger="diana.telegram"):
+        result = await handle_admin_text(
+            text="too late free text",
+            actor_id=OWNER,
+            owner_telegram_id=OWNER,
+            vips=InMemoryVipStore(),
+            admin=None,  # type: ignore[arg-type]
+            correct_sessions=sessions,
+        )
+    assert result == "session_expired"
+    assert sessions.get(OWNER) is None
+    assert sum(1 for r in caplog.records if r.getMessage() == "correct_session_expired") == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_admin_text_never_started_silent() -> None:
+    from diana.telegram.handlers.admin import handle_admin_text
+    from diana.application.memory import InMemoryVipStore
+
+    sessions = CorrectSessionStore()
+    result = await handle_admin_text(
+        text="private chatter",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=None,  # type: ignore[arg-type]
+        correct_sessions=sessions,
+    )
+    assert result == "ignored"
+    assert result != "session_expired"
+
+
+@pytest.mark.asyncio
+async def test_handle_admin_text_after_cancel_not_session_expired() -> None:
+    from diana.telegram.handlers.admin import handle_admin_text
+    from diana.application.memory import InMemoryVipStore
+
+    sessions = CorrectSessionStore()
+    sessions.start(OWNER, uuid4())
+    sessions.cancel(OWNER)
+    result = await handle_admin_text(
+        text="after cancel",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=None,  # type: ignore[arg-type]
+        correct_sessions=sessions,
+    )
+    assert result == "ignored"

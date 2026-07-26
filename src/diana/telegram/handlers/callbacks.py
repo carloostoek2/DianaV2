@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import UUID
 
 from aiogram import Router
@@ -33,14 +33,20 @@ ADMIN_MENU_TEXT = (
     "/metricas — alias of /resumen"
 )
 
+SESSION_EXPIRED_UX = "Session expired — press Correct on the draft again"
+
 logger = logging.getLogger("diana.telegram")
 
 DEFAULT_CORRECT_TTL = timedelta(minutes=15)
 ClockFn = Callable[[], datetime]
+ResolveState = Literal["live", "expired", "none"]
 
 
 class CorrectSessionStore:
-    """In-process FSM: owner_id → awaiting free-text correct for turn_id.
+    """Process-local FSM: owner_id → awaiting free-text correct for turn_id.
+
+    In-memory only (single-instance). Restart clears all sessions; multi-replica
+    would need a shared store (out of scope — see docs/OPS_SINGLE_INSTANCE.md).
 
     Supports TTL (default 15 min) and cancel-by-turn for supersede cleanup.
     """
@@ -57,6 +63,14 @@ class CorrectSessionStore:
 
     def start(self, owner_id: int, turn_id: UUID) -> None:
         self._awaiting[owner_id] = (turn_id, self._clock())
+        logger.info(
+            "correct_session_started",
+            extra={
+                "owner_id": owner_id,
+                "turn_id": str(turn_id),
+                "ttl_s": int(self._ttl.total_seconds()),
+            },
+        )
 
     def pop(self, owner_id: int) -> UUID | None:
         item = self._awaiting.pop(owner_id, None)
@@ -68,14 +82,36 @@ class CorrectSessionStore:
         return turn_id
 
     def get(self, owner_id: int) -> UUID | None:
+        """Live UUID, or None when missing or expired (pop-on-TTL)."""
+        state, turn_id = self.resolve(owner_id)
+        if state == "live":
+            return turn_id
+        return None
+
+    def resolve(
+        self, owner_id: int
+    ) -> tuple[ResolveState, UUID | None]:
+        """Gate helper for free-text correct.
+
+        - live: within TTL; UUID returned; entry KEPT (does not consume)
+        - expired: TTL exceeded; entry POPPED; log correct_session_expired once
+        - none: missing; no log
+        """
         item = self._awaiting.get(owner_id)
         if item is None:
-            return None
+            return ("none", None)
         turn_id, started = item
         if self._clock() - started > self._ttl:
             self._awaiting.pop(owner_id, None)
-            return None
-        return turn_id
+            logger.info(
+                "correct_session_expired",
+                extra={
+                    "owner_id": owner_id,
+                    "turn_id": str(turn_id),
+                },
+            )
+            return ("expired", turn_id)
+        return ("live", turn_id)
 
     def cancel(self, owner_id: int) -> None:
         self._awaiting.pop(owner_id, None)
