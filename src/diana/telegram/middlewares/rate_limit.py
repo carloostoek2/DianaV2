@@ -2,6 +2,7 @@
 
 Owner is exempt via constructor ``owner_telegram_id`` (runs before OwnerDetection).
 Single-instance only; multi-replica needs a shared store (out of scope).
+See docs/OPS_SINGLE_INSTANCE.md.
 
 Fail-closed when no user/chat key can be extracted (SEC-RL-02).
 Idle keys are deleted after window prune; map size is capped (SEC-RL-01).

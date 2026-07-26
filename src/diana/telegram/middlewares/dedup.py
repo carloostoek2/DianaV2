@@ -2,6 +2,7 @@
 
 In-memory TTL cache keyed by update_id and/or callback.id.
 Single-instance only; multi-replica deployments need a shared store (out of scope).
+See docs/OPS_SINGLE_INSTANCE.md.
 """
 
 from __future__ import annotations

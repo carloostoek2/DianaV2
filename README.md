@@ -52,6 +52,8 @@ On startup the process:
 
 **Ops assumption:** single active bot process. Multi-instance polling / multi-writer
 CAS for delivery rows is an F2 concern (see `.planning/phases/MVP-FASE1-SUMMARY.md`).
+Process-local inventory (chat locks, CorrectSession, dedup, rate-limit):
+[docs/OPS_SINGLE_INSTANCE.md](docs/OPS_SINGLE_INSTANCE.md).
 
 ## Tests
 
