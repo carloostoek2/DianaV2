@@ -14,6 +14,8 @@ J4Category = Literal["identidad_ia", "pago_precio", "compromiso_real"]
 
 IA_TEMPLATE = "jsjsj si y sólo vivo en tu mente 😏"
 
+# Prefer second-person / question-like forms for identity probes.
+# Bare "chatbot" / "inteligencia artificial" alone omitted (high FP).
 IDENTIDAD_IA_KEYWORDS = [
     "eres ia",
     "eres una ia",
@@ -25,12 +27,21 @@ IDENTIDAD_IA_KEYWORDS = [
     "sos bot",
     "eres una inteligencia artificial",
     "sos una inteligencia artificial",
-    "inteligencia artificial",
-    "chatbot",
     "eres un robot",
     "sos un robot",
     "sos real o",
     "eres real o",
+    "eres real",
+    "sos real",
+    "eres real?",
+    "sos real?",
+    "chatgpt",
+    "eres chatgpt",
+    "sos chatgpt",
+    "eres un chatbot",
+    "sos un chatbot",
+    "eres chatbot",
+    "sos chatbot",
 ]
 
 PAGO_KEYWORDS = [
@@ -39,6 +50,8 @@ PAGO_KEYWORDS = [
     "pago",
     "pagos",
     "pagar",
+    "pagado",
+    "pagada",
     "suscripción",
     "suscripcion",
     "abono",
@@ -47,29 +60,42 @@ PAGO_KEYWORDS = [
     "tarifa",
     "tarifas",
     "cuesta",
+    "costo",
+    "costos",
     "cuánto sale",
     "cuanto sale",
     "cuánto cuesta",
     "cuanto cuesta",
+    "cuánto vale",
+    "cuanto vale",
+    "cuánto es",
+    "cuanto es",
     "transferencia",
     "mercadopago",
     "mercado pago",
+    "paypal",
     "reclamo",
     "reclamar",
     "cobrar",
     "cobro",
 ]
 
+# Commitment / real-world meet — tighten broad tokens (no bare "quedar").
+# Residual FP risk remains on short "cita"/"encuentro" (Anexo product terms).
 COMPROMISO_KEYWORDS = [
     "cita",
     "citas",
+    "una cita",
+    "hacer una cita",
+    "agendar cita",
     "encuentro",
     "encuentros",
     "vernos",
     "nos vemos",
-    "quedar",
+    "quedemos",
     "acuerdo",
     "acuerdos",
+    "acuerdo de",
     "contenido personalizado",
     "pack personalizado",
     "videollamada",
