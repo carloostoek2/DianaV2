@@ -110,7 +110,7 @@
 
 ## Docs commit
 
-_pending stamp after git commit_
+`6bad8f7` — `docs(f3): close pool1 autonomous-core summary`
 
 ## Next Steps
 
