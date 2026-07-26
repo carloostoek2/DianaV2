@@ -14,12 +14,12 @@ Close residual **owner Telegram `/fp` UI**: DM `/fp <turn_id>` → existing `Adm
 |------|--------|--------|
 | 1. TDD pure `/fp` in `handle_admin_text` | Status tokens `fp_marked` / `fp_usage` / `fp_unavailable` / `ignored_non_owner` / `forbidden`; always passes `actor_id` | `4a8d9ee` |
 | 2. Router `Command("fp")` + menu line | Owner English UX; non-owner silent; `ADMIN_MENU_TEXT` documents `/fp` | `4a8d9ee` |
-| 3. Residual hygiene | F3-PHASE-STATUS `/fp` closed; residuals-polish index + POOL item 2 done | `338ac3c` |
+| 3. Residual hygiene | F3-PHASE-STATUS `/fp` closed; residuals-polish index + POOL item 2 done | `92cfffd` |
 
 ## Commits
 
 1. `4a8d9ee` — `feat(telegram): wire owner /fp to mark_false_positive`
-2. `338ac3c` — `docs(planning): close owner /fp residual after UI ship`
+2. `92cfffd` — `docs(planning): close owner /fp residual after UI ship`
 
 ## Files touched
 

@@ -8,7 +8,7 @@
 | # | Item | Status | Path | Commits |
 |---|------|--------|------|---------|
 | 1 | docs-sync | **done** | `item1-docs-sync/` | `311fe39`, `9d9ff22` |
-| 2 | owner-fp-ui | **done** | `item2-owner-fp-ui/` | `4a8d9ee`, `338ac3c` |
+| 2 | owner-fp-ui | **done** | `item2-owner-fp-ui/` | `4a8d9ee` (feat), docs residual close |
 | 3 | naturalness-mvp | pending | `item3-naturalness-mvp/` | — |
 | 4 | profile-real | pending | `item4-profile-real/` | — |
 
