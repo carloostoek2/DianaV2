@@ -109,7 +109,10 @@ def test_desc_indexes_present_in_orm_metadata() -> None:
     assert "DESC" in index_exprs("message_history", "ix_message_history_chat_id_timestamp")
     assert "DESC" in index_exprs("turns", "ix_turns_chat_id_created_at")
     assert "DESC" in index_exprs("pipeline_traces", "ix_pipeline_traces_vip_id_created_at")
+    assert "DESC" in index_exprs("pipeline_traces", "ix_pipeline_traces_chat_id_created_at")
     assert "pipeline_traces_created_at_idx" in {i.name for i in Base.metadata.tables["pipeline_traces"].indexes}
+    names = {i.name for i in Base.metadata.tables["pipeline_traces"].indexes}
+    assert "ix_pipeline_traces_chat_id_created_at" in names
 
 
 def test_migration_003_creates_f2_knowledge_tables() -> None:
@@ -156,3 +159,18 @@ def test_migration_seed_keys_allowlist() -> None:
     assert '"owner_telegram_id"' not in text
     assert "ON CONFLICT (key) DO NOTHING" in text
     assert "nullable=False" in text  # notificado alignment among others
+
+def test_migration_011_pipeline_traces_chat_index() -> None:
+    """Migration 011 indexes pipeline_traces (chat_id, created_at DESC)."""
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "alembic"
+        / "versions"
+        / "011_pipeline_traces_chat_intents_idx.py"
+    )
+    text = migration.read_text(encoding="utf-8")
+    assert 'revision: str = "011_pipeline_traces_chat_intents_idx"' in text
+    assert "010_owner_marks" in text
+    assert "ix_pipeline_traces_chat_id_created_at" in text
+    assert "created_at DESC" in text
+

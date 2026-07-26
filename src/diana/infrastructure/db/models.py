@@ -104,6 +104,7 @@ class PipelineTrace(Base):
     __table_args__ = (
         Index("ix_pipeline_traces_turn_id", "turn_id"),
         Index("ix_pipeline_traces_vip_id_created_at", "vip_id", text("created_at DESC")),
+        Index("ix_pipeline_traces_chat_id_created_at", "chat_id", text("created_at DESC")),
         Index("pipeline_traces_created_at_idx", text("created_at DESC")),
     )
 
