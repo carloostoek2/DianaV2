@@ -47,7 +47,7 @@ from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
 from diana.cognitive.planner import Planner
 from diana.cognitive.policy_distiller import PolicyDistiller
-from diana.cognitive.persona_catalog import load_persona_catalog
+from diana.cognitive.persona_catalog import get_persona_catalog
 from diana.cognitive.registry import build_default_registry
 from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 from diana.config import Settings
@@ -88,9 +88,16 @@ from diana.telegram.setup import TelegramWiring, build_dispatcher
 
 logger = logging.getLogger("diana.composition")
 
-# Production persona from Anexo J.1 static catalog (not English placeholder).
-_PERSONA_CATALOG = load_persona_catalog()
-DEFAULT_PERSONA = str(_PERSONA_CATALOG["voz_configurada"]["persona"])
+# Production persona from Anexo J.1 static catalog (lazy — no import-time I/O).
+def _default_persona() -> str:
+    return str(get_persona_catalog()["voz_configurada"]["persona"])
+
+
+def __getattr__(name: str):
+    """Lazy DEFAULT_PERSONA export without module-level catalog load."""
+    if name == "DEFAULT_PERSONA":
+        return _default_persona()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class SystemClock:
@@ -346,7 +353,7 @@ def build_app(
         fp_marks=owner_marks,
     )
 
-    catalog = _PERSONA_CATALOG
+    catalog = get_persona_catalog()
     voz = catalog["voz_configurada"]
     registry = build_default_registry(
         history,

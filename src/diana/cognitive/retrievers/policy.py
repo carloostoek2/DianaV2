@@ -5,7 +5,7 @@ catalog is configured (stub backward compatibility with F1 callers).
 
 When ``static_policies`` is present, matches by tema ∩ (topics ∪ {intent}).
 DB/pgvector hits (when deps configured) are appended after static; de-duplicated
-by exact rule text.
+by exact rule text. DB failures never drop already-matched static hits.
 
 Pure cognitive module: does NOT import from ``diana.infrastructure``.
 """
@@ -23,12 +23,17 @@ DEFAULT_POLICY_THRESHOLD = 0.8
 DEFAULT_POLICY_LIMIT = 5
 
 
+def _norm(token: Any) -> str:
+    return str(token).strip().lower()
+
+
 def _as_tema_list(tema: Any) -> list[str]:
     if isinstance(tema, list):
-        return [str(t) for t in tema]
+        return [_norm(t) for t in tema if str(t).strip()]
     if tema is None:
         return []
-    return [str(tema)]
+    token = _norm(tema)
+    return [token] if token else []
 
 
 def _rule_text_from_formatted(line: str) -> str:
@@ -50,6 +55,7 @@ class PolicyRetriever:
     ) -> None:
         self._embed = embedding_service
         self._repo = repo
+        # Empty list is treated as "no static catalog" (same as None) for stub semantics.
         self._static = list(static_policies) if static_policies else None
 
     async def fetch(
@@ -69,7 +75,9 @@ class PolicyRetriever:
         seen_rules: list[str] = []
 
         if has_static:
-            signals = set(comprehension.topics) | {comprehension.intent}
+            signals = {_norm(t) for t in comprehension.topics if str(t).strip()} | {
+                _norm(comprehension.intent)
+            }
             for policy in self._static or []:
                 temas = _as_tema_list(policy.get("tema"))
                 if not (signals & set(temas)):
@@ -84,20 +92,21 @@ class PolicyRetriever:
                 out.append(line)
 
         if has_db:
-            embedding = await self._embed.embed(turn.text)
-            vip_segment: str | None = None
-            rows = await self._repo.find_active_by_similarity(
-                embedding,
-                threshold=DEFAULT_POLICY_THRESHOLD,
-                scope=vip_segment,
-                limit=DEFAULT_POLICY_LIMIT,
-            )
-            if not rows and not out and has_static:
-                # static present, no static hits, no DB rows → []
-                return out
-            if not rows and not has_static:
-                logger.debug("PolicyRetriever: no matching policies")
-                return []
+            try:
+                embedding = await self._embed.embed(turn.text)
+                vip_segment: str | None = None
+                rows = await self._repo.find_active_by_similarity(
+                    embedding,
+                    threshold=DEFAULT_POLICY_THRESHOLD,
+                    scope=vip_segment,
+                    limit=DEFAULT_POLICY_LIMIT,
+                )
+            except Exception:
+                logger.exception(
+                    "PolicyRetriever: DB/embed path failed; returning static results only"
+                )
+                return out if has_static else None
+
             for row in rows or []:
                 line = f"Trigger: {row['trigger_description']} | Rule: {row['rule']}"
                 rule_key = _rule_text_from_formatted(line)
@@ -106,7 +115,7 @@ class PolicyRetriever:
                 seen_rules.append(rule_key)
                 out.append(line)
 
-        # Static-only with no match → [] (not None)
+        # Static present with no match → []; DB-only with no rows → []
         return out
 
 

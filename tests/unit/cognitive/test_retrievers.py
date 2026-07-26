@@ -261,6 +261,8 @@ def test_retrievers_have_no_cross_peer_imports_ast() -> None:
         "examples",
         "profile",
         "schedule",
+        "persona_facts",
+        "voice_patterns",
     )
     for name in peer_names:
         path = root / f"{name}.py"
@@ -309,6 +311,8 @@ def test_retrievers_are_read_only_ast() -> None:
         "examples.py",
         "profile.py",
         "schedule.py",
+        "persona_facts.py",
+        "voice_patterns.py",
     )
     for filename in peer_files:
         path = root / filename
@@ -599,3 +603,157 @@ async def test_policy_static_plus_db_merge_dedupes_by_rule() -> None:
     # de-duped: only one with same rule text
     rules = [r.split("| Rule: ", 1)[1] for r in result]
     assert rules.count("same rule text") == 1
+
+
+
+@pytest.mark.asyncio
+async def test_policy_static_empty_list_is_stub_none() -> None:
+    """static_policies=[] with no deps behaves like stub (None)."""
+    retriever = PolicyRetriever(static_policies=[])
+    assert await retriever.fetch(_turn(), _comprehension()) is None
+
+
+@pytest.mark.asyncio
+async def test_policy_both_sources_static_only_match() -> None:
+    """Both deps + static: only static tema hits when DB empty."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    policies = [{"id": "s1", "tema": ["contenido"], "regla": "static rule"}]
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(return_value=[])
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, static_policies=policies
+    )
+    c = Comprehension(
+        intent="chat",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert result == ["Trigger: s1 | Rule: static rule"]
+
+
+@pytest.mark.asyncio
+async def test_policy_both_sources_db_only_match() -> None:
+    """Both deps + static: only DB hits when static temas miss."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    policies = [{"id": "s1", "tema": ["psicologia"], "regla": "static only"}]
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(
+        return_value=[{"trigger_description": "db", "rule": "db rule"}]
+    )
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, static_policies=policies
+    )
+    c = Comprehension(
+        intent="chat",
+        topics=["otro"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert result == ["Trigger: db | Rule: db rule"]
+
+
+@pytest.mark.asyncio
+async def test_policy_both_sources_no_hits_returns_empty() -> None:
+    """Both configured, no static match and no DB rows → []."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    policies = [{"id": "s1", "tema": ["psicologia"], "regla": "x"}]
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(return_value=[])
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, static_policies=policies
+    )
+    c = Comprehension(
+        intent="chat",
+        topics=["otro"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    assert await retriever.fetch(_turn(), c) == []
+
+
+@pytest.mark.asyncio
+async def test_policy_db_exception_preserves_static_hits() -> None:
+    """Issue 3: embed/DB failure after static match still returns static lines."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    policies = [{"id": "s1", "tema": ["contenido"], "regla": "keep me"}]
+    embed = MagicMock()
+    embed.embed = AsyncMock(side_effect=RuntimeError("embed down"))
+    repo = AsyncMock()
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, static_policies=policies
+    )
+    c = Comprehension(
+        intent="chat",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert result == ["Trigger: s1 | Rule: keep me"]
+
+
+
+@pytest.mark.asyncio
+async def test_production_catalog_policy_contenido_gold() -> None:
+    """Issue 8: production soft policy gold — contenido tema matches."""
+    from diana.cognitive.persona_catalog import load_persona_catalog
+
+    catalog = load_persona_catalog()
+    retriever = PolicyRetriever(static_policies=catalog["policies"])
+    c = Comprehension(
+        intent="chat",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert isinstance(result, list) and result
+    assert any("no_promesas_contenido" in line or "peticion_fotos_video" in line for line in result)

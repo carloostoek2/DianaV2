@@ -22,10 +22,17 @@ _SYSTEM = (
     "Also set needs_persona_facts and needs_voice_patterns (default false if unsure). "
     "intent is a free lowercase verb_object label. topics is a list of lowercase strings. "
     "Set each needs_* boolean only to indicate which knowledge would help later stages. "
-    "needs_persona_facts=true when the turn asks about Diana biography/personal facts "
-    "(familia, estudios, duelo, vivienda, rutina, canal). "
+    "needs_persona_facts=true when the turn asks about Diana biography/personal facts. "
+    "Prefer topics/intent from catalog temas: familia, duelo, estudios, trayectoria, "
+    "vivienda, rutina, independencia, trabajo, contenido, canal, suscripcion, soporte, "
+    "motivacion_personal, tema_pesado. "
     "needs_voice_patterns=true when a characteristic voice/muletilla would help. "
-    "needs_policy=true for limits, content promises, bio invention bounds, or photo/video requests."
+    "Useful tags: risa, humor, casual, saludo, apertura, cariño, cercania, enfasis, "
+    "honestidad, tema_pesado, extrañar, reencuentro, conexion; emotion values "
+    "positiva/cariñosa/triste/molesta/urgente also index patterns. "
+    "needs_policy=true for limits, content promises, bio invention bounds, or photo/video. "
+    "Policy temas: contenido, expectativas, psicologia, limites_profesionales, biografia, "
+    "limites, identidad, dinamica_novia_virtual; map foto/video requests to contenido."
 )
 
 _MAX_ATTEMPTS = 2  # initial try + exactly one retry (contrato A.6)

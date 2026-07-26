@@ -2,6 +2,9 @@
 
 Returns a single atomic fact ``{hecho, tema}`` or ``None``. Never emits
 ``nota_privada``. No embeddings; pure in-memory set intersection.
+
+When multiple facts match, prefer the largest intersection size; ties keep
+catalog list order.
 """
 
 from __future__ import annotations
@@ -11,12 +14,17 @@ from typing import Any
 from diana.cognitive.models import Comprehension, IncomingTurn
 
 
+def _norm(token: Any) -> str:
+    return str(token).strip().lower()
+
+
 def _as_tema_list(tema: Any) -> list[str]:
     if isinstance(tema, list):
-        return [str(t) for t in tema]
+        return [_norm(t) for t in tema if str(t).strip()]
     if tema is None:
         return []
-    return [str(tema)]
+    token = _norm(tema)
+    return [token] if token else []
 
 
 class PersonaFactsRetriever:
@@ -31,15 +39,27 @@ class PersonaFactsRetriever:
         comprehension: Comprehension,
     ) -> dict[str, str] | None:
         _ = turn  # match is comprehension-driven only
-        topics = set(comprehension.topics) | {comprehension.intent}
+        topics = {_norm(t) for t in comprehension.topics if str(t).strip()} | {
+            _norm(comprehension.intent)
+        }
+
+        best: dict[str, str] | None = None
+        best_score = 0
         for fact in self._facts:
             temas = _as_tema_list(fact.get("tema"))
-            if topics & set(temas):
-                return {
+            if not temas:
+                continue
+            inter = topics & set(temas)
+            score = len(inter)
+            if score > best_score:
+                best_score = score
+                # Prefer first tema that is in the intersection (stable within fact).
+                match_tema = next((t for t in temas if t in inter), temas[0])
+                best = {
                     "hecho": str(fact["hecho"]),
-                    "tema": temas[0],
+                    "tema": match_tema,
                 }
-        return None
+        return best
 
 
 __all__ = ["PersonaFactsRetriever"]

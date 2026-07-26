@@ -49,7 +49,7 @@ def _comprehension() -> Comprehension:
     )
 
 
-def test_default_registry_resolves_all_seven_capabilities() -> None:
+def test_default_registry_resolves_all_registered_capabilities() -> None:
     history = InMemoryMessageHistory()
     registry = build_default_registry(history)
     for name in ALL_CAPS:

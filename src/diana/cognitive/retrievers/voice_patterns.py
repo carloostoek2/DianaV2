@@ -6,9 +6,11 @@ or ``None``. No embeddings; pure in-memory set intersection.
 
 from __future__ import annotations
 
-from typing import Any
-
 from diana.cognitive.models import Comprehension, IncomingTurn
+
+
+def _norm(token: object) -> str:
+    return str(token).strip().lower()
 
 
 class VoicePatternsRetriever:
@@ -24,15 +26,15 @@ class VoicePatternsRetriever:
     ) -> dict[str, str] | None:
         _ = turn  # match is comprehension-driven only
         signals = {
-            comprehension.emotion,
-            comprehension.intent,
-            *comprehension.topics,
+            _norm(comprehension.emotion),
+            _norm(comprehension.intent),
+            *(_norm(t) for t in comprehension.topics if str(t).strip()),
         }
         for pattern in self._patterns:
             tags = pattern.get("tags") or []
             if not isinstance(tags, list):
                 tags = [tags]
-            tag_set = {str(t) for t in tags}
+            tag_set = {_norm(t) for t in tags if str(t).strip()}
             if signals & tag_set:
                 return {
                     "patron": str(pattern["patron"]),

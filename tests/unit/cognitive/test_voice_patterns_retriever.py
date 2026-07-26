@@ -116,3 +116,34 @@ async def test_voice_patterns_empty_catalog_returns_none() -> None:
     retriever = VoicePatternsRetriever([])
     result = await retriever.fetch(_turn(), _comp(intent="saludo"))
     assert result is None
+
+
+
+@pytest.mark.asyncio
+async def test_production_catalog_emotion_cariñosa_recovers_pattern() -> None:
+    """Issue 2: production tags intersect Emotion enum (cariñosa)."""
+    from diana.cognitive.persona_catalog import load_persona_catalog
+
+    catalog = load_persona_catalog()
+    retriever = VoicePatternsRetriever(catalog["voice_patterns"])
+    result = await retriever.fetch(
+        _turn(),
+        _comp(emotion="cariñosa", intent="chat", topics=[]),
+    )
+    assert result is not None
+    assert "patron" in result and result["patron"]
+    assert set(result.keys()) == {"patron", "uso"}
+
+
+@pytest.mark.asyncio
+async def test_production_catalog_emotion_positiva_recovers_pattern() -> None:
+    from diana.cognitive.persona_catalog import load_persona_catalog
+
+    catalog = load_persona_catalog()
+    retriever = VoicePatternsRetriever(catalog["voice_patterns"])
+    result = await retriever.fetch(
+        _turn(),
+        _comp(emotion="positiva", intent="chat", topics=[]),
+    )
+    assert result is not None
+    assert result["patron"]

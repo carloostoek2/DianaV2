@@ -80,3 +80,48 @@ def test_load_persona_catalog_fail_loud_on_invalid_payload(tmp_path: Path) -> No
     ):
         with pytest.raises(ValueError):
             load_persona_catalog()
+
+
+
+def test_catalog_package_resource_readable() -> None:
+    """Issue 4: persona_diana.json must be importlib.resources-readable package data."""
+    import importlib.resources
+
+    raw = (
+        importlib.resources.files("diana.config")
+        .joinpath("persona_diana.json")
+        .read_text(encoding="utf-8")
+    )
+    assert "voz_configurada" in raw
+    assert "persona_facts" in raw
+
+
+def test_load_rejects_empty_tema_and_empty_patron() -> None:
+    """Issue 9: empty tema/tags/patron/uso rejected at load."""
+    from diana.cognitive.persona_catalog import _parse_and_validate
+    import json
+
+    base = {
+        "voz_configurada": {
+            "persona": "Eres Diana",
+            "reglas_estilo": ["r1", "r2", "r3", "r4", "r5", "r6"],
+        },
+        "persona_facts": [
+            {"id": "f1", "tema": [], "hecho": "x"},
+        ],
+        "voice_patterns": [
+            {"id": "p1", "tags": ["a"], "patron": "x", "uso": "y"},
+        ],
+        "policies": [
+            {"id": "pol", "tema": ["t"], "regla": "r"},
+        ],
+    }
+    with pytest.raises(ValueError, match="tema"):
+        _parse_and_validate(json.dumps(base))
+
+    base["persona_facts"] = [{"id": "f1", "tema": ["familia"], "hecho": "x"}]
+    base["voice_patterns"] = [
+        {"id": "p1", "tags": ["a"], "patron": "  ", "uso": "y"},
+    ]
+    with pytest.raises(ValueError, match="patron"):
+        _parse_and_validate(json.dumps(base))
