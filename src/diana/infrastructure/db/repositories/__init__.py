@@ -13,6 +13,7 @@ from diana.infrastructure.db.repositories.learning_metrics import (
     SqlLearningMetricsRepo,
 )
 from diana.infrastructure.db.repositories.metrics_data import SqlMetricsDataSource
+from diana.infrastructure.db.repositories.owner_marks import SqlOwnerMarkStore
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
@@ -24,6 +25,7 @@ __all__ = [
     "SqlLearningMetricsRepo",
     "SqlMetricsDataSource",
     "SqlMessageHistoryRepo",
+    "SqlOwnerMarkStore",
     "SqlPendingApprovalStore",
     "SqlPendingDeliveryStore",
     "SqlSystemConfigStore",

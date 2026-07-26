@@ -593,3 +593,37 @@ async def test_admin_deliver_ctx_is_frozen_false_when_unfrozen() -> None:
     assert result is not None and result.success is True
     assert len(spy.ctxs) == 1
     assert spy.ctxs[0].is_frozen is False
+
+
+
+@pytest.mark.asyncio
+async def test_mark_false_positive_records_owner_mark() -> None:
+    """R5: owner can mark a turn as false-positive escalation."""
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+    from datetime import date
+
+    g = _admin_graph()
+    marks = InMemoryOwnerMarkStore()
+    g["admin"]._fp_marks = marks  # noqa: SLF001
+    turn_id = uuid4()
+    ok = await g["admin"].mark_false_positive(turn_id, actor_id=OWNER_ID)
+    assert ok is True
+    assert await marks.count_in_range(date(2000, 1, 1), date(2100, 1, 1)) == 1
+
+
+@pytest.mark.asyncio
+async def test_mark_false_positive_rejects_non_owner() -> None:
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+
+    g = _admin_graph()
+    g["admin"]._fp_marks = InMemoryOwnerMarkStore()  # noqa: SLF001
+    with pytest.raises(OwnerAuthError):
+        await g["admin"].mark_false_positive(uuid4(), actor_id=OTHER_USER)
+
+
+@pytest.mark.asyncio
+async def test_mark_false_positive_noop_without_store() -> None:
+    g = _admin_graph()
+    # no fp_marks wired
+    ok = await g["admin"].mark_false_positive(uuid4(), actor_id=OWNER_ID)
+    assert ok is False

@@ -27,6 +27,7 @@ from diana.application.recontact_service import (
     RecontactService,
 )
 from diana.application.runtime_thresholds import RuntimeThresholds
+from diana.infrastructure.db.repositories.owner_marks import SqlOwnerMarkStore
 from diana.application.recovery_startup import (
     DEFAULT_STALE_AFTER,
     run_startup_recovery,
@@ -328,6 +329,7 @@ def build_app(
         recontact=recontact,
         feature_recontact_enabled=feature_recontact_enabled,
     )
+    owner_marks = SqlOwnerMarkStore(sf)
     admin = AdminService(
         notifier=notifier,
         approvals=approvals,
@@ -340,6 +342,7 @@ def build_app(
         delivery_mode=settings.global_mode,
         feature_advanced_behavior=feature_advanced_behavior,
         vip_store=vips,
+        fp_marks=owner_marks,
     )
 
     registry = build_default_registry(
@@ -428,6 +431,7 @@ def build_app(
         sides=metrics_data,
         store=learning_metrics,
         drift=calibration,
+        fp_marks=owner_marks,
     )
     admin_metrics = AdminMetricsService(store=learning_metrics)
 

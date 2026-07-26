@@ -388,3 +388,55 @@ async def test_report_type_and_rates_in_unit_interval() -> None:
     assert 0.0 <= report.metrics.autonomous_send_rate <= 1.0
     assert 0.0 <= report.metrics.approval_without_correction_rate <= 1.0
     assert report.metrics.false_positive_escalation_rate == 0.0
+
+
+
+@pytest.mark.asyncio
+async def test_false_positive_rate_from_owner_marks() -> None:
+    """R5: fp_rate = fp_count / escalate_count when owner marks exist."""
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+
+    t_esc1 = uuid4()
+    t_esc2 = uuid4()
+    t_ok = uuid4()
+    traces = [
+        _trace(action="escalate", turn_id=t_esc1),
+        _trace(action="escalate", turn_id=t_esc2),
+        _trace(action="approve", turn_id=t_ok),
+    ]
+    marks = InMemoryOwnerMarkStore()
+    # mark one escalate as FP inside week
+    marks._clock = lambda: datetime(2026, 7, 14, 10, 0, tzinfo=UTC)  # noqa: SLF001
+    await marks.mark(t_esc1)
+
+    store = FakeStore()
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource(traces),
+        sides=FakeSideSource(),
+        store=store,
+        fp_marks=marks,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    # 1 FP / 2 escalates
+    assert report.metrics.false_positive_escalation_rate == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_false_positive_rate_zero_when_no_escalations() -> None:
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+
+    marks = InMemoryOwnerMarkStore()
+    marks._clock = lambda: datetime(2026, 7, 14, tzinfo=UTC)  # noqa: SLF001
+    await marks.mark(uuid4())
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource([_trace(action="approve")]),
+        sides=FakeSideSource(),
+        store=FakeStore(),
+        fp_marks=marks,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.false_positive_escalation_rate == 0.0

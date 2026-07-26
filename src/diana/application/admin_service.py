@@ -70,6 +70,7 @@ class AdminService:
         delivery_mode: DeliveryMode = "supervised",
         feature_advanced_behavior: bool = False,
         vip_store: VipStore | None = None,
+        fp_marks: Any | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -82,6 +83,7 @@ class AdminService:
         self._delivery_mode = delivery_mode
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
         self._vip_store = vip_store
+        self._fp_marks = fp_marks
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -260,6 +262,31 @@ class AdminService:
             return False
         approval = await self._approvals.get_by_turn(turn_id)
         return approval is not None and approval.status == "waiting"
+
+    async def mark_false_positive(
+        self,
+        turn_id: UUID,
+        *,
+        actor_id: int | None = None,
+    ) -> bool:
+        """Record owner mark that an escalation was a false positive (metrics).
+
+        Thin entry point — no Telegram UI required. Returns False when the
+        mark store is not wired.
+        """
+        self._assert_owner(actor_id)
+        if self._fp_marks is None:
+            logger.info(
+                "mark_false_positive_no_store",
+                extra={"turn_id": str(turn_id)},
+            )
+            return False
+        await self._fp_marks.mark(turn_id)
+        logger.info(
+            "false_positive_marked",
+            extra={"turn_id": str(turn_id)},
+        )
+        return True
 
     async def handle_owner_escalate(
         self,

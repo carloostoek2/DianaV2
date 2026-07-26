@@ -44,7 +44,6 @@ METRIC_NAMES: tuple[str, ...] = (
 )
 
 _APPROVE_OR_SEND = frozenset({"approve", "send"})
-_FP_RESIDUAL_LOGGED = False
 
 
 class DriftDetector(Protocol):
@@ -177,12 +176,14 @@ class MetricsAggregationService:
         store: LearningMetricsStore,
         drift: DriftDetector | None = None,
         clock: Callable[[], datetime] | None = None,
+        fp_marks: Any | None = None,
     ) -> None:
         self._traces = traces
         self._sides = sides
         self._store = store
         self._drift = drift
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._fp_marks = fp_marks
 
     def previous_complete_week_start(
         self, now: datetime | None = None
@@ -192,8 +193,6 @@ class MetricsAggregationService:
     async def aggregate_week(
         self, week_start: date | None = None
     ) -> WeekMetricsReport:
-        global _FP_RESIDUAL_LOGGED
-
         if week_start is None:
             week_start = self.previous_complete_week_start()
         start, end = week_bounds(week_start)
@@ -204,6 +203,7 @@ class MetricsAggregationService:
         turn_ids: list[UUID] = []
         approve_send_ids: list[UUID] = []
         send_count = 0
+        escalate_count = 0
         latencies: list[float] = []
 
         for tr in traces:
@@ -215,6 +215,8 @@ class MetricsAggregationService:
                     approve_send_ids.append(tid)
             if action == "send":
                 send_count += 1
+            if action == "escalate":
+                escalate_count += 1
             lat = _latency_ms(tr.get("timings"))
             if lat is not None:
                 latencies.append(lat)
@@ -232,13 +234,16 @@ class MetricsAggregationService:
         gray_qs = await self._sides.gray_zone_questions(start, end)
         gray_rep = _gray_zone_repetition_count(gray_qs)
 
-        if not _FP_RESIDUAL_LOGGED:
-            logger.info(
-                "false_positive_escalation_rate residual: always 0.0 "
-                "(no owner FP mark model yet)"
-            )
-            _FP_RESIDUAL_LOGGED = True
-        fp_rate = 0.0
+        fp_count = 0
+        if self._fp_marks is not None:
+            try:
+                fp_count = int(
+                    await self._fp_marks.count_in_range(start, end)
+                )
+            except Exception:
+                logger.exception("metrics_fp_count_failed")
+                fp_count = 0
+        fp_rate = (fp_count / escalate_count) if escalate_count else 0.0
 
         style_score = await self._style_drift_score()
 

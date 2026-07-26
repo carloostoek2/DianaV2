@@ -496,3 +496,18 @@ class PromoExecution(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'sent'"),
     )
+
+
+class OwnerMark(Base):
+    """Owner feedback on a turn (e.g. false_positive escalation mark)."""
+
+    __tablename__ = "owner_marks"
+    __table_args__ = (
+        Index("ix_owner_marks_kind_created", "kind", "created_at"),
+    )
+
+    turn_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
