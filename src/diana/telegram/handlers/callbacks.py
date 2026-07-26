@@ -29,6 +29,7 @@ ADMIN_MENU_TEXT = (
     "Draft buttons: Approve / Correct / Escalate\n"
     "/turnos — recent turns\n"
     "/traza <id> — trace detail\n"
+    "/fp <turn_id> — mark escalation false positive\n"
     "/resumen — weekly learning metrics\n"
     "/metricas — alias of /resumen"
 )

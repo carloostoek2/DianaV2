@@ -1,4 +1,4 @@
-"""Owner private commands: /start, /menu, VIP add/remove, /resumen, correct text."""
+"""Owner private commands: /start, /menu, VIP add/remove, /fp, /resumen, correct text."""
 
 from __future__ import annotations
 
@@ -103,6 +103,24 @@ async def handle_admin_text(
         tg_id = int(m_rm.group(1))
         ok = await vips.deactivate(tg_id)
         return "vip_removed" if ok else "vip_not_found"
+
+    # /fp <turn_id> — mark escalation false positive (owner mark store).
+    # First token may include bot suffix (/fp@BotName).
+    parts = stripped.split(None, 1)
+    first = parts[0].split("@", 1)[0].lower()
+    if first == "/fp":
+        if len(parts) < 2 or not parts[1].strip():
+            return "fp_usage"
+        raw_id = parts[1].strip().split(None, 1)[0]
+        try:
+            turn_id = UUID(raw_id)
+        except ValueError:
+            return "fp_usage"
+        try:
+            ok = await admin.mark_false_positive(turn_id, actor_id=actor_id)
+        except OwnerAuthError:
+            return "forbidden"
+        return "fp_marked" if ok else "fp_unavailable"
 
     return "ignored"
 
@@ -231,6 +249,28 @@ def build_admin_router(
             return
         kb = trace_detail_keyboard(view.turn_id, timings=view.timings)
         await message.answer(view.text, reply_markup=kb)
+
+    @router.message(Command("fp"))
+    async def on_fp(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await handle_admin_text(
+            text=message.text or "",
+            actor_id=message.from_user.id if message.from_user else None,
+            owner_telegram_id=owner_telegram_id,
+            vips=vips,
+            admin=admin,
+            correct_sessions=sessions,
+        )
+        if status == "fp_marked":
+            await message.answer("False positive marked")
+        elif status == "fp_unavailable":
+            await message.answer("False positive store not available.")
+        elif status == "forbidden":
+            return  # fail-closed silent
+        else:
+            # fp_usage and any unexpected
+            await message.answer("Usage: /fp <turn_id>")
 
     @router.message(Command("resumen", "metricas"))
     async def on_resumen(message: Message, **_: Any) -> None:

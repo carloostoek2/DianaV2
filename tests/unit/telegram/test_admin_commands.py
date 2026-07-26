@@ -1,8 +1,9 @@
-"""Admin commands — owner-only VIP add/remove /start /resumen."""
+"""Admin commands — owner-only VIP add/remove /start /resumen /fp."""
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 
@@ -17,14 +18,17 @@ from diana.application.memory import (
     InMemoryTurnStore,
     InMemoryVipStore,
 )
+from diana.application.owner_marks import InMemoryOwnerMarkStore
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
 from diana.telegram.handlers.admin import handle_admin_text
-from diana.telegram.handlers.callbacks import CorrectSessionStore
+from diana.telegram.handlers.callbacks import ADMIN_MENU_TEXT, CorrectSessionStore
 
 OWNER = 999001
 OTHER = 111
+_WIDE_START = date(2000, 1, 1)
+_WIDE_END = date(2100, 1, 1)
 
 
 class _FakeMetricsStore:
@@ -70,6 +74,8 @@ def admin_ctx() -> dict:
         turns=turns,
         owner_telegram_id=OWNER,
     )
+    fp_marks = InMemoryOwnerMarkStore()
+    admin._fp_marks = fp_marks  # noqa: SLF001
     metrics_store = _FakeMetricsStore()
     admin_metrics = AdminMetricsService(
         store=metrics_store,
@@ -82,6 +88,7 @@ def admin_ctx() -> dict:
         "owner": OWNER,
         "metrics_store": metrics_store,
         "admin_metrics": admin_metrics,
+        "fp_marks": fp_marks,
     }
 
 
@@ -210,3 +217,62 @@ async def test_resumen_unavailable_when_service_none(admin_ctx: dict) -> None:
 async def test_resumen_non_owner_ignored(admin_ctx: dict) -> None:
     g = admin_ctx
     assert await _dispatch(g, "/resumen", actor_id=OTHER) == "ignored_non_owner"
+
+
+@pytest.mark.asyncio
+async def test_fp_owner_marks_turn(admin_ctx: dict) -> None:
+    g = admin_ctx
+    turn_id = uuid4()
+    assert await _dispatch(g, f"/fp {turn_id}") == "fp_marked"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 1
+
+
+@pytest.mark.asyncio
+async def test_fp_non_owner_ignored(admin_ctx: dict) -> None:
+    g = admin_ctx
+    turn_id = uuid4()
+    assert await _dispatch(g, f"/fp {turn_id}", actor_id=OTHER) == "ignored_non_owner"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 0
+
+
+@pytest.mark.asyncio
+async def test_fp_usage_missing_arg(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/fp") == "fp_usage"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 0
+
+
+@pytest.mark.asyncio
+async def test_fp_usage_invalid_uuid(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/fp not-a-uuid") == "fp_usage"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 0
+
+
+@pytest.mark.asyncio
+async def test_fp_unavailable_without_store(admin_ctx: dict) -> None:
+    g = admin_ctx
+    g["admin"]._fp_marks = None  # noqa: SLF001
+    turn_id = uuid4()
+    assert await _dispatch(g, f"/fp {turn_id}") == "fp_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_fp_bot_suffix(admin_ctx: dict) -> None:
+    g = admin_ctx
+    turn_id = uuid4()
+    assert await _dispatch(g, f"/fp@SomeBot {turn_id}") == "fp_marked"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 1
+
+
+@pytest.mark.asyncio
+async def test_fp_idempotent_remark(admin_ctx: dict) -> None:
+    g = admin_ctx
+    turn_id = uuid4()
+    assert await _dispatch(g, f"/fp {turn_id}") == "fp_marked"
+    assert await _dispatch(g, f"/fp {turn_id}") == "fp_marked"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 1
+
+
+def test_admin_menu_lists_fp() -> None:
+    assert "/fp" in ADMIN_MENU_TEXT
