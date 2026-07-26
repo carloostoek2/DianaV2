@@ -42,6 +42,7 @@ from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.director import ANALYST_HISTORY_LIMIT, CognitiveDirector
+from diana.cognitive.repetition_guard import RepetitionGuard
 from diana.cognitive.embedding import EmbeddingService
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
@@ -382,6 +383,9 @@ def build_app(
         # TurnStatusSink protocol: object with .transition(...).
         # Must inject the coordinator itself, not the unbound method.
         status_sink=coordinator,
+        # H4: prior intents + pure guard for pregunta_repetida early-exit.
+        recent_intents=traces,
+        repetition_guard=RepetitionGuard(threshold=3),
     )
     learning = LearningService(traces)
     orchestrator = TurnOrchestrator(

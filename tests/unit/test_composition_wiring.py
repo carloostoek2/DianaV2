@@ -248,3 +248,27 @@ def test_composition_persona_catalog_wired(_comp_src: str) -> None:
     assert "warm and professional VIP chat assistant" not in _comp_src
     # Lazy: no bare load_persona_catalog() at module import path for catalog
     assert "_PERSONA_CATALOG = load_persona_catalog()" not in _comp_src
+
+def test_composition_repetition_guard_wired(_comp_src: str) -> None:
+    """H4/H5: Director receives recent_intents=traces + RepetitionGuard(3)."""
+    assert "from diana.cognitive.repetition_guard import RepetitionGuard" in _comp_src
+    assert "recent_intents=traces" in _comp_src
+    assert "RepetitionGuard(threshold=3)" in _comp_src
+    assert "repetition_guard=RepetitionGuard(threshold=3)" in _comp_src
+
+
+def test_setup_forbidden_middleware_receives_behavior() -> None:
+    """H5/J.4: ForbiddenKeywordsMiddleware gets behavior for IA template path."""
+    from pathlib import Path
+
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    setup_src = (root / "telegram" / "setup.py").read_text(encoding="utf-8")
+    assert "behavior=behavior" in setup_src
+    # Middleware construction path includes behavior kw.
+    assert "ForbiddenKeywordsMiddleware(" in setup_src
+    block_start = setup_src.find("ForbiddenKeywordsMiddleware(")
+    block = setup_src[block_start : block_start + 350]
+    assert "behavior=behavior" in block
+
