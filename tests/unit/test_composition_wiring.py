@@ -118,3 +118,21 @@ def test_composition_app_container_has_promo_field() -> None:
     from diana.composition import AppContainer
 
     assert "promo" in AppContainer.__dataclass_fields__
+
+
+def test_composition_recontact_service_wired(_comp_src: str) -> None:
+    """RecontactService + schedule repo always constructed; flag from settings."""
+    assert "from diana.application.recontact_service import" in _comp_src
+    assert "RecontactService" in _comp_src
+    assert "RecontactScheduleRepo" in _comp_src
+    assert "feature_recontact_enabled" in _comp_src
+    assert "feature_recontact_enabled=settings.feature_recontact_enabled" in _comp_src or (
+        "feature_recontact_enabled=feature_recontact_enabled" in _comp_src
+    )
+    assert "recontact=recontact" in _comp_src or "recontact=recontact," in _comp_src
+
+
+def test_composition_app_container_has_recontact_field() -> None:
+    from diana.composition import AppContainer
+
+    assert "recontact" in AppContainer.__dataclass_fields__
