@@ -42,3 +42,38 @@ def test_exports_in_repositories_package() -> None:
     from diana.infrastructure.db.repositories import SqlLearningMetricsRepo as Exported
 
     assert Exported is SqlLearningMetricsRepo
+
+
+def test_metrics_data_trace_mapper_and_window() -> None:
+    from uuid import uuid4
+
+    from diana.infrastructure.db.repositories.metrics_data import (
+        SqlMetricsDataSource,
+        trace_row_to_metrics_dict,
+        week_window_utc,
+    )
+
+    start, end = week_window_utc(date(2026, 7, 13), date(2026, 7, 20))
+    assert start == datetime(2026, 7, 13, 0, 0, tzinfo=UTC)
+    assert end == datetime(2026, 7, 20, 0, 0, tzinfo=UTC)
+
+    tid = uuid4()
+    d = trace_row_to_metrics_dict(
+        turn_id=tid,
+        decision={"action": "send"},
+        timings={"total_ms": 12},
+        created_at=start,
+    )
+    assert d["turn_id"] == tid
+    assert d["decision"]["action"] == "send"
+    assert d["timings"]["total_ms"] == 12
+
+    src = SqlMetricsDataSource(session_factory=object)  # type: ignore[arg-type]
+    for name in (
+        "iter_week_traces",
+        "corrected_turn_ids",
+        "gray_zone_questions",
+        "promo_stats",
+    ):
+        assert hasattr(src, name)
+        assert inspect.iscoroutinefunction(getattr(src, name))
