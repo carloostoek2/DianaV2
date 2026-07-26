@@ -168,25 +168,31 @@ class SqlTraceStore:
 
         Uses LIMIT 1000 per batch with separate sessions to avoid long-lived
         transactions and table locks. Returns total rows deleted.
+
+        Note: SQLAlchemy's ``delete()`` has no ``.limit()``; batching is done
+        via ``DELETE ... WHERE id IN (SELECT id ... LIMIT 1000)``.
         """
         days = ttl_days if ttl_days is not None else self._ttl_days
+        batch_size = 1000
 
         cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")
         total_deleted = 0
 
         while True:
             async with self._sf() as session:
-                stmt = (
-                    delete(PipelineTrace)
+                # Delete has no .limit() and no .params(); batch via subquery
+                # and pass bind values to execute().
+                batch_ids = (
+                    select(PipelineTrace.id)
                     .where(PipelineTrace.created_at < cutoff)
-                    .limit(1000)
+                    .limit(batch_size)
                 )
-                stmt = stmt.params(ttl_days=days)
-                result = await session.execute(stmt)
+                stmt = delete(PipelineTrace).where(PipelineTrace.id.in_(batch_ids))
+                result = await session.execute(stmt, {"ttl_days": days})
                 await session.commit()
-                batch_count = result.rowcount
+                batch_count = result.rowcount if result.rowcount and result.rowcount > 0 else 0
                 total_deleted += batch_count
-                if batch_count < 1000:
+                if batch_count < batch_size:
                     break
 
         if total_deleted:
