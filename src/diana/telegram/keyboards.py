@@ -18,6 +18,9 @@ _ACTION_VIEW_TRACE = "vt"
 _ACTION_TRACE_DETAIL = "td"
 _ACTION_TRACE_PAGE = "tp"
 _ACTION_TRACE_JSON = "tj"
+# Metrics dashboard callbacks (mx:e export, mx:b back) — ≤64 bytes
+_ACTION_METRICS_EXPORT = "mx:e"
+_ACTION_METRICS_BACK = "mx:b"
 
 
 def encode_callback(action: str, turn_id: UUID) -> str:
@@ -372,6 +375,49 @@ def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
     return base
 
 
+def encode_metrics_export() -> str:
+    """callback_data for metrics JSON export (≤64 bytes)."""
+    data = _ACTION_METRICS_EXPORT
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_metrics_back() -> str:
+    """callback_data for metrics back-to-menu (≤64 bytes)."""
+    data = _ACTION_METRICS_BACK
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_metrics_callback(data: str) -> str | None:
+    """Parse metrics callback into action name: export | back | None."""
+    if data == _ACTION_METRICS_EXPORT:
+        return "export"
+    if data == _ACTION_METRICS_BACK:
+        return "back"
+    return None
+
+
+def metrics_keyboard() -> InlineKeyboardMarkup:
+    """[Exportar datos] [Volver] under the weekly metrics summary."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📥 Exportar datos",
+                    callback_data=encode_metrics_export(),
+                ),
+                InlineKeyboardButton(
+                    text="🔙 Volver",
+                    callback_data=encode_metrics_back(),
+                ),
+            ],
+        ]
+    )
+
+
 __all__ = [
     "TraceCallbackData",
     "doctrine_keyboard",
@@ -380,12 +426,16 @@ __all__ = [
     "encode_doctrine_callback",
     "encode_doctrine_resolve_callback",
     "encode_doctrine_escalate_callback",
+    "encode_metrics_back",
+    "encode_metrics_export",
     "encode_trace_view",
     "encode_trace_detail",
     "encode_trace_page",
     "encode_trace_json",
+    "metrics_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
+    "parse_metrics_callback",
     "parse_trace_callback",
     "step_detail_keyboard",
     "trace_detail_keyboard",

@@ -1,4 +1,4 @@
-"""Owner private commands: /start, /menu, VIP add/remove, correct text follow-up."""
+"""Owner private commands: /start, /menu, VIP add/remove, /resumen, correct text."""
 
 from __future__ import annotations
 
@@ -11,17 +11,23 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import VipStore
-from diana.telegram.handlers.callbacks import CorrectSessionStore
+from diana.telegram.handlers.callbacks import ADMIN_MENU_TEXT, CorrectSessionStore
 from diana.telegram.helpers import _format_relative_time
-from diana.telegram.keyboards import trace_detail_keyboard, trace_list_keyboard
+from diana.telegram.keyboards import (
+    metrics_keyboard,
+    trace_detail_keyboard,
+    trace_list_keyboard,
+)
 
 logger = logging.getLogger("diana.telegram")
 
 _ADD_RE = re.compile(r"^/add_vip\s+(\d+)(?:\s+(.+))?$", re.IGNORECASE)
 _RM_RE = re.compile(r"^/remove_vip\s+(\d+)\s*$", re.IGNORECASE)
+_METRICS_CMDS = frozenset({"/resumen", "/metricas"})
 
 
 async def handle_admin_text(
@@ -33,6 +39,7 @@ async def handle_admin_text(
     admin: AdminService,
     correct_sessions: CorrectSessionStore,
     admin_trace: AdminTraceService | None = None,
+    admin_metrics: AdminMetricsService | None = None,
 ) -> str:
     """Pure admin text dispatcher for unit tests. Returns honest status token."""
     if actor_id is None or actor_id != owner_telegram_id:
@@ -70,6 +77,14 @@ async def handle_admin_text(
     if stripped in {"/start", "/menu"}:
         return "menu"
 
+    # Strip bot suffix if present (/resumen@BotName)
+    cmd = stripped.split("@", 1)[0].split(None, 1)[0].lower()
+    if cmd in _METRICS_CMDS:
+        if admin_metrics is None:
+            return "metrics_unavailable"
+        summary = await admin_metrics.get_week_summary()
+        return "metrics_empty" if summary.status == "empty" else "metrics_ok"
+
     m_add = _ADD_RE.match(stripped)
     if m_add:
         tg_id = int(m_add.group(1))
@@ -93,6 +108,7 @@ def build_admin_router(
     admin: AdminService,
     correct_sessions: CorrectSessionStore | None = None,
     admin_trace: AdminTraceService | None = None,
+    admin_metrics: AdminMetricsService | None = None,
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
@@ -106,14 +122,7 @@ def build_admin_router(
     async def on_menu(message: Message, **_: Any) -> None:
         if not _is_owner(message):
             return
-        await message.answer(
-            "Diana F1 admin\n"
-            "/add_vip <telegram_user_id> [name]\n"
-            "/remove_vip <telegram_user_id>\n"
-            "Draft buttons: Approve / Correct / Escalate\n"
-            "/turnos — recent turns\n"
-            "/traza <id> — trace detail"
-        )
+        await message.answer(ADMIN_MENU_TEXT)
 
     @router.message(Command("add_vip"))
     async def on_add_vip(message: Message, **_: Any) -> None:
@@ -251,6 +260,35 @@ def build_admin_router(
         ]
         kb = trace_detail_keyboard(trace.turn_id, timings=trace.timings)
         await message.answer("\n".join(lines), reply_markup=kb)
+
+    @router.message(Command("resumen", "metricas"))
+    async def on_resumen(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await handle_admin_text(
+            text=message.text or "/resumen",
+            actor_id=message.from_user.id if message.from_user else None,
+            owner_telegram_id=owner_telegram_id,
+            vips=vips,
+            admin=admin,
+            correct_sessions=sessions,
+            admin_metrics=admin_metrics,
+        )
+        if status == "metrics_unavailable":
+            await message.answer("Métricas no disponibles todavía.")
+            return
+        if admin_metrics is None:
+            await message.answer("Métricas no disponibles todavía.")
+            return
+        try:
+            summary = await admin_metrics.get_week_summary()
+            body = admin_metrics.format_summary_text(summary)
+        except Exception:
+            logger.exception("Error loading metrics summary")
+            await message.answer("Error del sistema al cargar métricas. Reintentá más tarde.")
+            return
+        kb = metrics_keyboard() if status == "metrics_ok" else None
+        await message.answer(body, reply_markup=kb)
 
     @router.message()
     async def on_owner_text(message: Message, **_: Any) -> None:
