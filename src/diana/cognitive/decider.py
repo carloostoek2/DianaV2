@@ -84,15 +84,14 @@ class Decider:
         from diana.application.runtime_thresholds import RuntimeThresholds as _RT
 
         thresholds = thresholds or {}
-        self._safety_threshold = float(
-            thresholds.get("safety", _DEFAULT_SAFETY_THRESHOLD)
-        )
+        safety = float(thresholds.get("safety", _DEFAULT_SAFETY_THRESHOLD))
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
         self._feature_autonomous_mode = feature_autonomous_mode
         if runtime_thresholds is not None:
+            # Shared holder owns mins/safety; ctor thresholds["safety"] ignored.
             self._runtime = runtime_thresholds
         else:
-            self._runtime = _RT(autonomous=autonomous_thresholds)
+            self._runtime = _RT(autonomous=autonomous_thresholds, safety=safety)
 
     def _autonomous_mins(self) -> tuple[float, float, float]:
         mins = self._runtime.autonomous
@@ -116,8 +115,8 @@ class Decider:
         retrieved: dict | None = None,
         mode: str = "supervised",
     ) -> Decision:
-        # 1. Safety gate (unchanged from F1) — P1 bare "safety" threshold.
-        if evaluation.safety < self._safety_threshold:
+        # 1. Safety gate (F1) — bare "safety" from live RuntimeThresholds.
+        if evaluation.safety < float(self._runtime.safety):
             return Decision(
                 action="escalate",
                 reason="safety_below_threshold",

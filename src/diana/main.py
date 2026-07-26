@@ -10,6 +10,7 @@ from diana.composition import (
     AppContainer,
     build_app,
     load_forbidden_keywords,
+    load_runtime_thresholds,
     run_app_startup_recovery,
 )
 from diana.config import Settings
@@ -48,6 +49,7 @@ async def async_main() -> None:
     configure_logging(settings.log_level)
     app = build_app(settings)
     await load_forbidden_keywords(app)
+    await load_runtime_thresholds(app)
     report = await run_app_startup_recovery(app)
     logger.info(
         "startup_complete",

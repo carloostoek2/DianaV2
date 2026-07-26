@@ -214,3 +214,16 @@ def test_setup_forwards_admin_metrics() -> None:
     assert "admin_metrics: AdminMetricsService | None = None" in setup_src
     assert "admin_metrics=admin_metrics" in setup_src
     assert setup_src.count("admin_metrics=admin_metrics") >= 2
+
+
+def test_composition_load_runtime_thresholds_exported(_comp_src: str) -> None:
+    assert "async def load_runtime_thresholds" in _comp_src
+    assert "runtime_thresholds=runtime_thresholds" in _comp_src
+
+
+def test_main_calls_load_runtime_thresholds() -> None:
+    from pathlib import Path
+
+    main = Path("src/diana/main.py").read_text(encoding="utf-8")
+    assert "load_runtime_thresholds" in main
+    assert "await load_runtime_thresholds(app)" in main

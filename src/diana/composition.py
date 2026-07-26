@@ -176,6 +176,7 @@ class AppContainer:
     calibration: CalibrationService | None = None
     metrics: MetricsAggregationService | None = None
     admin_metrics: AdminMetricsService | None = None
+    runtime_thresholds: RuntimeThresholds | None = None
 
 
 def build_app(
@@ -480,6 +481,7 @@ def build_app(
         calibration=calibration,
         metrics=metrics,
         admin_metrics=admin_metrics,
+        runtime_thresholds=runtime_thresholds,
     )
 
 
@@ -493,6 +495,40 @@ async def load_forbidden_keywords(app: AppContainer) -> list[str]:
     app.wiring.forbidden_middleware.set_keywords(kws)
     logger.info("forbidden_keywords_loaded", extra={"count": len(kws)})
     return kws
+
+
+async def load_runtime_thresholds(app: AppContainer) -> None:
+    """Hydrate RuntimeThresholds from system_config at boot (R2 residual).
+
+    Calibration writes DB + live holder; boot must re-read DB so mins survive restart.
+    Missing keys leave pure DEFAULT_* / safety from RuntimeThresholds defaults.
+    """
+    holder = app.runtime_thresholds
+    if holder is None:
+        return
+    store = SqlSystemConfigStore(app.session_factory)
+    auto = await store.get_autonomous_thresholds()
+    if auto:
+        holder.replace_autonomous(auto)
+    supervised = await store.get_supervised_thresholds()
+    if isinstance(supervised, dict) and "safety_min" in supervised:
+        try:
+            holder.replace_safety(float(supervised["safety_min"]))
+        except (TypeError, ValueError):
+            pass
+    eval_th = await store.get_eval_thresholds()
+    if isinstance(eval_th, dict) and "safety" in eval_th:
+        try:
+            holder.replace_safety(float(eval_th["safety"]))
+        except (TypeError, ValueError):
+            pass
+    logger.info(
+        "runtime_thresholds_loaded",
+        extra={
+            "autonomous": dict(holder.autonomous),
+            "safety": holder.safety,
+        },
+    )
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:
@@ -514,5 +550,6 @@ __all__ = [
     "TurnStoreStatusReader",
     "build_app",
     "load_forbidden_keywords",
+    "load_runtime_thresholds",
     "run_app_startup_recovery",
 ]
