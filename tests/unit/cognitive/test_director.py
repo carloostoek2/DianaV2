@@ -82,6 +82,7 @@ def make_director(
     max_prompt_chars: int | None = None,
     recent_intents: InMemoryRecentIntents | None = None,
     repetition_guard: RepetitionGuard | None = None,
+    naturalness_min: float | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -90,6 +91,9 @@ def make_director(
             context_builder = ContextBuilder(max_prompt_chars=max_prompt_chars)
         else:
             context_builder = ContextBuilder()
+    director_kwargs: dict = {}
+    if naturalness_min is not None:
+        director_kwargs["naturalness_min"] = naturalness_min
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),
@@ -106,6 +110,7 @@ def make_director(
         analyst_history_limit=analyst_history_limit,
         recent_intents=recent_intents,
         repetition_guard=repetition_guard,
+        **director_kwargs,
     )
     return director, trace, history
 
@@ -1046,4 +1051,215 @@ async def test_director_timings_include_persona_and_voice_buckets() -> None:
     assert "memory_retriever_ms" in timings
     assert "policy_retriever_ms" in timings
     assert "examples_retriever_ms" in timings
+
+
+# --- Naturalness 1× redraft (Director pre-Decider MVP) ---
+
+
+@pytest.mark.asyncio
+async def test_naturalness_above_min_no_redraft() -> None:
+    """High naturalness: TAC-01 three LLM calls; draft unchanged; no redraft."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.9),
+        ],
+        text_responses=["draft-a"],
+    )
+    director, trace, _ = make_director(llm)
+    turn = _turn()
+    decision = await director.handle_turn(turn)
+
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+    assert len(llm.calls) == 3
+    assert decision.draft_text == "draft-a"
+    assert decision.action == "approve"
+    timings = trace.get(turn.turn_id, "timings")
+    assert isinstance(timings, dict)
+    assert "naturalness_redraft" not in timings
+
+
+@pytest.mark.asyncio
+async def test_naturalness_below_min_redrafts_once() -> None:
+    """Low naturalness → exactly one extra G+E; final draft/eval from second attempt."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.2),
+            _profile(naturalness=0.9),
+        ],
+        text_responses=["draft-low", "draft-high"],
+    )
+    director, trace, _ = make_director(llm)
+    turn = _turn()
+    decision = await director.handle_turn(turn)
+
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+    assert len(llm.calls) == 5
+    assert decision.draft_text == "draft-high"
+    assert decision.evaluation.naturalness == 0.9
+    assert decision.action == "approve"
+
+    assert trace.get(turn.turn_id, "generated_text") == "draft-high"
+    evaluation = trace.get(turn.turn_id, "evaluation")
+    assert isinstance(evaluation, dict)
+    assert evaluation["naturalness"] == 0.9
+    # Exactly one decision store (Decider once).
+    decision_payload = trace.get(turn.turn_id, "decision")
+    assert isinstance(decision_payload, dict)
+    assert decision_payload["draft_text"] == "draft-high"
+
+    generate_calls = [c for c in llm.calls if c[0] == "generate"]
+    assert len(generate_calls) == 2
+
+    timings = trace.get(turn.turn_id, "timings")
+    assert isinstance(timings, dict)
+    assert timings.get("naturalness_redraft") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_naturalness_equal_min_no_redraft() -> None:
+    """Boundary: naturalness == min (0.5) does not redraft."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.5),
+        ],
+        text_responses=["draft-boundary"],
+    )
+    director, _, _ = make_director(llm)
+    decision = await director.handle_turn(_turn())
+
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+    assert len(llm.calls) == 3
+    assert decision.draft_text == "draft-boundary"
+
+
+@pytest.mark.asyncio
+async def test_naturalness_redraft_never_third_generate() -> None:
+    """Second naturalness still low → no third generate; decide on second draft."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.1),
+            _profile(naturalness=0.1),
+        ],
+        text_responses=["a", "b"],
+    )
+    director, _, _ = make_director(llm)
+    decision = await director.handle_turn(_turn())
+
+    generate_calls = [c for c in llm.calls if c[0] == "generate"]
+    assert len(generate_calls) == 2
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+    assert decision.draft_text == "b"
+    assert decision.evaluation.naturalness == 0.1
+    assert decision.action == "approve"
+
+
+@pytest.mark.asyncio
+async def test_naturalness_redraft_then_decide_once() -> None:
+    """After redraft, Decider runs once; single decision payload in trace."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.1),
+            _profile(naturalness=0.95, safety=0.95),
+        ],
+        text_responses=["stiff", "natural"],
+    )
+    director, trace, _ = make_director(llm)
+    turn = _turn()
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "approve"
+    assert decision.reason == "ok_for_human_review"
+    assert decision.draft_text == "natural"
+    keys = trace.keys_for(turn.turn_id)
+    assert "decision" in keys
+    # Overwrite semantics: one decision key, final payload only.
+    payload = trace.get(turn.turn_id, "decision")
+    assert isinstance(payload, dict)
+    assert payload["action"] == "approve"
+    assert payload["draft_text"] == "natural"
+
+
+@pytest.mark.asyncio
+async def test_naturalness_second_generate_empty_fail_closed() -> None:
+    """Second generate permanently empty → GeneratorEmptyOutputError; no decision."""
+    from diana.cognitive.exceptions import GeneratorEmptyOutputError
+
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.2),
+            # Second eval must never be consumed.
+            _profile(naturalness=0.9),
+        ],
+        # First G ok; second G: empty + retry empty → GeneratorEmptyOutputError.
+        text_responses=["draft-low", "", "  "],
+    )
+    director, trace, _ = make_director(llm)
+    turn = _turn()
+    with pytest.raises(GeneratorEmptyOutputError) as ei:
+        await director.handle_turn(turn)
+    assert ei.value.reason == "generador_salida_vacia"
+
+    keys = trace.keys_for(turn.turn_id)
+    assert "decision" not in keys
+    # First draft/eval may remain (overwrite of draft not completed on empty fail).
+    assert "evaluation" in keys
+    generate_calls = [c for c in llm.calls if c[0] == "generate"]
+    # 1 success + 2 empty attempts on redraft
+    assert len(generate_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_naturalness_custom_min_via_ctor() -> None:
+    """Ctor naturalness_min overrides default 0.5 supervised constant."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.55),
+            _profile(naturalness=0.9),
+        ],
+        text_responses=["mid", "better"],
+    )
+    director, _, _ = make_director(llm, naturalness_min=0.6)
+    decision = await director.handle_turn(_turn())
+
+    methods = [name for name, _ in llm.calls]
+    assert methods == [
+        "generate_structured",
+        "generate",
+        "generate_structured",
+        "generate",
+        "generate_structured",
+    ]
+    assert len(llm.calls) == 5
+    assert decision.draft_text == "better"
 

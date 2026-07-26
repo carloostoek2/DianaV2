@@ -50,7 +50,10 @@ from diana.cognitive.planner import Planner
 from diana.cognitive.policy_distiller import PolicyDistiller
 from diana.cognitive.persona_catalog import get_persona_catalog
 from diana.cognitive.registry import build_default_registry
-from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
+from diana.cognitive.thresholds import (
+    DEFAULT_AUTONOMOUS_THRESHOLDS,
+    DEFAULT_SUPERVISED_THRESHOLDS,
+)
 from diana.config import Settings
 from diana.infrastructure.db.repositories.calibration_data import (
     SqlCalibrationDataSource,
@@ -386,6 +389,8 @@ def build_app(
         # H4: prior intents + pure guard for pregunta_repetida early-exit.
         recent_intents=traces,
         repetition_guard=RepetitionGuard(threshold=3),
+        # Supervised naturalness redraft min (Director pre-Decider; not send gate).
+        naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
     )
     learning = LearningService(traces)
     orchestrator = TurnOrchestrator(

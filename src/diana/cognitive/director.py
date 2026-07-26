@@ -42,6 +42,7 @@ from diana.cognitive.ports import (
     to_jsonable,
 )
 from diana.cognitive.registry import CapabilityRegistry
+from diana.cognitive.thresholds import DEFAULT_SUPERVISED_THRESHOLDS
 
 # Short Analyst window (contrato A.2 recommends 5–10). Registry retrieval stays at 20.
 ANALYST_HISTORY_LIMIT = 8
@@ -86,6 +87,8 @@ class CognitiveDirector:
         style_rules: list[str] | None = None,
         recent_intents: RecentIntentsPort | None = None,
         repetition_guard: RepetitionGuard | None = None,
+        # Supervised naturalness redraft min; not autonomous send gate.
+        naturalness_min: float | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -102,6 +105,11 @@ class CognitiveDirector:
         self._status = status_sink or NoOpTurnStatusSink()
         self._recent_intents = recent_intents
         self._repetition_guard = repetition_guard
+        self._naturalness_min = (
+            float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"])
+            if naturalness_min is None
+            else float(naturalness_min)
+        )
 
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
         """Run the F1 cognitive pipeline for one inbound turn.
@@ -238,6 +246,29 @@ class CognitiveDirector:
             )
         timings["evaluator_ms"] = tc.elapsed_ms
         await self._store(turn_id, "evaluation", evaluation)
+
+        # Naturalness 1× redraft (Director pre-Decider): same prompt_final only.
+        # Exactly once — boolean gate, never a while/retry loop or Decider action.
+        if evaluation.naturalness < self._naturalness_min:
+            await self._status.transition(turn_id, TurnStatus.GENERATING)
+            with TimingContext("generator_redraft") as tc:
+                draft = await self._generator.generate(built.prompt_final)
+            timings["generator_redraft_ms"] = tc.elapsed_ms
+            await self._store(turn_id, "generated_text", draft)
+
+            await self._status.transition(turn_id, TurnStatus.EVALUATING)
+            with TimingContext("evaluator_redraft") as tc:
+                evaluation = await self._evaluator.evaluate(
+                    EvaluatorInput(
+                        draft=draft,
+                        comprehension=comprehension,
+                        included_blocks=built.included_blocks,
+                        current_turn=turn.text,
+                    )
+                )
+            timings["evaluator_redraft_ms"] = tc.elapsed_ms
+            await self._store(turn_id, "evaluation", evaluation)
+            timings["naturalness_redraft"] = 1.0
 
         await self._status.transition(turn_id, TurnStatus.DECIDING)
         # Generator guarantees non-empty draft on success; Decider owns action choice.
