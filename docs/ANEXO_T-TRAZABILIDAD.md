@@ -8,13 +8,15 @@ Nivel Diseño e implementación del sistema de trazabilidad para el DM de la due
 Basado en SPEC.md v1.5 y SPEC-FASE2.md v2.1
 Audiencia Ingeniería
 Versión 1.0
-Estado Pendiente de implementación (puede ejecutarse en paralelo a Fase 2)
+Estado Implementado (DM dueña solo lectura; migration 005 + AdminTraceService + /turnos /traza)
 
 ---
 
 1. Propósito
 
 Permitir que la dueña (o el equipo de operaciones) pueda inspeccionar el paso a paso de cualquier turno, desde la recepción del mensaje hasta la decisión final y entrega.
+
+Implementación actual (código): `AdminTraceService`, migration `005_trace_timings`, handlers `Command("turnos")` / `Command("traza")` en el DM de la dueña. El cuerpo de diseño de este anexo (mockups, exclusiones T-O*) se conserva como referencia histórica.
 
 Objetivos concretos:
 
@@ -297,7 +299,7 @@ H7 Implementar la vista de detalle de cada paso (mensaje separado con entrada/sa
 H8 Añadir botón "Ver traza" en el mensaje de aprobación (callback). H5
 H9 (Opcional) Implementar exportación a JSON desde la vista de traza. H5
 
-Criterio de salida: La dueña puede, desde su DM, ver los últimos turnos, seleccionar uno y explorar el detalle de cada nodo del pipeline, incluyendo tiempos de ejecución y la entrada/salida de cada paso.
+Criterio de salida (core — cumplido): La dueña puede, desde su DM, listar turnos recientes (`/turnos`), abrir una traza (`/traza`) y revisar detalle de pasos con timings. Exportación JSON y analytics avanzados (T-O*) permanecen opcionales / fuera de alcance V1.
 
 ---
 
@@ -328,4 +330,4 @@ AGENTS.md Los agentes deben saber que no se pueden eliminar registros de pipelin
 
 Fin del Anexo T — Sistema de Trazabilidad Interactiva
 Última actualización: Julio 2026
-Equipo de Arquitectura — Listo para implementación.
+Equipo de Arquitectura — Implementado y disponible para auditoría de la dueña (DM solo lectura).

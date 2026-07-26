@@ -1,0 +1,27 @@
+## 2026-07-26T21:28:31Z — start residuals-polish item1-docs-sync
+Read PLAN + CLARIFY; evidence: load_runtime_thresholds@composition.py:524 main.py:53; flags default False; migrations 001-011; ANEXO_T pending; README F1-only.
+Task 1 starting: README rewrite
+## 2026-07-26T21:28:52Z — Task 1: edit README.md
+## 2026-07-26T21:29:02Z — Task 1 done (README). Task 2: ANEXO_T + F3-PHASE-STATUS
+## 2026-07-26T21:29:13Z — Task 2 done. Task 3: residual index + POOL + MEMORY
+## 2026-07-26T21:29:20Z — smoke DoD verification
+## 2026-07-26T21:29:33Z — fix smoke: rephrase boot-load closed row + avoid '8 tables only' in README
+## 2026-07-26T21:30:18Z — smoke PASSED; committing docs work unit
+Self-Check checklist pre-commit: tasks 1-3 done; no src/tests/alembic
+## 2026-07-26T21:30:18Z — commit 4299b9c: docs: align README, Anexo T, F3 status to implemented reality
+## Self-Check: PASSED
+- [x] Todas las tareas completadas
+- [x] Tests del PLAN corridos (docs smoke)
+- [x] 0 regresiones atribuibles
+- [x] Convenciones del proyecto respetadas
+## 2026-07-26T21:30:26Z — final commit f6da31c Self-Check PASSED
+## 2026-07-26T21:30:41Z — fix: MEMORY.md only residual pointer (drop unrelated working-tree churn)
+## 2026-07-26T21:30:56Z — final commit acc8cbe
+## Self-Check: PASSED
+- [x] Todas las tareas completadas
+- [x] Tests del PLAN corridos (docs smoke)
+- [x] 0 regresiones atribuibles (no product code)
+- [x] Convenciones del proyecto respetadas
+- [x] MEMORY.md limited to residual pointer only (unrelated WT churn discarded)
+## 2026-07-26T21:31:49Z — SUMMARY cleaned; final amend
+## 2026-07-26T21:32:01Z — SUMMARY stabilized (no self-hash); final amend + Self-Check PASSED

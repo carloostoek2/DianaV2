@@ -101,3 +101,7 @@
 - [telegram-hardener-3w](documentador/pool-2026-07-26-telegram-hardener-3w.md) — 2026-07-26 — Pool telegram-hardener-3w CLOSED: items 1–4 (error-safety + ops-surface + thin-handlers + scale-debt); arch 0 critical; review 0 open; single-instance OPS; residuals → Redis multi-replica, health disable flag, full orch split, recontact log_swallowed
 - Consolidated SUMMARY: `.planning/quick/telegram-hardener-3w/POOL-SUMMARY.md`
 - Residuals: `.grok/agent-memory/residuals/telegram-hardener-3w.md`
+
+## Residuals
+
+- [residuals-polish](residuals/residuals-polish.md) — pool residual index (docs-sync /fp /naturalness /profile)

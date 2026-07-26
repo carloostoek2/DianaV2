@@ -114,13 +114,20 @@ Plan: `.planning/quick/f3-residuals/PLAN.md` · Summary: `.planning/quick/f3-res
 | **R4** MetricsJob durable last-success week | **done** | `system_config` key `metrics.last_success_week` |
 | **R5** Owner false-positive marks | **done** | `owner_marks` migration **010**, `AdminService.mark_false_positive`, metrics `fp/escalate` rate |
 
+### Closed follow-ups (docs-verified)
+
+| Residual | Status | Evidence |
+|----------|--------|----------|
+| Load calibrated thresholds from DB at boot (`RuntimeThresholds`) | **done** | `src/diana/composition.py` — `load_runtime_thresholds`; `src/diana/main.py` — boot `await load_runtime_thresholds(app)`; tests: `tests/unit/application/test_load_runtime_thresholds.py` |
+
 ### Follow-ups still open (not in residual pack)
 
 | Residual | Priority | Origin |
 |----------|----------|--------|
 | Exact Sunday 03:00 UTC cron (v1 = hourly + internal gates) | low | Pool3 |
-| Boot-load calibrated thresholds from DB into `RuntimeThresholds` | low | R2 follow-up |
-| Telegram `/fp <turn_id>` UI (API exists) | low | R5 |
+| Telegram `/fp <turn_id>` UI (API exists) | low | R5 · pool `residuals-polish` item 2 |
+
+Polish pool `residuals-polish` in progress (docs-sync / `/fp` / naturalness / profile) — see `.planning/quick/residuals-polish/`.
 
 ### Documented out-of-scope (do not expand without product ask)
 
