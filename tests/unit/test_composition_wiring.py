@@ -136,3 +136,22 @@ def test_composition_app_container_has_recontact_field() -> None:
     from diana.composition import AppContainer
 
     assert "recontact" in AppContainer.__dataclass_fields__
+
+
+def test_composition_turn_coordinator_receives_recontact(_comp_src: str) -> None:
+    """BR-07: TurnCoordinator gets recontact service + feature flag."""
+    assert "from diana.application.recontact_service import" in _comp_src
+    assert "RecontactService" in _comp_src
+    # Coordinator construction must pass both kwargs (not bare 3-arg form only).
+    assert "recontact=recontact" in _comp_src
+    assert "feature_recontact_enabled=feature_recontact_enabled" in _comp_src
+    # Build order: RecontactService constructed before TurnCoordinator.
+    recontact_pos = _comp_src.find("recontact = RecontactService(")
+    coord_pos = _comp_src.find("coordinator = TurnCoordinator(")
+    assert recontact_pos != -1
+    assert coord_pos != -1
+    assert recontact_pos < coord_pos
+    # Within TurnCoordinator(...) block both kwargs appear.
+    coord_block = _comp_src[coord_pos : coord_pos + 400]
+    assert "recontact=recontact" in coord_block
+    assert "feature_recontact_enabled=feature_recontact_enabled" in coord_block

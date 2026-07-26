@@ -210,20 +210,6 @@ def build_app(
         feature_advanced_behavior=feature_advanced_behavior,
         quirk_probability=0.05 if feature_advanced_behavior else 0.0,
     )
-    coordinator = TurnCoordinator(turns, approvals, behavior)
-    admin = AdminService(
-        notifier=notifier,
-        approvals=approvals,
-        escalations=escalations,
-        coordinator=coordinator,
-        behavior=behavior,
-        traces=traces,
-        turns=turns,
-        owner_telegram_id=settings.owner_telegram_id,
-        delivery_mode=settings.global_mode,
-        feature_advanced_behavior=feature_advanced_behavior,
-        vip_store=vips,
-    )
 
     if llm is not None:
         provider = llm
@@ -283,6 +269,58 @@ def build_app(
         vip_store=vips,
         notifier=notifier,
         autonomous_thresholds=dict(DEFAULT_AUTONOMOUS_THRESHOLDS),
+    )
+
+    # F3 recontact — always construct; methods no-op when flag false.
+    # Built before TurnCoordinator so BR-07 cancel hook can be injected.
+    feature_recontact_enabled = settings.feature_recontact_enabled
+    recontact_schedules_repo = RecontactScheduleRepo(sf)
+    route_resolver = ApprovalsDeliveriesRouteResolver(approvals, deliveries)
+
+    async def _has_open_gray_zone(vip_id: Any) -> bool:
+        if gray_zone_repo is None:
+            return False
+        open_rows = await gray_zone_repo.list_open()
+        return any(q.vip_id == vip_id for q in open_rows)
+
+    recontact = RecontactService(
+        feature_recontact_enabled=feature_recontact_enabled,
+        schedules=recontact_schedules_repo,
+        vips=vips,
+        config=config_store,
+        approvals=approvals,
+        ams=ams,
+        behavior=behavior,
+        turns=turns,
+        route_resolver=route_resolver,
+        notifier=notifier,
+        clock=clock,
+        delivery_mode=settings.global_mode,
+        has_open_gray_zone=(
+            _has_open_gray_zone if feature_gray_zone_enabled else None
+        ),
+        is_sandbox_vip=None,
+    )
+
+    coordinator = TurnCoordinator(
+        turns,
+        approvals,
+        behavior,
+        recontact=recontact,
+        feature_recontact_enabled=feature_recontact_enabled,
+    )
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=settings.owner_telegram_id,
+        delivery_mode=settings.global_mode,
+        feature_advanced_behavior=feature_advanced_behavior,
+        vip_store=vips,
     )
 
     registry = build_default_registry(
@@ -348,36 +386,6 @@ def build_app(
         turns=turns,
         clock=clock,
         delivery_mode=settings.global_mode,
-    )
-
-    # F3 recontact — always construct; methods no-op when flag false (item3 inject).
-    feature_recontact_enabled = settings.feature_recontact_enabled
-    recontact_schedules_repo = RecontactScheduleRepo(sf)
-    route_resolver = ApprovalsDeliveriesRouteResolver(approvals, deliveries)
-
-    async def _has_open_gray_zone(vip_id: Any) -> bool:
-        if gray_zone_repo is None:
-            return False
-        open_rows = await gray_zone_repo.list_open()
-        return any(q.vip_id == vip_id for q in open_rows)
-
-    recontact = RecontactService(
-        feature_recontact_enabled=feature_recontact_enabled,
-        schedules=recontact_schedules_repo,
-        vips=vips,
-        config=config_store,
-        approvals=approvals,
-        ams=ams,
-        behavior=behavior,
-        turns=turns,
-        route_resolver=route_resolver,
-        notifier=notifier,
-        clock=clock,
-        delivery_mode=settings.global_mode,
-        has_open_gray_zone=(
-            _has_open_gray_zone if feature_gray_zone_enabled else None
-        ),
-        is_sandbox_vip=None,
     )
 
     wiring = build_dispatcher(
