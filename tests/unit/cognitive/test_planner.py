@@ -157,5 +157,7 @@ def test_planner_persona_voice_order_between_context_and_memory() -> None:
 
 def test_planner_needs_profile_alone_maps_to_profile() -> None:
     """Option B: needs_profile=True alone → [knowledge.profile]."""
-    plan = Planner().plan(_comprehension(**_all_needs(False), needs_profile=True))
+    flags = _all_needs(False)
+    flags["needs_profile"] = True
+    plan = Planner().plan(_comprehension(**flags))
     assert plan.capabilities == ["knowledge.profile"]

@@ -90,6 +90,7 @@ class Evaluator:
             "needs_context": c.needs_context,
             "needs_persona_facts": c.needs_persona_facts,
             "needs_voice_patterns": c.needs_voice_patterns,
+            "needs_profile": c.needs_profile,
         }
         user_content = (
             f"current_turn:\n{input.current_turn}\n\n"
