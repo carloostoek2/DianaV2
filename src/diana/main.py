@@ -19,6 +19,7 @@ from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
 from diana.jobs.metrics import MetricsJob
 from diana.jobs.recontact import RecontactJob
 from diana.jobs.trace_purge import TracePurgeJob
+from diana.telegram.health import HealthServer
 
 logger = logging.getLogger("diana.composition")
 
@@ -68,12 +69,20 @@ async def async_main() -> None:
     metrics_job = _setup_metrics_job(app)
     calibration_job = _setup_calibration_job(app)
 
+    health = HealthServer(
+        host=settings.health_host,
+        port=settings.health_port,
+        session_factory=app.session_factory,
+        bot=app.bot,
+    )
+    await health.start()
     try:
         await app.dispatcher.start_polling(
             app.bot,
             allowed_updates=["message", "business_message", "callback_query"],
         )
     finally:
+        await health.stop()
         # Stop new jobs first, then existing F2/F3 jobs.
         await _cancel_job(calibration_job, "calibration_job")
         await _cancel_job(metrics_job, "metrics_job")
