@@ -417,6 +417,30 @@ async def test_is_blocked_pending_approval() -> None:
 
 
 @pytest.mark.asyncio
+async def test_is_blocked_claimed_approval() -> None:
+    """R1: claimed approvals also block recontact (not only waiting)."""
+    svc, deps = _make_service()
+    vip = await _seed_vip(deps["vips"])
+    turn_id = uuid4()
+    await deps["approvals"].create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=turn_id,
+            chat_id=1001,
+            business_connection_id="bc-1",
+            draft_text="draft",
+            status="waiting",
+            vip_id=vip.id,
+        )
+    )
+    claimed = await deps["approvals"].claim_waiting(turn_id)
+    assert claimed is not None and claimed.status == "claimed"
+    assert await svc.is_blocked(vip.id) is True
+
+
+
+
+@pytest.mark.asyncio
 async def test_is_blocked_open_gray_zone_hook() -> None:
     vips = InMemoryVipStore()
     vip = await _seed_vip(vips)
@@ -681,3 +705,30 @@ async def test_recontact_service_source_has_no_cognitive_pipeline_imports() -> N
     )
     for token in forbidden:
         assert token not in src, f"forbidden import surface: {token}"
+
+
+@pytest.mark.asyncio
+async def test_route_resolver_uses_open_including_claimed() -> None:
+    """R1: ApprovalsDeliveriesRouteResolver resolves VIP route from claimed too."""
+    from diana.application.recontact_service import ApprovalsDeliveriesRouteResolver
+    from diana.application.memory import InMemoryPendingDeliveryStore
+
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    vip_id = uuid4()
+    turn_id = uuid4()
+    await approvals.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=turn_id,
+            chat_id=42,
+            business_connection_id="bc-claimed",
+            draft_text="x",
+            status="waiting",
+            vip_id=vip_id,
+        )
+    )
+    await approvals.claim_waiting(turn_id)
+    resolver = ApprovalsDeliveriesRouteResolver(approvals, deliveries)
+    route = await resolver.resolve(vip_id)
+    assert route == (42, "bc-claimed")

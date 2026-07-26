@@ -144,3 +144,57 @@ async def test_terminal_statuses_match_domain() -> None:
     non_term = await store.list_non_terminal(1)
     assert len(non_term) == 1
     assert non_term[0].status == "analyzing"
+
+
+@pytest.mark.asyncio
+async def test_list_open_includes_waiting_and_claimed() -> None:
+    """R1: open approvals are waiting + claimed (not approved/cancelled)."""
+    store = InMemoryPendingApprovalStore()
+    waiting_id = uuid4()
+    claimed_id = uuid4()
+    approved_id = uuid4()
+    await store.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=waiting_id,
+            chat_id=1,
+            business_connection_id="bc",
+            draft_text="w",
+            status="waiting",
+            vip_id=uuid4(),
+        )
+    )
+    await store.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=claimed_id,
+            chat_id=1,
+            business_connection_id="bc",
+            draft_text="c",
+            status="waiting",
+            vip_id=uuid4(),
+        )
+    )
+    await store.claim_waiting(claimed_id)
+    await store.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=approved_id,
+            chat_id=1,
+            business_connection_id="bc",
+            draft_text="a",
+            status="waiting",
+        )
+    )
+    await store.mark_status(approved_id, "approved")
+
+    open_rows = await store.list_open()
+    open_ids = {r.turn_id for r in open_rows}
+    assert waiting_id in open_ids
+    assert claimed_id in open_ids
+    assert approved_id not in open_ids
+
+    waiting = await store.list_waiting()
+    waiting_ids = {r.turn_id for r in waiting}
+    assert waiting_id in waiting_ids
+    assert claimed_id not in waiting_ids

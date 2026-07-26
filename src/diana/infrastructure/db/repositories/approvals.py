@@ -144,5 +144,20 @@ class SqlPendingApprovalStore:
                 out.append(approval_orm_to_record(row, trigger_message_id=trigger))
             return out
 
+    async def list_open(self) -> list[ApprovalRecord]:
+        """Waiting + claimed (still in flight for recontact / route)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(PendingApproval).where(
+                    PendingApproval.status.in_(tuple(OPEN_APPROVAL_STATUSES))
+                )
+            )
+            rows = result.scalars().all()
+            out: list[ApprovalRecord] = []
+            for row in rows:
+                trigger = await self._trigger_for(session, row.turn_id)
+                out.append(approval_orm_to_record(row, trigger_message_id=trigger))
+            return out
+
 
 __all__ = ["SqlPendingApprovalStore", "approval_orm_to_record"]

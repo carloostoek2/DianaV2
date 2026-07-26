@@ -126,8 +126,8 @@ class RecontactService:
         if vip.frozen_until is not None and _as_aware(vip.frozen_until, now) > now:
             return True
 
-        waiting = await self._approvals.list_waiting()
-        if any(a.vip_id == vip_id for a in waiting):
+        open_approvals = await self._approvals.list_open()
+        if any(a.vip_id == vip_id for a in open_approvals):
             return True
 
         if self._has_open_gray_zone is not None:
@@ -333,8 +333,8 @@ class ApprovalsDeliveriesRouteResolver:
         self._deliveries = deliveries
 
     async def resolve(self, vip_id: UUID) -> tuple[int, str] | None:
-        waiting = await self._approvals.list_waiting()
-        for row in waiting:
+        open_rows = await self._approvals.list_open()
+        for row in open_rows:
             if row.vip_id == vip_id:
                 bc = (row.business_connection_id or "").strip()
                 if bc:

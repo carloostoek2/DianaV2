@@ -296,6 +296,10 @@ class PendingApprovalStore(Protocol):
 
     async def list_waiting(self) -> list[ApprovalRecord]: ...
 
+    async def list_open(self) -> list[ApprovalRecord]:
+        """Approvals still in flight: status in {waiting, claimed}."""
+        ...
+
 
 @runtime_checkable
 class PendingDeliveryStore(Protocol):

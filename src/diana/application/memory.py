@@ -141,6 +141,13 @@ class InMemoryPendingApprovalStore:
             if r.status == "waiting"
         ]
 
+    async def list_open(self) -> list[ApprovalRecord]:
+        return [
+            r.model_copy(deep=True)
+            for r in self._by_turn.values()
+            if r.status in _OPEN_APPROVAL_STATUSES
+        ]
+
 
 class InMemoryPendingDeliveryStore:
     """Dict-backed PendingDeliveryStore with monotonic status transitions."""
