@@ -14,7 +14,11 @@ QuirkKind = Literal["pause", "natural_split", "typo_correct"]
 
 _QUIRK_KINDS: tuple[QuirkKind, ...] = ("pause", "natural_split", "typo_correct")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
-_WORD_RE = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+")
+# Latin letters + Spanish accented (áéíóúñü and uppercase).
+_WORD_RE = re.compile(
+    r"[A-Za-zÀ-ÖØ-öø-ÿÁÉÍÓÚÜÑáéíóúüñ]+",
+    re.UNICODE,
+)
 _MIN_NATURAL_SPLIT_LEN = 20
 _MIN_TYPO_WORD_LEN = 4
 
@@ -28,10 +32,11 @@ def pick_quirk(
     """Return a quirk kind, or None when the probability gate does not fire.
 
     ``force`` (tests) bypasses probability and returns the kind directly.
+    Invalid force fail-closes to ``pause`` (never raises mid-delivery).
     """
     if force is not None:
         if force not in _QUIRK_KINDS:
-            raise ValueError(f"invalid quirk_force: {force!r}")
+            return "pause"
         return force  # type: ignore[return-value]
 
     p = max(0.0, min(1.0, float(probability)))
@@ -61,31 +66,47 @@ def natural_split_text(text: str) -> list[str]:
 
 
 def apply_typo(text: str, rng: Random) -> tuple[str, str] | None:
-    """Mild typo on first alphabetic word len≥4; correction bubble ``*{word}``.
+    """Mild typo on first viable alphabetic word len≥4; correction ``*{word}``.
 
-    Swap characters at indices 1 and 2 of the chosen word (interior swap).
-    Returns ``None`` when no candidate word exists.
-    ``rng`` reserved for future multi-candidate selection; currently unused
-    beyond API stability (first candidate wins).
+    Prefer first long word; try adjacent interior swaps starting at (1,2), then
+    (2,3), … If a swap is a no-op (e.g. ``book`` double letter), try the next
+    pair, then the next word. Returns ``None`` when no real typo is possible.
+    ``rng`` reserved for injectable determinism contract (first viable wins).
     """
-    del rng  # first-candidate policy; kept for injectable determinism contract
+    del rng  # first-viable policy; kept for injectable determinism contract
     stripped = text.strip()
     if not stripped:
         return None
 
-    match = None
-    for m in _WORD_RE.finditer(stripped):
-        if len(m.group(0)) >= _MIN_TYPO_WORD_LEN:
-            match = m
-            break
-    if match is None:
-        return None
+    for match in _WORD_RE.finditer(stripped):
+        word = match.group(0)
+        if len(word) < _MIN_TYPO_WORD_LEN:
+            continue
+        typoed_word = _first_real_swap(word)
+        if typoed_word is None:
+            continue
+        typoed = stripped[: match.start()] + typoed_word + stripped[match.end() :]
+        return typoed, f"*{word}"
+    return None
 
-    word = match.group(0)
-    # Interior swap of positions 1 and 2 (0-indexed).
+
+def _first_real_swap(word: str) -> str | None:
+    """Return word with first adjacent swap that actually changes it, else None."""
     chars = list(word)
-    chars[1], chars[2] = chars[2], chars[1]
-    typoed_word = "".join(chars)
-    typoed = stripped[: match.start()] + typoed_word + stripped[match.end() :]
-    correction = f"*{word}"
-    return typoed, correction
+    # Adjacent pairs from index 1..len-2 (prefer interior; keep trying).
+    for i in range(1, len(chars) - 1):
+        if chars[i] == chars[i + 1]:
+            continue
+        swapped = chars.copy()
+        swapped[i], swapped[i + 1] = swapped[i + 1], swapped[i]
+        candidate = "".join(swapped)
+        if candidate != word:
+            return candidate
+    # Also try swap at (0,1) if interior pairs all failed/noop (len>=4).
+    if chars[0] != chars[1]:
+        swapped = chars.copy()
+        swapped[0], swapped[1] = swapped[1], swapped[0]
+        candidate = "".join(swapped)
+        if candidate != word:
+            return candidate
+    return None

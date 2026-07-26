@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import random
 
-import pytest
-
 from diana.behavior.quirks import apply_typo, natural_split_text, pick_quirk
 
 
@@ -33,9 +31,10 @@ def test_pick_quirk_p_one_returns_one_of_kinds() -> None:
     assert len(kinds) >= 2
 
 
-def test_pick_quirk_force_invalid_raises() -> None:
-    with pytest.raises(ValueError):
-        pick_quirk(random.Random(0), 1.0, force="nope")
+def test_pick_quirk_force_invalid_fail_closed_pause() -> None:
+    """Invalid force must not raise mid-delivery; fall closed to pause."""
+    assert pick_quirk(random.Random(0), 1.0, force="nope") == "pause"
+    assert pick_quirk(random.Random(0), 0.0, force="bogus") == "pause"
 
 
 # --- natural_split_text ---
@@ -104,3 +103,37 @@ def test_apply_typo_prefers_first_long_word() -> None:
     assert correction == "*code"
     assert "cdoe" in typoed
     assert "code" not in typoed.split()
+
+
+def test_apply_typo_skips_noop_swap_words() -> None:
+    """book/look style double letters: try next pair or next word, never noop."""
+    rng = random.Random(0)
+    # "book" swap(1,2) is noop (o/o); must still produce a real typo.
+    result = apply_typo("book time", rng)
+    assert result is not None
+    typoed, correction = result
+    assert typoed != "book time"
+    assert correction in ("*book", "*time")
+    assert correction[1:] not in typoed.split() or typoed != "book time"
+
+
+def test_apply_typo_all_noop_candidates_returns_none() -> None:
+    """Words where no adjacent swap changes the string → None (pause fallback)."""
+    rng = random.Random(0)
+    # "aaaa" any adjacent swap is still "aaaa".
+    assert apply_typo("aaaa", rng) is None
+    assert apply_typo("aa bb", rng) is None
+
+
+def test_apply_typo_spanish_accented_word() -> None:
+    rng = random.Random(0)
+    text = "Me gusta el café mucho"
+    result = apply_typo(text, rng)
+    assert result is not None
+    typoed, correction = result
+    assert typoed != text
+    # First long word is "gusta" (len 5); café is also eligible if reached.
+    assert correction.startswith("*")
+    word = correction[1:]
+    assert any(c in "áéíóúñüÁÉÍÓÚÑÜ" or c.isalpha() for c in word)
+    assert word in text

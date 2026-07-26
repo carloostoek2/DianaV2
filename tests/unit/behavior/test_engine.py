@@ -748,6 +748,97 @@ async def test_quirks_typo_fallback_to_pause_when_no_candidate() -> None:
     assert clock.sleeps == [0.05, 0.03, 0.02]
 
 
+@pytest.mark.asyncio
+async def test_quirks_dual_gate_ctx_off_blocks_force_typo() -> None:
+    """Advanced on + allow_human_quirks=False + force typo → no effect."""
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="typo_correct",
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "Hello beautiful world"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=False, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == text
+    assert clock.sleeps == [0.05, 0.02]
+
+
+@pytest.mark.asyncio
+async def test_quirks_dual_gate_ctx_off_blocks_force_natural_split() -> None:
+    """Advanced on + allow_human_quirks=False + force natural_split → no effect."""
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="natural_split",
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "Hello there friend. How are you doing today?"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=False, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == text
+    assert clock.sleeps == [0.05, 0.02]
+
+
+@pytest.mark.asyncio
+async def test_quirks_natural_split_fallback_to_pause_when_unsplittable() -> None:
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="natural_split",
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "short unsplittable"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == text
+    # Fallback pause: baseline [0.05, 0.02] + 0.03 quirk pause.
+    assert clock.sleeps == [0.05, 0.03, 0.02]
+
+
+@pytest.mark.asyncio
+async def test_quirks_invalid_force_fail_closed_pause() -> None:
+    engine, actuator, _, clock = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="not-a-real-kind",
+        initial=0.05,
+        typing=0.02,
+    )
+    text = "hola mundo"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == text
+    assert clock.sleeps == [0.05, 0.03, 0.02]
+
+
 # --- Item4 Task3: deliver_with_sequence inter-message gaps ---
 
 
