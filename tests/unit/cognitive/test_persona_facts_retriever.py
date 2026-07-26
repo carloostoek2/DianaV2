@@ -1,0 +1,101 @@
+"""Unit tests for PersonaFactsRetriever (set intersection, no embeddings)."""
+
+from __future__ import annotations
+
+from uuid import uuid4
+
+import pytest
+
+from diana.cognitive.models import Comprehension, IncomingTurn
+from diana.cognitive.retrievers.persona_facts import PersonaFactsRetriever
+
+
+def _turn(text: str = "hola") -> IncomingTurn:
+    return IncomingTurn(turn_id=uuid4(), chat_id=1, text=text)
+
+
+def _comp(**overrides: object) -> Comprehension:
+    data: dict = {
+        "intent": "chat",
+        "topics": [],
+        "emotion": "neutral",
+        "urgency": "baja",
+        "risk": "bajo",
+        "needs_memory": False,
+        "needs_policy": False,
+        "needs_schedule": False,
+        "needs_examples": False,
+        "needs_history": False,
+        "needs_context": False,
+        "needs_persona_facts": True,
+    }
+    data.update(overrides)
+    return Comprehension(**data)  # type: ignore[arg-type]
+
+
+_MINI_FACTS = [
+    {
+        "id": "familia_hermana",
+        "tema": ["familia"],
+        "hecho": "Tengo una hermana, Laura.",
+        "nota_privada": "NO mencionar gastritis.",
+    },
+    {
+        "id": "familia_duelo",
+        "tema": ["familia", "duelo"],
+        "hecho": "Perdí a mi mamá el año pasado.",
+    },
+    {
+        "id": "estudios",
+        "tema": ["estudios"],
+        "hecho": "Termino psicología.",
+    },
+]
+
+
+@pytest.mark.asyncio
+async def test_persona_facts_match_by_topic() -> None:
+    retriever = PersonaFactsRetriever(_MINI_FACTS)
+    result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    assert result is not None
+    assert result["hecho"] == "Tengo una hermana, Laura."
+    assert result["tema"] == "familia"
+    assert set(result.keys()) == {"hecho", "tema"}
+
+
+@pytest.mark.asyncio
+async def test_persona_facts_match_by_intent_only() -> None:
+    retriever = PersonaFactsRetriever(_MINI_FACTS)
+    result = await retriever.fetch(
+        _turn(),
+        _comp(intent="duelo", topics=[]),
+    )
+    assert result is not None
+    assert "mamá" in result["hecho"] or "mama" in result["hecho"].lower()
+    assert result["tema"] in ("familia", "duelo")
+
+
+@pytest.mark.asyncio
+async def test_persona_facts_no_match_returns_none() -> None:
+    retriever = PersonaFactsRetriever(_MINI_FACTS)
+    result = await retriever.fetch(
+        _turn(),
+        _comp(intent="saludo", topics=["clima"]),
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_persona_facts_never_emits_nota_privada() -> None:
+    retriever = PersonaFactsRetriever(_MINI_FACTS)
+    result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    assert result is not None
+    assert "nota_privada" not in result
+    assert set(result.keys()) == {"hecho", "tema"}
+
+
+@pytest.mark.asyncio
+async def test_persona_facts_empty_catalog_returns_none() -> None:
+    retriever = PersonaFactsRetriever([])
+    result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    assert result is None
