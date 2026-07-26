@@ -30,3 +30,7 @@ Decisions to document (from CLARIFY + item SUMMARYs):
 Residuals for next pools:
 - Pool 2: recontact + cancel hook; promo + re-intro amigable
 - Pool 3: calibration + metrics + dashboard DM
+
+Docs commit: `6bad8f7` — docs(f3): close pool1 autonomous-core summary
+Stamp commit: `b1d328e` — docs(f3): stamp pool1 autonomous-core documentador commit hash
+Paths: POOL-SUMMARY.md, POOL.md, documentador report, MEMORY.md, this log.
