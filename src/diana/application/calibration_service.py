@@ -23,6 +23,7 @@ from diana.application.calibration_math import (
     style_drift_score,
 )
 from diana.application.ports import OwnerNotifierPort
+from diana.application.runtime_thresholds import RuntimeThresholds
 from diana.cognitive.thresholds import (
     DEFAULT_AUTONOMOUS_THRESHOLDS,
     DEFAULT_SUPERVISED_THRESHOLDS,
@@ -123,6 +124,7 @@ class CalibrationService:
         drift_texts: DriftTextSource,
         notifier: OwnerNotifierPort | None = None,
         clock: Callable[[], datetime] | None = None,
+        runtime: RuntimeThresholds | None = None,
     ) -> None:
         self._enabled = feature_calibration_enabled
         self._traces = traces
@@ -131,6 +133,7 @@ class CalibrationService:
         self._drift_texts = drift_texts
         self._notifier = notifier
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._runtime = runtime
 
     async def calibrate_thresholds(
         self, window_days: int | None = None
@@ -194,6 +197,13 @@ class CalibrationService:
 
         await self._config.set_supervised_thresholds(final_sup)
         await self._config.set_autonomous_thresholds(final_auto)
+
+        # Live Decider mins without process restart (R2 residual).
+        if self._runtime is not None:
+            self._runtime.replace_autonomous(final_auto)
+            # P1 safety uses bare key; prefer supervised safety_min when present.
+            if "safety_min" in final_sup:
+                self._runtime.replace_safety(float(final_sup["safety_min"]))
 
         now = self._clock()
         ts = now.isoformat() if now.tzinfo else now.replace(tzinfo=UTC).isoformat()

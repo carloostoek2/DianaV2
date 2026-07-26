@@ -640,3 +640,30 @@ def test_policy_empty_dict_triggers_consult_doctrine() -> None:
     )
     assert non_empty.action == "approve"
     assert non_empty.reason == "ok_for_human_review"
+
+
+def test_decider_reads_runtime_thresholds_live() -> None:
+    """R2: Decider picks up autonomous mins updated after construction."""
+    from diana.application.runtime_thresholds import RuntimeThresholds
+
+    rt = RuntimeThresholds(
+        autonomous={
+            "safety_min": 0.95,
+            "doctrine_min": 0.95,
+            "naturalness_min": 0.95,
+        }
+    )
+    d = Decider(feature_autonomous_mode=True, runtime_thresholds=rt)
+    profile = _profile(safety=0.9, doctrine=0.9, naturalness=0.9)
+    comp = _comprehension(risk="bajo")
+    # Below mins → approve
+    assert d.decide(profile, comp).action == "approve"
+    assert d.decide(profile, comp).reason == "autonomous_below_threshold"
+
+    # Lower mins live — same Decider instance sends
+    rt.replace_autonomous(
+        {"safety_min": 0.5, "doctrine_min": 0.5, "naturalness_min": 0.5}
+    )
+    decision = d.decide(profile, comp)
+    assert decision.action == "send"
+    assert decision.reason == "autonomous_ok"

@@ -571,3 +571,52 @@ async def test_calibrate_report_type() -> None:
     svc, _, _, _, _ = _build_service(enabled=False)
     report = await svc.calibrate_thresholds()
     assert isinstance(report, CalibrationReport)
+
+
+@pytest.mark.asyncio
+async def test_calibrate_applies_runtime_thresholds() -> None:
+    """R2: after successful calibrate, RuntimeThresholds gets final_auto."""
+    from diana.application.runtime_thresholds import RuntimeThresholds
+
+    # Enough samples with corrections for ok path
+    samples = [
+        CalibrationSample(
+            turn_id=uuid4(),
+            safety=0.8,
+            doctrine=0.7,
+            naturalness=0.6,
+            corrected=True,
+        )
+        for _ in range(60)
+    ] + [
+        CalibrationSample(
+            turn_id=uuid4(),
+            safety=0.9,
+            doctrine=0.85,
+            naturalness=0.8,
+            corrected=False,
+        )
+        for _ in range(10)
+    ]
+    cfg = FakeConfigStore(
+        supervised=dict(DEFAULT_SUPERVISED_THRESHOLDS),
+        autonomous=dict(DEFAULT_AUTONOMOUS_THRESHOLDS),
+        calibration={"window_days": 30, "min_samples": 50, "autonomous_margin_min": 0.05},
+    )
+    rt = RuntimeThresholds(autonomous=dict(DEFAULT_AUTONOMOUS_THRESHOLDS))
+    before = dict(rt.autonomous)
+    svc = CalibrationService(
+        feature_calibration_enabled=True,
+        traces=FakeTraceSource(samples),
+        config=cfg,
+        embeddings=FakeEmbedder(),
+        drift_texts=FakeDriftTexts(),
+        runtime=rt,
+    )
+    report = await svc.calibrate_thresholds()
+    assert report.status == "ok"
+    assert report.autonomous is not None
+    assert dict(rt.autonomous) == report.autonomous
+    # Holder changed vs initial defaults when calibration produces values
+    assert dict(rt.autonomous) != before or report.autonomous == before
+    assert cfg.set_auto_calls, "must still write DB thresholds"

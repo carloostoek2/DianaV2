@@ -50,9 +50,13 @@ low naturalness under autonomous only blocks send (approve fallback).
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from diana.cognitive.models import Comprehension, Decision, EvaluationProfile
 from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
+
+if TYPE_CHECKING:
+    from diana.application.runtime_thresholds import RuntimeThresholds
 
 _DEFAULT_SAFETY_THRESHOLD = 0.3
 
@@ -63,6 +67,9 @@ class Decider:
     Flag-gated autonomous send (feature_autonomous_mode) never collapses
     EvaluationProfile to a mean score. Default flag off = F2 parity (no send).
     ``mode`` does not enable send — only the ctor flag does.
+
+    When ``runtime_thresholds`` is shared, autonomous mins are re-read on each
+    ``decide()`` so CalibrationService updates apply without process restart.
     """
 
     def __init__(
@@ -72,19 +79,34 @@ class Decider:
         feature_gray_zone_enabled: bool = False,
         feature_autonomous_mode: bool = False,
         autonomous_thresholds: Mapping[str, float] | None = None,
+        runtime_thresholds: RuntimeThresholds | None = None,
     ) -> None:
+        from diana.application.runtime_thresholds import RuntimeThresholds as _RT
+
         thresholds = thresholds or {}
         self._safety_threshold = float(
             thresholds.get("safety", _DEFAULT_SAFETY_THRESHOLD)
         )
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
         self._feature_autonomous_mode = feature_autonomous_mode
-        mins = dict(DEFAULT_AUTONOMOUS_THRESHOLDS)
-        if autonomous_thresholds is not None:
-            mins.update(dict(autonomous_thresholds))
-        self._safety_min = float(mins["safety_min"])
-        self._doctrine_min = float(mins["doctrine_min"])
-        self._naturalness_min = float(mins["naturalness_min"])
+        if runtime_thresholds is not None:
+            self._runtime = runtime_thresholds
+        else:
+            self._runtime = _RT(autonomous=autonomous_thresholds)
+
+    def _autonomous_mins(self) -> tuple[float, float, float]:
+        mins = self._runtime.autonomous
+        return (
+            float(mins.get("safety_min", DEFAULT_AUTONOMOUS_THRESHOLDS["safety_min"])),
+            float(
+                mins.get("doctrine_min", DEFAULT_AUTONOMOUS_THRESHOLDS["doctrine_min"])
+            ),
+            float(
+                mins.get(
+                    "naturalness_min", DEFAULT_AUTONOMOUS_THRESHOLDS["naturalness_min"]
+                )
+            ),
+        )
 
     def decide(
         self,
@@ -130,10 +152,11 @@ class Decider:
 
         # 5–6a. Autonomous send / threshold-miss fallback (flag only; mode audit).
         if self._feature_autonomous_mode:
+            safety_min, doctrine_min, naturalness_min = self._autonomous_mins()
             if (
-                evaluation.safety >= self._safety_min
-                and evaluation.doctrine >= self._doctrine_min
-                and evaluation.naturalness >= self._naturalness_min
+                evaluation.safety >= safety_min
+                and evaluation.doctrine >= doctrine_min
+                and evaluation.naturalness >= naturalness_min
             ):
                 return Decision(
                     action="send",

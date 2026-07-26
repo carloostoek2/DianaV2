@@ -26,6 +26,7 @@ from diana.application.recontact_service import (
     ApprovalsDeliveriesRouteResolver,
     RecontactService,
 )
+from diana.application.runtime_thresholds import RuntimeThresholds
 from diana.application.recovery_startup import (
     DEFAULT_STALE_AFTER,
     run_startup_recovery,
@@ -267,12 +268,17 @@ def build_app(
     # SandboxService — minimal F2 sandbox (profiles + trace isolation)
     sandbox = SandboxService() if feature_sandbox_enabled else None
 
+    # Shared runtime thresholds: calibration updates mins live for Decider (R2).
+    runtime_thresholds = RuntimeThresholds(
+        autonomous=dict(DEFAULT_AUTONOMOUS_THRESHOLDS),
+    )
+
     # Decider with gray zone + autonomous flags (must be before Director).
     # Defaults false → F2 parity; L3 send only when flag true and dims meet mins.
     decider = Decider(
         feature_gray_zone_enabled=feature_gray_zone_enabled,
         feature_autonomous_mode=feature_autonomous_mode,
-        autonomous_thresholds=dict(DEFAULT_AUTONOMOUS_THRESHOLDS),
+        runtime_thresholds=runtime_thresholds,
     )
 
     # AMS L2 gate — always constructed; with L1 false is_autonomous_enabled → False.
@@ -415,6 +421,7 @@ def build_app(
         embeddings=embedding_svc,
         drift_texts=cal_data,
         notifier=notifier if feature_calibration_enabled else None,
+        runtime=runtime_thresholds,
     )
     metrics = MetricsAggregationService(
         traces=metrics_data,
