@@ -9,6 +9,9 @@ from diana.infrastructure.db.repositories.history import SqlMessageHistoryRepo
 from diana.infrastructure.db.repositories.calibration_data import (
     SqlCalibrationDataSource,
 )
+from diana.infrastructure.db.repositories.learning_metrics import (
+    SqlLearningMetricsRepo,
+)
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
@@ -17,6 +20,7 @@ from diana.infrastructure.db.repositories.vips import SqlVipStore, vip_orm_to_re
 __all__ = [
     "SqlCalibrationDataSource",
     "SqlEscalationStore",
+    "SqlLearningMetricsRepo",
     "SqlMessageHistoryRepo",
     "SqlPendingApprovalStore",
     "SqlPendingDeliveryStore",
