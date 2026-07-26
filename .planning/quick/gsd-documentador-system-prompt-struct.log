@@ -1,0 +1,10 @@
+
+=== Documentador START system-prompt-struct 2026-07-26T17:44:50Z ===
+Sources: CLARIFY, item1/item2 SUMMARY, impact/arch/test-guardian/review agent reports, gsd logs
+Writes planned: POOL-SUMMARY, item2 SUMMARY review loop, residuals, documentador report
+
+=== Documentador WRITES done 2026-07-26T17:46:09Z ===
+Paths: POOL-SUMMARY, item2 SUMMARY, residuals, documentador report
+
+=== Documentador COMMIT done 2026-07-26T17:46:30Z ===
+hash recorded
