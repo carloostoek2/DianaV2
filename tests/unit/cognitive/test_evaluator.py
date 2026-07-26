@@ -295,3 +295,50 @@ def test_evaluator_schema_invalid_error_str_and_reason() -> None:
     err = EvaluatorSchemaInvalidError()
     assert str(err) == "evaluador_schema_invalido"
     assert err.reason == "evaluador_schema_invalido"
+
+@pytest.mark.asyncio
+async def test_evaluate_payload_includes_persona_voice_needs_flags() -> None:
+    """User payload JSON includes needs_persona_facts / needs_voice_patterns (true and false)."""
+    llm = FakeLLM(structured_responses=[_profile(), _profile()])
+    evaluator = Evaluator(llm)
+
+    await evaluator.evaluate(
+        _input(
+            comprehension=_comprehension(
+                needs_persona_facts=True,
+                needs_voice_patterns=False,
+            )
+        )
+    )
+    user_true = next(m["content"] for m in llm.calls[0][1]["messages"] if m["role"] == "user")
+    # Extract comprehension JSON object from user payload.
+    marker = "comprehension:\n"
+    assert marker in user_true
+    rest = user_true.split(marker, 1)[1]
+    compr_json = rest.split("\n\nincluded_blocks:", 1)[0]
+    data = json.loads(compr_json)
+    assert data["needs_persona_facts"] is True
+    assert data["needs_voice_patterns"] is False
+    assert data["needs_context"] is True
+
+    await evaluator.evaluate(
+        _input(
+            comprehension=_comprehension(
+                needs_persona_facts=False,
+                needs_voice_patterns=True,
+            )
+        )
+    )
+    user_false = next(m["content"] for m in llm.calls[1][1]["messages"] if m["role"] == "user")
+    rest2 = user_false.split(marker, 1)[1]
+    data2 = json.loads(rest2.split("\n\nincluded_blocks:", 1)[0])
+    assert data2["needs_persona_facts"] is False
+    assert data2["needs_voice_patterns"] is True
+
+
+def test_comprehension_helper_defaults_new_needs_flags_false() -> None:
+    """_comprehension() still works; new needs_* fields default False via model."""
+    c = _comprehension()
+    assert c.needs_persona_facts is False
+    assert c.needs_voice_patterns is False
+

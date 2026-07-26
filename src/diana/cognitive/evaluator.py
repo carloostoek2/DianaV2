@@ -88,6 +88,8 @@ class Evaluator:
             "needs_examples": c.needs_examples,
             "needs_history": c.needs_history,
             "needs_context": c.needs_context,
+            "needs_persona_facts": c.needs_persona_facts,
+            "needs_voice_patterns": c.needs_voice_patterns,
         }
         user_content = (
             f"current_turn:\n{input.current_turn}\n\n"
