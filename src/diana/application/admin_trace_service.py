@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -25,6 +26,7 @@ _STEP_JSON_CAP = 1800
 _SHORT_ID_LEN = 8
 _DEFAULT_PAGE_LIMIT = 10
 _TRUNCATION_SUFFIX = "\n... (truncated)"
+_WS_RE = re.compile(r"\s+")
 
 _STEP_TIMING_KEY: dict[str, str] = {
     "analyst": "analyst_ms",
@@ -274,20 +276,12 @@ class AdminTraceService:
         """Canonical trace summary (shared by /traza and vt)."""
         sid = str(trace.turn_id)[:_SHORT_ID_LEN]
         ts = self._relative(trace.created_at)
-        original = (trace.prompt_text or "")[:_ORIGINAL_CAP]
-        draft = (trace.generated_text or "")[:_DRAFT_CAP]
+        original = _collapse_ws(trace.prompt_text or "")[:_ORIGINAL_CAP]
+        draft = _collapse_ws(trace.generated_text or "")[:_DRAFT_CAP]
         decision_action = "N/A"
         if trace.decision:
             decision_action = trace.decision.get("action", "N/A")
-        total_ms = 0
-        if trace.timings:
-            total_ms = int(
-                sum(
-                    v
-                    for v in trace.timings.values()
-                    if isinstance(v, (int, float))
-                )
-            )
+        total_ms = _total_ms_from_timings(trace.timings)
         status = trace.status or "N/A"
         return "\n".join(
             [
@@ -374,12 +368,34 @@ class AdminTraceService:
         )
 
 
+def _collapse_ws(text: str) -> str:
+    """Normalize newlines/tabs/runs of whitespace to single spaces."""
+    return _WS_RE.sub(" ", text).strip()
+
+
 def _truncate(text: str | None, length: int = _PREVIEW_LENGTH) -> str:
     if not text:
         return ""
-    if len(text) <= length:
-        return text
-    return text[:length] + "..."
+    normalized = _collapse_ws(text)
+    if len(normalized) <= length:
+        return normalized
+    return normalized[:length] + "..."
+
+
+def _total_ms_from_timings(timings: dict | None) -> int:
+    """Prefer Director ``total_ms``; else sum step ``*_ms`` values."""
+    if not timings:
+        return 0
+    raw = timings.get("total_ms")
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    return int(
+        sum(
+            v
+            for k, v in timings.items()
+            if k != "total_ms" and isinstance(v, (int, float))
+        )
+    )
 
 
 def _row_to_summary(row: dict) -> TurnSummary:

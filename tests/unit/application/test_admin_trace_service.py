@@ -331,6 +331,33 @@ class TestTurnsKeyboardRows:
         assert len(rows[0][1]) == 8
 
 
+class TestTruncatePreview:
+    async def test_list_preview_collapses_newlines(
+        self, svc: AdminTraceService, reader: FakeTraceabilityReader
+    ) -> None:
+        turn_id = uuid4()
+        reader.seed_turns(
+            [
+                {
+                    "turn_id": turn_id,
+                    "chat_id": 1,
+                    "display_name": "Ana",
+                    "message_text": "hola\nmundo\tprecio",
+                    "decision": "approve",
+                    "status": "delivered",
+                    "created_at": FROZEN_NOW - timedelta(minutes=5),
+                    "correction_applied": False,
+                }
+            ]
+        )
+        results = await svc.get_recent_turns()
+        assert results[0].message_preview == "hola mundo precio"
+        assert "\n" not in results[0].message_preview
+        text = svc.format_turns_list_text(results, page=0, total_pages=1)
+        assert "hola mundo precio" in text
+        assert "hola\nmundo" not in text
+
+
 class TestFormatTurnsListText:
     def test_list_template_and_header(
         self, svc: AdminTraceService
@@ -476,6 +503,62 @@ class TestFormatTraceSummaryText:
         assert "Status: N/A" in text
         assert "Decision: N/A" in text
         assert "Total time: 0ms" in text
+
+    def test_prefers_director_total_ms_not_double_sum(
+        self, svc: AdminTraceService
+    ) -> None:
+        """Production timings include step *_ms AND total_ms — use total_ms."""
+        turn_id = UUID("abcdef12-3456-7890-abcd-ef1234567890")
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=turn_id,
+                chat_id=1,
+                created_at=FROZEN_NOW - timedelta(minutes=1),
+                prompt_text="x",
+                generated_text="y",
+                decision={"action": "approve"},
+                timings={
+                    "analyst_ms": 100.0,
+                    "generator_ms": 50.0,
+                    "total_ms": 150.0,
+                },
+                status="delivered",
+            )
+        )
+        assert "Total time: 150ms" in text
+        assert "Total time: 300ms" not in text
+
+    def test_total_ms_fallback_sums_steps_without_total_key(
+        self, svc: AdminTraceService
+    ) -> None:
+        turn_id = uuid4()
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=turn_id,
+                chat_id=1,
+                created_at=FROZEN_NOW,
+                timings={"analyst_ms": 100.0, "generator_ms": 50.5},
+            )
+        )
+        assert "Total time: 150ms" in text
+
+    def test_summary_collapses_newlines_in_slices(
+        self, svc: AdminTraceService
+    ) -> None:
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=uuid4(),
+                chat_id=1,
+                created_at=FROZEN_NOW,
+                prompt_text="line1\nline2\tline3",
+                generated_text="draft\nwith\nbreaks",
+                decision={"action": "approve"},
+                status="delivered",
+            )
+        )
+        assert "Original intent: line1 line2 line3" in text
+        assert "\nline2" not in text.split("Original intent:", 1)[1].split("\n")[0]
+        assert "draft with breaks" in text
 
     def test_original_intent_truncated_at_200(self, svc: AdminTraceService) -> None:
         """PLAN A8/M3: original intent cap is 200 chars (no ellipsis on intent)."""
