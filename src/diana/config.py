@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     feature_calibration_enabled: bool = False
     feature_advanced_behavior: bool = False
 
+    # Ops surface (Telegram process edge) — single-instance defaults.
+    health_host: str = "127.0.0.1"
+    health_port: Annotated[int, Field(ge=1, le=65535)] = 8080
+    rate_limit_max_events: Annotated[int, Field(ge=1)] = 20
+    rate_limit_window_s: Annotated[float, Field(gt=0)] = 10.0
+    dedup_ttl_s: Annotated[float, Field(gt=0)] = 300.0
+
     @field_validator("telegram_bot_token", "database_url", mode="after")
     @classmethod
     def reject_empty_required_secrets(cls, value: SecretStr) -> SecretStr:

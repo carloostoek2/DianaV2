@@ -452,6 +452,9 @@ def build_app(
         admin_metrics=admin_metrics,
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
+        rate_limit_max_events=settings.rate_limit_max_events,
+        rate_limit_window_s=settings.rate_limit_window_s,
+        dedup_ttl_s=settings.dedup_ttl_s,
     )
 
     return AppContainer(

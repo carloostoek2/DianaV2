@@ -20,7 +20,7 @@ class FreezeCheckMiddleware(BaseMiddleware):
 
     Self-sufficient: looks up VIP by ``event.from_user.id`` via injected
     ``VipStore``. Does NOT depend on AuthMiddleware.
-    Registered after ErrorHandler + Logging + BC + Owner (index 4).
+    Registered after ErrorHandler + Dedup + RateLimit + Logging + BC + Owner (index 6).
 
     Lookup failure is fail-CLOSED: log and drop (do not call handler).
     ``vip_record is None`` still passes through (non-VIP / unknown).

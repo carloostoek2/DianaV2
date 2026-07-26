@@ -28,6 +28,8 @@ def test_f2_middleware_order_constant() -> None:
     assert registered_middleware_names() == F2_MIDDLEWARE_ORDER
     assert registered_middleware_names() == (
         "ErrorHandlerMiddleware",
+        "DedupMiddleware",
+        "RateLimitMiddleware",
         "LoggingMiddleware",
         "BusinessConnectionMiddleware",
         "OwnerDetectionMiddleware",
@@ -39,7 +41,7 @@ def test_f2_middleware_order_constant() -> None:
 
 def test_f2_middleware_includes_freeze_check() -> None:
     names = registered_middleware_names()
-    assert names[4] == "FreezeCheckMiddleware"
+    assert names[6] == "FreezeCheckMiddleware"
 
 
 def _fake_orchestrator() -> MagicMock:
@@ -88,11 +90,15 @@ def test_build_dispatcher_registers_f2_order_on_business_message() -> None:
     live_msg = extract_observer_middleware_names(wiring.dispatcher.message)
     assert live_msg == F2_MIDDLEWARE_ORDER
     assert live[0] == "ErrorHandlerMiddleware"
+    assert live[1] == "DedupMiddleware"
+    assert live[2] == "RateLimitMiddleware"
     assert live_msg[0] == "ErrorHandlerMiddleware"
     assert "FreezeCheckMiddleware" in live
-    # Verify position 5 (index 4) is FreezeCheck after ErrorHandler prepend
-    assert live[4] == "FreezeCheckMiddleware"
+    # Freeze after ErrorHandler + Dedup + RateLimit + Logging + BC + Owner
+    assert live[6] == "FreezeCheckMiddleware"
 
     live_cb = extract_observer_middleware_names(wiring.dispatcher.callback_query)
     assert live_cb[0] == "ErrorHandlerMiddleware"
+    assert "DedupMiddleware" in live_cb
+    assert "RateLimitMiddleware" in live_cb
     assert "FreezeCheckMiddleware" not in live_cb

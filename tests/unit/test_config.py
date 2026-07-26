@@ -321,3 +321,20 @@ def test_settings_rejects_invalid_numeric_and_log_level(
     monkeypatch.setenv(env_key, bad_value)
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_settings_ops_surface_defaults(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Health bind + rate-limit + dedup TTL defaults (ops-surface hardener)."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    assert settings.health_host == "127.0.0.1"
+    assert settings.health_port == 8080
+    assert settings.rate_limit_max_events == 20
+    assert settings.rate_limit_window_s == 10.0
+    assert settings.dedup_ttl_s == 300.0
+

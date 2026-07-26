@@ -29,10 +29,12 @@ from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 from diana.telegram.middlewares import F2_MIDDLEWARE_ORDER
 from diana.telegram.middlewares.auth import AuthMiddleware
 from diana.telegram.middlewares.business_connection import BusinessConnectionMiddleware
+from diana.telegram.middlewares.dedup import DedupMiddleware
 from diana.telegram.middlewares.error_handler import ErrorHandlerMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
+from diana.telegram.middlewares.rate_limit import RateLimitMiddleware
 
 
 @dataclass
@@ -81,13 +83,16 @@ def build_dispatcher(
     admin_metrics: AdminMetricsService | None = None,
     promo: PromoService | None = None,
     feature_promo_enabled: bool = False,
+    rate_limit_max_events: int = 20,
+    rate_limit_window_s: float = 10.0,
+    dedup_ttl_s: float = 300.0,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
     sessions = correct_sessions or CorrectSessionStore()
 
     # first registered = outermost (aiogram wraps with reversed()).
-    # Order: ErrorHandler → Logging → BC → Owner → FreezeCheck → Forbidden → Auth → handler.
+    # Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Owner → Freeze → Forbidden → Auth.
     forbidden_mw = ForbiddenKeywordsMiddleware(
         keywords=forbidden_keywords,
         coordinator=coordinator,
@@ -97,6 +102,12 @@ def build_dispatcher(
     )
     middlewares: list[Any] = [
         ErrorHandlerMiddleware(),
+        DedupMiddleware(ttl_s=dedup_ttl_s),
+        RateLimitMiddleware(
+            max_events=rate_limit_max_events,
+            window_s=rate_limit_window_s,
+            owner_telegram_id=owner_telegram_id,
+        ),
         LoggingMiddleware(),
         BusinessConnectionMiddleware(),
         OwnerDetectionMiddleware(
@@ -157,7 +168,7 @@ def build_dispatcher(
 
 
 def registered_middleware_names() -> tuple[str, ...]:
-    """Ordered middleware names (ErrorHandler@0, FreezeCheck@4)."""
+    """Ordered middleware names (ErrorHandler@0, Dedup@1, RateLimit@2, FreezeCheck@6)."""
     return F2_MIDDLEWARE_ORDER
 
 
