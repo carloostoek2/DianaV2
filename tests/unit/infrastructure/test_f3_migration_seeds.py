@@ -15,7 +15,7 @@ MIGRATION_006 = (
     Path(__file__).resolve().parents[3]
     / "alembic"
     / "versions"
-    / "006_f3_foundation_flags_thresholds.py"
+    / "006_f3_flags_thresholds.py"
 )
 
 MIGRATION_001 = (
@@ -61,7 +61,7 @@ def test_f3_migration_006_file_exists() -> None:
 
 def test_f3_migration_006_revision_chain() -> None:
     text = _migration_text()
-    assert 'revision: str = "006_f3_foundation_flags_thresholds"' in text
+    assert 'revision: str = "006_f3_flags_thresholds"' in text
     # Exact assignment — not merely "005_trace_timings" in docstring/comments.
     assert (
         'down_revision: Union[str, Sequence[str], None] = "005_trace_timings"'

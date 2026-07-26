@@ -1,6 +1,6 @@
 """Seed F3 feature flags (false) + dual eval thresholds (SPEC §4.2).
 
-Revision ID: 006_f3_foundation_flags_thresholds
+Revision ID: 006_f3_flags_thresholds
 Revises: 005_trace_timings
 Create Date: 2026-07-25
 """
@@ -12,13 +12,17 @@ from typing import Sequence, Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "006_f3_foundation_flags_thresholds"
+revision: str = "006_f3_flags_thresholds"
 down_revision: Union[str, Sequence[str], None] = "005_trace_timings"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # alembic_version.version_num defaults to VARCHAR(32); widen for safety.
+    op.execute(
+        "ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)"
+    )
     op.execute(
         """
         INSERT INTO system_config (key, value) VALUES
