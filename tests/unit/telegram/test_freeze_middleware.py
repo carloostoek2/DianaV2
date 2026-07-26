@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -142,7 +142,33 @@ async def test_freeze_lookup_error_fail_closed() -> None:
     mw = FreezeCheckMiddleware(vips=vips)
     handler = AsyncMock(return_value="next")
     data: dict = {}
-    result = await mw(handler, _biz_msg(555), data)
+    with patch("diana.telegram.freeze_middleware.logger") as mock_logger:
+        result = await mw(handler, _biz_msg(555), data)
     assert result is None
     handler.assert_not_awaited()
     assert "_vip_record" not in data
+    mock_logger.exception.assert_called()
+    assert mock_logger.exception.call_args.args[0] == "freeze_check_lookup_error"
+    extra = mock_logger.exception.call_args.kwargs.get("extra") or {}
+    assert extra.get("telegram_user_id") == 555
+
+
+@pytest.mark.asyncio
+async def test_freeze_naive_frozen_until_still_drops() -> None:
+    """Naive frozen_until must not TypeError; treat as UTC and drop when future."""
+    naive_future = (datetime.now(UTC) + timedelta(hours=2)).replace(tzinfo=None)
+    assert naive_future.tzinfo is None
+    rec = VipRecord(
+        id=uuid4(),
+        telegram_user_id=666,
+        display_name="Vip",
+        is_active=True,
+        frozen_until=naive_future,
+    )
+    vips = AsyncMock()
+    vips.get_by_telegram_user_id = AsyncMock(return_value=rec)
+    mw = FreezeCheckMiddleware(vips=vips)
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _biz_msg(666), {})
+    assert result is None
+    handler.assert_not_awaited()

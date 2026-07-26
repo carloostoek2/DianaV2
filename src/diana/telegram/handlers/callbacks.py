@@ -387,6 +387,8 @@ def build_callback_router(
                 return
 
         # ---- Standard owner callbacks ----
+        # Domain dispatch only — status→Telegram UX mapping stays outside so
+        # post-success I/O faults are not labeled "Error processing action."
         try:
             status = await dispatch_owner_callback(
                 admin=admin,
@@ -395,15 +397,37 @@ def build_callback_router(
                 actor_id=actor_id,
                 admin_trace=admin_trace,
             )
+        except Exception:
+            logger.exception(
+                "owner_callback_error",
+                extra={"callback_data": data, "actor_id": actor_id},
+            )
+            try:
+                await query.answer(
+                    "Error processing action. Try again.",
+                    show_alert=True,
+                )
+            except Exception:
+                logger.exception("owner_callback_answer_failed")
+            return
+
+        try:
             if status == "forbidden":
                 await query.answer("Not authorized", show_alert=True)
                 return
             if status == "awaiting_correct":
                 await query.answer()
+                # Follow-up chat text is best-effort: never re-answer the callback.
                 if query.message:
-                    await query.message.answer(
-                        f"Send corrected text for turn {data.split(':', 1)[-1]}"
-                    )
+                    try:
+                        await query.message.answer(
+                            f"Send corrected text for turn {data.split(':', 1)[-1]}"
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_callback_followup_failed",
+                            extra={"callback_data": data, "actor_id": actor_id},
+                        )
                 return
             if status == "approved":
                 await query.answer("Approved")
@@ -423,16 +447,13 @@ def build_callback_router(
             await query.answer()
         except Exception:
             logger.exception(
-                "owner_callback_error",
-                extra={"callback_data": data},
+                "owner_callback_answer_failed",
+                extra={
+                    "callback_data": data,
+                    "actor_id": actor_id,
+                    "status": status,
+                },
             )
-            try:
-                await query.answer(
-                    "Error processing action. Try again.",
-                    show_alert=True,
-                )
-            except Exception:
-                logger.exception("owner_callback_answer_failed")
 
     return router
 

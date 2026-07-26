@@ -58,15 +58,19 @@ class FreezeCheckMiddleware(BaseMiddleware):
         data["_vip_record"] = vip_record
 
         frozen_until = getattr(vip_record, "frozen_until", None)
-        if frozen_until is not None and frozen_until > datetime.now(UTC):
-            logger.debug(
-                "freeze_drop",
-                extra={
-                    "telegram_user_id": user_id,
-                    "frozen_until": frozen_until.isoformat(),
-                },
-            )
-            return None
+        if frozen_until is not None:
+            # Mirror admin/orchestrator: normalize naive datetimes before compare.
+            if frozen_until.tzinfo is None:
+                frozen_until = frozen_until.replace(tzinfo=UTC)
+            if frozen_until > datetime.now(UTC):
+                logger.debug(
+                    "freeze_drop",
+                    extra={
+                        "telegram_user_id": user_id,
+                        "frozen_until": frozen_until.isoformat(),
+                    },
+                )
+                return None
 
         return await handler(event, data)
 

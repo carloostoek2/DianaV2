@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -72,6 +72,13 @@ async def test_router_swallows_orchestrator_exception() -> None:
     orch.handle_vip_message = AsyncMock(side_effect=RuntimeError("orch down"))
     router = build_business_router(orchestrator=orch)
     on_business = router.business_message.handlers[0].callback
-    # Must not raise — router edge swallows.
-    await on_business(_biz_message())
+    with patch("diana.telegram.handlers.business.logger") as mock_logger:
+        # Must not raise — router edge swallows.
+        await on_business(_biz_message())
     orch.handle_vip_message.assert_awaited_once()
+    mock_logger.exception.assert_called()
+    assert mock_logger.exception.call_args.args[0] == "business_handler_error"
+    extra = mock_logger.exception.call_args.kwargs.get("extra") or {}
+    assert extra.get("chat_id") == 42
+    assert extra.get("telegram_message_id") == 7
+    assert extra.get("business_connection_id") == "bc-1"

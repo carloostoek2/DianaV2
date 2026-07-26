@@ -43,7 +43,12 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
         except Exception:
             logger.exception(
                 "business_handler_error",
-                extra={"chat_id": inbound.chat_id},
+                extra={
+                    "chat_id": inbound.chat_id,
+                    "telegram_message_id": inbound.telegram_message_id,
+                    "vip_id": str(inbound.vip_id) if inbound.vip_id else None,
+                    "business_connection_id": inbound.business_connection_id,
+                },
             )
 
     return router

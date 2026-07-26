@@ -7,9 +7,47 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject
 
 logger = logging.getLogger("diana.telegram")
+
+
+def _event_log_extra(event: TelegramObject) -> dict[str, Any]:
+    """Short correlation fields for swallowed faults (no message text / PII body)."""
+    extra: dict[str, Any] = {"event_type": type(event).__name__}
+    from_user = getattr(event, "from_user", None)
+    if from_user is not None:
+        extra["telegram_user_id"] = getattr(from_user, "id", None)
+
+    if isinstance(event, CallbackQuery):
+        extra["callback_query_id"] = getattr(event, "id", None)
+        extra["callback_data"] = getattr(event, "data", None)
+        msg = getattr(event, "message", None)
+        if msg is not None:
+            chat = getattr(msg, "chat", None)
+            extra["chat_id"] = getattr(chat, "id", None) if chat else None
+            extra["message_id"] = getattr(msg, "message_id", None)
+        else:
+            extra["chat_id"] = None
+            extra["message_id"] = None
+        return extra
+
+    if isinstance(event, Message):
+        chat = getattr(event, "chat", None)
+        extra["chat_id"] = getattr(chat, "id", None) if chat else None
+        extra["message_id"] = getattr(event, "message_id", None)
+        return extra
+
+    # Best-effort for other TelegramObject shapes.
+    chat = getattr(event, "chat", None)
+    if chat is not None:
+        extra["chat_id"] = getattr(chat, "id", None)
+    msg = getattr(event, "message", None)
+    if msg is not None:
+        chat = getattr(msg, "chat", None)
+        extra.setdefault("chat_id", getattr(chat, "id", None) if chat else None)
+        extra["message_id"] = getattr(msg, "message_id", None)
+    return extra
 
 
 class ErrorHandlerMiddleware(BaseMiddleware):
@@ -29,18 +67,9 @@ class ErrorHandlerMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except Exception:
-            chat_id = None
-            if hasattr(event, "chat") and event.chat is not None:
-                chat_id = getattr(event.chat, "id", None)
-            elif hasattr(event, "message") and event.message is not None:
-                chat = getattr(event.message, "chat", None)
-                chat_id = getattr(chat, "id", None) if chat else None
             logger.exception(
                 "telegram_handler_error",
-                extra={
-                    "event_type": type(event).__name__,
-                    "chat_id": chat_id,
-                },
+                extra=_event_log_extra(event),
             )
             if isinstance(event, CallbackQuery):
                 try:
