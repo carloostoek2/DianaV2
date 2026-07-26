@@ -34,11 +34,17 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             business_connection_id=bc,
             vip_id=vip_id,
         )
-        turn_id = await orchestrator.handle_vip_message(inbound)
-        logger.info(
-            "business_handled",
-            extra={"turn_id": str(turn_id), "chat_id": inbound.chat_id},
-        )
+        try:
+            turn_id = await orchestrator.handle_vip_message(inbound)
+            logger.info(
+                "business_handled",
+                extra={"turn_id": str(turn_id), "chat_id": inbound.chat_id},
+            )
+        except Exception:
+            logger.exception(
+                "business_handler_error",
+                extra={"chat_id": inbound.chat_id},
+            )
 
     return router
 
