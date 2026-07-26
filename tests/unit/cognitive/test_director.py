@@ -1013,3 +1013,37 @@ async def test_repetition_not_triggered_with_two_total() -> None:
         "generate_structured",
     ]
 
+@pytest.mark.asyncio
+async def test_director_timings_include_persona_and_voice_buckets() -> None:
+    """Retriever timing map always sets persona_facts_ms and voice_patterns_ms."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(
+                needs_history=False,
+                needs_context=False,
+                needs_persona_facts=True,
+                needs_voice_patterns=True,
+            ),
+            _profile(),
+        ],
+        text_responses=["draft"],
+    )
+    director, trace, _ = make_director(llm)
+    turn = _turn()
+    await director.handle_turn(turn)
+
+    timings = trace.get(turn.turn_id, "timings")
+    assert isinstance(timings, dict)
+    assert "persona_facts_ms" in timings
+    assert "voice_patterns_ms" in timings
+    assert timings["persona_facts_ms"] >= 0.0
+    assert timings["voice_patterns_ms"] >= 0.0
+    # Capabilities planned should include both knowledge keys when needs_* true.
+    plan = trace.get(turn.turn_id, "plan")
+    assert "knowledge.persona_facts" in plan["capabilities"]
+    assert "knowledge.voice_patterns" in plan["capabilities"]
+    # Existing buckets still present when any retriever ran.
+    assert "memory_retriever_ms" in timings
+    assert "policy_retriever_ms" in timings
+    assert "examples_retriever_ms" in timings
+

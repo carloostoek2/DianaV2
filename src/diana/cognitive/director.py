@@ -185,6 +185,8 @@ class CognitiveDirector:
             memory_ms = 0.0
             policy_ms = 0.0
             examples_ms = 0.0
+            persona_facts_ms = 0.0
+            voice_patterns_ms = 0.0
             for cap, elapsed in retriever_timings.items():
                 if "memory" in cap:
                     memory_ms += elapsed
@@ -192,9 +194,15 @@ class CognitiveDirector:
                     policy_ms += elapsed
                 elif "examples" in cap:
                     examples_ms += elapsed
+                elif "persona_facts" in cap:
+                    persona_facts_ms += elapsed
+                elif "voice_patterns" in cap:
+                    voice_patterns_ms += elapsed
             timings["memory_retriever_ms"] = memory_ms
             timings["policy_retriever_ms"] = policy_ms
             timings["examples_retriever_ms"] = examples_ms
+            timings["persona_facts_ms"] = persona_facts_ms
+            timings["voice_patterns_ms"] = voice_patterns_ms
 
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
         # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).
