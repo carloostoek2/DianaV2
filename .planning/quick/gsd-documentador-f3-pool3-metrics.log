@@ -1,0 +1,6 @@
+=== documentador f3-pool3-metrics start 2026-07-26T04:52Z ===
+Sources: POOL.md + item1-4 SUMMARYs + pool1/2 POOL-SUMMARYs + MEMORY index
+Scope: POOL-SUMMARY, F3-PHASE-STATUS, documentador report, MEMORY index; 0 code
+Status: writing...
+Wrote: POOL-SUMMARY.md, F3-PHASE-STATUS.md, documentador/f3-pool3-metrics.md, POOL.md CLOSED stamp, MEMORY index
+Next: git commit docs only

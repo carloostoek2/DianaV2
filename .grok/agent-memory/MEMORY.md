@@ -80,3 +80,6 @@
 - Consolidated SUMMARY: `.planning/quick/f3-pool1-autonomous-core/POOL-SUMMARY.md`
 - [f3-pool2-proactivity](documentador/f3-pool2-proactivity.md) — 2026-07-26 — Pool f3-pool2-proactivity CLOSED: items 1–4 (H3.3 recontact + H3.4 promo + H3.8 BR-07 cancel); arch 0 critical; TG suite OK; no LLM; flags default false; residuals → is_blocked claimed approvals (follow-up), schedule-on-message OOS, pool3 calibration/metrics/dashboard
 - Consolidated SUMMARY: `.planning/quick/f3-pool2-proactivity/POOL-SUMMARY.md`
+- [f3-pool3-metrics](documentador/f3-pool3-metrics.md) — 2026-07-26 — Pool f3-pool3-metrics CLOSED: items 1–4 (H3.5 calibration + H3.7 metrics/drift + H3.9 /resumen); migration 009; A2 detect_drift observational when flag off; flags default false; **F3 Pools 1–3 complete** → ops gradual flag enable
+- Consolidated SUMMARY: `.planning/quick/f3-pool3-metrics/POOL-SUMMARY.md`
+- Master phase status: `.planning/quick/F3-PHASE-STATUS.md`
