@@ -6,28 +6,31 @@ cognitive decision pipeline, application shell (orchestrator + admin approval
 gate), Behavior Engine, Learning post-turn, and **Telegram I/O** (aiogram 3
 long-polling) with SQL repository adapters.
 
-**Default runtime posture:** with **all feature flags at default `false`**,
+**Default runtime posture:** with **wired feature flags at default `false`**,
 behavior is **supervised / F2-compatible** — VIP path does not auto-send;
 delivery follows owner approve/correct unless autonomous mode is explicitly
-unlocked. F2/F3 surfaces exist in code and are **flag-gated**; ops enable them
-gradually (see [`.planning/quick/F3-PHASE-STATUS.md`](.planning/quick/F3-PHASE-STATUS.md)).
+unlocked. F2/F3 code surfaces exist; **wired** gates use Settings/env (see
+table). Ops enable them gradually
+(see [`.planning/quick/F3-PHASE-STATUS.md`](.planning/quick/F3-PHASE-STATUS.md)).
 
 ## Feature flags
 
-All listed flags default to **`false`** in Settings (ops enablement is gradual;
-not always-on in production).
+All listed Settings fields default to **`false`** (ops enablement is gradual;
+not always-on in production). **Runtime source of truth = process Settings/env**
+(`diana.config.Settings`). `system_config` may seed `FEATURE_*` keys for future
+merge; those seeds are **not** live overrides today.
 
-| Surface | Flag (Settings / env-style) | Notes |
-|---------|----------------------------|--------|
-| **F2** Memory | `feature_memory_enabled` / `FEATURE_MEMORY_ENABLED` | VIP memory retrieval |
-| **F2** Gray zone | `feature_gray_zone_enabled` / `FEATURE_GRAY_ZONE_ENABLED` | Doctrine consult + freeze path |
-| **F2** Staging | `feature_staging_enabled` / `FEATURE_STAGING_ENABLED` | Correction → staging candidates |
-| **F2** Sandbox | `feature_sandbox_enabled` / `FEATURE_SANDBOX_ENABLED` | Sandbox / fake delivery path |
-| **F3** Autonomous | `feature_autonomous_mode` / `FEATURE_AUTONOMOUS_MODE` | Decider `send` when thresholds + AMS path unlock |
-| **F3** Recontact | `feature_recontact_enabled` / `FEATURE_RECONTACT_ENABLED` | Silence recontact job |
-| **F3** Promo | `feature_promo_enabled` / `FEATURE_PROMO_ENABLED` | Non-VIP exact-match promo |
-| **F3** Calibration | `feature_calibration_enabled` / `FEATURE_CALIBRATION_ENABLED` | Threshold calibration job |
-| **F3** Advanced behavior | `feature_advanced_behavior` / `FEATURE_ADVANCED_BEHAVIOR` | Message split + human quirks |
+| Surface | Flag (Settings field / env var) | Wired? | Notes |
+|---------|----------------------------------|--------|--------|
+| **F2** Memory | `feature_memory_enabled` / `FEATURE_MEMORY_ENABLED` | **no** | Settings stub only — not read in `src/`. `MemoryRetriever` always registered; runs when planner `needs_memory`. |
+| **F2** Gray zone | `feature_gray_zone_enabled` / `FEATURE_GRAY_ZONE_ENABLED` | **yes** | Doctrine consult (`consult_doctrine`) + VIP freeze path |
+| **F2** Staging | `feature_staging_enabled` / `FEATURE_STAGING_ENABLED` | **no** | Settings stub only — not read. `StagingService` not wired in composition; policy staging rows only via gray-zone path when gray zone is on |
+| **F2** Sandbox | `feature_sandbox_enabled` / `FEATURE_SANDBOX_ENABLED` | **partial** | Builds empty `SandboxService` on container only (no VIP-path callers). **FakeDelivery** is separate: `global_mode=fake_delivery`, not this flag |
+| **F3** Autonomous | `feature_autonomous_mode` / `FEATURE_AUTONOMOUS_MODE` | **yes** | Decider may emit `send` when flag on and autonomous score mins met; auto-**delivery** also needs autonomous mode service L1/L2 (else demote to approve) |
+| **F3** Recontact | `feature_recontact_enabled` / `FEATURE_RECONTACT_ENABLED` | **yes** | Silence recontact job + cancel-on-VIP-message path |
+| **F3** Promo | `feature_promo_enabled` / `FEATURE_PROMO_ENABLED` | **yes** | Non-VIP exact-match promo |
+| **F3** Calibration | `feature_calibration_enabled` / `FEATURE_CALIBRATION_ENABLED` | **yes** | Threshold calibration job + threshold writes / drift alerts |
+| **F3** Advanced behavior | `feature_advanced_behavior` / `FEATURE_ADVANCED_BEHAVIOR` | **yes** | Message split + human quirks when delivery context enables them |
 
 **Freeze** is implemented on the gray-zone / freeze path (middleware + Behavior
 delivery hard-check). **Traceability (Anexo T)** is available for the owner DM:
@@ -134,7 +137,7 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 | Contract | Rule |
 |----------|------|
 | `EvaluationProfile` | Exactly 7 floats; no single score / confidence |
-| `Decision.action` | `approve` \| `escalate` \| `consult_doctrine` \| `send` (`send` only when autonomous path unlocked: flag + thresholds + AMS) |
+| `Decision.action` | `approve` \| `escalate` \| `consult_doctrine` \| `send` — Decider emits `send` when autonomous **flag + mins** met; auto-**delivery** only if autonomous mode service L1/L2 enable (else demote to approve) |
 | Schema | F1 foundation + F2 knowledge + F3 tables via migrations **001–011** (see `alembic/versions`) |
 | Secrets | Env only; not in seed or repo |
-| Feature flags | Default **`false`**; F2/F3 surfaces are opt-in |
+| Feature flags | Default **`false`** in Settings/env (runtime SoT). Not every Settings field is a live gate — see table (memory/staging stubs; sandbox partial) |

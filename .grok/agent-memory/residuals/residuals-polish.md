@@ -19,18 +19,19 @@
 
 | Residual | Notes |
 |----------|-------|
-| README F1-only narrative | Flags default false; F2/F3 surfaces documented as gated |
+| README F1-only narrative | Flags default false; wired F3 + gray-zone gates documented; memory/staging Settings stubs called out (not live gates) |
 | ANEXO_T “Pendiente de implementación” | Implemented: 005 + AdminTraceService + `/turnos` `/traza` |
 | F3 boot-load RuntimeThresholds open row | Done in code: `load_runtime_thresholds` @ composition + main boot |
+| Hardener fix-round flag honesty | Memory/staging unwired; sandbox ≠ FakeDelivery; config path; naturalness OOS narrowed |
 
 ## Explicit OOS (CLARIFY — do not expand)
 
-- Multi-worker / Redis / advisory locks G.4
+- Multi-worker / Redis / advisory locks G.4 — see [`docs/OPS_SINGLE_INSTANCE.md`](../../../docs/OPS_SINGLE_INSTANCE.md)
 - Fuzzy J.4 / admin hot-edit catalogs
 - Promo rate-limit hard silence
-- Sandbox FakeDelivery UX complete
+- Sandbox FakeDelivery UX complete (`global_mode=fake_delivery` is separate from `feature_sandbox_enabled`)
 - Schedule REAL / external calendar
-- Naturalness `regenerate` action or >1 retry
+- Naturalness `regenerate` action or >1 retry (multi-retry OOS; **1× MVP is item 3**)
 - Ops production flag enablement
 - Exact Sunday 03:00 cron (doc residual only unless scheduled work)
 

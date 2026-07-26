@@ -20,18 +20,19 @@ Align operator- and agent-facing docs with implemented code: F1 core + F2/F3 sur
 
 | Hash | Message |
 |------|---------|
-| (work unit on main) | docs: align README, Anexo T, F3 status to implemented reality |
+| `311fe39` | docs: align README, Anexo T, F3 status to implemented reality |
+| *(fix round)* | docs: honest F2 flag wiring and F3 status residual polish |
 
-Trust `git log -1 --oneline` for the short hash of this docs work unit.
+Trust `git log --oneline` for short hashes of this item.
 
 ## Files touched
 
 | Path | Action |
 |------|--------|
-| `README.md` | rewrite lead, flags, migrations, docs, locked contracts |
-| `docs/ANEXO_T-TRAZABILIDAD.md` | Estado + note + exit criterion + closing |
-| `.planning/quick/F3-PHASE-STATUS.md` | closed boot-load; `/fp` open; polish pool pointer |
-| `.grok/agent-memory/residuals/residuals-polish.md` | create |
+| `README.md` | rewrite lead, flags, migrations, docs, locked contracts; fix-round honesty (wired vs stub) |
+| `docs/ANEXO_T-TRAZABILIDAD.md` | Estado + note + exit criterion + closing; JSON export implemented |
+| `.planning/quick/F3-PHASE-STATUS.md` | closed boot-load; `/fp` open; polish pointer; fix-round SoT/OPS/naturalness |
+| `.grok/agent-memory/residuals/residuals-polish.md` | create + hardener fix notes / OPS pointer |
 | `.planning/quick/residuals-polish/POOL.md` | RESIDUALS + item1 done |
 | `.grok/agent-memory/MEMORY.md` | Residuals pointer |
 
@@ -40,9 +41,22 @@ Trust `git log -1 --oneline` for the short hash of this docs work unit.
 - Boot-load closed-row title rephrased slightly so smoke negative `rg` for the old open residual string stays clean.
 - MEMORY.md: only residual pointer added; unrelated working-tree churn discarded before commit.
 
+## Hardener fix round (df8fc346)
+
+Docs-only accuracy pass after merged review:
+
+| ID | Fix |
+|----|-----|
+| G4-DOC-1 | README memory/staging: Settings stubs **not wired**; MemoryRetriever always registered |
+| G4-DOC-2 | Sandbox: empty service construction only; FakeDelivery = `global_mode` |
+| general-2 #1 / general #4 | F3 sources → `src/diana/config/settings.py`; chain 006–010 |
+| general-3 #1 | F3 flag table SoT = Settings/env; system_config seeds not live |
+| general-3 #2 | OPS_SINGLE_INSTANCE pointers on F3 + residual multi-worker OOS |
+| general #1–3 / g2 #2–3 / g2 #5–6 | naturalness OOS narrowed; polish pointer docs-sync done; AMS/send wording; ANEXO JSON export; jargon soften |
+
 ## Verifications
 
-Smoke DoD from PLAN (stale phrases absent; required truths present; no product-code paths modified).
+Smoke DoD from PLAN (stale phrases absent; required truths present; no product-code paths modified). Post-fix: no `config.py` dead path; memory/staging honesty present.
 
 ## Residuals
 

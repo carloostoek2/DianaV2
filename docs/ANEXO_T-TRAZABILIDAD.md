@@ -299,7 +299,7 @@ H7 Implementar la vista de detalle de cada paso (mensaje separado con entrada/sa
 H8 Añadir botón "Ver traza" en el mensaje de aprobación (callback). H5
 H9 (Opcional) Implementar exportación a JSON desde la vista de traza. H5
 
-Criterio de salida (core — cumplido): La dueña puede, desde su DM, listar turnos recientes (`/turnos`), abrir una traza (`/traza`) y revisar detalle de pasos con timings. Exportación JSON y analytics avanzados (T-O*) permanecen opcionales / fuera de alcance V1.
+Criterio de salida (core — cumplido): La dueña puede, desde su DM, listar turnos recientes (`/turnos`), abrir una traza (`/traza`) y revisar detalle de pasos con timings. Exportación JSON disponible desde la vista de traza (`export_trace_json` / teclado Export JSON). Analytics avanzados (T-O*) siguen fuera de alcance V1.
 
 ---
 

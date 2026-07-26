@@ -9,13 +9,15 @@
 - `.planning/quick/f3-pool1-autonomous-core/POOL-SUMMARY.md`  
 - `.planning/quick/f3-pool2-proactivity/POOL-SUMMARY.md`  
 - `.planning/quick/f3-pool3-metrics/POOL-SUMMARY.md`  
-- Item SUMMARYs under each pool · migration chain 006–009 · `src/diana/config.py` defaults  
+- Item SUMMARYs under each pool · migration chain **006–010** (F3 product; **011** = index-only) · `src/diana/config/settings.py` defaults  
 
 ---
 
 ## Executive summary
 
 Fase 3 product surface is **implemented behind feature flags**. With all F3 flags at default `false`, boot behavior remains **Fase 2–compatible**. Enabling production behavior is an **ops decision**: turn flags on gradually (env + VIP settings), not a new coding pool by default.
+
+**Deploy assumption:** single active bot process — process-local locks, CorrectSession, dedup, rate-limit inventory in [`docs/OPS_SINGLE_INSTANCE.md`](../../docs/OPS_SINGLE_INSTANCE.md).
 
 | Pool | Scope (roadmap) | Status | Closed |
 |------|-----------------|--------|--------|
@@ -57,15 +59,17 @@ Fase 3 product surface is **implemented behind feature flags**. With all F3 flag
 
 ## Feature flags (defaults)
 
-All Fase 3 flags default **`false`** in Settings and migration **006** seeds:
+All Fase 3 flags default **`false`** in Settings (`src/diana/config/settings.py`) and migration **006** seeds:
 
-| Flag (Settings / system_config) | Default | Gates |
+| Flag (Settings field / env var) | Default | Gates |
 |---------------------------------|---------|--------|
-| `feature_autonomous_mode` / `FEATURE_AUTONOMOUS_MODE` | **false** | Decider `send`, AMS L1, auto-deliver path |
+| `feature_autonomous_mode` / `FEATURE_AUTONOMOUS_MODE` | **false** | Decider may emit `send`; AMS L1; auto-deliver path (L2 = global autonomous or VIP `auto_send`) |
 | `feature_recontact_enabled` / `FEATURE_RECONTACT_ENABLED` | **false** | Recontact job + BR-07 cancel path |
 | `feature_promo_enabled` / `FEATURE_PROMO_ENABLED` | **false** | Non-VIP promo Auth path |
 | `feature_calibration_enabled` / `FEATURE_CALIBRATION_ENABLED` | **false** | Threshold writes + calibration job + drift alerts |
 | `feature_advanced_behavior` / `FEATURE_ADVANCED_BEHAVIOR` | **false** | Split + human quirks dual-gate |
+
+**Runtime SoT = process Settings/env.** Migration seeds write `FEATURE_*` into `system_config` for inventory/future merge; **DB keys are not live overrides** today (composition wires `settings.feature_*` only).
 
 **Invariant:** flag off ⇒ no new F3 side effects on that surface (metrics aggregation may still run as observational telemetry without writing thresholds).
 
@@ -127,29 +131,31 @@ Plan: `.planning/quick/f3-residuals/PLAN.md` · Summary: `.planning/quick/f3-res
 | Exact Sunday 03:00 UTC cron (v1 = hourly + internal gates) | low | Pool3 |
 | Telegram `/fp <turn_id>` UI (API exists) | low | R5 · pool `residuals-polish` item 2 |
 
-Polish pool `residuals-polish` in progress (docs-sync / `/fp` / naturalness / profile) — see `.planning/quick/residuals-polish/`.
+Polish pool `residuals-polish` in progress (item1 docs-sync **done**; remaining open: `/fp`, naturalness MVP, profile REAL) — see `.planning/quick/residuals-polish/`.
 
 ### Documented out-of-scope (do not expand without product ask)
 
 | Residual | Origin |
 |----------|--------|
-| Naturalness re-draft / regenerate action | Pool1 |
+| Naturalness `Decision.action=regenerate` or >1 retry (full loop). **1× re-draft MVP** is in-scope under `residuals-polish` item 3 | Pool1 / CLARIFY |
 | Promo hard rate-limit silence | Pool2 / CLARIFY |
 | Gray-zone trigger name list in `/resumen` | Pool3 |
-| Multi-worker durable CAS / claim token | Pool1 |
+| Multi-worker durable CAS / claim token — process-local inventory: [`docs/OPS_SINGLE_INSTANCE.md`](../../docs/OPS_SINGLE_INSTANCE.md) | Pool1 |
 | `system_config.behavior` runtime merge | Pool1 |
 
 ---
 
 ## Next operations (enable flags gradually)
 
+**Single-instance only** — see [`docs/OPS_SINGLE_INSTANCE.md`](../../docs/OPS_SINGLE_INSTANCE.md) before enabling jobs/autonomous on any host with more than one bot process.
+
 Recommended order for non-prod → prod (one surface at a time; verify; then next):
 
 1. **Observability first (safe):** leave `FEATURE_CALIBRATION_ENABLED=false`; ensure MetricsJob + `/resumen` run against real data; confirm EAV rows and owner DM layout.
-2. **Advanced behavior (low risk):** `FEATURE_ADVANCED_BEHAVIOR=true` for split/quirks only on paths that set `allow_*`.
+2. **Advanced behavior (low risk):** `FEATURE_ADVANCED_BEHAVIOR=true` for split/quirks only when the delivery context enables those options.
 3. **Promo (isolated):** `FEATURE_PROMO_ENABLED=true`; validate exact triggers + re-intro; no VIP path impact.
 4. **Recontact:** `FEATURE_RECONTACT_ENABLED=true`; verify freeze/pause/`is_blocked` (waiting+claimed), BR-07 cancel+schedule on VIP msg, job cadence.
-5. **Autonomous:** `FEATURE_AUTONOMOUS_MODE=true` + per-VIP `auto_send` / global mode; start with high thresholds; confirm demote-to-approve when L2 off; deliver outside lock + freeze.
+5. **Autonomous:** `FEATURE_AUTONOMOUS_MODE=true` + per-VIP `auto_send` / global mode; start with high thresholds; confirm demote-to-approve when VIP/global auto-send path is off; deliver outside chat lock + freeze checks.
 6. **Calibration last:** `FEATURE_CALIBRATION_ENABLED=true` after enough traces exist; verify margin 0.05, smooth, owner drift alerts; live `RuntimeThresholds` updates Decider without restart.
 
 Rollback = set flag false (no redeploy required for kill-switch surfaces).
