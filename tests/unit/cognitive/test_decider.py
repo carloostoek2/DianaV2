@@ -445,7 +445,7 @@ def test_flag_sole_enablement_send_with_mode_supervised_is_intentional() -> None
     """PLAN A1: feature_autonomous_mode alone unlocks send; mode is audit residual.
 
     mode=supervised does NOT force rewrite to approve when flag+mins are met.
-    Director may still pass mode=supervised until item3 enablement plumbing.
+    Director currently hardcodes mode=supervised into decide() (audit residual).
     """
     decider = Decider(feature_autonomous_mode=True)
     decision = decider.decide(

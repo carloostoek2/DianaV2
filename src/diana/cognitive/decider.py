@@ -21,8 +21,9 @@ English <-> Anexo F mapping
 
 **Enablement contract (PLAN A1):** ``feature_autonomous_mode`` is the sole
 send gate. ``mode`` is an audit residual only — it never unlocks or blocks
-send by itself. Flag on + mins met → send even when ``mode="supervised"``
-(Director may still pass supervised until item3 wiring).
+send by itself. Flag on + mins met → send even when ``mode="supervised"``.
+Director currently hardcodes ``mode="supervised"`` into ``decide()``; that is
+intentional audit residual, not incomplete enablement plumbing.
 
 F3 matrix (first match wins)
 ----------------------------

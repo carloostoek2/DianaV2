@@ -4,10 +4,11 @@ Product vision (AGENTS.md) defines Decision actions as:
   send | approve | escalate | consult_doctrine | regenerate
 
 F3 **type surface** exposes: approve | escalate | consult_doctrine | send
-(``Decision.action`` is constructible with ``send``). Runtime emission of
-``send`` is deferred to Decider (item 2) and orchestrator delivery (item 3);
-until then producers stay on the F2 action set and unknown paths fail closed.
-regenerate remains reserved / out of scope (still rejected by the Literal).
+(``Decision.action`` is constructible with ``send``). Decider may emit
+``send`` when ``feature_autonomous_mode`` and autonomous mins are met;
+TurnOrchestrator delivers ``action=="send"`` under AMS. Unknown actions fail
+closed. Product-vision ``regenerate`` remains reserved / out of scope
+(still rejected by the Literal).
 
 EvaluationProfile is a 7-dimension vector. Never collapse it to a single
 score (no confidence field, no overall_score, no mean() helper).
