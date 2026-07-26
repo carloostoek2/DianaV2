@@ -23,6 +23,10 @@
 - [telegram-hardener-3w-item2-ops-surface](impact-analyzer/telegram-hardener-3w-item2-ops-surface.md) — 2026-07-26 — GET /health + RateLimitMiddleware + DedupMiddleware (telegram/ops edge only; ErrorHandler stays outermost)
 - [telegram-hardener-3w-item3-thin-handlers](impact-analyzer/telegram-hardener-3w-item3-thin-handlers.md) — 2026-07-26 — Extract trace/metrics presentation from thick handlers into AdminTraceService/AdminMetricsService (plain text/DTOs; no aiogram in application)
 - [telegram-hardener-3w-item4-scale-debt](impact-analyzer/telegram-hardener-3w-item4-scale-debt.md) — 2026-07-26 — Single-instance docs + CorrectSession UX/logging + modest orch extract + log_swallowed (no Redis)
+- [residuals-polish-item1-docs-sync](impact-analyzer/residuals-polish-item1-docs-sync.md) — 2026-07-26 — Docs-only align README/ANEXO_T/F3 status; `/fp` left open for item2
+- [residuals-polish-item2-owner-fp-ui](impact-analyzer/residuals-polish-item2-owner-fp-ui.md) — 2026-07-26 — Wire Telegram `/fp` → mark_false_positive; API/store done; thin admin handler only; risk LOW
+- [residuals-polish-item3-naturalness-mvp](impact-analyzer/residuals-polish-item3-naturalness-mvp.md) — 2026-07-26 — Director 1× re-gen+re-eval on low naturalness; no Decision.action regenerate; threshold default supervised 0.5; risk low–medium
+- [residuals-polish-item4-profile-real](impact-analyzer/residuals-polish-item4-profile-real.md) — 2026-07-26 — ProfileRetriever REAL mínimo (SQL profiles PK + anti-contam); Schedule stays no_implementado; recommend needs_profile optional; risk low–medium
 
 ## Arch Enforcer
 
@@ -52,6 +56,10 @@
 - [telegram-hardener-3w-item2-ops-surface](arch-enforcer/telegram-hardener-3w-item2-ops-surface.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Dedup+RateLimit order + health stdlib at telegram edge; F3 flags intact; no cognitive
 - [telegram-hardener-3w-item3-thin-handlers](arch-enforcer/telegram-hardener-3w-item3-thin-handlers.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; no aiogram in application; keyboards only telegram; handlers thin; no cognitive
 - [telegram-hardener-3w-item4-scale-debt](arch-enforcer/telegram-hardener-3w-item4-scale-debt.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; single-instance docs honest; learning post-turn; deliver outside lock; log_swallowed purity
+- [residuals-polish-item1-docs-sync](arch-enforcer/residuals-polish-item1-docs-sync.md) — 2026-07-26 — **PASS**, 0 critical → handoff test-guardian; docs-only 311fe39; flags default false; no F3 always-on; AGENTS untouched
+- [residuals-polish-item2-owner-fp-ui](arch-enforcer/residuals-polish-item2-owner-fp-ui.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; telegram thin `/fp` UI; dual fail-closed owner; no Decider/cognitive; mark via AdminService only
+- [residuals-polish-item3-naturalness-mvp](arch-enforcer/residuals-polish-item3-naturalness-mvp.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Director 1× redraft pre-Decider; no regenerate action; Decider order intact; cognitive purity OK
+- [residuals-polish-item4-profile-real](arch-enforcer/residuals-polish-item4-profile-real.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; BR-15 vip short-circuit + PK WHERE; cognitive DI purity; Schedule no-touch; Option B `needs_profile` default False
 
 ## Test Guardian
 
@@ -80,6 +88,10 @@
 - [telegram-hardener-3w-item2-ops-surface](test-guardian/telegram-hardener-3w-item2-ops-surface.md) — 2026-07-26 — **suite protege adecuadamente**, Dedup+RateLimit+health+Freeze@6; 0 mocks prohibidos; focused 62 + telegram 153 + full unit 1011 → paso 6 / item3 gate
 - [telegram-hardener-3w-item3-thin-handlers](test-guardian/telegram-hardener-3w-item3-thin-handlers.md) — 2026-07-26 — **suite protege adecuadamente**, format goldens list/summary/step + caps 200/80/1800; thin handlers; 0 mocks prohibidos; focused 121 → paso 6 / item4 gate
 - [telegram-hardener-3w-item4-scale-debt](test-guardian/telegram-hardener-3w-item4-scale-debt.md) — 2026-07-26 — **suite protege adecuadamente**, log_swallowed + CorrectSession resolve/expired UX + orch/TC counters + OPS docs; 0 mocks prohibidos; item bundle 109 → paso 6 / pool close
+- [residuals-polish-item1-docs-sync](test-guardian/residuals-polish-item1-docs-sync.md) — 2026-07-26 — **suite protege adecuadamente** (docs item); PLAN DoD smoke clean; 0 product paths; Mock Audit N/A → documentador / item2
+- [residuals-polish-item2-owner-fp-ui](test-guardian/residuals-polish-item2-owner-fp-ui.md) — 2026-07-26 — **suite protege adecuadamente**, pure /fp dispatcher + store marks, 0 mocks prohibidos; critical 48 passed → paso 6 / review
+- [residuals-polish-item3-naturalness-mvp](test-guardian/residuals-polish-item3-naturalness-mvp.md) — 2026-07-26 — **suite protege adecuadamente**, Director 1× redraft matrix (7) + residual no-regenerate; FakeLLM only; 0 mocks prohibidos; naturalness 7 / dir+dec+mod 146 / cognitive 337 / orch 37 → paso 6
+- [residuals-polish-item4-profile-real](test-guardian/residuals-polish-item4-profile-real.md) — 2026-07-26 — **suite protege adecuadamente**, Profile REAL + needs_profile + BR-15 + schedule freeze; AsyncMock repo edge only; 0 mocks prohibidos; primary 203 / cognitive 348 / unit 1213 → paso 6
 
 ## Documentador
 
@@ -101,7 +113,10 @@
 - [telegram-hardener-3w](documentador/pool-2026-07-26-telegram-hardener-3w.md) — 2026-07-26 — Pool telegram-hardener-3w CLOSED: items 1–4 (error-safety + ops-surface + thin-handlers + scale-debt); arch 0 critical; review 0 open; single-instance OPS; residuals → Redis multi-replica, health disable flag, full orch split, recontact log_swallowed
 - Consolidated SUMMARY: `.planning/quick/telegram-hardener-3w/POOL-SUMMARY.md`
 - Residuals: `.grok/agent-memory/residuals/telegram-hardener-3w.md`
+- [residuals-polish](documentador/pool-2026-07-26-residuals-polish.md) — 2026-07-26 — Pool residuals-polish CLOSED: docs-sync + owner `/fp` + naturalness 1× + profile REAL; arch 0 critical; review 0 open; OOS multi-replica/schedule REAL/profile writers/naturalness multi-retry
+- Consolidated SUMMARY: `.planning/quick/residuals-polish/POOL-SUMMARY.md`
+- Residuals: `.grok/agent-memory/residuals/residuals-polish.md`
 
 ## Residuals
 
-- [residuals-polish](residuals/residuals-polish.md) — pool residual index (docs-sync /fp /naturalness /profile)
+- [residuals-polish](residuals/residuals-polish.md) — **CLOSED** residual index (docs-sync · `/fp` · naturalness 1× · profile REAL; open OOS listed inside)

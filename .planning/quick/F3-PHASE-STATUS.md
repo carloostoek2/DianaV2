@@ -9,6 +9,7 @@
 - `.planning/quick/f3-pool1-autonomous-core/POOL-SUMMARY.md`  
 - `.planning/quick/f3-pool2-proactivity/POOL-SUMMARY.md`  
 - `.planning/quick/f3-pool3-metrics/POOL-SUMMARY.md`  
+- `.planning/quick/residuals-polish/POOL-SUMMARY.md` (post-F3 residual polish)  
 - Item SUMMARYs under each pool · migration chain **006–010** (F3 product; **011** = index-only) · `src/diana/config/settings.py` defaults  
 
 ---
@@ -125,23 +126,36 @@ Plan: `.planning/quick/f3-residuals/PLAN.md` · Summary: `.planning/quick/f3-res
 | Load calibrated thresholds from DB at boot (`RuntimeThresholds`) | **done** | `src/diana/composition.py` — `load_runtime_thresholds`; `src/diana/main.py` — boot `await load_runtime_thresholds(app)`; tests: `tests/unit/application/test_load_runtime_thresholds.py` |
 | Telegram `/fp <turn_id>` UI | **done** | `src/diana/telegram/handlers/admin.py` — `Command("fp")` + pure `handle_admin_text` branch; `ADMIN_MENU_TEXT` line; tests: `tests/unit/telegram/test_admin_commands.py` (`test_fp_*`) · pool `residuals-polish` item 2 · commit `4a8d9ee` |
 
-### Follow-ups still open (not in residual pack)
+### Hardening residual polish pack `residuals-polish` — **DONE** (2026-07-26)
+
+Plan root: `.planning/quick/residuals-polish/` · Summary: `.planning/quick/residuals-polish/POOL-SUMMARY.md` · Residual index: `.grok/agent-memory/residuals/residuals-polish.md`
+
+| Item | Status | Notes |
+|------|--------|-------|
+| **docs-sync** | **done** | README / ANEXO_T / F3 status honesty; commits `311fe39`, `9d9ff22` |
+| **owner-fp-ui** | **done** | `/fp` UI closed (see Closed follow-ups above) |
+| **naturalness-mvp** | **done** | Director 1× redraft when naturalness < supervised 0.5; no `Decision.action=regenerate`; commits `cee38e1`…`97df474` |
+| **profile-real** | **done** | `ProfilesRepo` + ProfileRetriever REAL (BR-15); `needs_profile`; Schedule stays seat; commits `f2b908d`…`dc27f33` |
+
+### Follow-ups still open (not in residual packs)
 
 | Residual | Priority | Origin |
 |----------|----------|--------|
 | Exact Sunday 03:00 UTC cron (v1 = hourly + internal gates) | low | Pool3 |
-
-Polish pool `residuals-polish` in progress (item1 docs-sync **done**, item2 owner-fp-ui **done**; remaining open: naturalness MVP, profile REAL) — see `.planning/quick/residuals-polish/`.
+| Live hydrate supervised `naturalness_min` into RuntimeThresholds (optional) | low | residuals-polish item3 residual |
+| Profile writers / seed path (ops) | ops | residuals-polish item4 OOS |
+| Schedule REAL / external calendar | product | residuals-polish CLARIFY OOS |
 
 ### Documented out-of-scope (do not expand without product ask)
 
 | Residual | Origin |
 |----------|--------|
-| Naturalness `Decision.action=regenerate` or >1 retry (full loop). **1× re-draft MVP** is in-scope under `residuals-polish` item 3 | Pool1 / CLARIFY |
+| Naturalness `Decision.action=regenerate` or >1 retry (full loop). **1× re-draft MVP closed** in `residuals-polish` item 3 | Pool1 / CLARIFY |
 | Promo hard rate-limit silence | Pool2 / CLARIFY |
 | Gray-zone trigger name list in `/resumen` | Pool3 |
 | Multi-worker durable CAS / claim token — process-local inventory: [`docs/OPS_SINGLE_INSTANCE.md`](../../docs/OPS_SINGLE_INSTANCE.md) | Pool1 |
 | `system_config.behavior` runtime merge | Pool1 |
+| Profile writers / sandbox FakeProfiles production wire | residuals-polish item4 |
 
 ---
 
@@ -166,4 +180,5 @@ Rollback = set flag false (no redeploy required for kill-switch surfaces).
 
 > Pool `f3-pool3-metrics` closed — 4 items completed, tests passing, commits done, documentation updated.  
 > Residual pack `f3-residuals` (R1–R5) closed 2026-07-26.  
-> **Fase 3 implementation (Pools 1–3) + residual hardening complete.** All F3 feature flags remain **default false**. Next: gradual ops enablement.
+> Residual polish pack `residuals-polish` (docs-sync · owner `/fp` · naturalness 1× · profile REAL) closed 2026-07-26.  
+> **Fase 3 implementation (Pools 1–3) + residual hardening + residual polish complete.** All F3 feature flags remain **default false**. Next: gradual ops enablement.

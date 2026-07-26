@@ -1,47 +1,59 @@
 # residuals-polish — residual index
 
 **Pool:** residuals-polish  
-**Status:** in_progress  
+**Status:** **CLOSED** (2026-07-26)  
 **CLARIFY:** `.planning/quick/residuals-polish/CLARIFY.md`  
 **POOL:** `.planning/quick/residuals-polish/POOL.md`  
-**Created:** 2026-07-26
+**POOL-SUMMARY:** `.planning/quick/residuals-polish/POOL-SUMMARY.md`  
+**Created:** 2026-07-26  
 
-## Pool items
+## Pool items (all done)
 
-| # | Item | Status | Path / notes |
-|---|------|--------|--------------|
-| 1 | docs-sync | **done** | `.planning/quick/residuals-polish/item1-docs-sync/` — README, ANEXO_T, F3-PHASE-STATUS, this index |
-| 2 | owner-fp-ui | **done** | Telegram `/fp <turn_id>` → `AdminService.mark_false_positive`; pure dispatcher + `Command("fp")`; `4a8d9ee` |
-| 3 | naturalness-mvp | open | Director 1× re-generate + re-eval when naturalidad low; no new Decision.action |
-| 4 | profile-real | open | ProfileRetriever REAL mínimo (SQL `profiles`); Schedule stays seat `no_implementado` |
+| # | Item | Status | Path / notes | Commits |
+|---|------|--------|--------------|---------|
+| 1 | docs-sync | **done** | README, ANEXO_T, F3-PHASE-STATUS, this index | `311fe39`, `9d9ff22` |
+| 2 | owner-fp-ui | **done** | Telegram `/fp` → `mark_false_positive`; dual owner gate; `fp_error` | `4a8d9ee`, `92cfffd`, `40acf9d`, `7432d2d`, `77c1f51` |
+| 3 | naturalness-mvp | **done** | Director 1× redraft pre-Decider; threshold supervised 0.5; no `regenerate` action | `cee38e1`, `4c35a67`, `4c58553`, `97df474` |
+| 4 | profile-real | **done** | ProfileRetriever REAL mínimo + `needs_profile`; Schedule seat unchanged | `f2b908d`, `cce719c`, `03b51a5`, `dc27f33` |
 
-## Closed by item2 (owner FP UI)
+## Closed in this pool
 
-| Residual | Notes |
-|----------|-------|
-| Telegram `/fp` UI (R5 surface) | Owner DM `/fp <turn_id>`; status tokens `fp_marked` / `fp_usage` / `fp_unavailable`; dual owner gate; no escalate-action validation (accepted residual); no keyboard FP |
+| Residual | Closed by | Notes |
+|----------|-----------|-------|
+| README F1-only / stale Anexo T / boot-load open row | item1 | Code-aligned docs; flags default false honesty |
+| Telegram `/fp` UI (R5 surface) | item2 | Owner DM; tokens `fp_marked`/`fp_usage`/`fp_unavailable`/`fp_error`; no escalate validation |
+| Naturalness 1× re-draft MVP | item3 | Director owns; AGENTS §4.1 P4; total_ms + store order fix-round |
+| Profile REAL mínimo + planner path | item4 | ProfilesRepo + BR-15; Option B `needs_profile`; Schedule still seat |
 
-## Closed by item1 (docs only)
+## Open follow-ups (deferred queue — not auto-created items)
 
-| Residual | Notes |
-|----------|-------|
-| README F1-only narrative | Flags default false; wired F3 + gray-zone gates documented; memory/staging Settings stubs called out (not live gates) |
-| ANEXO_T “Pendiente de implementación” | Implemented: 005 + AdminTraceService + `/turnos` `/traza` |
-| F3 boot-load RuntimeThresholds open row | Done in code: `load_runtime_thresholds` @ composition + main boot |
-| Hardener fix-round flag honesty | Memory/staging unwired; sandbox ≠ FakeDelivery; config path; naturalness OOS narrowed |
+| Residual | Class | Why | Files / origin |
+|----------|-------|-----|----------------|
+| Supervised `naturalness_min` live hydrate into RuntimeThresholds / calibration | in-scope-followup | PLAN non-goal; ctor default 0.5 only | director.py, RuntimeThresholds |
+| First-draft trace retention (non-overwrite history on redraft) | in-scope-followup | MVP overwrites final wins | director.py |
+| Second-G empty after first success edge (fail-closed) | in-scope-followup | PLAN A5 | director.py |
+| Composition scan lock for `naturalness_min` | in-scope-followup | optional hygiene G3-3 | composition tests |
+| ProfilesRepo `load_only` exclude embedding | in-scope-followup | nit5 performance when QPS/writers arrive | profiles.py |
+| Exact Sunday 03:00 UTC cron | out-of-scope | Doc residual; v1 hourly + internal gates | F3-PHASE-STATUS / Pool3 |
 
-## Explicit OOS (CLARIFY — do not expand)
+## Explicit OOS (CLARIFY + item SUMMARYs — do not expand without product ask)
 
-- Multi-worker / Redis / advisory locks G.4 — see [`docs/OPS_SINGLE_INSTANCE.md`](../../../docs/OPS_SINGLE_INSTANCE.md)
-- Fuzzy J.4 / admin hot-edit catalogs
-- Promo rate-limit hard silence
-- Sandbox FakeDelivery UX complete (`global_mode=fake_delivery` is separate from `feature_sandbox_enabled`)
-- Schedule REAL / external calendar
-- Naturalness `regenerate` action or >1 retry (multi-retry OOS; **1× MVP is item 3**)
-- Ops production flag enablement
-- Exact Sunday 03:00 cron (doc residual only unless scheduled work)
+| Residual | Origin |
+|----------|--------|
+| **Multi-replica** / multi-worker / Redis / advisory locks G.4 | CLARIFY · OPS_SINGLE_INSTANCE.md |
+| **Schedule REAL** / external calendar | CLARIFY · item4 no-touch |
+| **Profile writers** / seed path / sandbox FakeProfiles production wire | item4 A9 · OOS |
+| **Naturalness multi-retry** / `Decision.action=regenerate` | CLARIFY locked |
+| Fuzzy J.4 / admin hot-edit catalogs | CLARIFY |
+| Promo hard rate-limit silence | CLARIFY |
+| Sandbox FakeDelivery UX complete | CLARIFY |
+| Ops production flag enablement | CLARIFY |
+| Mark FP without escalate-decision validation | item2 accepted residual |
+| Inline keyboard “mark FP” on escalate notifications | item2 non-goal |
+| Director timing key `profile_retriever_ms` | item4 nit7 |
 
 ## Related
 
-- Impact: `.grok/agent-memory/impact-analyzer/residuals-polish-item1-docs-sync.md`
-- Master F3 status: `.planning/quick/F3-PHASE-STATUS.md` (not replaced by this file)
+- Master F3 status: `.planning/quick/F3-PHASE-STATUS.md`
+- Documentador report: `.grok/agent-memory/documentador/pool-2026-07-26-residuals-polish.md`
+- Reviews: `.grok/agent-memory/review/residuals-polish-item*.md`
