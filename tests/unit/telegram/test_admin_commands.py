@@ -274,5 +274,39 @@ async def test_fp_idempotent_remark(admin_ctx: dict) -> None:
     assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 1
 
 
+@pytest.mark.asyncio
+async def test_fp_store_exception_returns_fp_error(admin_ctx: dict) -> None:
+    """Store/DB faults map to fp_error (owner system-error UX), not false success."""
+    g = admin_ctx
+
+    class _RaisingMarkStore:
+        async def mark(self, turn_id, *, kind: str = "false_positive") -> None:  # noqa: ANN001
+            raise RuntimeError("db down")
+
+        async def count_in_range(self, week_start, week_end, *, kind: str = "false_positive") -> int:  # noqa: ANN001
+            return 0
+
+    g["admin"]._fp_marks = _RaisingMarkStore()  # noqa: SLF001
+    turn_id = uuid4()
+    assert await _dispatch(g, f"/fp {turn_id}") == "fp_error"
+
+
+@pytest.mark.asyncio
+async def test_fp_store_exception_non_owner_still_ignored(admin_ctx: dict) -> None:
+    """Non-owner never reaches mark; store faults must not change fail-closed ignore."""
+    g = admin_ctx
+
+    class _RaisingMarkStore:
+        async def mark(self, turn_id, *, kind: str = "false_positive") -> None:  # noqa: ANN001
+            raise RuntimeError("db down")
+
+        async def count_in_range(self, week_start, week_end, *, kind: str = "false_positive") -> int:  # noqa: ANN001
+            return 0
+
+    g["admin"]._fp_marks = _RaisingMarkStore()  # noqa: SLF001
+    turn_id = uuid4()
+    assert await _dispatch(g, f"/fp {turn_id}", actor_id=OTHER) == "ignored_non_owner"
+
+
 def test_admin_menu_lists_fp() -> None:
     assert "/fp" in ADMIN_MENU_TEXT

@@ -120,6 +120,13 @@ async def handle_admin_text(
             ok = await admin.mark_false_positive(turn_id, actor_id=actor_id)
         except OwnerAuthError:
             return "forbidden"
+        except Exception:
+            # Store/DB faults — surface token for owner system-error UX (mirror /traza).
+            logger.exception(
+                "fp_mark_failed",
+                extra={"turn_id": str(turn_id)},
+            )
+            return "fp_error"
         return "fp_marked" if ok else "fp_unavailable"
 
     return "ignored"
@@ -266,6 +273,10 @@ def build_admin_router(
             await message.answer("False positive marked")
         elif status == "fp_unavailable":
             await message.answer("False positive store not available.")
+        elif status == "fp_error":
+            await message.answer(
+                "System error: unable to mark false positive. Try again later."
+            )
         elif status == "forbidden":
             return  # fail-closed silent
         else:
