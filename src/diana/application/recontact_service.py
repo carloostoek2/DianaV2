@@ -18,6 +18,7 @@ from diana.application.ports import (
     DeliveryMode,
     OwnerNotifierPort,
     PendingApprovalStore,
+    PendingDeliveryStore,
     RecontactScheduleRecord,
     RecontactScheduleStore,
     TurnRecord,
@@ -320,7 +321,42 @@ def _as_aware(value: datetime, ref: datetime) -> datetime:
     return value
 
 
+class ApprovalsDeliveriesRouteResolver:
+    """Resolve VIP routing from waiting approvals, then active deliveries."""
+
+    def __init__(
+        self,
+        approvals: PendingApprovalStore,
+        deliveries: PendingDeliveryStore,
+    ) -> None:
+        self._approvals = approvals
+        self._deliveries = deliveries
+
+    async def resolve(self, vip_id: UUID) -> tuple[int, str] | None:
+        waiting = await self._approvals.list_waiting()
+        for row in waiting:
+            if row.vip_id == vip_id:
+                bc = (row.business_connection_id or "").strip()
+                if bc:
+                    return row.chat_id, bc
+        try:
+            active = await self._deliveries.list_active()
+        except Exception:
+            logger.exception(
+                "recontact_route_list_active_failed",
+                extra={"vip_id": str(vip_id)},
+            )
+            return None
+        for row in active:
+            if row.vip_id == vip_id:
+                bc = (row.business_connection_id or "").strip()
+                if bc:
+                    return row.chat_id, bc
+        return None
+
+
 __all__ = [
+    "ApprovalsDeliveriesRouteResolver",
     "ClockPort",
     "RecontactConfigReader",
     "RecontactService",

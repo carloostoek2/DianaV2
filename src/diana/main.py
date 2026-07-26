@@ -14,6 +14,7 @@ from diana.composition import (
 )
 from diana.config import Settings
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
+from diana.jobs.recontact import RecontactJob
 from diana.jobs.trace_purge import TracePurgeJob
 
 logger = logging.getLogger("diana.composition")
@@ -45,6 +46,7 @@ async def async_main() -> None:
     # F2 Item 4: start gray zone expiration background job.
     expiration_job = _setup_expiration_job(app)
     purge_job = _setup_purge_job(app)
+    recontact_job = _setup_recontact_job(app)
 
     try:
         await app.dispatcher.start_polling(
@@ -52,6 +54,14 @@ async def async_main() -> None:
             allowed_updates=["message", "business_message", "callback_query"],
         )
     finally:
+        if recontact_job is not None:
+            recontact_job.cancel()
+            try:
+                await asyncio.wait_for(recontact_job, timeout=10.0)
+            except TimeoutError:
+                logger.warning("recontact_job_stop_timeout")
+            except (asyncio.CancelledError, Exception):
+                pass
         if purge_job is not None:
             purge_job.cancel()
             try:
@@ -96,6 +106,18 @@ def _setup_purge_job(app: AppContainer) -> asyncio.Task | None:
     job = TracePurgeJob(app.trace_store, interval_seconds=3600)
     task = asyncio.create_task(job.start())
     logger.info("purge_job_started", extra={"interval_seconds": 3600})
+    return task
+
+
+def _setup_recontact_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the recontact background job when feature flag is on."""
+    if not app.settings.feature_recontact_enabled or app.recontact is None:
+        logger.info("recontact_job_skipped_flag_off")
+        return None
+
+    job = RecontactJob(app.recontact, interval_seconds=3600)
+    task = asyncio.create_task(job.start())
+    logger.info("recontact_job_started", extra={"interval_seconds": 3600})
     return task
 
 
