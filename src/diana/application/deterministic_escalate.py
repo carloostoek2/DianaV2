@@ -1,11 +1,18 @@
-"""Deterministic forbidden-keyword escalation (no Director / no LLM)."""
+"""Deterministic pre-Director escalation (no Director / no LLM).
+
+Covers forbidden keywords (TAC-06) and J.4 categories (pago / IA / compromiso).
+IA path may deliver a fixed VIP template before escalating.
+"""
 
 from __future__ import annotations
 
 import logging
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from diana.application.j4_triggers import IA_TEMPLATE
 from diana.application.ports import (
+    DeliveryContext,
     EscalationNotification,
     EscalationStore,
     OwnerNotifierPort,
@@ -16,6 +23,22 @@ from diana.cognitive.models import TurnStatus
 logger = logging.getLogger("diana.application")
 
 FORBIDDEN_TIPO = "palabra_prohibida"
+TIPO_PAGO_PRECIO = "pago_precio"
+TIPO_IDENTIDAD_IA = "identidad_ia"
+TIPO_COMPROMISO_REAL = "compromiso_real"
+
+
+@runtime_checkable
+class BehaviorDeliverer(Protocol):
+    """Minimal deliver surface for IA template path (avoids deep behavior import)."""
+
+    async def deliver(
+        self,
+        texts: list[str],
+        ctx: DeliveryContext,
+        turn_id: UUID,
+        decision: object | None = None,
+    ) -> object: ...
 
 
 async def handle_deterministic_escalation(
@@ -29,6 +52,8 @@ async def handle_deterministic_escalation(
     business_connection_id: str | None,
     message_id: int | None,
     keywords_hit: list[str],
+    tipo: str = FORBIDDEN_TIPO,
+    reason: str | None = None,
 ) -> UUID:
     """Create an escalated turn without CognitiveDirector or LLM.
 
@@ -48,15 +73,16 @@ async def handle_deterministic_escalation(
     turn_id = record.id
     await coordinator.transition(turn_id, TurnStatus.ESCALATED)
 
-    motivo = ",".join(keywords_hit) if keywords_hit else "forbidden"
-    await escalations.create(turn_id, tipo=FORBIDDEN_TIPO, motivo=motivo)
+    motivo = ",".join(keywords_hit) if keywords_hit else tipo
+    await escalations.create(turn_id, tipo=tipo, motivo=motivo)
+    notify_reason = reason or f"{tipo}: {motivo}"
     await notifier.notify_escalation(
         EscalationNotification(
             turn_id=turn_id,
             chat_id=chat_id,
-            reason=f"forbidden keywords: {motivo}",
+            reason=notify_reason,
             vip_text=text,
-            tipo=FORBIDDEN_TIPO,
+            tipo=tipo,
             business_connection_id=business_connection_id,
         )
     )
@@ -67,9 +93,97 @@ async def handle_deterministic_escalation(
             "turn_id": str(turn_id),
             "chat_id": chat_id,
             "keywords": keywords_hit,
+            "tipo": tipo,
         },
     )
     return turn_id
 
 
-__all__ = ["FORBIDDEN_TIPO", "handle_deterministic_escalation"]
+async def handle_deterministic_template_escalate(
+    *,
+    coordinator: TurnCoordinator,
+    escalations: EscalationStore,
+    notifier: OwnerNotifierPort,
+    behavior: BehaviorDeliverer,
+    chat_id: int,
+    text: str,
+    vip_id: UUID | None,
+    business_connection_id: str | None,
+    message_id: int | None,
+    keywords_hit: list[str],
+    template: str = IA_TEMPLATE,
+    tipo: str = TIPO_IDENTIDAD_IA,
+) -> UUID:
+    """Deliver fixed VIP template (if business connection present), then escalate.
+
+    Still no Director/LLM. Deliver failure is logged; escalate still proceeds
+    so the owner always sees the event.
+    """
+    record = await coordinator.begin_turn(
+        chat_id=chat_id,
+        trigger_message_id=message_id,
+        vip_id=vip_id,
+    )
+    turn_id = record.id
+
+    if business_connection_id:
+        ctx = DeliveryContext(
+            chat_id=chat_id,
+            business_connection_id=str(business_connection_id),
+            vip_id=vip_id,
+            telegram_message_id=message_id,
+            is_frozen=False,
+        )
+        try:
+            await behavior.deliver([template], ctx, turn_id)
+        except Exception:
+            logger.exception(
+                "deterministic_template_deliver_failed",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "tipo": tipo,
+                },
+            )
+    else:
+        logger.warning(
+            "deterministic_template_skip_deliver_no_bc",
+            extra={"turn_id": str(turn_id), "chat_id": chat_id, "tipo": tipo},
+        )
+
+    await coordinator.transition(turn_id, TurnStatus.ESCALATED)
+
+    motivo = ",".join(keywords_hit) if keywords_hit else tipo
+    await escalations.create(turn_id, tipo=tipo, motivo=motivo)
+    await notifier.notify_escalation(
+        EscalationNotification(
+            turn_id=turn_id,
+            chat_id=chat_id,
+            reason=f"{tipo}: {motivo}",
+            vip_text=text,
+            tipo=tipo,
+            business_connection_id=business_connection_id,
+        )
+    )
+    await escalations.mark_notified(turn_id)
+    logger.info(
+        "deterministic_template_escalation",
+        extra={
+            "turn_id": str(turn_id),
+            "chat_id": chat_id,
+            "keywords": keywords_hit,
+            "tipo": tipo,
+        },
+    )
+    return turn_id
+
+
+__all__ = [
+    "BehaviorDeliverer",
+    "FORBIDDEN_TIPO",
+    "TIPO_COMPROMISO_REAL",
+    "TIPO_IDENTIDAD_IA",
+    "TIPO_PAGO_PRECIO",
+    "handle_deterministic_escalation",
+    "handle_deterministic_template_escalate",
+]

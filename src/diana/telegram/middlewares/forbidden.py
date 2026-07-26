@@ -1,9 +1,12 @@
-"""ForbiddenKeywordsMiddleware — business VIP short-circuit, zero Director."""
+"""ForbiddenKeywordsMiddleware — business VIP short-circuit, zero Director.
+
+Order of classification (first win): J.4 identidad_ia → pago_precio →
+compromiso_real → system_config forbidden list (palabra_prohibida).
+"""
 
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
@@ -11,7 +14,12 @@ from uuid import UUID
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
-from diana.application.deterministic_escalate import handle_deterministic_escalation
+from diana.application.deterministic_escalate import (
+    BehaviorDeliverer,
+    handle_deterministic_escalation,
+    handle_deterministic_template_escalate,
+)
+from diana.application.j4_triggers import classify_j4_text, match_keywords
 from diana.application.ports import EscalationStore, OwnerNotifierPort, VipStore
 from diana.application.turn_coordinator import TurnCoordinator
 
@@ -19,27 +27,12 @@ logger = logging.getLogger("diana.telegram")
 
 
 def match_forbidden_keywords(text: str, keywords: list[str]) -> list[str]:
-    """Return list of keywords found in text (case-insensitive word/phrase)."""
-    if not text or not keywords:
-        return []
-    lower = text.lower()
-    hits: list[str] = []
-    for kw in keywords:
-        k = (kw or "").strip().lower()
-        if not k:
-            continue
-        # Phrase or whole-word style match.
-        if " " in k:
-            if k in lower:
-                hits.append(kw.strip())
-        else:
-            if re.search(rf"\b{re.escape(k)}\b", lower, flags=re.IGNORECASE):
-                hits.append(kw.strip())
-    return hits
+    """Thin wrapper over application ``match_keywords`` (single algorithm)."""
+    return match_keywords(text, keywords)
 
 
 class ForbiddenKeywordsMiddleware(BaseMiddleware):
-    """On business VIP keyword hit: deterministic escalate and stop pipeline.
+    """On business VIP J.4/forbidden hit: deterministic escalate and stop pipeline.
 
     Does **not** run on private (non-business) traffic — owner free-text correct
     and non-owner DMs must not short-circuit or supersede VIP chats.
@@ -53,12 +46,14 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         escalations: EscalationStore,
         notifier: OwnerNotifierPort,
         vips: VipStore | None = None,
+        behavior: BehaviorDeliverer | None = None,
     ) -> None:
         self._keywords = list(keywords)
         self._coordinator = coordinator
         self._escalations = escalations
         self._notifier = notifier
         self._vips = vips
+        self._behavior = behavior
 
     def set_keywords(self, keywords: list[str]) -> None:
         """Replace keyword list in place (boot load from system_config)."""
@@ -85,8 +80,11 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         text = event.text or event.caption or ""
-        hits = match_forbidden_keywords(text, self._keywords)
-        if not hits:
+        j4 = classify_j4_text(text)
+        forbidden_hits = (
+            match_forbidden_keywords(text, self._keywords) if not j4 else []
+        )
+        if j4 is None and not forbidden_hits:
             return await handler(event, data)
 
         chat_id = event.chat.id if event.chat else 0
@@ -105,6 +103,73 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                 if rec is not None:
                     vip_id = rec.id
 
+        if j4 is not None and j4.category == "identidad_ia":
+            if self._behavior is None:
+                logger.warning(
+                    "j4_ia_no_behavior_fail_closed",
+                    extra={"chat_id": chat_id, "keywords": j4.keywords_hit},
+                )
+                await handle_deterministic_escalation(
+                    coordinator=self._coordinator,
+                    escalations=self._escalations,
+                    notifier=self._notifier,
+                    chat_id=chat_id,
+                    text=text,
+                    vip_id=vip_id,
+                    business_connection_id=str(bc),
+                    message_id=event.message_id,
+                    keywords_hit=j4.keywords_hit,
+                    tipo=j4.tipo,
+                )
+            else:
+                await handle_deterministic_template_escalate(
+                    coordinator=self._coordinator,
+                    escalations=self._escalations,
+                    notifier=self._notifier,
+                    behavior=self._behavior,
+                    chat_id=chat_id,
+                    text=text,
+                    vip_id=vip_id,
+                    business_connection_id=str(bc),
+                    message_id=event.message_id,
+                    keywords_hit=j4.keywords_hit,
+                    template=j4.template or "",
+                    tipo=j4.tipo,
+                )
+            logger.info(
+                "j4_ia_short_circuit",
+                extra={
+                    "chat_id": chat_id,
+                    "keywords": j4.keywords_hit,
+                    "vip_id": str(vip_id) if vip_id else None,
+                },
+            )
+            return None
+
+        if j4 is not None:
+            await handle_deterministic_escalation(
+                coordinator=self._coordinator,
+                escalations=self._escalations,
+                notifier=self._notifier,
+                chat_id=chat_id,
+                text=text,
+                vip_id=vip_id,
+                business_connection_id=str(bc),
+                message_id=event.message_id,
+                keywords_hit=j4.keywords_hit,
+                tipo=j4.tipo,
+            )
+            logger.info(
+                "j4_short_circuit",
+                extra={
+                    "chat_id": chat_id,
+                    "keywords": j4.keywords_hit,
+                    "tipo": j4.tipo,
+                    "vip_id": str(vip_id) if vip_id else None,
+                },
+            )
+            return None
+
         await handle_deterministic_escalation(
             coordinator=self._coordinator,
             escalations=self._escalations,
@@ -114,13 +179,13 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
             vip_id=vip_id,
             business_connection_id=str(bc),
             message_id=event.message_id,
-            keywords_hit=hits,
+            keywords_hit=forbidden_hits,
         )
         logger.info(
             "forbidden_short_circuit",
             extra={
                 "chat_id": chat_id,
-                "keywords": hits,
+                "keywords": forbidden_hits,
                 "vip_id": str(vip_id) if vip_id else None,
             },
         )

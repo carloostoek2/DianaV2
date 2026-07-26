@@ -123,3 +123,86 @@ async def test_helper_signature_has_no_director_param() -> None:
     assert "director" not in names
     assert "llm" not in names
     assert "cognitive" not in names
+
+@pytest.mark.asyncio
+async def test_custom_tipo_stored(escalate_graph: dict) -> None:
+    g = escalate_graph
+    turn_id = await handle_deterministic_escalation(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        chat_id=42,
+        text="cuánto cuesta?",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=20,
+        keywords_hit=["cuesta"],
+        tipo="pago_precio",
+    )
+    ev = g["escalations"].events[0]
+    assert ev["turn_id"] == turn_id
+    assert ev["tipo"] == "pago_precio"
+    payload = g["notifier"].escalations[0]
+    assert payload.tipo == "pago_precio"
+    assert "pago_precio" in payload.reason
+
+
+@pytest.mark.asyncio
+async def test_default_tipo_still_palabra_prohibida(escalate_graph: dict) -> None:
+    g = escalate_graph
+    await handle_deterministic_escalation(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        chat_id=42,
+        text="x",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=21,
+        keywords_hit=["x"],
+    )
+    assert g["escalations"].events[0]["tipo"] == "palabra_prohibida"
+
+
+@pytest.mark.asyncio
+async def test_template_escalate_delivers_ia_then_escalates(
+    escalate_graph: dict,
+) -> None:
+    from diana.application.deterministic_escalate import (
+        handle_deterministic_template_escalate,
+    )
+    from diana.application.j4_triggers import IA_TEMPLATE
+
+    g = escalate_graph
+    turn_id = await handle_deterministic_template_escalate(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        behavior=g["behavior"],
+        chat_id=42,
+        text="sos un bot?",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=22,
+        keywords_hit=["sos un bot"],
+    )
+    assert g["actuator"].send_count() == 1
+    send_calls = [c for c in g["actuator"].calls if c["op"] == "send_message"]
+    assert send_calls[0]["text"] == IA_TEMPLATE
+    rec = await g["turns"].get(turn_id)
+    assert rec is not None and rec.status == "escalated"
+    assert g["escalations"].events[0]["tipo"] == "identidad_ia"
+    assert len(g["notifier"].escalations) == 1
+
+
+@pytest.mark.asyncio
+async def test_template_helper_has_no_director_param() -> None:
+    import inspect
+
+    from diana.application import deterministic_escalate as mod
+
+    sig = inspect.signature(mod.handle_deterministic_template_escalate)
+    names = set(sig.parameters)
+    assert "director" not in names
+    assert "llm" not in names
+

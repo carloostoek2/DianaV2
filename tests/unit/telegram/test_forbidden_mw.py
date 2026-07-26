@@ -165,3 +165,118 @@ async def test_private_owner_dm_with_keyword_does_not_escalate() -> None:
     # Live VIP turn must not be superseded by private DM
     stored = await g["turns"].get(live.id)
     assert stored is not None and stored.status == "pending_approval"
+
+@pytest.mark.asyncio
+async def test_j4_pago_stops_pipeline() -> None:
+    """Business VIP J.4 pago → escalate without handler; tipo pago_precio."""
+    g = _graph()
+    await g["vips"].add(100, display_name="Vip")
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["zzz_never"],  # forbidden list empty of real hits
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=30,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="V"),
+        text="cuál es el precio?",
+        business_connection_id="bc-1",
+    )
+    handler = AsyncMock(return_value="orchestrator")
+    result = await mw(handler, event, {"business_connection_id": "bc-1"})
+    assert result is None
+    handler.assert_not_awaited()
+    assert g["escalations"].events
+    assert g["escalations"].events[0]["tipo"] == "pago_precio"
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_private_dm_no_j4() -> None:
+    """Private owner DM with J.4 keyword must not short-circuit."""
+    g = _graph()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=[],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=31,
+        date=0,
+        chat=Chat(id=999001, type="private"),
+        from_user=User(id=999001, is_bot=False, first_name="Owner"),
+        text="cuál es el precio?",
+        business_connection_id=None,
+    )
+    handler = AsyncMock(return_value="admin")
+    result = await mw(handler, event, {"is_owner": True})
+    assert result == "admin"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+
+
+@pytest.mark.asyncio
+async def test_j4_ia_delivers_template_then_escalates() -> None:
+    from diana.application.j4_triggers import IA_TEMPLATE
+
+    g = _graph()
+    await g["vips"].add(100, display_name="Vip")
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=[],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        behavior=g["coordinator"]._behavior,  # noqa: SLF001 — test inject
+    )
+    # coordinator stores behavior; get from graph via rebuild
+    from diana.behavior.engine import BehaviorEngine
+    from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
+    from diana.application.memory import InMemoryPendingDeliveryStore
+
+    # Use explicit behavior from a fresh graph field
+    actuator = FakeTelegramActuator()
+    deliveries = InMemoryPendingDeliveryStore()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+    )
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=[],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        behavior=behavior,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=32,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="V"),
+        text="sos un bot?",
+        business_connection_id="bc-1",
+    )
+    handler = AsyncMock(return_value="orchestrator")
+    result = await mw(handler, event, {"business_connection_id": "bc-1"})
+    assert result is None
+    handler.assert_not_awaited()
+    assert actuator.send_count() == 1
+    send_calls = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert send_calls[0]["text"] == IA_TEMPLATE
+    assert g["escalations"].events[0]["tipo"] == "identidad_ia"
+

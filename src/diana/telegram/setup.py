@@ -99,6 +99,7 @@ def build_dispatcher(
         escalations=escalations,
         notifier=notifier,
         vips=vips,
+        behavior=behavior,  # type: ignore[arg-type]  # engine implements deliver
     )
     middlewares: list[Any] = [
         ErrorHandlerMiddleware(),
