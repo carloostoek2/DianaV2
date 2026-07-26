@@ -18,6 +18,11 @@ from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.gray_zone_service import GrayZoneService
+from diana.application.promo_service import PromoService
+from diana.application.recontact_service import (
+    ApprovalsDeliveriesRouteResolver,
+    RecontactService,
+)
 from diana.application.recovery_startup import (
     DEFAULT_STALE_AFTER,
     run_startup_recovery,
@@ -46,6 +51,11 @@ from diana.infrastructure.db.repositories.approvals import SqlPendingApprovalSto
 from diana.infrastructure.db.repositories.deliveries import SqlPendingDeliveryStore
 from diana.infrastructure.db.repositories.escalations import SqlEscalationStore
 from diana.infrastructure.db.repositories.history import SqlMessageHistoryRepo
+from diana.infrastructure.db.repositories.promo_executions import PromoExecutionRepo
+from diana.infrastructure.db.repositories.promo_triggers import PromoTriggerRepo
+from diana.infrastructure.db.repositories.recontact_schedules import (
+    RecontactScheduleRepo,
+)
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
@@ -149,6 +159,8 @@ class AppContainer:
     sandbox: SandboxService | None = None
     admin_trace: AdminTraceService | None = None
     trace_store: SqlTraceStore | None = None
+    recontact: RecontactService | None = None
+    promo: PromoService | None = None
 
 
 def build_app(
@@ -239,6 +251,7 @@ def build_app(
 
     # GrayZoneService — created only when the feature is enabled.
     # When disabled, TurnOrchestrator receives None (dead-code guard).
+    gray_zone_repo: GrayZoneQueryRepo | None = None
     if feature_gray_zone_enabled:
         staging_repo = StagingCandidateRepo(sf)
         gray_zone_repo = GrayZoneQueryRepo(sf)
@@ -324,6 +337,49 @@ def build_app(
         else None
     )
 
+    # F3 promo (non-VIP) — always construct; feature flag gates execute/match path.
+    feature_promo_enabled = settings.feature_promo_enabled
+    promo = PromoService(
+        feature_promo_enabled=feature_promo_enabled,
+        triggers=PromoTriggerRepo(sf),
+        executions=PromoExecutionRepo(sf),
+        config=config_store,
+        behavior=behavior,
+        turns=turns,
+        clock=clock,
+        delivery_mode=settings.global_mode,
+    )
+
+    # F3 recontact — always construct; methods no-op when flag false (item3 inject).
+    feature_recontact_enabled = settings.feature_recontact_enabled
+    recontact_schedules_repo = RecontactScheduleRepo(sf)
+    route_resolver = ApprovalsDeliveriesRouteResolver(approvals, deliveries)
+
+    async def _has_open_gray_zone(vip_id: Any) -> bool:
+        if gray_zone_repo is None:
+            return False
+        open_rows = await gray_zone_repo.list_open()
+        return any(q.vip_id == vip_id for q in open_rows)
+
+    recontact = RecontactService(
+        feature_recontact_enabled=feature_recontact_enabled,
+        schedules=recontact_schedules_repo,
+        vips=vips,
+        config=config_store,
+        approvals=approvals,
+        ams=ams,
+        behavior=behavior,
+        turns=turns,
+        route_resolver=route_resolver,
+        notifier=notifier,
+        clock=clock,
+        delivery_mode=settings.global_mode,
+        has_open_gray_zone=(
+            _has_open_gray_zone if feature_gray_zone_enabled else None
+        ),
+        is_sandbox_vip=None,
+    )
+
     wiring = build_dispatcher(
         orchestrator=orchestrator,
         admin=admin,
@@ -337,6 +393,8 @@ def build_app(
         correct_sessions=sessions,
         doctrine_router=doctrine_router,
         admin_trace=admin_trace,
+        promo=promo,
+        feature_promo_enabled=feature_promo_enabled,
     )
 
     return AppContainer(
@@ -361,6 +419,8 @@ def build_app(
         sandbox=sandbox,
         admin_trace=admin_trace,
         trace_store=traces,
+        recontact=recontact,
+        promo=promo,
     )
 
 

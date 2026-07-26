@@ -85,3 +85,36 @@ def test_composition_advanced_behavior_wired(_comp_src: str) -> None:
     assert _comp_src.count("feature_advanced_behavior=feature_advanced_behavior") >= 3
     # SEC-F1: Admin freeze gate needs vip_store wired.
     assert "vip_store=vips" in _comp_src
+
+
+def test_composition_promo_service_wired(_comp_src: str) -> None:
+    """PromoService is constructed and passed into Auth via build_dispatcher."""
+    assert "from diana.application.promo_service import PromoService" in _comp_src
+    assert "PromoTriggerRepo" in _comp_src
+    assert "PromoExecutionRepo" in _comp_src
+    assert "PromoService(" in _comp_src
+    assert "feature_promo_enabled = settings.feature_promo_enabled" in _comp_src
+    assert "feature_promo_enabled=feature_promo_enabled" in _comp_src
+    assert "promo=promo" in _comp_src
+    assert "promo=promo," in _comp_src or "promo=promo\n" in _comp_src
+
+
+def test_setup_auth_receives_promo_kwargs() -> None:
+    """build_dispatcher forwards promo + feature flag into AuthMiddleware."""
+    from pathlib import Path
+
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    setup_src = (root / "telegram" / "setup.py").read_text(encoding="utf-8")
+    assert "promo: PromoService | None = None" in setup_src
+    assert "feature_promo_enabled: bool = False" in setup_src
+    assert "promo=promo" in setup_src
+    assert "feature_promo_enabled=feature_promo_enabled" in setup_src
+    assert "AuthMiddleware(" in setup_src
+
+
+def test_composition_app_container_has_promo_field() -> None:
+    from diana.composition import AppContainer
+
+    assert "promo" in AppContainer.__dataclass_fields__

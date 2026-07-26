@@ -15,6 +15,7 @@ from diana.application.ports import (
     OwnerNotifierPort,
     VipStore,
 )
+from diana.application.promo_service import PromoService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.telegram.handlers.admin import build_admin_router
@@ -75,6 +76,8 @@ def build_dispatcher(
     correct_sessions: CorrectSessionStore | None = None,
     doctrine_router: Router | None = None,
     admin_trace: AdminTraceService | None = None,
+    promo: PromoService | None = None,
+    feature_promo_enabled: bool = False,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -97,7 +100,11 @@ def build_dispatcher(
         ),
         FreezeCheckMiddleware(vips=vips),
         forbidden_mw,
-        AuthMiddleware(vips=vips),
+        AuthMiddleware(
+            vips=vips,
+            promo=promo,
+            feature_promo_enabled=feature_promo_enabled,
+        ),
     ]
 
     # Apply to business messages (VIP path) and private messages/callbacks.
