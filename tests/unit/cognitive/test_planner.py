@@ -135,3 +135,20 @@ def test_planner_has_no_llm_dependency() -> None:
     source = inspect.getsource(planner_mod)
     assert "LLM" not in source
     assert "generate" not in source
+
+
+def test_planner_persona_voice_order_between_context_and_memory() -> None:
+    """H2: persona_facts and voice_patterns sit after context, before memory."""
+    expected = [
+        "knowledge.history",
+        "knowledge.context",
+        "knowledge.persona_facts",
+        "knowledge.voice_patterns",
+        "knowledge.memory",
+        "knowledge.policy",
+        "knowledge.examples",
+        "knowledge.schedule",
+    ]
+    assert _STABLE_CAPS == expected
+    plan = Planner().plan(_comprehension(**_all_needs(True)))
+    assert plan.capabilities == expected

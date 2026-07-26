@@ -245,3 +245,18 @@ async def test_analyze_system_prompt_has_no_tone_or_policy_instructions() -> Non
     assert "cariñosa" in lowered or "carinosa" in lowered
     assert "baja" in lowered
     assert "bajo" in lowered
+
+
+
+def test_system_prompt_mentions_persona_voice_needs() -> None:
+    """H2: Analyst _SYSTEM lists new needs_* flags and usage hints."""
+    from diana.cognitive import analyst as analyst_mod
+
+    system = analyst_mod._SYSTEM
+    assert "needs_persona_facts" in system
+    assert "needs_voice_patterns" in system
+    # usage hints (bio / voice / policy)
+    low = system.lower()
+    assert "persona" in low or "bio" in low or "biogr" in low
+    assert "voice" in low or "tone" in low or "muletilla" in low
+    assert "needs_policy" in system

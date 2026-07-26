@@ -508,3 +508,94 @@ async def test_examples_retriever_counter_example() -> None:
     assert result[0] == "Turn: hello | Draft: hi | Corrected: hello there"
     assert "[COUNTER-EXAMPLE]" in result[1]
     assert "bad example" in result[1]
+
+
+
+@pytest.mark.asyncio
+async def test_policy_static_tema_match_without_embeddings() -> None:
+    """J.5: static policies match by tema without repo/embed deps."""
+    policies = [
+        {
+            "id": "no_promesas_contenido",
+            "tema": ["contenido", "expectativas"],
+            "regla": "No prometo fechas concretas.",
+        },
+        {
+            "id": "no_consultas",
+            "tema": ["psicologia"],
+            "regla": "No doy consultas clínicas.",
+        },
+    ]
+    retriever = PolicyRetriever(static_policies=policies)
+    c = Comprehension(
+        intent="chat",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert result == [
+        "Trigger: no_promesas_contenido | Rule: No prometo fechas concretas."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_policy_static_no_match_returns_empty_list() -> None:
+    """Static catalog present but no tema match → [] (not None)."""
+    policies = [
+        {"id": "x", "tema": ["contenido"], "regla": "rule x"},
+    ]
+    retriever = PolicyRetriever(static_policies=policies)
+    c = _comprehension()  # topics empty, intent chat
+    result = await retriever.fetch(_turn(), c)
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_policy_static_plus_db_merge_dedupes_by_rule() -> None:
+    """Static hits first; DB appends; de-dupe by rule text after '| Rule: '."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    policies = [
+        {"id": "static1", "tema": ["limites"], "regla": "same rule text"},
+    ]
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(
+        return_value=[
+            {"trigger_description": "db trig", "rule": "same rule text"},
+            {"trigger_description": "other", "rule": "unique db rule"},
+        ]
+    )
+    retriever = PolicyRetriever(
+        embedding_service=embed,
+        repo=repo,
+        static_policies=policies,
+    )
+    c = Comprehension(
+        intent="limites",
+        topics=["limites"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert result[0] == "Trigger: static1 | Rule: same rule text"
+    assert "Trigger: other | Rule: unique db rule" in result
+    # de-duped: only one with same rule text
+    rules = [r.split("| Rule: ", 1)[1] for r in result]
+    assert rules.count("same rule text") == 1

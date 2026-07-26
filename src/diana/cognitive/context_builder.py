@@ -12,6 +12,8 @@ from diana.cognitive.models import BuiltContext, Comprehension, IncomingTurn
 _KNOWLEDGE_EMISSION_ORDER: tuple[str, ...] = (
     "knowledge.history",
     "knowledge.context",
+    "knowledge.persona_facts",
+    "knowledge.voice_patterns",
     "knowledge.memory",
     "knowledge.policy",
     "knowledge.examples",

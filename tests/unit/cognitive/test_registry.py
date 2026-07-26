@@ -24,6 +24,8 @@ ALL_CAPS = (
     "knowledge.policy",
     "knowledge.examples",
     "knowledge.schedule",
+    "knowledge.persona_facts",
+    "knowledge.voice_patterns",
 )
 
 
@@ -147,3 +149,103 @@ async def test_build_default_registry_without_repos_still_stubs() -> None:
     for name in ("knowledge.memory", "knowledge.policy", "knowledge.examples"):
         retriever = registry.resolve(name)
         assert await retriever.fetch(turn, c) is None
+
+
+
+def test_planner_universe_has_eight_capabilities() -> None:
+    """H2: 6 original + persona_facts + voice_patterns."""
+    assert len(PLANNER_CAPABILITY_UNIVERSE) == 8
+    assert "knowledge.persona_facts" in PLANNER_CAPABILITY_UNIVERSE
+    assert "knowledge.voice_patterns" in PLANNER_CAPABILITY_UNIVERSE
+
+
+@pytest.mark.asyncio
+async def test_persona_voice_capabilities_resolve_and_empty_fetch() -> None:
+    """Empty default catalogs still resolve; fetch returns None."""
+    registry = build_default_registry(InMemoryMessageHistory())
+    turn = _turn()
+    c = _comprehension()
+    for name in ("knowledge.persona_facts", "knowledge.voice_patterns"):
+        retriever = registry.resolve(name)
+        assert await retriever.fetch(turn, c) is None
+
+
+@pytest.mark.asyncio
+async def test_build_default_registry_accepts_catalog_kwargs() -> None:
+    """Catalog kwargs wire persona_facts / voice_patterns / static_policies."""
+    facts = [{"id": "f1", "tema": ["familia"], "hecho": "Hermana Laura"}]
+    patterns = [
+        {
+            "id": "p1",
+            "tags": ["saludo"],
+            "patron": "Holis",
+            "uso": "apertura",
+        }
+    ]
+    policies = [
+        {
+            "id": "no_promesas",
+            "tema": ["contenido"],
+            "regla": "No prometo fechas",
+        }
+    ]
+    registry = build_default_registry(
+        InMemoryMessageHistory(),
+        persona_facts=facts,
+        voice_patterns=patterns,
+        static_policies=policies,
+    )
+    turn = _turn()
+    c = _comprehension()
+    # override comprehension for match
+    c_facts = Comprehension(
+        intent="chat",
+        topics=["familia"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=False,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+        needs_persona_facts=True,
+    )
+    fact = await registry.resolve("knowledge.persona_facts").fetch(turn, c_facts)
+    assert fact is not None
+    assert "Laura" in fact["hecho"]
+
+    c_voice = Comprehension(
+        intent="saludo",
+        topics=[],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=False,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+        needs_voice_patterns=True,
+    )
+    voice = await registry.resolve("knowledge.voice_patterns").fetch(turn, c_voice)
+    assert voice is not None
+    assert voice["patron"] == "Holis"
+
+    c_pol = Comprehension(
+        intent="contenido",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    pol = await registry.resolve("knowledge.policy").fetch(turn, c_pol)
+    assert pol == ["Trigger: no_promesas | Rule: No prometo fechas"]

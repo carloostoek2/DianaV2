@@ -9,19 +9,23 @@ from diana.cognitive.retrievers.context import ContextRetriever
 from diana.cognitive.retrievers.examples import ExamplesRetriever
 from diana.cognitive.retrievers.history import HistoryRetriever
 from diana.cognitive.retrievers.memory import MemoryRetriever
+from diana.cognitive.retrievers.persona_facts import PersonaFactsRetriever
 from diana.cognitive.retrievers.policy import PolicyRetriever
 from diana.cognitive.retrievers.profile import ProfileRetriever
 from diana.cognitive.retrievers.schedule import ScheduleRetriever
+from diana.cognitive.retrievers.voice_patterns import VoicePatternsRetriever
 
 DEFAULT_HISTORY_LIMIT = 20
 
 # Half-registered seats: resolve OK, fetch → None, optional fuente attribute.
 UNIMPLEMENTED_CAPABILITIES: frozenset[str] = frozenset({"knowledge.schedule"})
 
-# Planner-requestable names in F1 (Anexo C + H). Must resolve after build.
+# Planner-requestable names (Anexo C + H + system prompt struct). Must resolve after build.
 PLANNER_CAPABILITY_UNIVERSE: tuple[str, ...] = (
     "knowledge.history",
     "knowledge.context",
+    "knowledge.persona_facts",
+    "knowledge.voice_patterns",
     "knowledge.memory",
     "knowledge.policy",
     "knowledge.examples",
@@ -56,13 +60,18 @@ def build_default_registry(
     policy_repo: Any = None,
     examples_repo: Any = None,
     embedding_service: Any = None,
+    persona_facts: list | None = None,
+    voice_patterns: list | None = None,
+    static_policies: list | None = None,
 ) -> CapabilityRegistry:
-    """Register F1 capabilities and fail-fast for the planner universe.
+    """Register capabilities and fail-fast for the planner universe.
 
-    Seven seats: history/context REAL; memory/policy/examples REAL when
-    their ``*_repo`` and ``embedding_service`` are provided, STUB otherwise;
-    schedule half-registered (``fuente=no_implementado``, fetch always None).
-    Profile is an F2 seat outside the planner universe but remains registered.
+    Seats: history/context REAL; persona_facts/voice_patterns from static
+    catalogs (empty → always None); memory/policy/examples REAL when their
+    ``*_repo`` and ``embedding_service`` are provided, STUB otherwise (policy
+    may still match static_policies); schedule half-registered
+    (``fuente=no_implementado``, fetch always None). Profile is an F2 seat
+    outside the planner universe but remains registered.
     """
     registry = CapabilityRegistry()
     registry.register(
@@ -75,6 +84,14 @@ def build_default_registry(
     )
     registry.register("knowledge.profile", ProfileRetriever())
     registry.register(
+        "knowledge.persona_facts",
+        PersonaFactsRetriever(persona_facts or []),
+    )
+    registry.register(
+        "knowledge.voice_patterns",
+        VoicePatternsRetriever(voice_patterns or []),
+    )
+    registry.register(
         "knowledge.memory",
         MemoryRetriever(
             embedding_service=embedding_service,
@@ -86,6 +103,7 @@ def build_default_registry(
         PolicyRetriever(
             embedding_service=embedding_service,
             repo=policy_repo,
+            static_policies=static_policies,
         ),
     )
     registry.register(

@@ -249,6 +249,8 @@ def test_d4_knowledge_emitted_in_fixed_order_regardless_of_dict_insertion() -> N
     # Reverse / shuffled insertion order relative to D.4 emission tuple
     knowledge = {
         "knowledge.profile": "profile body",
+        "knowledge.persona_facts": {"hecho": "f", "tema": "familia"},
+        "knowledge.voice_patterns": {"patron": "jsjs", "uso": "risa"},
         "knowledge.schedule": "schedule body",
         "knowledge.examples": ["ex1"],
         "knowledge.policy": {"rule": "no spam"},
@@ -271,6 +273,8 @@ def test_d4_knowledge_emitted_in_fixed_order_regardless_of_dict_insertion() -> N
     assert headings == [
         "knowledge.history",
         "knowledge.context",
+        "knowledge.persona_facts",
+        "knowledge.voice_patterns",
         "knowledge.memory",
         "knowledge.policy",
         "knowledge.examples",
@@ -353,3 +357,34 @@ def test_included_blocks_exclude_comprehension_and_persona() -> None:
         assert "Persona" not in block
     assert "Comprehension" not in built.included_blocks
     assert "Persona" not in built.included_blocks
+
+
+
+def test_persona_voice_emitted_between_context_and_memory() -> None:
+    """H2: persona_facts and voice_patterns sit between context and memory."""
+    builder = ContextBuilder()
+    knowledge = {
+        "knowledge.memory": "mem",
+        "knowledge.persona_facts": {"hecho": "Hermana", "tema": "familia"},
+        "knowledge.voice_patterns": {"patron": "jsjs", "uso": "risa"},
+        "knowledge.context": {"n": 1},
+        "knowledge.history": [{"role": "vip", "text": "h"}],
+    }
+    built = builder.build(
+        _turn("now"),
+        _comprehension(),
+        knowledge=knowledge,
+        persona="P",
+    )
+    headings = [
+        line.removeprefix("## Knowledge: ").strip()
+        for line in built.prompt_final.splitlines()
+        if line.startswith("## Knowledge: ")
+    ]
+    assert headings == [
+        "knowledge.history",
+        "knowledge.context",
+        "knowledge.persona_facts",
+        "knowledge.voice_patterns",
+        "knowledge.memory",
+    ]

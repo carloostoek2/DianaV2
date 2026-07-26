@@ -17,10 +17,15 @@ _SYSTEM = (
     "emotion must be one of: neutral, positiva, ansiosa, molesta, triste, cariñosa, urgente. "
     "urgency must be one of: baja, media, alta. "
     "risk must be one of: bajo, medio, alto. "
-    "All of these fields are required: intent, topics, emotion, urgency, risk, "
+    "Required fields: intent, topics, emotion, urgency, risk, "
     "needs_memory, needs_policy, needs_schedule, needs_examples, needs_history, needs_context. "
+    "Also set needs_persona_facts and needs_voice_patterns (default false if unsure). "
     "intent is a free lowercase verb_object label. topics is a list of lowercase strings. "
-    "Set each needs_* boolean only to indicate which knowledge would help later stages."
+    "Set each needs_* boolean only to indicate which knowledge would help later stages. "
+    "needs_persona_facts=true when the turn asks about Diana biography/personal facts "
+    "(familia, estudios, duelo, vivienda, rutina, canal). "
+    "needs_voice_patterns=true when a characteristic voice/muletilla would help. "
+    "needs_policy=true for limits, content promises, bio invention bounds, or photo/video requests."
 )
 
 _MAX_ATTEMPTS = 2  # initial try + exactly one retry (contrato A.6)

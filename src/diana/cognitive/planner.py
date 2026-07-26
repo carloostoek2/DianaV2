@@ -17,6 +17,8 @@ from diana.cognitive.models import Comprehension, Plan
 _NEED_TO_CAPABILITY: tuple[tuple[str, str], ...] = (
     ("needs_history", "knowledge.history"),
     ("needs_context", "knowledge.context"),
+    ("needs_persona_facts", "knowledge.persona_facts"),
+    ("needs_voice_patterns", "knowledge.voice_patterns"),
     ("needs_memory", "knowledge.memory"),
     ("needs_policy", "knowledge.policy"),
     ("needs_examples", "knowledge.examples"),
