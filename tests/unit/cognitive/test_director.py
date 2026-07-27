@@ -28,9 +28,51 @@ from diana.cognitive.ports import (
     InMemoryTurnStatusSink,
 )
 from diana.cognitive.repetition_guard import RepetitionGuard
+from diana.cognitive.template_gate import TemplateGate, TemplateRule
 from unittest.mock import AsyncMock, MagicMock
 from diana.cognitive.registry import build_default_registry
 from diana.llm.fake import FakeLLM
+import random
+
+IA_TEMPLATE = "jsjsj si y sólo vivo en tu mente 😏"
+SALUDO_POOL = ["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"]
+
+
+def _h6_template_gate() -> TemplateGate:
+    """Production-shaped rules (IA first); fixed RNG for stable pool picks."""
+    deteccion_ia = TemplateRule(
+        id="deteccion_ia",
+        trigger_patterns=[
+            "eres una ia",
+            "eres un bot",
+            "eres ia",
+            "hablo con una ia",
+            "hablo con un bot",
+            "eres real",
+        ],
+        max_words=None,
+        response_pool=[IA_TEMPLATE],
+        reason="plantilla_deteccion_ia",
+    )
+    saludo = TemplateRule(
+        id="saludo_constante",
+        trigger_patterns=[
+            "hola",
+            "holaa",
+            "holis",
+            "buenas",
+            "buenos días",
+            "buenas tardes",
+            "buenas noches",
+            "hey",
+            "qué tal",
+        ],
+        max_words=4,
+        response_pool=list(SALUDO_POOL),
+        reason="plantilla_saludo",
+    )
+    return TemplateGate(rules=[deteccion_ia, saludo], rng=random.Random(0))
+
 
 
 def _profile(**overrides: float) -> EvaluationProfile:
@@ -82,6 +124,7 @@ def make_director(
     max_prompt_chars: int | None = None,
     recent_intents: InMemoryRecentIntents | None = None,
     repetition_guard: RepetitionGuard | None = None,
+    template_gate: TemplateGate | None = None,
     naturalness_min: float | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
@@ -110,9 +153,11 @@ def make_director(
         analyst_history_limit=analyst_history_limit,
         recent_intents=recent_intents,
         repetition_guard=repetition_guard,
+        template_gate=template_gate,
         **director_kwargs,
     )
     return director, trace, history
+
 
 
 @pytest.mark.asyncio
@@ -1271,4 +1316,128 @@ async def test_naturalness_custom_min_via_ctor() -> None:
     ]
     assert len(llm.calls) == 5
     assert decision.draft_text == "better"
+
+
+# ── H6 TemplateGate pre-pipeline early-exit ────────────────────────────
+
+
+def _assert_zero_evaluation(evaluation: EvaluationProfile) -> None:
+    assert evaluation.naturalness == 0.0
+    assert evaluation.precision == 0.0
+    assert evaluation.doctrine == 0.0
+    assert evaluation.consistency == 0.0
+    assert evaluation.safety == 0.0
+    assert evaluation.coverage == 0.0
+    assert evaluation.empathy == 0.0
+
+
+@pytest.mark.asyncio
+async def test_h6_short_hola_template_approve_skips_pipeline() -> None:
+    """H6.6.1: short greeting → plantilla_saludo approve; 0 LLM; decision only."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["should-not-run"],
+    )
+    director, trace, _ = make_director(llm, template_gate=_h6_template_gate())
+    director._analyst.analyze = AsyncMock(side_effect=director._analyst.analyze)  # type: ignore[method-assign]
+    director._planner.plan = MagicMock(side_effect=director._planner.plan)  # type: ignore[method-assign]
+    director._generator.generate = AsyncMock(side_effect=director._generator.generate)  # type: ignore[method-assign]
+    director._evaluator.evaluate = AsyncMock(side_effect=director._evaluator.evaluate)  # type: ignore[method-assign]
+    director._decider.decide = MagicMock(side_effect=director._decider.decide)  # type: ignore[method-assign]
+
+    turn = _turn(text="Hola")
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "approve"
+    assert decision.reason == "plantilla_saludo"
+    assert decision.draft_text in SALUDO_POOL
+    assert decision.draft_text
+    _assert_zero_evaluation(decision.evaluation)
+    assert decision.mode_restriction_applied is None
+
+    assert trace.get(turn.turn_id, "decision") is not None
+    assert trace.get(turn.turn_id, "comprehension") is None
+    assert trace.get(turn.turn_id, "plan") is None
+    assert trace.get(turn.turn_id, "generated_text") is None
+    assert trace.get(turn.turn_id, "evaluation") is None
+
+    director._analyst.analyze.assert_not_called()  # type: ignore[attr-defined]
+    director._planner.plan.assert_not_called()  # type: ignore[attr-defined]
+    director._generator.generate.assert_not_called()  # type: ignore[attr-defined]
+    director._evaluator.evaluate.assert_not_called()  # type: ignore[attr-defined]
+    director._decider.decide.assert_not_called()  # type: ignore[attr-defined]
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_h6_long_hola_does_not_template_runs_pipeline() -> None:
+    """H6.6.2: long hola message skips template; full pipeline still runs."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(risk="medio"), _profile(safety=0.5)],
+        text_responses=["Long path draft"],
+    )
+    director, trace, _ = make_director(llm, template_gate=_h6_template_gate())
+    long_text = "Hola, tengo una pregunta sobre el contenido"
+    turn = _turn(text=long_text)
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "approve"
+    assert decision.reason != "plantilla_saludo"
+    assert decision.draft_text == "Long path draft"
+    assert trace.get(turn.turn_id, "comprehension") is not None
+    assert trace.get(turn.turn_id, "plan") is not None
+    methods = [name for name, _ in llm.calls]
+    assert "generate_structured" in methods
+    assert "generate" in methods
+
+
+@pytest.mark.asyncio
+async def test_h6_ia_probe_template_exact_draft() -> None:
+    """H6.6.3: IA probe → exact template draft + plantilla_deteccion_ia."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["should-not-run"],
+    )
+    director, trace, _ = make_director(llm, template_gate=_h6_template_gate())
+    turn = _turn(text="eres una ia?")
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "approve"
+    assert decision.reason == "plantilla_deteccion_ia"
+    assert decision.draft_text == IA_TEMPLATE
+    _assert_zero_evaluation(decision.evaluation)
+    assert llm.calls == []
+    assert trace.get(turn.turn_id, "decision") is not None
+    assert trace.get(turn.turn_id, "comprehension") is None
+
+
+@pytest.mark.asyncio
+async def test_h6_template_decision_never_send_or_escalate() -> None:
+    """H6.6.4: template Decision is supervised approve only (no send/escalate)."""
+    llm = FakeLLM(structured_responses=[], text_responses=[])
+    director, _, _ = make_director(llm, template_gate=_h6_template_gate())
+
+    for text in ("Hola", "eres una ia?", "hola eres una ia"):
+        decision = await director.handle_turn(_turn(text=text))
+        assert decision.action == "approve"
+        assert decision.action not in ("send", "escalate")
+        assert decision.draft_text
+        assert decision.evaluation is not None
+        _assert_zero_evaluation(decision.evaluation)
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_h6_default_gate_none_does_not_false_fire_hola_diana() -> None:
+    """Default template_gate=None keeps fixture text 'hola Diana' on full pipeline."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(risk="medio"), _profile(safety=0.5)],
+        text_responses=["Fixture path draft"],
+    )
+    director, _, _ = make_director(llm)  # no template_gate
+    decision = await director.handle_turn(_turn(text="hola Diana"))
+    assert decision.draft_text == "Fixture path draft"
+    assert decision.reason != "plantilla_saludo"
+    assert any(name == "generate" for name, _ in llm.calls)
+
 

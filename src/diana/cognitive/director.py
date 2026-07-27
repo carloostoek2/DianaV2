@@ -32,7 +32,9 @@ from diana.cognitive.models import (
     TurnStatus,
 )
 from diana.cognitive.repetition_guard import RepetitionGuard
+from diana.cognitive.template_gate import TemplateGate, TemplateRule
 from diana.cognitive.planner import Planner
+
 from diana.cognitive.ports import (
     KnowledgeAugmenter,
     MessageHistoryPort,
@@ -88,6 +90,7 @@ class CognitiveDirector:
         style_rules: list[str] | None = None,
         recent_intents: RecentIntentsPort | None = None,
         repetition_guard: RepetitionGuard | None = None,
+        template_gate: TemplateGate | None = None,
         # Supervised naturalness redraft min; not autonomous send gate.
         naturalness_min: float | None = None,
         knowledge_augmenter: KnowledgeAugmenter | None = None,
@@ -107,6 +110,7 @@ class CognitiveDirector:
         self._status = status_sink or NoOpTurnStatusSink()
         self._recent_intents = recent_intents
         self._repetition_guard = repetition_guard
+        self._template_gate = template_gate
         self._naturalness_min = (
             float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"])
             if naturalness_min is None
@@ -123,7 +127,8 @@ class CognitiveDirector:
 
         Returns:
             ``Decision`` with ``action`` in {approve, escalate} and non-empty
-            ``draft_text`` from a successful Generator return.
+            ``draft_text`` from a successful Generator return (or a TemplateGate
+            draft on H6 short-circuit).
 
         On unexpected errors the status sink receives ``TurnStatus.FAILED`` and
         the exception is re-raised. Partial artifacts already stored remain in
@@ -135,10 +140,29 @@ class CognitiveDirector:
         turn = turn_context
         turn_id = turn.turn_id
         try:
+            if self._template_gate is not None:
+                rule = self._template_gate.match(turn.text)
+                if rule is not None:
+                    return await self._handle_template(turn, rule)
             return await self._run_pipeline(turn)
         except Exception:
             await self._status.transition(turn_id, TurnStatus.FAILED)
             raise
+
+    async def _handle_template(self, turn: IncomingTurn, rule: TemplateRule) -> Decision:
+        """H6 pre-pipeline: synthetic approve Decision from fixed template (0 LLM)."""
+        assert self._template_gate is not None
+        text = self._template_gate.render(rule)
+        decision = Decision(
+            action="approve",
+            reason=rule.reason,
+            evaluation=_early_exit_evaluation(),
+            draft_text=text,
+            mode_restriction_applied=None,
+        )
+        await self._store(turn.turn_id, "decision", decision)
+        return decision
+
 
     async def _run_pipeline(self, turn: IncomingTurn) -> Decision:
         turn_id = turn.turn_id
