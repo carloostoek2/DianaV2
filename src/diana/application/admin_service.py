@@ -552,27 +552,40 @@ class AdminService:
                     turn_id, result.to_trace_dict()
                 )
                 # H7.2: append delivered outbound text for HistoryRetriever (owner→dueña).
+                # Skip durable history when sandbox is active (should_persist false).
                 if self._history is not None:
-                    try:
-                        mid = (
-                            result.message_ids[0]
-                            if result.message_ids
-                            else None
-                        )
-                        await self._history.append(
-                            chat_id,
-                            role="owner",
-                            text=text,
-                            telegram_message_id=mid,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "owner_history_append_failed",
+                    if (
+                        self._sandbox is not None
+                        and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
+                    ):
+                        logger.info(
+                            "owner_history_skipped_sandbox",
                             extra={
                                 "turn_id": str(turn_id),
                                 "chat_id": chat_id,
                             },
                         )
+                    else:
+                        try:
+                            mid = (
+                                result.message_ids[0]
+                                if result.message_ids
+                                else None
+                            )
+                            await self._history.append(
+                                chat_id,
+                                role="owner",
+                                text=text,
+                                telegram_message_id=mid,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "owner_history_append_failed",
+                                extra={
+                                    "turn_id": str(turn_id),
+                                    "chat_id": chat_id,
+                                },
+                            )
                 logger.info(
                     "admin_delivered",
                     extra={

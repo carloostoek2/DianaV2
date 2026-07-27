@@ -457,6 +457,52 @@ async def test_autonomous_no_owner_history_on_frozen_or_fail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_autonomous_sandbox_skips_owner_history() -> None:
+    """Sandbox active: autonomous DELIVERED must not append durable owner history."""
+    from diana.application.sandbox import SandboxService
+
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="sandbox auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+    # Minimal catalog matching other sandbox orch tests.
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {
+            "label": "x",
+            "description": "",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    chat_id = 100
+    sandbox.activate(chat_id, "nuevo")
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=chat_id, vip_id=uuid4(), text="hola diana")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    rows = await g["history"].get_recent(chat_id)
+    # VIP inbound may still be present (pre-H7 residual); owner outbound must not.
+    assert not any(r.get("role") == "owner" for r in rows)
+
+
+@pytest.mark.asyncio
 async def test_send_ams_disabled_falls_back_to_approve() -> None:
     decision = Decision(
         action="send",

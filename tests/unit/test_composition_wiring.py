@@ -357,6 +357,7 @@ def test_composition_admin_receives_staging_when_enabled(_comp_src: str) -> None
     assert "feature_staging_enabled = settings.feature_staging_enabled" in _comp_src
     assert "if feature_staging_enabled:" in _comp_src
     assert "StagingService(" in _comp_src
+    assert "staging = None" in _comp_src  # flag off path
     assert "staging=staging" in _comp_src
     assert "history=history" in _comp_src
     # Admin construction region receives both deps.

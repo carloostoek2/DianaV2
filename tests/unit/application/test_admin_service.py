@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from diana.application.memory import (
     InMemoryTraceReaderWriter,
     InMemoryTurnStore,
 )
+from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import (
@@ -31,6 +33,67 @@ from diana.cognitive.models import Decision, EvaluationProfile, IncomingTurn
 
 OWNER_ID = 999001
 OTHER_USER = 111
+
+# Minimal six-profile catalog for SandboxService unit tests.
+_MINIMAL_SIX = {
+    "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+    "cercano": {
+        "label": "VIP cercano",
+        "description": "",
+        "facts": {"name": "Mateo", "personality": "confiado"},
+        "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+    },
+    "distante": {
+        "label": "VIP reservado",
+        "description": "",
+        "facts": {"personality": "formal"},
+        "notes": [],
+    },
+    "intenso": {
+        "label": "VIP emocional",
+        "description": "",
+        "facts": {"relationship": "recién separado"},
+        "notes": [],
+    },
+    "vip_largo": {
+        "label": "VIP largo",
+        "description": "",
+        "facts": {"name": "Sofía"},
+        "notes": [],
+    },
+    "inyeccion_previa": {
+        "label": "Fixture adversarial",
+        "description": "",
+        "facts": {"name": "TestUser"},
+        "notes": [],
+    },
+}
+
+
+def _real_staging(
+    *,
+    insert_return: object | None = None,
+    insert_side_effect: BaseException | None = None,
+    sandbox: object | None = None,
+) -> tuple[StagingService, AsyncMock]:
+    """Real StagingService with repo mocked at the infrastructure border."""
+    staging_repo = AsyncMock()
+    if insert_side_effect is not None:
+        staging_repo.insert = AsyncMock(side_effect=insert_side_effect)
+    else:
+        row = (
+            insert_return
+            if insert_return is not None
+            else SimpleNamespace(id=uuid4())
+        )
+        staging_repo.insert = AsyncMock(return_value=row)
+    service = StagingService(
+        staging_repo=staging_repo,
+        examples_repo=AsyncMock(),
+        policies_repo=AsyncMock(),
+        sandbox=sandbox,
+    )
+    return service, staging_repo
 
 
 def _eval() -> EvaluationProfile:
@@ -194,9 +257,14 @@ async def test_handle_correct_delivers_corrected_not_draft(admin_graph: dict) ->
 
 @pytest.mark.asyncio
 async def test_handle_correct_saves_staging_candidate() -> None:
-    """H7.1: handle_correct persists pending staging before deliver (timing A)."""
-    staging = AsyncMock()
-    staging.save_correction = AsyncMock(return_value=object())
+    """H7.1: handle_correct persists pending staging before deliver (timing A).
+
+    Uses real StagingService; only StagingCandidateRepo is mocked (infra border).
+    Asserts chat_id= reaches save_correction (sandbox isolation wiring).
+    """
+    staging, staging_repo = _real_staging()
+    save_spy = AsyncMock(wraps=staging.save_correction)
+    staging.save_correction = save_spy  # type: ignore[method-assign]
     history = InMemoryMessageHistoryWriter()
     await history.append(
         42, role="vip", text="vip trigger text", telegram_message_id=7
@@ -213,14 +281,46 @@ async def test_handle_correct_saves_staging_candidate() -> None:
         turn.id, "corrected final", actor_id=OWNER_ID
     )
     assert result is not None and result.success
-    staging.save_correction.assert_awaited_once()
-    call = staging.save_correction.await_args
-    assert call.args[0] == turn.id
-    assert call.kwargs["original_draft"] == "original draft"
-    assert call.kwargs["corrected_text"] == "corrected final"
-    assert call.kwargs["context"]["chat_id"] == 42
-    assert call.kwargs["context"]["turn_text"] == "vip trigger text"
-    assert call.kwargs["chat_id"] == 42
+    # Real StagingService.save_correction → repo.insert(type, payload, turn_id)
+    staging_repo.insert.assert_awaited_once()
+    insert_args = staging_repo.insert.await_args
+    assert insert_args.args[0] == "example"
+    payload = insert_args.args[1]
+    assert payload["original_draft"] == "original draft"
+    assert payload["corrected_text"] == "corrected final"
+    assert payload["context"]["chat_id"] == 42
+    assert payload["context"]["turn_text"] == "vip trigger text"
+    assert insert_args.args[2] == turn.id
+    # PLAN DoD: keyword-only chat_id= for sandbox isolation.
+    save_spy.assert_awaited_once()
+    assert save_spy.await_args.kwargs["chat_id"] == turn.chat_id
+    # Delivery still happened after staging (timing A).
+    assert g["actuator"].send_count() == 1
+    assert g["actuator"].calls[-1]["text"] == "corrected final"
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_sandbox_skips_staging_still_delivers() -> None:
+    """H7: active sandbox → save_correction skips insert; VIP deliver still succeeds."""
+    from diana.application.sandbox import SandboxService
+
+    sandbox = SandboxService(profiles=_MINIMAL_SIX)
+    sandbox.activate(42, "nuevo")
+    staging, staging_repo = _real_staging(sandbox=sandbox)
+    history = InMemoryMessageHistoryWriter()
+    g = _admin_graph(staging=staging, history=history)
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_correct(
+        turn.id, "sandbox corrected", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success
+    assert g["actuator"].send_count() == 1
+    staging_repo.insert.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -243,8 +343,9 @@ async def test_handle_correct_skips_staging_when_none(admin_graph: dict) -> None
 @pytest.mark.asyncio
 async def test_handle_correct_staging_failure_still_delivers() -> None:
     """H7: staging I/O failure must not block VIP delivery."""
-    staging = AsyncMock()
-    staging.save_correction = AsyncMock(side_effect=RuntimeError("db down"))
+    staging, staging_repo = _real_staging(
+        insert_side_effect=RuntimeError("db down")
+    )
     g = _admin_graph(staging=staging)
     turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
     await g["admin"].send_draft_for_approval(
@@ -257,7 +358,7 @@ async def test_handle_correct_staging_failure_still_delivers() -> None:
     assert result is not None and result.success
     assert g["actuator"].send_count() == 1
     assert g["actuator"].calls[-1]["text"] == "still deliver"
-    staging.save_correction.assert_awaited_once()
+    staging_repo.insert.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -299,6 +400,27 @@ async def test_handle_correct_appends_owner_history_with_corrected_text() -> Non
 
 
 @pytest.mark.asyncio
+async def test_approve_sandbox_skips_owner_history() -> None:
+    """Sandbox active: successful approve must not pollute durable owner history."""
+    from diana.application.sandbox import SandboxService
+
+    history = InMemoryMessageHistoryWriter()
+    sandbox = SandboxService(profiles=_MINIMAL_SIX)
+    sandbox.activate(42, "cercano")
+    g = _admin_graph(history=history)
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="sandbox outbound"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success
+    rows = await history.get_recent(42)
+    assert not any(r.get("role") == "owner" for r in rows)
+
+
+@pytest.mark.asyncio
 async def test_resolve_no_history_on_delivery_failure() -> None:
     """H7.2: frozen / failed resolve must not write owner history."""
     from datetime import UTC, datetime, timedelta
@@ -325,10 +447,27 @@ async def test_resolve_no_history_on_delivery_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_no_history_on_claim_lost_supersede() -> None:
+    """H7.2: claim-lost / superseded approve must not write owner history."""
+    history = InMemoryMessageHistoryWriter()
+    g = _admin_graph(history=history)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="old draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    await g["coordinator"].begin_turn(chat_id=42)  # supersede → claim lost
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is None
+    assert g["actuator"].send_count() == 0
+    rows = await history.get_recent(42)
+    assert not any(r.get("role") == "owner" for r in rows)
+
+
+@pytest.mark.asyncio
 async def test_handle_correct_turn_text_empty_without_history_match() -> None:
     """H7: missing history match → context turn_text is empty string."""
-    staging = AsyncMock()
-    staging.save_correction = AsyncMock(return_value=object())
+    staging, staging_repo = _real_staging()
     # No history injected → _resolve_trigger_text returns ""
     g = _admin_graph(staging=staging, history=None)
     turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=99)
@@ -342,9 +481,9 @@ async def test_handle_correct_turn_text_empty_without_history_match() -> None:
         turn.id, "corrected", actor_id=OWNER_ID
     )
     assert result is not None and result.success
-    call = staging.save_correction.await_args
-    assert call.kwargs["context"]["turn_text"] == ""
-
+    staging_repo.insert.assert_awaited_once()
+    payload = staging_repo.insert.await_args.args[1]
+    assert payload["context"]["turn_text"] == ""
 
 @pytest.mark.asyncio
 async def test_handle_approve_after_supersede_no_deliver(admin_graph: dict) -> None:
