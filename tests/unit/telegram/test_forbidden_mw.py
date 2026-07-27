@@ -57,6 +57,48 @@ def test_match_forbidden_keywords() -> None:
     assert match_forbidden_keywords("hola", ["encuentro"]) == []
 
 
+def test_sanitize_forbidden_strips_template_gate_annex_keeps_real_words() -> None:
+    from diana.telegram.middlewares.forbidden import (
+        TEMPLATE_GATE_OWNED_FORBIDDEN_PHRASES,
+        sanitize_forbidden_keywords,
+    )
+
+    seed = ["pago", "transferencia", "eres un bot", "reclamación", "eres una ia"]
+    cleaned = sanitize_forbidden_keywords(seed)
+    assert cleaned == ["pago", "transferencia", "reclamación"]
+    for phrase in TEMPLATE_GATE_OWNED_FORBIDDEN_PHRASES:
+        assert phrase not in {c.lower() for c in cleaned}
+
+
+@pytest.mark.asyncio
+async def test_legacy_eres_un_bot_in_forbidden_list_passes_to_handler() -> None:
+    """H6: annex phrase in seed list is stripped; VIP IA probe reaches handler."""
+    g = _graph()
+    await g["vips"].add(100, display_name="Vip")
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["pago", "transferencia", "eres un bot", "reclamación"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=33,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="V"),
+        text="eres un bot?",
+        business_connection_id="bc-1",
+    )
+    handler = AsyncMock(return_value="orchestrator")
+    result = await mw(handler, event, {"business_connection_id": "bc-1"})
+    assert result == "orchestrator"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+
+
 @pytest.mark.asyncio
 async def test_forbidden_match_escalates_without_handler() -> None:
     g = _graph()

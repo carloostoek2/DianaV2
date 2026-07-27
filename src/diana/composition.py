@@ -589,15 +589,22 @@ def build_app(
 
 
 async def load_forbidden_keywords(app: AppContainer) -> list[str]:
-    """Load keywords from system_config into the container (boot-time)."""
+    """Load keywords from system_config into the container (boot-time).
+
+    Strips H6 TemplateGate-owned annex phrases (e.g. legacy seed ``eres un bot``)
+    so they never silent-escalate as palabra_prohibida.
+    """
+    from diana.telegram.middlewares.forbidden import sanitize_forbidden_keywords
+
     store = SqlSystemConfigStore(app.session_factory)
-    kws = await store.get_forbidden_keywords()
+    kws = sanitize_forbidden_keywords(await store.get_forbidden_keywords())
     app.forbidden_keywords.clear()
     app.forbidden_keywords.extend(kws)
     # Explicit setter — no Dispatcher graph walk.
     app.wiring.forbidden_middleware.set_keywords(kws)
     logger.info("forbidden_keywords_loaded", extra={"count": len(kws)})
     return kws
+
 
 
 async def load_runtime_thresholds(app: AppContainer) -> None:

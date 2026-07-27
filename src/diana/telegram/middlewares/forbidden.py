@@ -35,6 +35,30 @@ from diana.application.turn_coordinator import TurnCoordinator
 
 logger = logging.getLogger("diana.telegram")
 
+# H6 annex deteccion_ia triggers — owned by CognitiveDirector TemplateGate.
+# Must never silent-escalate as palabra_prohibida (legacy seed had "eres un bot").
+TEMPLATE_GATE_OWNED_FORBIDDEN_PHRASES: frozenset[str] = frozenset(
+    {
+        "eres una ia",
+        "eres un bot",
+        "eres ia",
+        "hablo con una ia",
+        "hablo con un bot",
+        "eres real",
+    }
+)
+
+
+def sanitize_forbidden_keywords(keywords: list[str]) -> list[str]:
+    """Drop TemplateGate-owned annex phrases; keep real forbidden words."""
+    cleaned: list[str] = []
+    for kw in keywords:
+        key = str(kw).strip().lower()
+        if not key or key in TEMPLATE_GATE_OWNED_FORBIDDEN_PHRASES:
+            continue
+        cleaned.append(str(kw))
+    return cleaned
+
 
 def match_forbidden_keywords(text: str, keywords: list[str]) -> list[str]:
     """Thin wrapper over application ``match_keywords`` (single algorithm)."""
@@ -62,7 +86,7 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         vips: VipStore | None = None,
         behavior: BehaviorDeliverer | None = None,
     ) -> None:
-        self._keywords = list(keywords)
+        self._keywords = sanitize_forbidden_keywords(list(keywords))
         self._coordinator = coordinator
         self._escalations = escalations
         self._notifier = notifier
@@ -71,7 +95,8 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
 
     def set_keywords(self, keywords: list[str]) -> None:
         """Replace keyword list in place (boot load from system_config)."""
-        self._keywords = list(keywords)
+        self._keywords = sanitize_forbidden_keywords(list(keywords))
+
 
     async def __call__(
         self,
@@ -178,4 +203,10 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         return None
 
 
-__all__ = ["ForbiddenKeywordsMiddleware", "match_forbidden_keywords"]
+__all__ = [
+    "ForbiddenKeywordsMiddleware",
+    "TEMPLATE_GATE_OWNED_FORBIDDEN_PHRASES",
+    "match_forbidden_keywords",
+    "sanitize_forbidden_keywords",
+]
+
