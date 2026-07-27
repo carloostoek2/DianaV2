@@ -715,8 +715,8 @@ async def test_sandbox_draft_reason_has_marker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_approve_uses_fake_delivery() -> None:
-
+async def test_sandbox_approve_uses_configured_delivery_mode() -> None:
+    """Sandbox must not force fake_delivery; mode equals AdminService delivery_mode."""
     from diana.application.sandbox import SandboxService
     # inline six-profile catalog
     MINIMAL_SIX = {
@@ -778,4 +778,5 @@ async def test_sandbox_approve_uses_fake_delivery() -> None:
     assert result is not None
     assert result.success is True
     assert len(captured) == 1
-    assert captured[0].mode == "fake_delivery"
+    assert captured[0].mode == "supervised"
+    assert captured[0].mode != "fake_delivery"

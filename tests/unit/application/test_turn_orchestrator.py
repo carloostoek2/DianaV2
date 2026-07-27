@@ -1730,8 +1730,8 @@ async def test_sandbox_inactive_still_runs_learning() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sandbox_autonomous_uses_fake_delivery_mode() -> None:
-
+async def test_sandbox_autonomous_uses_configured_delivery_mode() -> None:
+    """Sandbox must not force fake_delivery; mode equals configured delivery_mode."""
     from diana.application.sandbox import SandboxService
     # inline six-profile catalog
     MINIMAL_SIX = {
@@ -1796,6 +1796,83 @@ async def test_sandbox_autonomous_uses_fake_delivery_mode() -> None:
         feature_autonomous_mode=True,
         global_mode="autonomous",
         delivery_mode="supervised",
+        vip_store=vip_store,
+        behavior_override=CaptureBehavior(),
+    )
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    await g["orch"].handle_vip_message(_vip(chat_id=100, vip_id=rec.id))
+    assert len(captured) == 1
+    assert captured[0].mode == "supervised"
+    assert captured[0].mode != "fake_delivery"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_respects_global_fake_delivery_mode() -> None:
+    """Sandbox active + configured fake_delivery still yields fake (ops mode preserved)."""
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "cercano")
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(9001, display_name="V")
+    captured: list = []
+
+    class CaptureBehavior:
+        async def deliver(self, texts, ctx, turn_id, **kwargs):
+            captured.append(ctx)
+            from diana.application.ports import DeliveryResult
+
+            return DeliveryResult(success=True, cancelled=False)
+
+        async def cancel_pending(self, chat_id, reason):
+            return 0
+
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="fake_delivery",
         vip_store=vip_store,
         behavior_override=CaptureBehavior(),
     )
