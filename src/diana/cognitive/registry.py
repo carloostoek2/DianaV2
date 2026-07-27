@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
-from diana.cognitive.ports import MessageHistoryPort, Retriever
+from diana.cognitive.ports import ClockPort, MessageHistoryPort, Retriever
 from diana.cognitive.retrievers.context import ContextRetriever
 from diana.cognitive.retrievers.examples import ExamplesRetriever
 from diana.cognitive.retrievers.history import HistoryRetriever
@@ -18,7 +19,8 @@ from diana.cognitive.retrievers.voice_patterns import VoicePatternsRetriever
 DEFAULT_HISTORY_LIMIT = 20
 
 # Half-registered seats: resolve OK, fetch → None, optional fuente attribute.
-UNIMPLEMENTED_CAPABILITIES: frozenset[str] = frozenset({"knowledge.schedule"})
+# Empty after H9 (schedule is real). Kept for future half-seats.
+UNIMPLEMENTED_CAPABILITIES: frozenset[str] = frozenset()
 
 # Planner-requestable names (Anexo C + H + system prompt struct). Must resolve after build.
 PLANNER_CAPABILITY_UNIVERSE: tuple[str, ...] = (
@@ -32,6 +34,16 @@ PLANNER_CAPABILITY_UNIVERSE: tuple[str, ...] = (
     "knowledge.examples",
     "knowledge.schedule",
 )
+
+_DEFAULT_SCHEDULE_TZ = "America/Mexico_City"
+_DEFAULT_SCHEDULE_RESPONSE = "Pues aquí entre cosas jsjsjs y tú?"
+
+
+class _UtcNowClock:
+    """Minimal ClockPort when composition does not inject a clock."""
+
+    def now(self) -> datetime:
+        return datetime.now(UTC)
 
 
 class CapabilityRegistry:
@@ -65,6 +77,8 @@ def build_default_registry(
     persona_facts: list | None = None,
     voice_patterns: list | None = None,
     static_policies: list | None = None,
+    schedule: dict | None = None,
+    clock: ClockPort | None = None,
 ) -> CapabilityRegistry:
     """Register capabilities and fail-fast for the planner universe.
 
@@ -72,10 +86,16 @@ def build_default_registry(
     catalogs (empty → always None); memory/policy/examples REAL when their
     ``*_repo`` and ``embedding_service`` are provided, STUB otherwise (policy
     may still match static_policies); profile REAL when ``profile_repo`` is
-    provided (PK VIP lookup), STUB otherwise; schedule half-registered
-    (``fuente=no_implementado``, fetch always None). Profile is always
+    provided (PK VIP lookup), STUB otherwise; schedule REAL from fixed weekly
+    agenda (empty bloques still yields respuesta_libre). Profile is always
     registered (stub or real).
     """
+    resolved_clock: ClockPort = clock if clock is not None else _UtcNowClock()
+    cfg = schedule or {}
+    bloques = list(cfg.get("bloques") or [])
+    defaults = list(cfg.get("default_responses") or [_DEFAULT_SCHEDULE_RESPONSE])
+    tz_name = str(cfg.get("timezone") or _DEFAULT_SCHEDULE_TZ)
+
     registry = CapabilityRegistry()
     registry.register(
         "knowledge.history",
@@ -83,7 +103,7 @@ def build_default_registry(
     )
     registry.register(
         "knowledge.context",
-        ContextRetriever(history_port, limit=history_limit),
+        ContextRetriever(history_port, limit=history_limit, clock=resolved_clock.now),
     )
     registry.register(
         "knowledge.profile",
@@ -119,7 +139,10 @@ def build_default_registry(
             repo=examples_repo,
         ),
     )
-    registry.register("knowledge.schedule", ScheduleRetriever())
+    registry.register(
+        "knowledge.schedule",
+        ScheduleRetriever(bloques, defaults, tz_name, resolved_clock),
+    )
     # Boot fail-fast: planner-requested names must resolve (H.1).
     for name in PLANNER_CAPABILITY_UNIVERSE:
         registry.resolve(name)

@@ -81,14 +81,52 @@ def test_capabilities_lists_registered_names() -> None:
 
 
 @pytest.mark.asyncio
-async def test_schedule_is_unimplemented_seat() -> None:
-    """H.3: schedule half-registered — resolve OK, fuente=no_implementado, fetch None."""
-    assert "knowledge.schedule" in UNIMPLEMENTED_CAPABILITIES
+async def test_schedule_is_real_seat() -> None:
+    """H9: schedule real seat — not unimplemented; fuente agenda_semanal_fija; fetch dict."""
+    from datetime import UTC, datetime
+
+    assert "knowledge.schedule" not in UNIMPLEMENTED_CAPABILITIES
+    assert UNIMPLEMENTED_CAPABILITIES == frozenset()
+
+    class _FixedClock:
+        def now(self) -> datetime:
+            # jueves 17:00 CDMX
+            return datetime(2026, 7, 23, 23, 0, tzinfo=UTC)
+
+    schedule = {
+        "timezone": "America/Mexico_City",
+        "default_responses": ["Pues aquí entre cosas jsjsjs y tú?"],
+        "bloques": [
+            {
+                "dias": ["jueves"],
+                "inicio": "16:00",
+                "fin": "21:00",
+                "actividad": "en las prácticas profesionales, en una casa hogar",
+            }
+        ],
+    }
+    registry = build_default_registry(
+        InMemoryMessageHistory(),
+        schedule=schedule,
+        clock=_FixedClock(),
+    )
+    retriever = registry.resolve("knowledge.schedule")
+    assert getattr(retriever, "fuente") == "agenda_semanal_fija"
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result is not None
+    assert result["tipo"] == "actividad"
+    assert "prácticas" in result["actividad"]
+
+
+@pytest.mark.asyncio
+async def test_schedule_default_registry_never_unimplemented() -> None:
+    """Without schedule kwargs, still real seat (empty bloques → respuesta_libre)."""
     registry = build_default_registry(InMemoryMessageHistory())
     retriever = registry.resolve("knowledge.schedule")
-    assert getattr(retriever, "fuente") == "no_implementado"
+    assert getattr(retriever, "fuente") == "agenda_semanal_fija"
     result = await retriever.fetch(_turn(), _comprehension())
-    assert result is None
+    assert isinstance(result, dict)
+    assert result["tipo"] == "respuesta_libre"
 
 
 def test_build_default_registry_resolves_planner_universe() -> None:
@@ -202,7 +240,13 @@ async def test_persona_voice_capabilities_resolve_and_empty_fetch() -> None:
 
 @pytest.mark.asyncio
 async def test_build_default_registry_accepts_catalog_kwargs() -> None:
-    """Catalog kwargs wire persona_facts / voice_patterns / static_policies."""
+    """Catalog kwargs wire persona_facts / voice_patterns / static_policies / schedule."""
+    from datetime import UTC, datetime
+
+    class _FixedClock:
+        def now(self) -> datetime:
+            return datetime(2026, 7, 23, 23, 0, tzinfo=UTC)
+
     facts = [{"id": "f1", "tema": ["familia"], "hecho": "Hermana Laura"}]
     patterns = [
         {
@@ -219,14 +263,31 @@ async def test_build_default_registry_accepts_catalog_kwargs() -> None:
             "regla": "No prometo fechas",
         }
     ]
+    schedule = {
+        "timezone": "America/Mexico_City",
+        "default_responses": ["gap line"],
+        "bloques": [
+            {
+                "dias": ["jueves"],
+                "inicio": "16:00",
+                "fin": "21:00",
+                "actividad": "en las prácticas profesionales, en una casa hogar",
+            }
+        ],
+    }
     registry = build_default_registry(
         InMemoryMessageHistory(),
         persona_facts=facts,
         voice_patterns=patterns,
         static_policies=policies,
+        schedule=schedule,
+        clock=_FixedClock(),
     )
     turn = _turn()
-    c = _comprehension()
+    sched = await registry.resolve("knowledge.schedule").fetch(turn, _comprehension())
+    assert sched is not None
+    assert sched["tipo"] == "actividad"
+
     # override comprehension for match
     c_facts = Comprehension(
         intent="chat",

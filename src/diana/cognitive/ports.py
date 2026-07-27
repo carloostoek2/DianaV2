@@ -7,6 +7,7 @@ composition root (or in tests).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -76,6 +77,17 @@ class LLMProvider(Protocol):
 
 
 @runtime_checkable
+class ClockPort(Protocol):
+    """Timezone-aware wall clock for cognitive retrievers (H9).
+
+    Production injects composition ``SystemClock`` (duck-typed). Tests use fixed
+    aware datetimes. Defined here so cognitive never imports ``diana.application``.
+    """
+
+    def now(self) -> datetime: ...
+
+
+@runtime_checkable
 class Retriever(Protocol):
     """Capability-scoped knowledge fetch (Anexo H.2).
 
@@ -89,8 +101,8 @@ class Retriever(Protocol):
 
     - ``resultado`` ↔ bare return value of ``fetch``
     - ``capacidad`` ↔ registry name used at ``resolve``
-    - ``fuente`` ↔ optional class attribute on half-registered / unimplemented
-      seats (e.g. ScheduleRetriever.fuente = \"no_implementado\")
+    - ``fuente`` ↔ optional class attribute on retrievers that expose provenance
+      (e.g. ScheduleRetriever.fuente = \"agenda_semanal_fija\")
 
     ``IncomingTurn.chat_id`` supplies the chat scope for history/context ports.
     """
@@ -259,6 +271,7 @@ class InMemoryTurnStatusSink:
 __all__ = [
     "TRACE_KEYS",
     "TRACE_KEY_TO_COLUMN",
+    "ClockPort",
     "InMemoryMessageHistory",
     "InMemoryRecentIntents",
     "InMemoryTraceStore",

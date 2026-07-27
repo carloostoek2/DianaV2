@@ -15,7 +15,6 @@ from diana.cognitive.retrievers.history import HistoryRetriever
 from diana.cognitive.retrievers.memory import MemoryRetriever
 from diana.cognitive.retrievers.policy import PolicyRetriever
 from diana.cognitive.retrievers.profile import ProfileRetriever
-from diana.cognitive.retrievers.schedule import ScheduleRetriever
 
 
 def _turn(chat_id: int = 100) -> IncomingTurn:
@@ -201,12 +200,12 @@ async def test_context_is_first_message_of_day_false_with_two_vip_today() -> Non
 async def test_stubs_return_none() -> None:
     turn = _turn()
     c = _comprehension()
+    # ScheduleRetriever is a real seat after H9 (see test_schedule_retriever.py).
     for cls in (
         ProfileRetriever,
         MemoryRetriever,
         PolicyRetriever,
         ExamplesRetriever,
-        ScheduleRetriever,
     ):
         result = await cls().fetch(turn, c)
         assert result is None
