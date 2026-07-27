@@ -1,7 +1,7 @@
 Filas candidatas (status revisado + rating usable): 4803
 
 Por rating (candidatas): {'corrected': 52, 'good': 128, 'diana_manual': 4623}
-Se saltarían por motivo: ninguna
+Se saltarían por motivo: {'contenido_pricing_excluido': 455}
 
 --- Muestra estratificada (15 filas, ~5 por rating) ---
 
@@ -94,7 +94,7 @@ Se saltarían por motivo: ninguna
   turn_text extraído:              'Quiero más información 🔥'
   draft_text:                      ''
   corrected_text:                  '*Precios en pesos mexicanos \n\n♥ Encanto Inicial 💫 - Explora mi lado más coqu3to con 1 video y 10 fotos, una dulce introd'
-  skip_reason:                     None
+  skip_reason:                     contenido_pricing_excluido
 
 [v1_id=68 rating=diana_manual]
   context (crudo, primeros 200c): '[{"role": "user", "content": "me interess el de intimidad explosiva"}, {"role": "assistant", "content": "Claro la que gustes"}]'
@@ -108,5 +108,5 @@ Se saltarían por motivo: ninguna
   turn_text extraído:              'me interess el de intimidad explosiva'
   draft_text:                      ''
   corrected_text:                  'Puedes hacer transferencia con estos datos:'
-  skip_reason:                     None
+  skip_reason:                     contenido_pricing_excluido
 
