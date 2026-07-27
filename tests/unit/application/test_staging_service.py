@@ -260,3 +260,127 @@ async def test_discard_candidate_not_found(
 
     with pytest.raises(ValueError, match="not found"):
         await service.discard(candidate_id=uuid4())
+
+
+# --- sandbox should_persist gate ---
+
+
+@pytest.mark.asyncio
+async def test_save_correction_skips_when_sandbox_active(
+    repos: dict[str, AsyncMock],
+) -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "nuevo")
+    service = StagingService(
+        staging_repo=repos["staging"],
+        examples_repo=repos["examples"],
+        policies_repo=repos["policies"],
+        sandbox=sandbox,
+    )
+    result = await service.save_correction(
+        turn_id=uuid4(),
+        original_draft="old",
+        corrected_text="new",
+        context={},
+        chat_id=42,
+    )
+    assert result is None
+    repos["staging"].insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_save_correction_inserts_when_sandbox_inactive(
+    repos: dict[str, AsyncMock],
+) -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    service = StagingService(
+        staging_repo=repos["staging"],
+        examples_repo=repos["examples"],
+        policies_repo=repos["policies"],
+        sandbox=sandbox,
+    )
+    fake_row = _fake_staging_row()
+    repos["staging"].insert.return_value = fake_row
+    result = await service.save_correction(
+        turn_id=uuid4(),
+        original_draft="old",
+        corrected_text="new",
+        context={},
+        chat_id=42,
+    )
+    assert result is fake_row
+    repos["staging"].insert.assert_awaited_once()

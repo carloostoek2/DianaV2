@@ -248,3 +248,162 @@ async def test_non_vip_flag_on_uses_caption_when_text_missing() -> None:
     assert result is None
     promo.match_trigger.assert_awaited_once_with("promos")
     promo.execute_promo.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Sandbox auth bypass (item4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sandbox_active_non_vip_passes() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    vips = InMemoryVipStore()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "cercano")
+    mw = AuthMiddleware(vips=vips, sandbox=sandbox)
+    handler = AsyncMock(return_value="orch")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, chat_id=42), data)
+    assert result == "orch"
+    handler.assert_awaited_once()
+    assert data.get("sandbox_active") is True
+    assert "vip_id" not in data
+
+
+@pytest.mark.asyncio
+async def test_sandbox_active_vip_still_sets_vip_id() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    vips = InMemoryVipStore()
+    rec = await vips.add(222, display_name="Vip")
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "nuevo")
+    mw = AuthMiddleware(vips=vips, sandbox=sandbox)
+    handler = AsyncMock(return_value="ok")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(222, chat_id=42), data)
+    assert result == "ok"
+    handler.assert_awaited_once()
+    assert data["vip_id"] == rec.id
+    assert data.get("sandbox_active") is True
+
+
+@pytest.mark.asyncio
+async def test_sandbox_inactive_non_vip_still_dropped() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    vips = InMemoryVipStore()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    # no activate
+    mw = AuthMiddleware(vips=vips, sandbox=sandbox)
+    handler = AsyncMock(return_value="orch")
+    result = await mw(handler, _biz_msg(111, chat_id=42), {"business_connection_id": "bc-1"})
+    assert result is None
+    handler.assert_not_awaited()

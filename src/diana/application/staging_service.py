@@ -29,10 +29,12 @@ class StagingService:
         staging_repo: StagingCandidateRepo,
         examples_repo: ExamplesRepo,
         policies_repo: PoliciesRepo,
+        sandbox: object | None = None,
     ) -> None:
         self._staging = staging_repo
         self._examples = examples_repo
         self._policies = policies_repo
+        self._sandbox = sandbox
 
     async def save_correction(
         self,
@@ -40,12 +42,25 @@ class StagingService:
         original_draft: str,
         corrected_text: str,
         context: dict,
-    ) -> object:
+        *,
+        chat_id: int | None = None,
+    ) -> object | None:
         """Save a correction as a pending staging candidate (type='example').
 
         The owner must later confirm promotion for this to become a live example.
         Returns the ORM StagingCandidate row (id, type, payload, status, turn_id).
+        When sandbox is active for ``chat_id``, returns None without insert.
         """
+        if (
+            chat_id is not None
+            and self._sandbox is not None
+            and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
+        ):
+            logger.info(
+                "correction_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return None
         payload = {
             "original_draft": original_draft,
             "corrected_text": corrected_text,

@@ -72,6 +72,7 @@ class AdminService:
         feature_advanced_behavior: bool = False,
         vip_store: VipStore | None = None,
         fp_marks: Any | None = None,
+        sandbox: Any | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -85,12 +86,30 @@ class AdminService:
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
         self._vip_store = vip_store
         self._fp_marks = fp_marks
+        self._sandbox = sandbox
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
             raise OwnerAuthError(
                 f"actor_id {actor_id!r} is not the configured owner"
             )
+
+    def _sandbox_prefix(self, chat_id: int) -> str:
+        if self._sandbox is None or not self._sandbox.is_active(chat_id):
+            return ""
+        key = self._sandbox.get_profile(chat_id) or "?"
+        return f"SANDBOX — profile: {key}"
+
+    def _sandbox_reason(self, chat_id: int, reason: str) -> str:
+        prefix = self._sandbox_prefix(chat_id)
+        if not prefix:
+            return reason
+        return f"{prefix} | {reason}"
+
+    def _effective_delivery_mode(self, chat_id: int) -> DeliveryMode:
+        if self._sandbox is not None and self._sandbox.is_active(chat_id):
+            return "fake_delivery"
+        return self._delivery_mode
 
     async def send_draft_for_approval(
         self,
@@ -115,13 +134,14 @@ class AdminService:
             trigger_message_id=turn.telegram_message_id,
         )
         await self._approvals.create_waiting(record)
+        reason = self._sandbox_reason(turn.chat_id, decision.reason)
         owner_mid = await self._notifier.notify_draft(
             DraftNotification(
                 turn_id=turn_id,
                 chat_id=turn.chat_id,
                 vip_text=turn.text,
                 draft_text=draft,
-                reason=decision.reason,
+                reason=reason,
                 evaluation_summary=_eval_summary(decision),
                 evaluation=decision.evaluation.model_dump(mode="json"),
                 business_connection_id=bc,
@@ -149,14 +169,15 @@ class AdminService:
         turn_id: UUID,
     ) -> None:
         tipo = tipo_from_reason(decision.reason)
+        reason = self._sandbox_reason(turn.chat_id, decision.reason)
         await self._escalations.create(
-            turn_id, tipo=tipo, motivo=decision.reason
+            turn_id, tipo=tipo, motivo=reason
         )
         await self._notifier.notify_escalation(
             EscalationNotification(
                 turn_id=turn_id,
                 chat_id=turn.chat_id,
-                reason=decision.reason,
+                reason=reason,
                 vip_text=turn.text,
                 tipo=tipo,
                 business_connection_id=turn.business_connection_id,
@@ -191,6 +212,7 @@ class AdminService:
 
         draft = decision.draft_text or ""
         query_id = query.id
+        reason = self._sandbox_reason(turn.chat_id, decision.reason)
 
         reply_spec: dict = {
             "actions": ["respond_doctrine", "resolve_with_draft", "escalate_doctrine"],
@@ -206,7 +228,7 @@ class AdminService:
                     chat_id=turn.chat_id,
                     vip_text=turn.text,
                     draft_text=draft,
-                    reason=decision.reason,
+                    reason=reason,
                     evaluation_summary=_eval_summary(decision),
                     business_connection_id=bc,
                     reply_markup_spec=reply_spec,
@@ -422,13 +444,19 @@ class AdminService:
             )
 
         advanced = self._feature_advanced_behavior
+        mode = self._effective_delivery_mode(claimed.chat_id)
+        if mode == "fake_delivery":
+            logger.info(
+                "sandbox_fake_delivery",
+                extra={"turn_id": str(turn_id), "chat_id": claimed.chat_id},
+            )
         # SEC-F2: is_frozen reflects gate result (False here; True never reaches deliver).
         ctx = DeliveryContext(
             chat_id=claimed.chat_id,
             business_connection_id=claimed.business_connection_id,
             vip_id=claimed.vip_id,
             telegram_message_id=trigger_message_id,
-            mode=self._delivery_mode,
+            mode=mode,
             is_frozen=False,
             allow_split=advanced,
             allow_human_quirks=advanced,

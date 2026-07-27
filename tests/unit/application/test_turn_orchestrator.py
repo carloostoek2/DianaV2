@@ -1617,3 +1617,251 @@ async def test_orchestrator_notify_fail_soft_increments_swallowed_counter() -> N
         "owner_notify_failed_after_analyst_schema_invalid", 0
     ) == 1
     assert g["actuator"].send_count() == 0
+
+
+# ── Sandbox isolation gates (item4) ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sandbox_skips_learning_post_turn() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    learn = RecordingLearning()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "nuevo")
+    g = _build(FakeDirector(decision), learning=learn)
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    await g["orch"].handle_vip_message(_vip(chat_id=100))
+    assert learn.calls == []
+
+
+@pytest.mark.asyncio
+async def test_sandbox_inactive_still_runs_learning() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    learn = RecordingLearning()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    g = _build(FakeDirector(decision), learning=learn)
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    await g["orch"].handle_vip_message(_vip(chat_id=100))
+    assert len(learn.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_sandbox_autonomous_uses_fake_delivery_mode() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "cercano")
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(9001, display_name="V")
+    captured: list = []
+
+    class CaptureBehavior:
+        async def deliver(self, texts, ctx, turn_id, **kwargs):
+            captured.append(ctx)
+            from diana.application.ports import DeliveryResult
+
+            return DeliveryResult(success=True, cancelled=False)
+
+        async def cancel_pending(self, chat_id, reason):
+            return 0
+
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="supervised",
+        vip_store=vip_store,
+        behavior_override=CaptureBehavior(),
+    )
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    await g["orch"].handle_vip_message(_vip(chat_id=100, vip_id=rec.id))
+    assert len(captured) == 1
+    assert captured[0].mode == "fake_delivery"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_consult_doctrine_demotes_when_no_vip() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "nuevo")
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=FakeGrayZone(),
+        feature_gray_zone_enabled=True,
+    )
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(_vip(chat_id=100, vip_id=None))
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert "SANDBOX" in g["notifier"].drafts[0].reason

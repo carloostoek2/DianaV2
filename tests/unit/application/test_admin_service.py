@@ -656,3 +656,126 @@ async def test_notify_escalation_maps_system_reason_to_tipo(
     assert g["escalations"].events[0]["tipo"] == expected_tipo
     assert g["notifier"].escalations[0].tipo == expected_tipo
 
+
+
+# ── Sandbox marker + fake_delivery (item4) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sandbox_draft_reason_has_marker() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    g = _admin_graph()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "cercano")
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    decision = _decision(draft="sandbox draft")
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, chat_id=42), decision, turn.id
+    )
+    assert len(g["notifier"].drafts) == 1
+    reason = g["notifier"].drafts[0].reason
+    assert reason.startswith("SANDBOX — profile: cercano")
+
+
+@pytest.mark.asyncio
+async def test_sandbox_approve_uses_fake_delivery() -> None:
+
+    from diana.application.sandbox import SandboxService
+    # inline six-profile catalog
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+    from diana.application.ports import DeliveryResult
+
+    captured: list = []
+
+    class CaptureBehavior:
+        async def deliver(self, texts, ctx, turn_id, **kwargs):
+            captured.append(ctx)
+            return DeliveryResult(success=True, cancelled=False)
+
+        async def cancel_pending(self, chat_id, reason):
+            return 0
+
+    g = _admin_graph(behavior_override=CaptureBehavior())
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "intenso")
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    decision = _decision(draft="send me")
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, chat_id=42), decision, turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None
+    assert result.success is True
+    assert len(captured) == 1
+    assert captured[0].mode == "fake_delivery"

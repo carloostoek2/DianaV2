@@ -41,10 +41,12 @@ class AuthMiddleware(BaseMiddleware):
         vips: VipStore,
         promo: PromoMatcher | None = None,
         feature_promo_enabled: bool = False,
+        sandbox: Any | None = None,
     ) -> None:
         self._vips = vips
         self._promo = promo
         self._feature_promo_enabled = feature_promo_enabled
+        self._sandbox = sandbox
 
     async def __call__(
         self,
@@ -76,6 +78,25 @@ class AuthMiddleware(BaseMiddleware):
         if user is None:
             logger.info("auth_drop_no_user")
             return None
+
+        chat_id = event.chat.id if event.chat is not None else user.id
+        if self._sandbox is not None and self._sandbox.is_active(chat_id):
+            rec: Any = data.get("_vip_record")
+            if rec is None:
+                rec = await self._vips.get_by_telegram_user_id(user.id)
+            if rec is not None:
+                data["vip_id"] = rec.id
+                data["vip_record"] = rec
+            data["sandbox_active"] = True
+            logger.info(
+                "sandbox_auth_bypass",
+                extra={
+                    "chat_id": chat_id,
+                    "telegram_user_id": user.id,
+                    "has_vip": rec is not None,
+                },
+            )
+            return await handler(event, data)
 
         allowed = await self._vips.is_allowed(user.id)
         if not allowed:

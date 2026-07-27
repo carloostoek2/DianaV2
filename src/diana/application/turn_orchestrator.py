@@ -80,6 +80,7 @@ class TurnOrchestrator:
         traces: DeliveryResultWriter | None = None,
         delivery_mode: DeliveryMode = "supervised",
         feature_advanced_behavior: bool = False,
+        sandbox: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -94,6 +95,24 @@ class TurnOrchestrator:
         self._traces = traces
         self._delivery_mode = delivery_mode
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
+        self._sandbox = sandbox
+
+    def _sandbox_active(self, chat_id: int) -> bool:
+        return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
+
+    def _effective_delivery_mode(self, chat_id: int) -> DeliveryMode:
+        if self._sandbox_active(chat_id):
+            return "fake_delivery"
+        return self._delivery_mode
+
+    async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
+        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+            logger.info(
+                "post_turn_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
+        await self._learning.run_post_turn(turn_id)
 
     async def _safe_notify_info(
         self,
@@ -135,7 +154,7 @@ class TurnOrchestrator:
                 incoming
             )
             if pending_deliver is None:
-                await self._learning.run_post_turn(turn_id)
+                await self._maybe_post_turn(turn_id, chat_id)
                 return turn_id
 
         # OUTSIDE lock — cancel_pending can interrupt delays (Admin pattern).
@@ -154,7 +173,7 @@ class TurnOrchestrator:
                         event="owner_notify_failed_after_vip_frozen",
                         turn_id=str(turn_id),
                     )
-            await self._learning.run_post_turn(turn_id)
+            await self._maybe_post_turn(turn_id, chat_id)
             logger.info(
                 "autonomous_vip_frozen_pre_deliver",
                 extra={
@@ -174,7 +193,7 @@ class TurnOrchestrator:
                     await self._coordinator.mark_failed(
                         turn_id, error="autonomous_behavior_not_wired"
                     )
-            await self._learning.run_post_turn(turn_id)
+            await self._maybe_post_turn(turn_id, chat_id)
             logger.error(
                 "autonomous_behavior_not_wired",
                 extra={"turn_id": str(turn_id), "chat_id": chat_id},
@@ -217,7 +236,7 @@ class TurnOrchestrator:
                 pending_deliver.decision.evaluation,
             )
 
-        await self._learning.run_post_turn(turn_id)
+        await self._maybe_post_turn(turn_id, chat_id)
         logger.info(
             "vip_message_handled",
             extra={
@@ -329,41 +348,67 @@ class TurnOrchestrator:
             )
             # CRITICAL: never call behavior.deliver here (L2 / R1)
         elif decision.action == "consult_doctrine":
-            if not self._feature_gray_zone_enabled:
+            if (
+                turn_ctx.vip_id is None
+                and self._sandbox_active(incoming.chat_id)
+            ):
+                demoted = decision.model_copy(
+                    update={
+                        "action": "approve",
+                        "reason": "sandbox_no_vip_doctrine",
+                    }
+                )
+                await self._coordinator.transition(
+                    turn_id, TurnStatus.PENDING_APPROVAL
+                )
+                await self._admin.send_draft_for_approval(
+                    turn_ctx, demoted, turn_id
+                )
+                logger.info(
+                    "sandbox_consult_doctrine_demoted",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": incoming.chat_id,
+                    },
+                )
+            elif not self._feature_gray_zone_enabled:
                 raise RuntimeError(
                     "consult_doctrine action returned but gray zone feature is disabled"
                 )
-            if self._gray_zone is None:
+            elif self._gray_zone is None:
                 raise RuntimeError(
                     "consult_doctrine action returned but GrayZoneService is not injected"
                 )
-            if turn_ctx.vip_id is None:
+            elif turn_ctx.vip_id is None:
                 raise RuntimeError(
                     "consult_doctrine requires vip_id but turn has None"
                 )
-            # Create query + notify BEFORE transitioning to GRAY_ZONE so
-            # a failure does not leave the turn stuck in gray_zone (BUG-3).
-            query = await self._gray_zone.create_query(
-                vip_id=turn_ctx.vip_id,
-                turn_id=turn_id,
-                question=turn_ctx.text,
-                draft=decision.draft_text or "",
-            )
-            await self._admin.send_doctrine_query(
-                turn_ctx, decision, turn_id, query
-            )
-            await self._coordinator.transition(
-                turn_id, TurnStatus.GRAY_ZONE
-            )
-            logger.info(
-                "consult_doctrine_completed",
-                extra={
-                    "turn_id": str(turn_id),
-                    "vip_id": str(turn_ctx.vip_id),
-                    "query_id": str(query.id) if hasattr(query, "id") else None,
-                },
-            )
-            # CRITICAL: never call behavior.deliver — VIP is frozen
+            else:
+                # Create query + notify BEFORE transitioning to GRAY_ZONE so
+                # a failure does not leave the turn stuck in gray_zone (BUG-3).
+                query = await self._gray_zone.create_query(
+                    vip_id=turn_ctx.vip_id,
+                    turn_id=turn_id,
+                    question=turn_ctx.text,
+                    draft=decision.draft_text or "",
+                )
+                await self._admin.send_doctrine_query(
+                    turn_ctx, decision, turn_id, query
+                )
+                await self._coordinator.transition(
+                    turn_id, TurnStatus.GRAY_ZONE
+                )
+                logger.info(
+                    "consult_doctrine_completed",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "vip_id": str(turn_ctx.vip_id),
+                        "query_id": str(query.id)
+                        if hasattr(query, "id")
+                        else None,
+                    },
+                )
+                # CRITICAL: never call behavior.deliver — VIP is frozen
         elif decision.action == "escalate":
             await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
             await self._admin.notify_escalation(turn_ctx, decision, turn_id)
@@ -495,12 +540,18 @@ class TurnOrchestrator:
         # Engine hard-check of is_frozen is defense-in-depth; orch re-checks
         # after lock release before deliver.
         advanced = self._feature_advanced_behavior
+        mode = self._effective_delivery_mode(incoming.chat_id)
+        if mode == "fake_delivery":
+            logger.info(
+                "sandbox_fake_delivery",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
         ctx = DeliveryContext(
             chat_id=incoming.chat_id,
             business_connection_id=str(turn_ctx.business_connection_id).strip(),
             vip_id=incoming.vip_id,
             telegram_message_id=incoming.telegram_message_id,
-            mode=self._delivery_mode,
+            mode=mode,
             is_frozen=False,
             allow_split=advanced,
             allow_human_quirks=advanced,

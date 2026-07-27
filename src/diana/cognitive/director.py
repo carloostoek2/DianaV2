@@ -34,6 +34,7 @@ from diana.cognitive.models import (
 from diana.cognitive.repetition_guard import RepetitionGuard
 from diana.cognitive.planner import Planner
 from diana.cognitive.ports import (
+    KnowledgeAugmenter,
     MessageHistoryPort,
     NoOpTurnStatusSink,
     RecentIntentsPort,
@@ -89,6 +90,7 @@ class CognitiveDirector:
         repetition_guard: RepetitionGuard | None = None,
         # Supervised naturalness redraft min; not autonomous send gate.
         naturalness_min: float | None = None,
+        knowledge_augmenter: KnowledgeAugmenter | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -110,6 +112,7 @@ class CognitiveDirector:
             if naturalness_min is None
             else float(naturalness_min)
         )
+        self._knowledge_augmenter = knowledge_augmenter
 
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
         """Run the F1 cognitive pipeline for one inbound turn.
@@ -211,6 +214,12 @@ class CognitiveDirector:
             timings["examples_retriever_ms"] = examples_ms
             timings["persona_facts_ms"] = persona_facts_ms
             timings["voice_patterns_ms"] = voice_patterns_ms
+
+        if self._knowledge_augmenter is not None:
+            retrieved = await self._knowledge_augmenter.augment_retrieved(
+                turn, retrieved
+            )
+            await self._store(turn_id, "retrieved", retrieved)
 
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
         # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).

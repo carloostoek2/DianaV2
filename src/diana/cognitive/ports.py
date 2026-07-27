@@ -103,6 +103,20 @@ class Retriever(Protocol):
 
 
 @runtime_checkable
+class KnowledgeAugmenter(Protocol):
+    """Optional post-retrieval inject (e.g. sandbox fixture profile).
+
+    Application-layer implementations only. Cognitive must not import sandbox.
+    """
+
+    async def augment_retrieved(
+        self,
+        turn: IncomingTurn,
+        retrieved: dict[str, Any | None],
+    ) -> dict[str, Any | None]: ...
+
+
+@runtime_checkable
 class MessageHistoryPort(Protocol):
     """Chat-scoped message history. Implementations must filter by chat_id only."""
 
@@ -249,6 +263,7 @@ __all__ = [
     "InMemoryRecentIntents",
     "InMemoryTraceStore",
     "InMemoryTurnStatusSink",
+    "KnowledgeAugmenter",
     "LLMProvider",
     "MessageHistoryPort",
     "NoOpTurnStatusSink",
