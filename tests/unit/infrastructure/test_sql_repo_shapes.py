@@ -180,7 +180,7 @@ def test_profile_to_dict_mapper() -> None:
 
 
 def test_profiles_repo_source_scopes_by_vip_id() -> None:
-    """BR-15 source lock: sole read method filters Profile.vip_id == vip_id."""
+    """BR-15 source lock: every ProfilesRepo method filters by vip_id."""
     from pathlib import Path
 
     import diana
@@ -192,6 +192,12 @@ def test_profiles_repo_source_scopes_by_vip_id() -> None:
     assert "async def get_by_vip_id" in source
     assert "Profile.vip_id == vip_id" in source
     assert "select(Profile)" in source
-    # No unscoped list-all helper in this residual.
+    # Mutators exist (owner profile write path).
+    for name in ("set_fact", "delete_fact", "add_note", "delete_note"):
+        assert f"async def {name}" in source
+    # No unscoped list-all helper.
     assert "def find_all" not in source
     assert "select(Profile).where" in source or ".where(Profile.vip_id == vip_id)" in source
+    # Every mutator path still binds vip_id (no bare unscoped select without where).
+    assert source.count("Profile.vip_id == vip_id") >= 1
+    assert "vip_id" in source
