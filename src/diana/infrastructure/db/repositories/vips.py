@@ -126,5 +126,30 @@ class SqlVipStore:
             row.frozen_until = None
             await session.commit()
 
+    async def list_active(self) -> list[VipRecord]:
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Vip)
+                .where(Vip.is_active.is_(True))
+                .order_by(Vip.telegram_user_id.asc())
+            )
+            rows = result.scalars().all()
+            return [vip_orm_to_record(row) for row in rows]
+
+    async def rename(
+        self, telegram_user_id: int, display_name: str
+    ) -> VipRecord | None:
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Vip).where(Vip.telegram_user_id == telegram_user_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is None or not row.is_active:
+                return None
+            row.display_name = display_name
+            await session.commit()
+            await session.refresh(row)
+            return vip_orm_to_record(row)
+
 
 __all__ = ["SqlVipStore", "vip_is_allowed", "vip_orm_to_record"]

@@ -127,3 +127,78 @@ async def test_deactivate_updates_both_indexes() -> None:
     by_id = await store.get_by_id(rec.id)
     assert by_id is not None
     assert by_id.is_active is False
+
+
+# --- list_active / rename (item2 vip-crud) ---
+
+
+@pytest.mark.asyncio
+async def test_list_active_empty() -> None:
+    store = InMemoryVipStore()
+    assert await store.list_active() == []
+
+
+@pytest.mark.asyncio
+async def test_list_active_only_actives_sorted_by_telegram_user_id() -> None:
+    store = InMemoryVipStore()
+    await store.add(3003, display_name="C")
+    await store.add(3001, display_name="A")
+    await store.add(3002, display_name="B")
+    await store.deactivate(3002)
+
+    active = await store.list_active()
+    assert [r.telegram_user_id for r in active] == [3001, 3003]
+    assert all(r.is_active for r in active)
+    assert active[0].display_name == "A"
+    assert active[1].display_name == "C"
+
+
+@pytest.mark.asyncio
+async def test_rename_active_updates_display_name() -> None:
+    store = InMemoryVipStore()
+    rec = await store.add(4001, display_name="Old")
+    updated = await store.rename(4001, "New Name")
+    assert updated is not None
+    assert updated.display_name == "New Name"
+    assert updated.is_active is True
+    assert updated.id == rec.id
+
+    by_tg = await store.get_by_telegram_user_id(4001)
+    by_id = await store.get_by_id(rec.id)
+    assert by_tg is not None and by_tg.display_name == "New Name"
+    assert by_id is not None and by_id.display_name == "New Name"
+    assert by_tg.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_rename_unknown_returns_none() -> None:
+    store = InMemoryVipStore()
+    assert await store.rename(99999, "Nobody") is None
+
+
+@pytest.mark.asyncio
+async def test_rename_inactive_returns_none_and_does_not_change_name() -> None:
+    store = InMemoryVipStore()
+    await store.add(4002, display_name="KeepMe")
+    await store.deactivate(4002)
+
+    result = await store.rename(4002, "ShouldNotApply")
+    assert result is None
+
+    rec = await store.get_by_telegram_user_id(4002)
+    assert rec is not None
+    assert rec.display_name == "KeepMe"
+    assert rec.is_active is False
+
+
+@pytest.mark.asyncio
+async def test_rename_does_not_reactivate() -> None:
+    store = InMemoryVipStore()
+    await store.add(4003, display_name="X")
+    await store.deactivate(4003)
+
+    await store.rename(4003, "Y")
+    rec = await store.get_by_telegram_user_id(4003)
+    assert rec is not None
+    assert rec.is_active is False
+    assert await store.is_allowed(4003) is False

@@ -244,6 +244,16 @@ class VipStore(Protocol):
         """Clear frozen_until column (set to NULL). Raises ValueError if VIP not found."""
         ...
 
+    async def list_active(self) -> list[VipRecord]:
+        """Active VIPs only (is_active True), ordered by telegram_user_id ASC."""
+        ...
+
+    async def rename(
+        self, telegram_user_id: int, display_name: str
+    ) -> VipRecord | None:
+        """Set display_name for an active VIP. None if missing or inactive. Never reactivates."""
+        ...
+
 
 @runtime_checkable
 class OwnerNotifierPort(Protocol):

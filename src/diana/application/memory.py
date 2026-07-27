@@ -394,6 +394,23 @@ class InMemoryVipStore:
         updated = rec.model_copy(update={"frozen_until": None})
         await self._upsert(updated)
 
+    async def list_active(self) -> list[VipRecord]:
+        """Active VIPs only, ordered by telegram_user_id ASC."""
+        active = [r for r in self._by_tg.values() if r.is_active]
+        active.sort(key=lambda r: r.telegram_user_id)
+        return [r.model_copy(deep=True) for r in active]
+
+    async def rename(
+        self, telegram_user_id: int, display_name: str
+    ) -> VipRecord | None:
+        """Set display_name for an active VIP. None if missing or inactive."""
+        rec = self._by_tg.get(telegram_user_id)
+        if rec is None or not rec.is_active:
+            return None
+        updated = rec.model_copy(update={"display_name": display_name})
+        await self._upsert(updated)
+        return updated.model_copy(deep=True)
+
     def set_paused_until(
         self, telegram_user_id: int, paused_until: datetime | None
     ) -> None:
