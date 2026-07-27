@@ -455,3 +455,23 @@ async def test_vip_fact_usage(admin_ctx: dict) -> None:
     g = admin_ctx
     assert await _dispatch(g, "/vip_fact 555") == "vip_fact_usage"
     assert await _dispatch(g, "/vip_fact 555 city") == "vip_fact_usage"
+
+
+@pytest.mark.asyncio
+async def test_vip_note_and_fact_del_usage(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/vip_note 555") == "vip_note_usage"
+    assert await _dispatch(g, "/vip_fact_del 555") == "vip_fact_del_usage"
+    assert await _dispatch(g, "/vip_note_del 555") == "vip_note_del_usage"
+    assert await _dispatch(g, "/vip_note_del 555 x") == "vip_note_del_usage"
+
+
+@pytest.mark.asyncio
+async def test_vip_fact_value_may_contain_spaces(admin_ctx: dict) -> None:
+    """A8: key = single token; value = remainder of line (spaces allowed)."""
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555 Alice")
+    assert await _dispatch(g, "/vip_fact 555 city Buenos Aires") == "fact_set"
+    rec = await g["vips"].get_by_telegram_user_id(555)
+    assert rec is not None
+    assert g["profiles"].rows[rec.id]["facts"]["city"] == "Buenos Aires"

@@ -177,6 +177,18 @@ async def test_set_fact_success(
 
 
 @pytest.mark.asyncio
+async def test_set_fact_overwrites_existing(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, vips, profiles = svc
+    rec = await vips.add(555)
+    await service.set_fact(OWNER, 555, "city", "BA")
+    r = await service.set_fact(OWNER, 555, "city", "MDZ")
+    assert r.status == "fact_set"
+    assert profiles.rows[rec.id]["facts"]["city"] == "MDZ"
+
+
+@pytest.mark.asyncio
 async def test_set_fact_invalid_empty_key(
     svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
 ) -> None:

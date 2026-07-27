@@ -75,6 +75,34 @@ async def test_set_fact_inserts_when_row_missing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_set_fact_updates_existing_row_without_reinsert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vip_id = uuid4()
+    row = SimpleNamespace(
+        vip_id=vip_id,
+        tipo="summary",
+        content={"facts": {"city": "BA"}, "notes": []},
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+    sf = _make_session_factory(row=row)
+    repo = ProfilesRepo(sf)
+    # flag_modified needs a real SQLAlchemy instance; stub ORM edge only.
+    monkeypatch.setattr(
+        "diana.infrastructure.db.repositories.profiles.flag_modified",
+        MagicMock(),
+    )
+
+    out = await repo.set_fact(vip_id, "city", "MDZ")
+
+    assert out["content"]["facts"]["city"] == "MDZ"
+    sf._session.add.assert_not_called()
+    assert row.content == {"facts": {"city": "MDZ"}, "notes": []}
+    sf._session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_delete_fact_returns_none_when_no_row() -> None:
     vip_id = uuid4()
     sf = _make_session_factory(row=None)
