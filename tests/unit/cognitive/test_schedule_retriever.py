@@ -98,6 +98,18 @@ def _retriever(
 
 
 @pytest.mark.asyncio
+async def test_thursday_1600_cdmx_inicio_inclusive_practicas() -> None:
+    """Half-open lock: inicio inclusive — jueves 16:00 CDMX → prácticas."""
+    # 2026-07-23 Thursday; 22:00 UTC = 16:00 America/Mexico_City (no DST).
+    r = _retriever(datetime(2026, 7, 23, 22, 0, tzinfo=UTC))
+    result = await r.fetch(_turn(), _comprehension())
+    assert result["tipo"] == "actividad"
+    assert result["dia"] == "jueves"
+    assert result["hora_actual"] == "16:00"
+    assert "prácticas profesionales" in result["actividad"]
+
+
+@pytest.mark.asyncio
 async def test_thursday_1700_cdmx_practicas() -> None:
     """A1 gold: jueves 17:00 CDMX → prácticas (16:00–21:00)."""
     # 2026-07-23 is Thursday; 23:00 UTC = 17:00 America/Mexico_City (no DST).
