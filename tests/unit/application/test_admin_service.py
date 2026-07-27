@@ -57,6 +57,7 @@ def _admin_graph(
     feature_advanced_behavior: bool = False,
     behavior_override: object | None = None,
     vip_store: object | None = None,
+    delivery_mode: str = "supervised",
 ) -> dict:
     from diana.application.memory import InMemoryVipStore
 
@@ -86,6 +87,7 @@ def _admin_graph(
         traces=traces,
         turns=turns,
         owner_telegram_id=OWNER_ID,
+        delivery_mode=delivery_mode,  # type: ignore[arg-type]
         feature_advanced_behavior=feature_advanced_behavior,
         vip_store=vips,  # type: ignore[arg-type]
     )
@@ -658,7 +660,7 @@ async def test_notify_escalation_maps_system_reason_to_tipo(
 
 
 
-# ── Sandbox marker + fake_delivery (item4) ──────────────────────────────
+# ── Sandbox marker + configured delivery_mode ───────────────────────────
 
 
 @pytest.mark.asyncio
@@ -778,5 +780,75 @@ async def test_sandbox_approve_uses_configured_delivery_mode() -> None:
     assert result is not None
     assert result.success is True
     assert len(captured) == 1
+    # CLARIFY: sandbox must not force fake — equals configured delivery_mode
     assert captured[0].mode == "supervised"
-    assert captured[0].mode != "fake_delivery"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_admin_respects_fake_delivery_mode() -> None:
+    """Sandbox active + AdminService delivery_mode=fake_delivery still yields fake (D6)."""
+    from diana.application.sandbox import SandboxService
+    from diana.application.ports import DeliveryResult
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    captured: list = []
+
+    class CaptureBehavior:
+        async def deliver(self, texts, ctx, turn_id, **kwargs):
+            captured.append(ctx)
+            return DeliveryResult(success=True, cancelled=False)
+
+        async def cancel_pending(self, chat_id, reason):
+            return 0
+
+    g = _admin_graph(
+        behavior_override=CaptureBehavior(),
+        delivery_mode="fake_delivery",
+    )
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "intenso")
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    decision = _decision(draft="send me")
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, chat_id=42), decision, turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None
+    assert result.success is True
+    assert len(captured) == 1
+    assert captured[0].mode == "fake_delivery"
