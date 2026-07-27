@@ -65,7 +65,7 @@ Full residual log: `.grok/agent-memory/residuals/sandbox-real-delivery.md`.
 
 ## Docs commit
 
-_pending_ — filled after atomic docs commit
+`a94a51d` — `docs(sandbox-real-delivery): close hardener pool sandbox-real-delivery`
 
 ## Next Steps
 
