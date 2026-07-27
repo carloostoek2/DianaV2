@@ -282,7 +282,7 @@ def build_app(
     else:
         gray_zone = None
 
-    # SandboxService — minimal F2 sandbox (profiles + trace isolation)
+    # SandboxService — v1 session model + package fixture catalog (not insert_sandbox)
     sandbox = SandboxService() if feature_sandbox_enabled else None
 
     # Shared runtime thresholds: calibration updates mins live for Decider (R2).
