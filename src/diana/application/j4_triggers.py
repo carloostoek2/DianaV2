@@ -135,11 +135,11 @@ COMPROMISO_KEYWORDS = [
 
 @dataclass(frozen=True)
 class J4Hit:
-    """Result of classify_j4_text.
+    """Result of classify_j4_text (pago_precio or compromiso_real only).
 
-    ``keywords_hit`` may include co-category keywords when identidad_ia wins
-    but pago/compromiso also matched (hybrid motivo for owner notify).
-    ``also_matched`` lists secondary categories for explicit motivo labeling.
+    H6: ``identidad_ia`` is never emitted; pure IA probes go to TemplateGate.
+    ``also_matched`` remains for historical/helper callers but classifiers no
+    longer populate hybrid co-hits.
     """
 
     category: J4Category
@@ -147,6 +147,7 @@ class J4Hit:
     keywords_hit: list[str]
     template: str | None = None
     also_matched: tuple[str, ...] = ()
+
 
 
 def match_keywords(text: str, keywords: list[str]) -> list[str]:

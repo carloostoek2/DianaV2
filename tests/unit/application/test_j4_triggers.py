@@ -55,6 +55,16 @@ def test_hybrid_ia_pago_escalates_as_pago() -> None:
     assert any("cuesta" in k or "cuánto cuesta" in k for k in hit.keywords_hit)
 
 
+def test_hybrid_ia_compromiso_escalates_as_compromiso() -> None:
+    """IA + commitment co-hit: compromiso_real wins (identity not classified)."""
+    hit = classify_j4_text("eres un bot y podemos coordinar una cita?")
+    assert hit is not None
+    assert hit.category == "compromiso_real"
+    assert hit.tipo == "compromiso_real"
+    assert hit.template is None
+
+
+
 def test_botella_not_pago_or_compromiso() -> None:
     hit = classify_j4_text("me regalas una botella?")
     assert hit is None

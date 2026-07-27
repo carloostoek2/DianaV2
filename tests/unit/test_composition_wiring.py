@@ -317,21 +317,24 @@ def test_persona_reglas_estilo_no_j2_examples_note() -> None:
     assert any("expresión característica de voz" in r for r in rules)
 
 
-def test_setup_forbidden_middleware_receives_behavior() -> None:
+def test_setup_forbidden_middleware_still_accepts_behavior_kw() -> None:
+    """Legacy residual: setup still passes behavior= to Forbidden (unused after H6).
 
-    """H5/J.4: ForbiddenKeywordsMiddleware gets behavior for IA template path."""
+    IA template deliver no longer runs in middleware; param kept for API
+    stability until residual cleanup of handle_deterministic_template_escalate.
+    """
     from pathlib import Path
 
     import diana
 
     root = Path(diana.__file__).resolve().parent
     setup_src = (root / "telegram" / "setup.py").read_text(encoding="utf-8")
-    assert "behavior=behavior" in setup_src
-    # Middleware construction path includes behavior kw.
     assert "ForbiddenKeywordsMiddleware(" in setup_src
     block_start = setup_src.find("ForbiddenKeywordsMiddleware(")
     block = setup_src[block_start : block_start + 350]
+    # Still wired (dead for IA path); not a claim that IA auto-deliver is live.
     assert "behavior=behavior" in block
+
 
 
 
