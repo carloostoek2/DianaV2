@@ -35,6 +35,7 @@ from diana.application.recovery_startup import (
 )
 from diana.application.sandbox import SandboxService
 from diana.application.sandbox_knowledge import SandboxKnowledgeAugmenter
+from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.ports import TurnStore
@@ -269,10 +270,13 @@ def build_app(
     feature_gray_zone_enabled = settings.feature_gray_zone_enabled
     feature_sandbox_enabled = settings.feature_sandbox_enabled
     feature_autonomous_mode = settings.feature_autonomous_mode
+    feature_staging_enabled = settings.feature_staging_enabled
 
     # GrayZoneService — created only when the feature is enabled.
     # When disabled, TurnOrchestrator receives None (dead-code guard).
+    # staging_repo is shared with StagingService when both flags are on.
     gray_zone_repo: GrayZoneQueryRepo | None = None
+    staging_repo: StagingCandidateRepo | None = None
     if feature_gray_zone_enabled:
         staging_repo = StagingCandidateRepo(sf)
         gray_zone_repo = GrayZoneQueryRepo(sf)
@@ -291,6 +295,19 @@ def build_app(
     knowledge_augmenter = (
         SandboxKnowledgeAugmenter(sandbox) if sandbox is not None else None
     )
+
+    # H7: StagingService for owner corrections — only when feature_staging_enabled.
+    if feature_staging_enabled:
+        if staging_repo is None:
+            staging_repo = StagingCandidateRepo(sf)
+        staging = StagingService(
+            staging_repo=staging_repo,
+            examples_repo=examples_repo,
+            policies_repo=policies_repo,
+            sandbox=sandbox,
+        )
+    else:
+        staging = None
 
     # Shared runtime thresholds: calibration updates mins live for Decider (R2).
     runtime_thresholds = RuntimeThresholds(
@@ -380,6 +397,8 @@ def build_app(
         vip_store=vips,
         fp_marks=owner_marks,
         sandbox=sandbox,
+        staging=staging,
+        history=history,
     )
 
     catalog = get_persona_catalog()

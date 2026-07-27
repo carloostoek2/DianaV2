@@ -349,6 +349,24 @@ def test_composition_sandbox_wired(_comp_src: str) -> None:
     assert _comp_src.count("sandbox=sandbox") >= 3
 
 
+def test_composition_admin_receives_staging_when_enabled(_comp_src: str) -> None:
+    """H7: StagingService is flag-gated and injected into Admin with history."""
+    assert (
+        "from diana.application.staging_service import StagingService" in _comp_src
+    )
+    assert "feature_staging_enabled = settings.feature_staging_enabled" in _comp_src
+    assert "if feature_staging_enabled:" in _comp_src
+    assert "StagingService(" in _comp_src
+    assert "staging=staging" in _comp_src
+    assert "history=history" in _comp_src
+    # Admin construction region receives both deps.
+    admin_start = _comp_src.find("admin = AdminService(")
+    assert admin_start != -1
+    admin_block = _comp_src[admin_start : admin_start + 700]
+    assert "staging=staging" in admin_block
+    assert "history=history" in admin_block
+
+
 def test_setup_auth_and_admin_receive_sandbox() -> None:
     from pathlib import Path
     import diana
