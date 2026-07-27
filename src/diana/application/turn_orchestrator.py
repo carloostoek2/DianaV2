@@ -220,7 +220,7 @@ class TurnOrchestrator:
         )
         async with self._coordinator.chat_scope(chat_id):
             delivered = await self._finalize_autonomous_delivery(
-                turn_id, chat_id, result
+                turn_id, chat_id, result, text=pending_deliver.text
             )
 
         # Near-threshold notify only when finalize confirmed DELIVERED
@@ -576,6 +576,7 @@ class TurnOrchestrator:
         turn_id: UUID,
         chat_id: int,
         result: DeliveryResult,
+        text: str,
     ) -> bool:
         """Post-deliver terminal check under chat lock (Admin I.5 parity, no approval).
 
@@ -599,6 +600,20 @@ class TurnOrchestrator:
             if self._traces is not None:
                 await self._traces.set_delivery_result(
                     turn_id, result.to_trace_dict()
+                )
+            # H7.2: owner history for Diana outbound (role maps to autor=dueña).
+            try:
+                mid = result.message_ids[0] if result.message_ids else None
+                await self._history.append(
+                    chat_id,
+                    role="owner",
+                    text=text,
+                    telegram_message_id=mid,
+                )
+            except Exception:
+                logger.exception(
+                    "owner_history_append_failed",
+                    extra={"turn_id": str(turn_id), "chat_id": chat_id},
                 )
             logger.info(
                 "autonomous_delivered",

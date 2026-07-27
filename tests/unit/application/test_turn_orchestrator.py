@@ -385,6 +385,78 @@ async def test_send_autonomous_delivers_and_marks_delivered() -> None:
 
 
 @pytest.mark.asyncio
+async def test_autonomous_finalize_appends_owner_history() -> None:
+    """H7.2: autonomous DELIVERED writes vip inbound then owner outbound history."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+    chat_id = 100
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=chat_id, vip_id=uuid4(), text="hola diana")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    rows = await g["history"].get_recent(chat_id)
+    roles = [r["role"] for r in rows]
+    assert "vip" in roles
+    assert "owner" in roles
+    vip_idx = next(i for i, r in enumerate(rows) if r["role"] == "vip")
+    owner_idx = next(i for i, r in enumerate(rows) if r["role"] == "owner")
+    assert vip_idx < owner_idx
+    assert rows[owner_idx]["text"] == "auto reply"
+
+
+@pytest.mark.asyncio
+async def test_autonomous_no_owner_history_on_frozen_or_fail() -> None:
+    """H7.2: freeze-after-prepare fail path must not append owner history."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="race freeze",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(5201)
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        vip_store=store,
+    )
+    calls = {"n": 0}
+    real_is_frozen = g["orch"]._is_vip_frozen  # noqa: SLF001
+
+    async def freeze_on_second_check(vip_id: UUID | None) -> bool:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            return True
+        return await real_is_frozen(vip_id)
+
+    g["orch"]._is_vip_frozen = freeze_on_second_check  # noqa: SLF001
+    chat_id = 100
+    turn_id = await g["orch"].handle_vip_message(_vip(chat_id=chat_id, vip_id=vip.id))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error == "vip_frozen"
+    rows = await g["history"].get_recent(chat_id)
+    assert any(r.get("role") == "vip" for r in rows)
+    assert not any(r.get("role") == "owner" for r in rows)
+
+
+@pytest.mark.asyncio
 async def test_send_ams_disabled_falls_back_to_approve() -> None:
     decision = Decision(
         action="send",
