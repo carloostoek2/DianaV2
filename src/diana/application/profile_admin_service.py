@@ -70,6 +70,29 @@ class ProfileAdminService:
             return None
         return rec
 
+    async def _resolve_vip_any(
+        self, telegram_user_id: int
+    ) -> VipRecord | None:
+        """Resolve VIP including inactive (for post-deactivate purge)."""
+        return await self._vips.get_by_telegram_user_id(telegram_user_id)
+
+    async def purge_profile_for_telegram_user(
+        self, actor_id: int | None, telegram_user_id: int
+    ) -> ProfileAdminResult:
+        """Owner-gated delete of profiles row for VIP (active or inactive)."""
+        self._assert_owner(actor_id)
+        vip = await self._resolve_vip_any(telegram_user_id)
+        if vip is None:
+            return ProfileAdminResult(
+                status="vip_not_found", telegram_user_id=telegram_user_id
+            )
+        deleted = await self._profiles.delete_by_vip_id(vip.id)
+        return ProfileAdminResult(
+            status="profile_purged" if deleted else "profile_absent",
+            telegram_user_id=telegram_user_id,
+            display_name=vip.display_name,
+        )
+
     async def show_profile(
         self, actor_id: int | None, telegram_user_id: int
     ) -> ProfileAdminResult:

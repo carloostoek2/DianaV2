@@ -71,6 +71,12 @@ class FakeProfilesRepo:
         self.rows[vip_id] = new_content
         return await self.get_by_vip_id(vip_id)
 
+    async def delete_by_vip_id(self, vip_id: UUID) -> bool:
+        if vip_id not in self.rows:
+            return False
+        del self.rows[vip_id]
+        return True
+
 
 @pytest.fixture
 def svc() -> tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo]:
@@ -323,3 +329,66 @@ async def test_module_has_no_aiogram_import() -> None:
                 assert "aiogram" not in alias.name
         elif isinstance(node, ast.ImportFrom) and node.module:
             assert not node.module.startswith("aiogram")
+
+
+# --- purge_profile_for_telegram_user (item2 vip-crud) ---
+
+
+@pytest.mark.asyncio
+async def test_purge_non_owner_raises(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, vips, _ = svc
+    await vips.add(555)
+    with pytest.raises(OwnerAuthError):
+        await service.purge_profile_for_telegram_user(OTHER, 555)
+
+
+@pytest.mark.asyncio
+async def test_purge_unknown_tg_id_vip_not_found(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, _, _ = svc
+    r = await service.purge_profile_for_telegram_user(OWNER, 404)
+    assert r.status == "vip_not_found"
+    assert r.telegram_user_id == 404
+
+
+@pytest.mark.asyncio
+async def test_purge_active_vip_with_profile_row(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, vips, profiles = svc
+    rec = await vips.add(555, display_name="Alice")
+    profiles.rows[rec.id] = {"facts": {"city": "BA"}, "notes": []}
+    r = await service.purge_profile_for_telegram_user(OWNER, 555)
+    assert r.status == "profile_purged"
+    assert rec.id not in profiles.rows
+    assert r.telegram_user_id == 555
+    assert r.display_name == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_purge_after_deactivate_still_works(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """Purge must resolve inactive VIP (post /remove_vip deactivate)."""
+    service, vips, profiles = svc
+    rec = await vips.add(555, display_name="Alice")
+    profiles.rows[rec.id] = {"facts": {"city": "BA"}, "notes": []}
+    await vips.deactivate(555)
+
+    r = await service.purge_profile_for_telegram_user(OWNER, 555)
+    assert r.status == "profile_purged"
+    assert rec.id not in profiles.rows
+
+
+@pytest.mark.asyncio
+async def test_purge_no_profile_row_profile_absent(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, vips, profiles = svc
+    await vips.add(555, display_name="Alice")
+    r = await service.purge_profile_for_telegram_user(OWNER, 555)
+    assert r.status == "profile_absent"
+    assert profiles.rows == {}

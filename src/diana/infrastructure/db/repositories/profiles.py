@@ -144,6 +144,16 @@ class ProfilesRepo:
             await session.refresh(row)
             return profile_to_dict(row)
 
+    async def delete_by_vip_id(self, vip_id: UUID) -> bool:
+        """DELETE profiles row for vip_id. True if deleted, False if none."""
+        async with self._sf() as session:
+            row = await self._load(session, vip_id)
+            if row is None:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
 
 __all__ = [
     "ProfilesRepo",

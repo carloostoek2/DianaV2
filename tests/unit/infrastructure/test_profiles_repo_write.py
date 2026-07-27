@@ -21,7 +21,13 @@ from diana.infrastructure.db.repositories.profiles import (
 
 
 def test_writer_methods_exist_on_profiles_repo() -> None:
-    for name in ("set_fact", "delete_fact", "add_note", "delete_note"):
+    for name in (
+        "set_fact",
+        "delete_fact",
+        "add_note",
+        "delete_note",
+        "delete_by_vip_id",
+    ):
         assert hasattr(ProfilesRepo, name)
         assert callable(getattr(ProfilesRepo, name))
 
@@ -136,3 +142,32 @@ async def test_set_fact_rejects_empty_key_without_session_write() -> None:
     with pytest.raises(ValueError):
         await repo.set_fact(vip_id, "", "v")
     sf.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_by_vip_id_missing_returns_false_no_delete() -> None:
+    vip_id = uuid4()
+    sf = _make_session_factory(row=None)
+    sf._session.delete = AsyncMock()
+    repo = ProfilesRepo(sf)
+
+    deleted = await repo.delete_by_vip_id(vip_id)
+
+    assert deleted is False
+    sf._session.delete.assert_not_awaited()
+    sf._session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_by_vip_id_existing_deletes_and_commits() -> None:
+    vip_id = uuid4()
+    row = SimpleNamespace(vip_id=vip_id, content={"facts": {}, "notes": []})
+    sf = _make_session_factory(row=row)
+    sf._session.delete = AsyncMock()
+    repo = ProfilesRepo(sf)
+
+    deleted = await repo.delete_by_vip_id(vip_id)
+
+    assert deleted is True
+    sf._session.delete.assert_awaited_once_with(row)
+    sf._session.commit.assert_awaited()
