@@ -69,7 +69,7 @@ Full residual log: `.grok/agent-memory/residuals/h6-template-gate.md`.
 
 ## Docs commit
 
-`63b8ef9` — `docs(h6-template-gate): close hardener pool h6-template-gate`
+`f243bba` — `docs(h6-template-gate): close hardener pool h6-template-gate`
 
 ## Next Steps
 
