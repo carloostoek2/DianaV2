@@ -8,3 +8,6 @@ docs only: PRODUCT, README, POOL, POOL-SUMMARY, residual index, F3 status, MEMOR
 === Documentador CLOSED pool=owner-admin-sandbox commit=50dc3fe 2026-07-27T05:37:37Z ===
 Phrase: Pool owner-admin-sandbox cerrado — 4 ítems completados, tests passing, commits hechos, documentación actualizada.
 docs commit final hash=b022ffa
+hash fix note pending
+report docs commit hash=0b78769
+report primary docs commit=17b5430 hash-note=04f7cde

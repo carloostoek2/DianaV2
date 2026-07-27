@@ -98,7 +98,7 @@ Full residual log: `.grok/agent-memory/residuals/owner-admin-sandbox.md`.
 
 ## Docs commit
 
-`b022ffa` — `docs(owner-admin-sandbox): close hardener pool owner-admin-sandbox`
+`17b5430` — `docs(owner-admin-sandbox): close hardener pool owner-admin-sandbox`
 
 ## Next Steps
 
