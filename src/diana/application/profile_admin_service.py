@@ -14,10 +14,19 @@ from typing import Any
 
 from diana.application.admin_service import OwnerAuthError
 from diana.application.ports import VipRecord, VipStore
+from diana.profile_content import is_hollow_content, normalize_content
 
 logger = logging.getLogger("diana.application")
 
 __all__ = ["ProfileAdminResult", "ProfileAdminService"]
+
+
+def _is_integrity_error(exc: BaseException) -> bool:
+    """True for SQLAlchemy/asyncpg IntegrityError without importing sqlalchemy."""
+    for cls in type(exc).__mro__:
+        if cls.__name__ == "IntegrityError":
+            return True
+    return False
 
 
 @dataclass
@@ -61,21 +70,6 @@ class ProfileAdminService:
             return None
         return rec
 
-    @staticmethod
-    def _is_hollow(content: Any) -> bool:
-        if content is None:
-            return True
-        if not isinstance(content, dict):
-            return True
-        facts = content.get("facts")
-        notes = content.get("notes")
-        facts_empty = facts is None or (isinstance(facts, dict) and len(facts) == 0)
-        notes_empty = notes is None or (isinstance(notes, list) and len(notes) == 0)
-        if not (facts_empty and notes_empty):
-            return False
-        other = {k: v for k, v in content.items() if k not in ("facts", "notes")}
-        return not other
-
     async def show_profile(
         self, actor_id: int | None, telegram_user_id: int
     ) -> ProfileAdminResult:
@@ -87,18 +81,28 @@ class ProfileAdminService:
             )
         row = await self._profiles.get_by_vip_id(vip.id)
         content = None if row is None else row.get("content")
-        if row is None or self._is_hollow(content):
+        if row is None or is_hollow_content(content):
             return ProfileAdminResult(
                 status="profile_empty",
                 telegram_user_id=telegram_user_id,
                 display_name=vip.display_name,
-                content={"facts": {}, "notes": []} if content is None else content,
+                content={"facts": {}, "notes": []},
             )
+        # Prefer normalized schema for structured rows; keep legacy flat as-is.
+        display: dict | None
+        if isinstance(content, dict):
+            other = {k: v for k, v in content.items() if k not in ("facts", "notes")}
+            if other:
+                display = content
+            else:
+                display = normalize_content(content)
+        else:
+            display = None
         return ProfileAdminResult(
             status="profile_ok",
             telegram_user_id=telegram_user_id,
             display_name=vip.display_name,
-            content=content if isinstance(content, dict) else None,
+            content=display,
         )
 
     async def set_fact(
@@ -116,13 +120,26 @@ class ProfileAdminService:
             )
         try:
             row = await self._profiles.set_fact(vip.id, key, value)
-        except ValueError:
+        except ValueError as exc:
             return ProfileAdminResult(
                 status="invalid",
                 telegram_user_id=telegram_user_id,
                 display_name=vip.display_name,
-                detail="empty key or value",
+                detail=str(exc) or "empty key or value",
             )
+        except Exception as exc:
+            if _is_integrity_error(exc):
+                logger.warning(
+                    "profile_set_fact_integrity",
+                    extra={"telegram_user_id": telegram_user_id},
+                )
+                return ProfileAdminResult(
+                    status="vip_not_found",
+                    telegram_user_id=telegram_user_id,
+                    display_name=vip.display_name,
+                    detail="integrity",
+                )
+            raise
         return ProfileAdminResult(
             status="fact_set",
             telegram_user_id=telegram_user_id,
@@ -156,9 +173,20 @@ class ProfileAdminService:
                 display_name=vip.display_name,
                 detail=k,
             )
-        pre_facts = (pre.get("content") or {}).get("facts") or {}
+        pre_content = pre.get("content") if isinstance(pre.get("content"), dict) else {}
+        pre_facts = (pre_content or {}).get("facts") or {}
         key_present = isinstance(pre_facts, dict) and k in pre_facts
-        row = await self._profiles.delete_fact(vip.id, k)
+        try:
+            row = await self._profiles.delete_fact(vip.id, k)
+        except Exception as exc:
+            if _is_integrity_error(exc):
+                return ProfileAdminResult(
+                    status="vip_not_found",
+                    telegram_user_id=telegram_user_id,
+                    display_name=vip.display_name,
+                    detail="integrity",
+                )
+            raise
         if row is None:
             return ProfileAdminResult(
                 status="fact_missing",
@@ -194,13 +222,26 @@ class ProfileAdminService:
         note_date = self._clock().date().isoformat()
         try:
             row = await self._profiles.add_note(vip.id, text, date=note_date)
-        except ValueError:
+        except ValueError as exc:
             return ProfileAdminResult(
                 status="invalid",
                 telegram_user_id=telegram_user_id,
                 display_name=vip.display_name,
-                detail="empty note text",
+                detail=str(exc) or "empty note text",
             )
+        except Exception as exc:
+            if _is_integrity_error(exc):
+                logger.warning(
+                    "profile_add_note_integrity",
+                    extra={"telegram_user_id": telegram_user_id},
+                )
+                return ProfileAdminResult(
+                    status="vip_not_found",
+                    telegram_user_id=telegram_user_id,
+                    display_name=vip.display_name,
+                    detail="integrity",
+                )
+            raise
         return ProfileAdminResult(
             status="note_added",
             telegram_user_id=telegram_user_id,
@@ -228,7 +269,17 @@ class ProfileAdminService:
                 detail=str(index_1based),
             )
         index0 = index_1based - 1
-        row = await self._profiles.delete_note(vip.id, index0)
+        try:
+            row = await self._profiles.delete_note(vip.id, index0)
+        except Exception as exc:
+            if _is_integrity_error(exc):
+                return ProfileAdminResult(
+                    status="vip_not_found",
+                    telegram_user_id=telegram_user_id,
+                    display_name=vip.display_name,
+                    detail="integrity",
+                )
+            raise
         if row is None:
             return ProfileAdminResult(
                 status="note_missing",

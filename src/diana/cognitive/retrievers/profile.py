@@ -5,6 +5,7 @@ returns ``None`` (F1 stub compatibility).
 
 Anti-contamination (BR-15): never call the repo when ``turn.vip_id is None``.
 Pure cognitive module: does NOT import from ``diana.infrastructure``.
+Hollow semantics: shared ``diana.profile_content.is_hollow_content``.
 """
 
 from __future__ import annotations
@@ -13,36 +14,19 @@ import logging
 from typing import Any
 
 from diana.cognitive.models import Comprehension, IncomingTurn
+from diana.profile_content import is_hollow_content, normalize_content
 
 logger = logging.getLogger(__name__)
 
 
 def _is_null_like_content(content: Any) -> bool:
-    """Mirror ContextBuilder null-like rules for the content payload only.
+    """Null-like / hollow content collapses to fetch ``None``.
 
-    Outer hit shape is always ``{"tipo", "content"}``; empty content must
-    collapse to fetch ``None`` so D.5 does not emit a hollow profile envelope.
-
-    Hollow schema envelope (Option A): ``{"facts": {}, "notes": []}`` (or only
-    one of those keys empty, with no other top-level payload) is null-like.
-    Legacy flat shapes like ``{"fact": "prefers morning"}`` remain hits.
+    Uses shared ``is_hollow_content`` (Option A + whitespace normalize +
+    legacy flat non-empty still a hit). Generic empty collections/str still
+    short-circuit first for ContextBuilder parity.
     """
-    if content is None:
-        return True
-    if isinstance(content, (list, dict, tuple, set)) and len(content) == 0:
-        return True
-    if isinstance(content, str) and not content.strip():
-        return True
-    if isinstance(content, dict):
-        facts = content.get("facts")
-        notes = content.get("notes")
-        facts_empty = facts is None or (isinstance(facts, dict) and len(facts) == 0)
-        notes_empty = notes is None or (isinstance(notes, list) and len(notes) == 0)
-        if facts_empty and notes_empty:
-            other = {k: v for k, v in content.items() if k not in ("facts", "notes")}
-            if not other:
-                return True
-    return False
+    return is_hollow_content(content)
 
 
 class ProfileRetriever:
@@ -59,6 +43,8 @@ class ProfileRetriever:
         """Return ``{"tipo", "content"}`` for the VIP, or None if unavailable.
 
         ``comprehension`` is unused (protocol parity only); filter is VIP PK.
+        Structured schema content is returned normalized so whitespace-only
+        facts never reach the prompt envelope.
         """
         _ = comprehension
         if self._repo is None:
@@ -79,6 +65,15 @@ class ProfileRetriever:
         if _is_null_like_content(content):
             logger.debug("ProfileRetriever: empty content for vip_id=%s", vip_id)
             return None
+
+        # Prefer normalized schema when content is structured-only.
+        # Keep legacy flat payloads as-is (normalize would drop them).
+        if isinstance(content, dict) and (
+            "facts" in content or "notes" in content
+        ):
+            other = {k: v for k, v in content.items() if k not in ("facts", "notes")}
+            if not other:
+                content = normalize_content(content)
 
         return {"tipo": row["tipo"], "content": content}
 
