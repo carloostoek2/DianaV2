@@ -2,3 +2,4 @@
 - Sources: SUMMARY, CLARIFY, arch-enforcer, test-guardian, review HARD 351a11fc R2, gsd log, commits 273912e..ac38fd1
 - Scope: 1 item complete; 0 production code edits; docs/planning/agent-memory only
 - Actions: SUMMARY review stats + residuals; documentador report; residual index; MEMORY pointers; force-add commit if trackable
+[2026-07-27T documentador] COMPLETE sandbox-real-delivery — docs commit a94a51d; residuals OOS soft-warn VIP chat; next=pool commit gate
