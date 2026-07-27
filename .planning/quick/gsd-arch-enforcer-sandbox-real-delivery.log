@@ -1,0 +1,8 @@
+[2026-07-27T arch-enforcer] START sandbox-real-delivery
+- Sources: AGENTS.md, CLARIFY.md, PLAN.md, SUMMARY.md, gsd-sandbox-real-delivery.log
+- Commits: 273912e, cc486d2, 00d51dd
+- Focus: drop sandbox→fake_delivery force; keep should_persist / doctrine demote / recontact
+[2026-07-27T arch-enforcer] Read PLAN/SUMMARY/CLARIFY + production helpers orch/admin
+[2026-07-27T arch-enforcer] Verified isolation: _maybe_post_turn, sandbox_no_vip_doctrine, staging should_persist, recontact _is_sandbox_vip, Behavior fake path
+[2026-07-27T arch-enforcer] Verified docs: README + PRODUCT_OWNER real delivery + operator chat-target risk
+[2026-07-27T arch-enforcer] Verdict: PASS WITH NOTES, critical=0 → next=test-guardian

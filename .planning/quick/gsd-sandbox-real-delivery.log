@@ -1,0 +1,17 @@
+[2026-07-27T15:18:38Z] START gsd-sandbox-real-delivery — read PLAN/CLARIFY/impact; begin Task 1 RED
+[2026-07-27T15:18:44Z] Task 1 START — invert sandbox delivery tests (expect RED)
+[2026-07-27T15:19:33Z] Task 1 RED verified — 2 inverted tests fail (mode fake_delivery vs supervised); optional fake_ops passes
+[2026-07-27T15:19:40Z] Task 2 START — drop sandbox force in _effective_delivery_mode (orch+admin); rename log event
+[2026-07-27T15:19:58Z] Task 2 GREEN — helpers return _delivery_mode only; isolation pack 36 passed; commit cc486d2
+[2026-07-27T15:20:07Z] Task 3 START — docs sync README + PRODUCT_OWNER sandbox delivery wording
+[2026-07-27T15:20:33Z] Task 3 docs committed 00d51dd; full tests/unit 1372 passed
+[2026-07-27T final] Self-Check: PASSED
+- [x] All PLAN tasks completed (1 RED tests, 2 GREEN helpers, 3 docs)
+- [x] PLAN tests run: inverted delivery + isolation pack + full tests/unit (1372 passed)
+- [x] 0 regressions attributable
+- [x] Project conventions respected (application layer only; no-touch list intact)
+- [x] Commits: 273912e, cc486d2, 00d51dd
+- [x] SUMMARY written: .planning/quick/sandbox-real-delivery/SUMMARY.md
+[2026-07-27T15:20:52Z] COMPLETE gsd-sandbox-real-delivery — next_recommended=arch
+[2026-07-27T15:26:33Z] FIX ROUND 1 START — hardener review 351a11fc
+[2026-07-27T15:28:15Z] FIX ROUND 1 — all 6 open issues fixed (General1 + Tests1-5); sandbox 9 passed

@@ -32,6 +32,7 @@
 - [owner-admin-sandbox-item3-sandbox-core](impact-analyzer/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — SandboxService session+catalog only; no pipeline gates; risk low
 - [owner-admin-sandbox-item4-sandbox-admin](impact-analyzer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — Owner sandbox commands + pipeline isolation (auth/fake_delivery/should_persist/inject); risk low–medium
 - [h6-template-gate](impact-analyzer/h6-template-gate.md) — 2026-07-27 — H6 TemplateGate pre-pipeline + migrate J.4 identidad_ia → approve; purity/hybrid/hola-fixture criticals; risk medium–high
+- [sandbox-real-delivery](impact-analyzer/sandbox-real-delivery.md) — 2026-07-27 — Drop sandbox-forced `fake_delivery` only; keep should_persist / doctrine demote / recontact skip; risk medium (VIP chat mis-target)
 
 ## Arch Enforcer
 
@@ -70,8 +71,11 @@
 - [owner-admin-sandbox-item3-sandbox-core](arch-enforcer/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; purity OK; no telegram; catalog 6 profiles; in-process session; F2 insert_sandbox removed
 - [owner-admin-sandbox-item4-sandbox-admin](arch-enforcer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Protocol inject; auth bypass; fake_delivery; should_persist learning skip; owner private `/sandbox`; no VIP pollution
 - [h6-template-gate](arch-enforcer/h6-template-gate.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; pure TemplateGate pre-pipeline; J.4 IA off middleware; pago/compromiso intact; no TO/Decider/Behavior/Learning; residuals dead helper + keyword coverage
+- [sandbox-real-delivery](arch-enforcer/sandbox-real-delivery.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; drop sandbox-forced fake_delivery; should_persist/doctrine demote/recontact intact; real Telegram under sandbox (CLARIFY supersedes item4 delivery claim)
 
 ## Test Guardian
+
+- [sandbox-real-delivery](test-guardian/sandbox-real-delivery.md) — 2026-07-27 — **suite protege adecuadamente**, configured delivery under sandbox + fake ops D6 + isolation golds; 3 primary + 36 isolation pack; 0 mocks prohibidos → run-tests
 
 - [01-foundation](test-guardian/01-foundation.md) — 2026-07-22 — **suite protege adecuadamente**, 31 passed, 0 mocks prohibidos → paso 6
 - [02-cognitive-core](test-guardian/02-cognitive-core.md) — 2026-07-22 — **suite protege adecuadamente**, 122 passed, 0 mocks prohibidos (FakeLLM+MockTransport OK) → paso 6
@@ -138,9 +142,13 @@
 - [h6-template-gate](documentador/h6-template-gate.md) — 2026-07-27 — Pool h6-template-gate CLOSED: TemplateGate saludo+deteccion_ia · J.4 IA off middleware · effort 4 · 3 review rounds · 0 open · 9 commits · safety-net 729
 - Consolidated SUMMARY: `.planning/quick/h6-template-gate/POOL-SUMMARY.md`
 - Residuals: `.grok/agent-memory/residuals/h6-template-gate.md`
+- [sandbox-real-delivery](documentador/sandbox-real-delivery.md) — 2026-07-27 — Pool sandbox-real-delivery CLOSED: drop sandbox-forced fake_delivery · real Telegram under sandbox · should_persist isolation · effort 3 · 2 review rounds · 0 open · 4 commits · unit 1372
+- Consolidated SUMMARY: `.planning/quick/sandbox-real-delivery/SUMMARY.md`
+- Residuals: `.grok/agent-memory/residuals/sandbox-real-delivery.md`
 
 ## Residuals
 
 - [residuals-polish](residuals/residuals-polish.md) — **CLOSED** residual index (docs-sync · `/fp` · naturalness 1× · profile REAL; profile writers/sandbox **closed by owner-admin-sandbox**)
 - [owner-admin-sandbox](residuals/owner-admin-sandbox.md) — **CLOSED** residual index (facts/notes · VIP CRUD · sandbox 6+session+isolation; follow-ups: orphan purge paths, staging composition)
 - [h6-template-gate](residuals/h6-template-gate.md) — **CLOSED** residual index (dead IA helper follow-up · IA keyword expand OOS · hostile short saludo needs-human · ANEXO-H eval doc · shared matcher OOS)
+- [sandbox-real-delivery](residuals/sandbox-real-delivery.md) — **CLOSED** residual index (soft warn VIP chat OOS · multi-replica OOS · gray-zone no vip_id OOS · item4 fake_delivery isolation claim superseded for delivery)

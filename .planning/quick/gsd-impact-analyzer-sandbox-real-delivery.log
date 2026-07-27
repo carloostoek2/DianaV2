@@ -1,0 +1,21 @@
+# gsd-impact-analyzer — sandbox-real-delivery
+# Date: 2026-07-27
+# Role: impact-analyzer (read-only)
+
+## Scope source
+- .planning/quick/sandbox-real-delivery/CLARIFY.md (LOCKED)
+
+## Work log
+- 2026-07-27T00:00Z start
+- Read CLARIFY.md (locked: real Telegram delivery; drop sandbox-forced fake_delivery only)
+- Read AGENTS.md sandbox/behavior/learning isolation via system context
+- Grep: _effective_delivery_mode, fake_delivery, sandbox_fake_delivery, should_persist, post_turn_skipped, correction_skipped, sandbox_no_vip_doctrine
+- Read turn_orchestrator.py L100-115, L350-373, L543-560
+- Read admin_service.py L109-112, L447-471
+- Read sandbox.py should_persist, staging_service correction gate
+- Read composition delivery_mode=settings.global_mode wiring
+- Read tests: test_turn_orchestrator sandbox_*, test_admin_service sandbox_approve, staging, recontact, behavior engine fake
+- Read docs PRODUCT_OWNER_ADMIN_SANDBOX.md + README flag table (stale: sandbox implies fake_delivery)
+- Wrote report: .grok/agent-memory/impact-analyzer/sandbox-real-delivery.md
+- Updated MEMORY.md pointer
+- Status: complete → next_recommended=plan

@@ -1,0 +1,7 @@
+2026-07-27T15:22:52+00:00 START test-guardian sandbox-real-delivery
+2026-07-27T15:23:00+00:00 READ production helpers + tests inventory
+2026-07-27T15:23:05+00:00 MOCK audit on item tests
+2026-07-27T15:23:16+00:00 RE-RUN focused sandbox delivery tests
+2026-07-27T15:23:16+00:00 RE-RUN isolation pack sandbox|fake_delivery
+2026-07-27T15:23:26+00:00 WRITE report verdict suite-protege
+2026-07-27T15:23:58+00:00 DONE verdict=suite_protege_adecuadamente primary=3 isolation=36 mocks_prohibidos=0 next=run-tests
