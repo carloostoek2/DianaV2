@@ -19,12 +19,14 @@ from diana.application.ports import (
     EscalationNotification,
     EscalationStore,
     GrayZoneQueryView,
+    MessageHistoryWriter,
     OwnerNotifierPort,
     PendingApprovalStore,
     TurnStore,
     VipStore,
 )
 from diana.application.escalation_labels import tipo_from_reason
+from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.models import (
     Decision,
@@ -73,6 +75,8 @@ class AdminService:
         vip_store: VipStore | None = None,
         fp_marks: Any | None = None,
         sandbox: Any | None = None,
+        staging: StagingService | None = None,
+        history: MessageHistoryWriter | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -87,6 +91,8 @@ class AdminService:
         self._vip_store = vip_store
         self._fp_marks = fp_marks
         self._sandbox = sandbox
+        self._staging = staging
+        self._history = history
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -273,9 +279,61 @@ class AdminService:
         self._assert_owner(actor_id)
         if not (corrected_text or "").strip():
             raise ValueError("corrected_text must be non-empty")
-        return await self._resolve_and_deliver(
-            turn_id, corrected_text=corrected_text.strip()
-        )
+        stripped = corrected_text.strip()
+        # H7.1 timing A: capture correction before claim/deliver (orphan pending OK).
+        if self._staging is not None:
+            turn = await self._turns.get(turn_id)
+            approval = await self._approvals.get_by_turn(turn_id)
+            if turn is not None and approval is not None:
+                turn_text = await self._resolve_trigger_text(
+                    turn.chat_id, turn.trigger_message_id
+                )
+                try:
+                    await self._staging.save_correction(
+                        turn_id,
+                        original_draft=approval.draft_text,
+                        corrected_text=stripped,
+                        context={
+                            "chat_id": turn.chat_id,
+                            "turn_text": turn_text,
+                        },
+                        chat_id=turn.chat_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "staging_save_correction_failed",
+                        extra={"turn_id": str(turn_id)},
+                    )
+        return await self._resolve_and_deliver(turn_id, corrected_text=stripped)
+
+    async def _resolve_trigger_text(
+        self,
+        chat_id: int,
+        trigger_message_id: int | None,
+    ) -> str:
+        """Resolve VIP trigger text from history by telegram_message_id (H7)."""
+        if self._history is None or trigger_message_id is None:
+            return ""
+        try:
+            recent = await self._history.get_recent(chat_id, limit=20)
+        except Exception:
+            logger.exception(
+                "owner_history_trigger_lookup_failed",
+                extra={"chat_id": chat_id, "trigger_message_id": trigger_message_id},
+            )
+            return ""
+        matches: list[dict[str, Any]] = []
+        for row in recent:
+            if not isinstance(row, dict):
+                continue
+            if row.get("telegram_message_id") == trigger_message_id:
+                matches.append(row)
+        if not matches:
+            return ""
+        for row in matches:
+            if row.get("role") == "vip":
+                return str(row.get("text") or "")
+        return str(matches[0].get("text") or "")
 
     async def is_pending_approval(self, turn_id: UUID) -> bool:
         """True when turn is non-terminal and has a waiting approval."""
@@ -493,6 +551,28 @@ class AdminService:
                 await self._traces.set_delivery_result(
                     turn_id, result.to_trace_dict()
                 )
+                # H7.2: append delivered outbound text for HistoryRetriever (owner→dueña).
+                if self._history is not None:
+                    try:
+                        mid = (
+                            result.message_ids[0]
+                            if result.message_ids
+                            else None
+                        )
+                        await self._history.append(
+                            chat_id,
+                            role="owner",
+                            text=text,
+                            telegram_message_id=mid,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_history_append_failed",
+                            extra={
+                                "turn_id": str(turn_id),
+                                "chat_id": chat_id,
+                            },
+                        )
                 logger.info(
                     "admin_delivered",
                     extra={

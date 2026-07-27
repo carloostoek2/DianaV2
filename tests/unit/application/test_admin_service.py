@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -11,6 +12,7 @@ from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.memory import (
     FakeOwnerNotifier,
     InMemoryEscalationStore,
+    InMemoryMessageHistoryWriter,
     InMemoryPendingApprovalStore,
     InMemoryPendingDeliveryStore,
     InMemoryTraceReaderWriter,
@@ -58,6 +60,8 @@ def _admin_graph(
     behavior_override: object | None = None,
     vip_store: object | None = None,
     delivery_mode: str = "supervised",
+    staging: object | None = None,
+    history: object | None = None,
 ) -> dict:
     from diana.application.memory import InMemoryVipStore
 
@@ -90,6 +94,8 @@ def _admin_graph(
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
         feature_advanced_behavior=feature_advanced_behavior,
         vip_store=vips,  # type: ignore[arg-type]
+        staging=staging,  # type: ignore[arg-type]
+        history=history,  # type: ignore[arg-type]
     )
     return {
         "admin": admin,
@@ -104,6 +110,8 @@ def _admin_graph(
         "deliveries": deliveries,
         "owner_id": OWNER_ID,
         "vip_store": vips,
+        "staging": staging,
+        "history": history,
     }
 
 
@@ -181,7 +189,161 @@ async def test_handle_correct_delivers_corrected_not_draft(admin_graph: dict) ->
     assert g["actuator"].calls[-1]["text"] == "corrected final"
     appr = await g["approvals"].get_by_turn(turn.id)
     assert appr is not None and appr.status == "corrected"
-    assert not hasattr(g["admin"], "staging")
+    assert g["admin"]._staging is None  # noqa: SLF001 — default optional dep
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_saves_staging_candidate() -> None:
+    """H7.1: handle_correct persists pending staging before deliver (timing A)."""
+    staging = AsyncMock()
+    staging.save_correction = AsyncMock(return_value=object())
+    history = InMemoryMessageHistoryWriter()
+    await history.append(
+        42, role="vip", text="vip trigger text", telegram_message_id=7
+    )
+    g = _admin_graph(staging=staging, history=history)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, telegram_message_id=7),
+        _decision(draft="original draft"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_correct(
+        turn.id, "corrected final", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success
+    staging.save_correction.assert_awaited_once()
+    call = staging.save_correction.await_args
+    assert call.args[0] == turn.id
+    assert call.kwargs["original_draft"] == "original draft"
+    assert call.kwargs["corrected_text"] == "corrected final"
+    assert call.kwargs["context"]["chat_id"] == 42
+    assert call.kwargs["context"]["turn_text"] == "vip trigger text"
+    assert call.kwargs["chat_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_skips_staging_when_none(admin_graph: dict) -> None:
+    """H7: staging None is a no-op; correct still delivers."""
+    g = admin_graph
+    assert g["admin"]._staging is None  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=42)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_correct(
+        turn.id, "fixed text", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success
+    assert g["actuator"].calls[-1]["text"] == "fixed text"
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_staging_failure_still_delivers() -> None:
+    """H7: staging I/O failure must not block VIP delivery."""
+    staging = AsyncMock()
+    staging.save_correction = AsyncMock(side_effect=RuntimeError("db down"))
+    g = _admin_graph(staging=staging)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_correct(
+        turn.id, "still deliver", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success
+    assert g["actuator"].send_count() == 1
+    assert g["actuator"].calls[-1]["text"] == "still deliver"
+    staging.save_correction.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_appends_owner_history() -> None:
+    """H7.2: successful approve appends role=owner with draft text."""
+    history = InMemoryMessageHistoryWriter()
+    g = _admin_graph(history=history)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="approved draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success
+    rows = await history.get_recent(42)
+    owner_rows = [r for r in rows if r.get("role") == "owner"]
+    assert len(owner_rows) == 1
+    assert owner_rows[0]["text"] == "approved draft"
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_appends_owner_history_with_corrected_text() -> None:
+    """H7.2: successful correct appends role=owner with corrected text, not draft."""
+    history = InMemoryMessageHistoryWriter()
+    g = _admin_graph(history=history)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="original draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_correct(
+        turn.id, "owner fix", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success
+    rows = await history.get_recent(42)
+    owner_rows = [r for r in rows if r.get("role") == "owner"]
+    assert len(owner_rows) == 1
+    assert owner_rows[0]["text"] == "owner fix"
+
+
+@pytest.mark.asyncio
+async def test_resolve_no_history_on_delivery_failure() -> None:
+    """H7.2: frozen / failed resolve must not write owner history."""
+    from datetime import UTC, datetime, timedelta
+
+    from diana.application.memory import InMemoryVipStore
+
+    history = InMemoryMessageHistoryWriter()
+    store = InMemoryVipStore()
+    vip = await store.add(43001, display_name="FrozenForHistory")
+    await store.freeze_vip(vip.id, datetime.now(UTC) + timedelta(hours=2))
+    g = _admin_graph(history=history, vip_store=store)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, vip_id=vip.id),
+        _decision(draft="should not history"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None
+    assert result.success is False
+    rows = await history.get_recent(42)
+    assert not any(r.get("role") == "owner" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_turn_text_empty_without_history_match() -> None:
+    """H7: missing history match → context turn_text is empty string."""
+    staging = AsyncMock()
+    staging.save_correction = AsyncMock(return_value=object())
+    # No history injected → _resolve_trigger_text returns ""
+    g = _admin_graph(staging=staging, history=None)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=99)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, telegram_message_id=99),
+        _decision(draft="draft"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_correct(
+        turn.id, "corrected", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success
+    call = staging.save_correction.await_args
+    assert call.kwargs["context"]["turn_text"] == ""
 
 
 @pytest.mark.asyncio
