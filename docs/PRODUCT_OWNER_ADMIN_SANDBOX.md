@@ -14,7 +14,7 @@
 | Real VIP facts/notes write | item1 profile-write | `profile_content`, `ProfilesRepo` writers, `ProfileAdminService`, `/vip_*`, ContextBuilder fence |
 | Real VIP list/rename/remove+purge | item2 vip-crud | `VipStore.list_active`/`rename`, purge on `/remove_vip`, private DM gate |
 | Sandbox catalog + session | item3 sandbox-core | `src/diana/config/sandbox_profiles.json` (6 keys), `SandboxService` |
-| Sandbox admin + isolation | item4 sandbox-admin | `/sandbox *`, auth bypass, inject, `fake_delivery`, learning skip, recontact skip |
+| Sandbox admin + isolation | item4 sandbox-admin | `/sandbox *`, auth bypass, fixture inject, real delivery under session, learning/`should_persist` skip, recontact skip |
 
 Feature flag: `FEATURE_SANDBOX_ENABLED` / `feature_sandbox_enabled` (default **false**). Owner VIP admin commands are always-on (owner + private DM).
 
@@ -136,7 +136,7 @@ Long-term: same actions as **buttons under owner `/menu` → Sandbox**.
 | Fixture storage | Static JSON catalog in repo (not owner-edited day-to-day) |
 | Session state | In-process map `chat_id → profile_key` (+ focus chat), like v1 |
 | Persist learning / staging / real profile writes | **Forbidden** while sandbox active for that chat (`should_persist` false) |
-| Delivery | Prefer **`fake_delivery`** (or equivalent) for sandbox turns so real VIP never receives test traffic |
+| Delivery | Uses configured `global_mode` / `delivery_mode` (**real Telegram** when supervised\|autonomous). Product knowledge isolation is `should_persist=false`, not delivery mode. Global `global_mode=fake_delivery` remains a separate ops mode. |
 | Real `profiles` / `vips` tables | **Do not** treat sandbox fixtures as real subscribers; do not pollute production allowlist |
 | Traces | May record with explicit `sandbox: true` metadata for owner audit of tests, or skip production learning metrics — plan to pick one; default: **trace allowed with sandbox flag, learning promotion disabled** |
 | Feature flag | `FEATURE_SANDBOX_ENABLED` gates the whole surface; off ⇒ commands no-op / unavailable |
@@ -186,7 +186,7 @@ Owner DM (Telegram)
 | “Are seeds for sandbox?” | **Yes for fixtures** (v1 catalog). **No for real subscribers** (day-0 empty). |
 | `SandboxService()` empty wire | Rebuild/align with v1 session model + catalog; optional repo methods only if PLAN needs DB traces. |
 | `insert_sandbox` on ProfilesRepo | **Not required** if catalog+session isolation is chosen (this doc). Prefer not writing fake rows into real VIP `profiles` PK space. |
-| FakeDelivery vs FEATURE_SANDBOX | Product: sandbox **implies** non-delivery to real users (fake_delivery or hard skip). Flag alone without session is insufficient. |
+| FakeDelivery vs FEATURE_SANDBOX | Product: sandbox does **not** force `fake_delivery`. Delivery follows configured `global_mode` / `delivery_mode` (real Telegram when supervised\|autonomous). **Operator risk:** `/sandbox on <chat_id>` targets the chat that **receives** messages — use a dedicated test chat, not a real VIP private chat. Flag alone without session is insufficient. |
 
 ---
 
