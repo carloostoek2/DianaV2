@@ -297,3 +297,26 @@ def test_setup_forbidden_middleware_receives_behavior() -> None:
     block = setup_src[block_start : block_start + 350]
     assert "behavior=behavior" in block
 
+
+
+
+def test_composition_sandbox_wired(_comp_src: str) -> None:
+    """When feature_sandbox_enabled, SandboxService + augmenter + deps are wired."""
+    assert "sandbox = SandboxService() if feature_sandbox_enabled else None" in _comp_src
+    assert "SandboxKnowledgeAugmenter" in _comp_src
+    assert "knowledge_augmenter=" in _comp_src
+    # Admin + orch + dispatcher receive sandbox
+    assert "sandbox=sandbox" in _comp_src
+    assert _comp_src.count("sandbox=sandbox") >= 3
+
+
+def test_setup_auth_and_admin_receive_sandbox() -> None:
+    from pathlib import Path
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    setup_src = (root / "telegram" / "setup.py").read_text(encoding="utf-8")
+    assert "sandbox" in setup_src
+    assert "AuthMiddleware(" in setup_src
+    assert "sandbox=sandbox" in setup_src
+    assert "build_admin_router(" in setup_src

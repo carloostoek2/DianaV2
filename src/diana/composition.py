@@ -34,6 +34,7 @@ from diana.application.recovery_startup import (
     run_startup_recovery,
 )
 from diana.application.sandbox import SandboxService
+from diana.application.sandbox_knowledge import SandboxKnowledgeAugmenter
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.ports import TurnStore
@@ -284,6 +285,9 @@ def build_app(
 
     # SandboxService — v1 session model + package fixture catalog (not insert_sandbox)
     sandbox = SandboxService() if feature_sandbox_enabled else None
+    knowledge_augmenter = (
+        SandboxKnowledgeAugmenter(sandbox) if sandbox is not None else None
+    )
 
     # Shared runtime thresholds: calibration updates mins live for Decider (R2).
     runtime_thresholds = RuntimeThresholds(
@@ -359,6 +363,7 @@ def build_app(
         feature_advanced_behavior=feature_advanced_behavior,
         vip_store=vips,
         fp_marks=owner_marks,
+        sandbox=sandbox,
     )
 
     catalog = get_persona_catalog()
@@ -396,6 +401,7 @@ def build_app(
         repetition_guard=RepetitionGuard(threshold=3),
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
+        knowledge_augmenter=knowledge_augmenter,
     )
     learning = LearningService(traces)
     orchestrator = TurnOrchestrator(
@@ -412,6 +418,7 @@ def build_app(
         traces=traces,
         delivery_mode=settings.global_mode,
         feature_advanced_behavior=feature_advanced_behavior,
+        sandbox=sandbox,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
@@ -489,6 +496,7 @@ def build_app(
         profile_admin=profile_admin,
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
+        sandbox=sandbox,
         rate_limit_max_events=settings.rate_limit_max_events,
         rate_limit_window_s=settings.rate_limit_window_s,
         dedup_ttl_s=settings.dedup_ttl_s,
