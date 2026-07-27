@@ -33,15 +33,18 @@ SALUDO = TemplateRule(
         "holis",
         "buenas",
         "buenos días",
+        "buenos dias",
         "buenas tardes",
         "buenas noches",
         "hey",
         "qué tal",
+        "que tal",
     ],
     max_words=4,
     response_pool=list(SALUDO_POOL),
     reason="plantilla_saludo",
 )
+
 
 
 def _saludo_gate() -> TemplateGate:
@@ -94,11 +97,20 @@ def test_rule_order_deteccion_ia_beats_saludo_on_mixed_short() -> None:
     assert rule.reason == "plantilla_deteccion_ia"
 
 
-def test_phrase_trigger_is_substring_on_lowercased() -> None:
+def test_phrase_trigger_matches_with_punctuation() -> None:
     gate = _ia_gate()
     rule = gate.match("??? eres un bot ???")
     assert rule is not None
     assert rule.id == "deteccion_ia"
+
+
+def test_phrase_eres_real_does_not_match_realmente_or_realista() -> None:
+    """Multi-word phrase requires trailing word boundary (not bare substring)."""
+    gate = _ia_gate()
+    assert gate.match("eres realmente inteligente?") is None
+    assert gate.match("eres realista con los plazos") is None
+    assert gate.match("eres real?") is not None
+    assert gate.match("eres real").id == "deteccion_ia"  # type: ignore[union-attr]
 
 
 def test_single_token_uses_word_boundary() -> None:
@@ -107,6 +119,26 @@ def test_single_token_uses_word_boundary() -> None:
     assert gate.match("hola") is not None
     # Single-token boundary: 'holaxyz' should not match trigger 'hola'
     assert gate.match("holaxyz") is None
+
+
+def test_saludo_max_words_boundary_exactly_four_matches_five_does_not() -> None:
+    gate = _saludo_gate()
+    four = "hola a b c"
+    five = "hola a b c d"
+    assert len(four.split()) == 4
+    assert len(five.split()) == 5
+    rule = gate.match(four)
+    assert rule is not None
+    assert rule.id == "saludo_constante"
+    assert gate.match(five) is None
+
+
+def test_saludo_unaccented_aliases_match() -> None:
+    gate = _saludo_gate()
+    for text in ("buenos dias", "que tal"):
+        rule = gate.match(text)
+        assert rule is not None, text
+        assert rule.id == "saludo_constante"
 
 
 def test_render_with_fixed_rng_is_stable_and_in_pool() -> None:
@@ -122,3 +154,4 @@ def test_render_with_fixed_rng_is_stable_and_in_pool() -> None:
     assert rule2 is not None
     assert gate2.render(rule2) == a
     assert b in SALUDO_POOL
+

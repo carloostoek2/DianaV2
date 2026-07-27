@@ -24,13 +24,16 @@ class TemplateRule:
 
 
 def _kw_hit(kw: str, lower_text: str) -> bool:
-    """Phrase = substring; single token = word-boundary regex on lowercased text."""
+    """Match keyword as a whole-token sequence on lowercased text.
+
+    Single tokens and multi-word phrases both require non-word boundaries on
+    both sides so ``eres real`` does not hit ``eres realmente`` / ``realista``.
+    """
     k = (kw or "").strip().lower()
     if not k:
         return False
-    if " " in k:
-        return k in lower_text
-    return re.search(rf"\b{re.escape(k)}\b", lower_text, flags=re.IGNORECASE) is not None
+    return re.search(rf"(?<!\w){re.escape(k)}(?!\w)", lower_text) is not None
+
 
 
 class TemplateGate:
