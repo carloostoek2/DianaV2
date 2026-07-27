@@ -1,4 +1,4 @@
-"""Pure loader for the static persona catalog (Anexo J).
+"""Pure loader for the static persona catalog (Anexo J / H9).
 
 Loads package data ``diana.config.persona_diana.json`` via stdlib only.
 No infrastructure / telegram / behavior imports.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -16,7 +17,13 @@ _REQUIRED_TOP_KEYS = (
     "persona_facts",
     "voice_patterns",
     "policies",
+    "schedule",
 )
+
+_WEEKDAY_TOKENS = frozenset(
+    {"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"}
+)
+_HHMM_RE = re.compile(r"^\d{2}:\d{2}$")
 
 
 def load_persona_catalog() -> dict[str, Any]:
@@ -24,7 +31,7 @@ def load_persona_catalog() -> dict[str, Any]:
 
     Returns:
         Dict with keys ``voz_configurada``, ``persona_facts``,
-        ``voice_patterns``, ``policies``.
+        ``voice_patterns``, ``policies``, ``schedule``.
 
     Raises:
         FileNotFoundError / OSError: package data file missing or unreadable.
@@ -132,7 +139,62 @@ def _parse_and_validate(raw: str) -> dict[str, Any]:
         if not isinstance(policy["regla"], str) or not policy["regla"].strip():
             raise ValueError("policy.regla must be a non-empty string")
 
+    _validate_schedule(data["schedule"])
     return data
+
+
+def _validate_schedule(schedule: Any) -> None:
+    """Validate H9.2 weekly agenda structure (fail loud at load)."""
+    if not isinstance(schedule, dict):
+        raise ValueError("schedule must be an object")
+
+    timezone = schedule.get("timezone")
+    if not isinstance(timezone, str) or not timezone.strip():
+        raise ValueError("schedule.timezone must be a non-empty string")
+
+    defaults = schedule.get("default_responses")
+    if not isinstance(defaults, list) or not defaults:
+        raise ValueError("schedule.default_responses must be a non-empty list")
+    if not all(isinstance(s, str) and s.strip() for s in defaults):
+        raise ValueError(
+            "schedule.default_responses entries must be non-empty strings"
+        )
+
+    bloques = schedule.get("bloques")
+    if not isinstance(bloques, list):
+        raise ValueError("schedule.bloques must be a list")
+
+    for idx, bloque in enumerate(bloques):
+        if not isinstance(bloque, dict):
+            raise ValueError(f"schedule.bloques[{idx}] must be an object")
+        dias = bloque.get("dias")
+        if not isinstance(dias, list) or not dias:
+            raise ValueError(
+                f"schedule.bloques[{idx}].dias must be a non-empty list"
+            )
+        if not all(isinstance(d, str) and d in _WEEKDAY_TOKENS for d in dias):
+            raise ValueError(
+                f"schedule.bloques[{idx}].dias must use weekday tokens "
+                f"without accents ({sorted(_WEEKDAY_TOKENS)})"
+            )
+        inicio = bloque.get("inicio")
+        fin = bloque.get("fin")
+        if not isinstance(inicio, str) or not _HHMM_RE.match(inicio):
+            raise ValueError(
+                f"schedule.bloques[{idx}].inicio must match HH:MM"
+            )
+        if not isinstance(fin, str) or not _HHMM_RE.match(fin):
+            raise ValueError(f"schedule.bloques[{idx}].fin must match HH:MM")
+        if not (inicio < fin):
+            raise ValueError(
+                f"schedule.bloques[{idx}] requires inicio < fin "
+                f"(got {inicio!r} / {fin!r})"
+            )
+        actividad = bloque.get("actividad")
+        if not isinstance(actividad, str) or not actividad.strip():
+            raise ValueError(
+                f"schedule.bloques[{idx}].actividad must be a non-empty string"
+            )
 
 
 __all__ = ["load_persona_catalog", "get_persona_catalog"]
