@@ -140,19 +140,24 @@ class CognitiveDirector:
         turn = turn_context
         turn_id = turn.turn_id
         try:
-            if self._template_gate is not None:
-                rule = self._template_gate.match(turn.text)
+            gate = self._template_gate
+            if gate is not None:
+                rule = gate.match(turn.text)
                 if rule is not None:
-                    return await self._handle_template(turn, rule)
+                    return await self._handle_template(turn, rule, gate)
             return await self._run_pipeline(turn)
         except Exception:
             await self._status.transition(turn_id, TurnStatus.FAILED)
             raise
 
-    async def _handle_template(self, turn: IncomingTurn, rule: TemplateRule) -> Decision:
+    async def _handle_template(
+        self,
+        turn: IncomingTurn,
+        rule: TemplateRule,
+        gate: TemplateGate,
+    ) -> Decision:
         """H6 pre-pipeline: synthetic approve Decision from fixed template (0 LLM)."""
-        assert self._template_gate is not None
-        text = self._template_gate.render(rule)
+        text = gate.render(rule)
         decision = Decision(
             action="approve",
             reason=rule.reason,
@@ -160,8 +165,11 @@ class CognitiveDirector:
             draft_text=text,
             mode_restriction_applied=None,
         )
+        # Mirror pipeline: /traza Draft line reads generated_text.
+        await self._store(turn.turn_id, "generated_text", text)
         await self._store(turn.turn_id, "decision", decision)
         return decision
+
 
 
     async def _run_pipeline(self, turn: IncomingTurn) -> Decision:

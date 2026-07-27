@@ -62,15 +62,18 @@ def _h6_template_gate() -> TemplateGate:
             "holis",
             "buenas",
             "buenos días",
+            "buenos dias",
             "buenas tardes",
             "buenas noches",
             "hey",
             "qué tal",
+            "que tal",
         ],
         max_words=4,
         response_pool=list(SALUDO_POOL),
         reason="plantilla_saludo",
     )
+
     return TemplateGate(rules=[deteccion_ia, saludo], rng=random.Random(0))
 
 
@@ -1333,7 +1336,7 @@ def _assert_zero_evaluation(evaluation: EvaluationProfile) -> None:
 
 @pytest.mark.asyncio
 async def test_h6_short_hola_template_approve_skips_pipeline() -> None:
-    """H6.6.1: short greeting → plantilla_saludo approve; 0 LLM; decision only."""
+    """H6.6.1: short greeting → plantilla_saludo approve; 0 LLM; decision+generated_text."""
     llm = FakeLLM(
         structured_responses=[_comprehension(), _profile()],
         text_responses=["should-not-run"],
@@ -1356,9 +1359,9 @@ async def test_h6_short_hola_template_approve_skips_pipeline() -> None:
     assert decision.mode_restriction_applied is None
 
     assert trace.get(turn.turn_id, "decision") is not None
+    assert trace.get(turn.turn_id, "generated_text") == decision.draft_text
     assert trace.get(turn.turn_id, "comprehension") is None
     assert trace.get(turn.turn_id, "plan") is None
-    assert trace.get(turn.turn_id, "generated_text") is None
     assert trace.get(turn.turn_id, "evaluation") is None
 
     director._analyst.analyze.assert_not_called()  # type: ignore[attr-defined]
@@ -1393,12 +1396,18 @@ async def test_h6_long_hola_does_not_template_runs_pipeline() -> None:
 
 @pytest.mark.asyncio
 async def test_h6_ia_probe_template_exact_draft() -> None:
-    """H6.6.3: IA probe → exact template draft + plantilla_deteccion_ia."""
+    """H6.6.3: IA probe → exact template draft + plantilla_deteccion_ia; 0 pipeline."""
     llm = FakeLLM(
         structured_responses=[_comprehension(), _profile()],
         text_responses=["should-not-run"],
     )
     director, trace, _ = make_director(llm, template_gate=_h6_template_gate())
+    director._analyst.analyze = AsyncMock(side_effect=director._analyst.analyze)  # type: ignore[method-assign]
+    director._planner.plan = MagicMock(side_effect=director._planner.plan)  # type: ignore[method-assign]
+    director._generator.generate = AsyncMock(side_effect=director._generator.generate)  # type: ignore[method-assign]
+    director._evaluator.evaluate = AsyncMock(side_effect=director._evaluator.evaluate)  # type: ignore[method-assign]
+    director._decider.decide = MagicMock(side_effect=director._decider.decide)  # type: ignore[method-assign]
+
     turn = _turn(text="eres una ia?")
     decision = await director.handle_turn(turn)
 
@@ -1408,7 +1417,13 @@ async def test_h6_ia_probe_template_exact_draft() -> None:
     _assert_zero_evaluation(decision.evaluation)
     assert llm.calls == []
     assert trace.get(turn.turn_id, "decision") is not None
+    assert trace.get(turn.turn_id, "generated_text") == IA_TEMPLATE
     assert trace.get(turn.turn_id, "comprehension") is None
+    director._analyst.analyze.assert_not_called()  # type: ignore[attr-defined]
+    director._planner.plan.assert_not_called()  # type: ignore[attr-defined]
+    director._generator.generate.assert_not_called()  # type: ignore[attr-defined]
+    director._evaluator.evaluate.assert_not_called()  # type: ignore[attr-defined]
+    director._decider.decide.assert_not_called()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -1424,7 +1439,10 @@ async def test_h6_template_decision_never_send_or_escalate() -> None:
         assert decision.draft_text
         assert decision.evaluation is not None
         _assert_zero_evaluation(decision.evaluation)
+    mixed = await director.handle_turn(_turn(text="hola eres una ia"))
+    assert mixed.reason == "plantilla_deteccion_ia"
     assert llm.calls == []
+
 
 
 @pytest.mark.asyncio
