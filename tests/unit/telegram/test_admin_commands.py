@@ -627,3 +627,163 @@ async def test_remove_vip_without_profile_admin_still_deactivates(
         await _dispatch(g, "/remove_vip 555", profile_admin=None) == "vip_removed"
     )
     assert await g["vips"].is_allowed(555) is False
+
+
+@pytest.mark.asyncio
+async def test_remove_vip_purge_exception_still_vip_removed(
+    admin_ctx: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SUG-1: after deactivate, purge faults must not hide vip_removed."""
+    import logging
+
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555 Alice")
+    await _dispatch(g, "/vip_fact 555 city BA")
+
+    async def _boom(*_a, **_k):  # noqa: ANN001
+        raise RuntimeError("db down")
+
+    g["profile_admin"].purge_profile_for_telegram_user = _boom  # type: ignore[method-assign]
+    with caplog.at_level(logging.ERROR, logger="diana.telegram"):
+        assert await _dispatch(g, "/remove_vip 555") == "vip_removed"
+    assert await g["vips"].is_allowed(555) is False
+    assert any(r.getMessage() == "vip_remove_purge_failed" for r in caplog.records)
+
+
+def test_is_private_owner_message_gate() -> None:
+    from aiogram.types import Chat, Message, User
+
+    from diana.telegram.handlers.admin import is_private_owner_message
+
+    owner = User(id=OWNER, is_bot=False, first_name="O")
+    other = User(id=OTHER, is_bot=False, first_name="X")
+    private = Message(
+        message_id=1,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=owner,
+        text="/list_vips",
+    )
+    group = Message(
+        message_id=2,
+        date=0,
+        chat=Chat(id=-1001, type="group"),
+        from_user=owner,
+        text="/list_vips",
+    )
+    supergroup = Message(
+        message_id=3,
+        date=0,
+        chat=Chat(id=-1002, type="supergroup"),
+        from_user=owner,
+        text="/list_vips",
+    )
+    non_owner_private = Message(
+        message_id=4,
+        date=0,
+        chat=Chat(id=OTHER, type="private"),
+        from_user=other,
+        text="/list_vips",
+    )
+    assert is_private_owner_message(private, OWNER) is True
+    assert is_private_owner_message(group, OWNER) is False
+    assert is_private_owner_message(supergroup, OWNER) is False
+    assert is_private_owner_message(non_owner_private, OWNER) is False
+
+
+def _router_handler(router, name: str):  # noqa: ANN001
+    for h in router.message.handlers:
+        if getattr(h.callback, "__name__", None) == name:
+            return h.callback
+    raise AssertionError(f"handler not found: {name}")
+
+
+def _admin_message(
+    text: str,
+    *,
+    chat_type: str = "private",
+    user_id: int = OWNER,
+    chat_id: int | None = None,
+):
+    from aiogram.types import Chat, Message, User
+    from unittest.mock import AsyncMock
+
+    cid = chat_id if chat_id is not None else (
+        user_id if chat_type == "private" else -100555
+    )
+    msg = Message(
+        message_id=1,
+        date=0,
+        chat=Chat(id=cid, type=chat_type),
+        from_user=User(id=user_id, is_bot=False, first_name="O"),
+        text=text,
+    )
+    object.__setattr__(msg, "answer", AsyncMock())
+    return msg
+
+
+@pytest.mark.asyncio
+async def test_list_vips_group_chat_silently_ignored(admin_ctx: dict) -> None:
+    """SEC-VIP-01: owner in non-private chat must not dump allowlist."""
+    from diana.telegram.handlers.admin import build_admin_router
+
+    g = admin_ctx
+    await g["vips"].add(100, display_name="Alice")
+    router = build_admin_router(
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        profile_admin=g["profile_admin"],
+    )
+    on_list = _router_handler(router, "on_list_vips")
+    msg = _admin_message("/list_vips", chat_type="group")
+    await on_list(msg)
+    msg.answer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_remove_vip_group_chat_silently_ignored(admin_ctx: dict) -> None:
+    """SEC-VIP-01: owner in group must not deactivate / purge."""
+    from diana.telegram.handlers.admin import build_admin_router
+
+    g = admin_ctx
+    await g["vips"].add(555, display_name="Alice")
+    await g["profile_admin"].set_fact(OWNER, 555, "city", "BA")
+    rec = await g["vips"].get_by_telegram_user_id(555)
+    assert rec is not None
+
+    router = build_admin_router(
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        profile_admin=g["profile_admin"],
+    )
+    on_rm = _router_handler(router, "on_remove_vip")
+    msg = _admin_message("/remove_vip 555", chat_type="supergroup")
+    await on_rm(msg)
+    msg.answer.assert_not_awaited()
+    assert await g["vips"].is_allowed(555) is True
+    assert rec.id in g["profiles"].rows
+
+
+@pytest.mark.asyncio
+async def test_list_vips_private_owner_answers(admin_ctx: dict) -> None:
+    from diana.telegram.handlers.admin import build_admin_router
+
+    g = admin_ctx
+    await g["vips"].add(100, display_name="Alice")
+    router = build_admin_router(
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        profile_admin=g["profile_admin"],
+    )
+    on_list = _router_handler(router, "on_list_vips")
+    msg = _admin_message("/list_vips", chat_type="private")
+    await on_list(msg)
+    msg.answer.assert_awaited()
+    body = msg.answer.await_args.args[0]
+    assert "100 — Alice" in body

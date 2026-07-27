@@ -29,6 +29,15 @@ from diana.telegram.keyboards import (
 
 logger = logging.getLogger("diana.telegram")
 
+
+def is_private_owner_message(message: Message, owner_telegram_id: int) -> bool:
+    """True iff sender is the owner and chat is a private DM (fail-closed)."""
+    if message.from_user is None or message.from_user.id != owner_telegram_id:
+        return False
+    chat = message.chat
+    return chat is not None and chat.type == "private"
+
+
 _ADD_RE = re.compile(r"^/add_vip\s+(\d+)(?:\s+(.+))?$", re.IGNORECASE)
 _RM_RE = re.compile(r"^/remove_vip\s+(\d+)\s*$", re.IGNORECASE)
 _LIST_RE = re.compile(r"^/list_vips(?:@\S+)?\s*$", re.I)
@@ -167,8 +176,14 @@ async def handle_admin_text(
             try:
                 await profile_admin.purge_profile_for_telegram_user(actor_id, tg_id)
             except OwnerAuthError:
+                # Miswired owner ids: allowlist already revoked; stay silent.
                 return "forbidden"
-            # profile_purged / profile_absent / unexpected: allowlist change wins
+            except Exception:
+                # Best-effort purge: deactivate is primary; log residual profile.
+                logger.exception(
+                    "vip_remove_purge_failed",
+                    extra={"tg_id": tg_id},
+                )
         return "vip_removed"
 
     m_list = _LIST_RE.match(stripped)
@@ -289,9 +304,8 @@ def build_admin_router(
     sessions = correct_sessions or CorrectSessionStore()
 
     def _is_owner(message: Message) -> bool:
-        return bool(
-            message.from_user and message.from_user.id == owner_telegram_id
-        )
+        # Owner identity + private DM only (SEC-VIP-01: no group leak).
+        return is_private_owner_message(message, owner_telegram_id)
 
     async def _dispatch_token(message: Message) -> str:
         return await handle_admin_text(
@@ -617,4 +631,5 @@ __all__ = [
     "format_profile_body",
     "format_vips_list",
     "handle_admin_text",
+    "is_private_owner_message",
 ]

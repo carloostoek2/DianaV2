@@ -196,9 +196,16 @@ def test_profiles_repo_source_scopes_by_vip_id() -> None:
     assert "async def _load" in source
     assert "select(Profile).where(Profile.vip_id == vip_id)" in source
     # Mutators exist (owner profile write path) and all go through _load.
-    for name in ("set_fact", "delete_fact", "add_note", "delete_note"):
+    for name in (
+        "set_fact",
+        "delete_fact",
+        "add_note",
+        "delete_note",
+        "delete_by_vip_id",
+    ):
         assert f"async def {name}" in source
-    assert source.count("await self._load(session, vip_id)") >= 5  # get + 4 mutators
+    # get + 4 writers + delete_by_vip_id
+    assert source.count("await self._load(session, vip_id)") >= 6
     # No unscoped list-all helper.
     assert "def find_all" not in source
     assert "vip_id" in source
