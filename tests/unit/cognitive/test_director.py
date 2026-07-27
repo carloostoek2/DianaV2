@@ -256,7 +256,6 @@ _STUB_CAPS = (
     "knowledge.memory",
     "knowledge.policy",
     "knowledge.examples",
-    "knowledge.schedule",
 )
 
 
@@ -440,11 +439,17 @@ async def test_registry_isolation_history_uses_turn_chat_id() -> None:
     assert retrieved["knowledge.history"] == [
         {"autor": "vip", "texto": "from-42", "timestamp": ""},
     ]
-    assert retrieved["knowledge.context"] == {
-        "waiting_for_reply_since": "",
-        "is_first_message_of_day": True,
-    }
-    # All planned stub caps must be present and None (not vacuous omission).
+    ctx = retrieved["knowledge.context"]
+    assert isinstance(ctx, dict)
+    assert ctx["waiting_for_reply_since"] == ""
+    assert ctx["is_first_message_of_day"] is True
+    assert "dia_semana" in ctx
+    assert "hora_actual" in ctx
+    # H9: schedule is a real seat — dict payload, never None when planned.
+    schedule = retrieved["knowledge.schedule"]
+    assert isinstance(schedule, dict)
+    assert schedule["tipo"] in {"actividad", "respuesta_libre"}
+    # Remaining planned stub caps must be present and None (not vacuous omission).
     for cap in _STUB_CAPS:
         assert cap in retrieved
         assert retrieved[cap] is None
