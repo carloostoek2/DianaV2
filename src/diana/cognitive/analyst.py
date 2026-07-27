@@ -35,7 +35,10 @@ _SYSTEM = (
     "(preferences/standing facts), not episodic memory. "
     "needs_policy=true for limits, content promises, bio invention bounds, or photo/video. "
     "Policy temas: contenido, expectativas, psicologia, limites_profesionales, biografia, "
-    "limites, identidad, dinamica_novia_virtual; map foto/video requests to contenido."
+    "limites, identidad, dinamica_novia_virtual; map foto/video requests to contenido. "
+    "needs_schedule=true for direct questions about Diana's current activity/availability "
+    "right now (qué haces, dónde andas, estás libre / \"ahora qué haces\"), "
+    "not only future appointments."
 )
 
 _MAX_ATTEMPTS = 2  # initial try + exactly one retry (contrato A.6)

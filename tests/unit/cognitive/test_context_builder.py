@@ -390,6 +390,69 @@ def test_persona_voice_emitted_between_context_and_memory() -> None:
     ]
 
 
+def test_schedule_actividad_renders_fact_anchor() -> None:
+    """H9: tipo=actividad → fact line for Generator, not raw JSON alone."""
+    builder = ContextBuilder()
+    built = builder.build(
+        _turn("Y ahora qué haces?"),
+        _comprehension(),
+        knowledge={
+            "knowledge.schedule": {
+                "dia": "jueves",
+                "hora_actual": "17:00",
+                "tipo": "actividad",
+                "actividad": "en las prácticas profesionales, en una casa hogar",
+            }
+        },
+        persona="Persona",
+    )
+    prompt = built.prompt_final
+    assert "## Knowledge: knowledge.schedule" in prompt
+    assert "prácticas profesionales" in prompt
+    assert "Diana está ahora" in prompt or "Diana está" in prompt
+    assert "jueves" in prompt
+    assert "17:00" in prompt
+    # Should not be only a raw JSON dump of keys as the sole content shape
+    assert '"tipo": "actividad"' not in prompt
+
+
+def test_schedule_respuesta_libre_renders_style_anchor() -> None:
+    """H9: tipo=respuesta_libre → style anchor, not forced verbatim dict dump."""
+    builder = ContextBuilder()
+    built = builder.build(
+        _turn("Y ahora qué haces?"),
+        _comprehension(),
+        knowledge={
+            "knowledge.schedule": {
+                "dia": "jueves",
+                "hora_actual": "13:00",
+                "tipo": "respuesta_libre",
+                "respuesta_sugerida": "Pues aquí entre cosas jsjsjs y tú?",
+            }
+        },
+        persona="Persona",
+    )
+    prompt = built.prompt_final
+    assert "## Knowledge: knowledge.schedule" in prompt
+    assert "Pues aquí entre cosas jsjsjs y tú?" in prompt
+    low = prompt.lower()
+    assert "ancla" in low or "tono" in low or "estilo" in low
+    assert '"tipo": "respuesta_libre"' not in prompt
+
+
+def test_schedule_absent_when_not_in_knowledge() -> None:
+    """Without needs_schedule / schedule key, no schedule block is forced."""
+    builder = ContextBuilder()
+    built = builder.build(
+        _turn("hola"),
+        _comprehension(),
+        knowledge={"knowledge.history": [{"autor": "vip", "texto": "hi"}]},
+        persona="Persona",
+    )
+    assert "knowledge.schedule" not in built.included_blocks
+    assert "Knowledge: knowledge.schedule" not in built.prompt_final
+
+
 def test_profile_knowledge_section_fenced_as_non_instruction_data() -> None:
     """SEC-INJ-01: knowledge.profile is historical owner data, not instructions."""
     builder = ContextBuilder()

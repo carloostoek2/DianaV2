@@ -3,6 +3,7 @@
 Anexo H.3 Context always returns a non-null object with English keys only:
 - ``waiting_for_reply_since`` (← esperando_respuesta_desde)
 - ``is_first_message_of_day`` (← es_primer_mensaje_del_dia)
+- ``dia_semana`` / ``hora_actual`` (H9.5, America/Mexico_City)
 
 Never returns None from fetch. Uses history port only (no cross-retriever import).
 """
@@ -12,12 +13,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from diana.cognitive.models import Comprehension, IncomingTurn
 from diana.cognitive.ports import MessageHistoryPort
 
 # Same role vocabulary as HistoryRetriever (local copy; no peer import).
 _MAPPABLE_ROLES = frozenset({"vip", "owner"})
+
+_CONTEXT_TZ = ZoneInfo("America/Mexico_City")
+_WEEKDAY_ES = (
+    "lunes",
+    "martes",
+    "miercoles",
+    "jueves",
+    "viernes",
+    "sabado",
+    "domingo",
+)
 
 
 def _timestamp_str(value: Any) -> str:
@@ -67,9 +80,13 @@ class ContextRetriever:
     ) -> dict[str, Any]:
         _ = comprehension
         messages = await self._port.get_recent(turn.chat_id, limit=self._limit)
+        now = self._clock()
+        local = now.astimezone(_CONTEXT_TZ) if now.tzinfo else now.replace(tzinfo=UTC).astimezone(_CONTEXT_TZ)
         return {
             "waiting_for_reply_since": self._waiting_for_reply_since(messages),
             "is_first_message_of_day": self._is_first_message_of_day(messages),
+            "dia_semana": _WEEKDAY_ES[local.weekday()],
+            "hora_actual": local.strftime("%H:%M"),
         }
 
     def _waiting_for_reply_since(self, messages: list[dict]) -> str | None:

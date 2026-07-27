@@ -413,6 +413,8 @@ def build_app(
         persona_facts=catalog["persona_facts"],
         voice_patterns=catalog["voice_patterns"],
         static_policies=catalog["policies"],
+        schedule=catalog["schedule"],
+        clock=clock,
     )
     # H6: pure TemplateGate pre-pipeline (deteccion_ia before saludo_constante).
     deteccion_ia = TemplateRule(

@@ -265,3 +265,14 @@ def test_system_prompt_mentions_persona_voice_needs() -> None:
     assert "familia" in low
     assert "contenido" in low
     assert "cariñosa" in low or "carinosa" in low
+
+
+def test_system_prompt_mentions_current_activity_needs_schedule() -> None:
+    """H9.6: needs_schedule for current-activity questions (qué haces ahora)."""
+    from diana.cognitive import analyst as analyst_mod
+
+    system = analyst_mod._SYSTEM
+    assert "needs_schedule" in system
+    low = system.lower()
+    assert "qué haces" in low or "que haces" in low
+    assert "current" in low or "ahora" in low or "activity" in low

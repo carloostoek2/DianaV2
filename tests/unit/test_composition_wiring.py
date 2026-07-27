@@ -260,6 +260,14 @@ def test_composition_persona_catalog_wired(_comp_src: str) -> None:
     assert "_PERSONA_CATALOG = load_persona_catalog()" not in _comp_src
 
 
+def test_composition_schedule_and_clock_wired(_comp_src: str) -> None:
+    """H9: composition passes schedule catalog slice + SystemClock to registry."""
+    assert "schedule=" in _comp_src
+    assert 'catalog["schedule"]' in _comp_src or "catalog['schedule']" in _comp_src
+    assert "clock=" in _comp_src
+    assert "SystemClock" in _comp_src
+
+
 def test_composition_profiles_repo_wired(_comp_src: str) -> None:
     """Item4: ProfilesRepo constructed and passed as profile_repo= to registry."""
     assert (

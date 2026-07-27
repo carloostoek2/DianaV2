@@ -124,7 +124,12 @@ async def test_context_retriever_derives_partial_from_history() -> None:
     retriever = ContextRetriever(port, limit=20, clock=lambda: fixed)
     ctx = await retriever.fetch(_turn(7), _comprehension())
     assert ctx is not None
-    assert set(ctx.keys()) == {"waiting_for_reply_since", "is_first_message_of_day"}
+    assert set(ctx.keys()) == {
+        "waiting_for_reply_since",
+        "is_first_message_of_day",
+        "dia_semana",
+        "hora_actual",
+    }
     assert "message_count" not in ctx
     assert "last_role" not in ctx
     assert "last_text_preview" not in ctx
@@ -139,10 +144,10 @@ async def test_context_retriever_empty_history() -> None:
     retriever = ContextRetriever(port)
     ctx = await retriever.fetch(_turn(99), _comprehension())
     assert ctx is not None
-    assert ctx == {
-        "waiting_for_reply_since": None,
-        "is_first_message_of_day": True,
-    }
+    assert ctx["waiting_for_reply_since"] is None
+    assert ctx["is_first_message_of_day"] is True
+    assert "dia_semana" in ctx
+    assert "hora_actual" in ctx
 
 
 @pytest.mark.asyncio
@@ -194,6 +199,20 @@ async def test_context_is_first_message_of_day_false_with_two_vip_today() -> Non
     ctx = await retriever.fetch(_turn(5), _comprehension())
     assert ctx["is_first_message_of_day"] is False
     assert ctx["waiting_for_reply_since"] == "2026-07-01T09:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_context_retriever_includes_dia_hora_mexico_city() -> None:
+    """H9.5: additive dia_semana/hora_actual in America/Mexico_City."""
+    port = InMemoryMessageHistory()
+    # 2026-07-23 Thursday 23:00 UTC → 17:00 CDMX
+    fixed = datetime(2026, 7, 23, 23, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed)
+    ctx = await retriever.fetch(_turn(7), _comprehension())
+    assert ctx["dia_semana"] == "jueves"
+    assert ctx["hora_actual"] == "17:00"
+    assert "waiting_for_reply_since" in ctx
+    assert "is_first_message_of_day" in ctx
 
 
 @pytest.mark.asyncio
