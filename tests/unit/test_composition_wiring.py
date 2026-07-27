@@ -320,3 +320,11 @@ def test_setup_auth_and_admin_receive_sandbox() -> None:
     assert "AuthMiddleware(" in setup_src
     assert "sandbox=sandbox" in setup_src
     assert "build_admin_router(" in setup_src
+
+
+
+def test_composition_recontact_sandbox_hook(_comp_src: str) -> None:
+    """RecontactService must bind is_sandbox_vip from SandboxService sessions."""
+    assert "is_sandbox_vip=None" not in _comp_src
+    assert "is_sandbox_vip=" in _comp_src
+    assert "sandbox.is_active" in _comp_src

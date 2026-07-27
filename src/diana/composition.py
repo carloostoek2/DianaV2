@@ -323,6 +323,19 @@ def build_app(
         open_rows = await gray_zone_repo.list_open()
         return any(q.vip_id == vip_id for q in open_rows)
 
+    async def _is_sandbox_vip(vip_id: Any) -> bool:
+        """True when VIP's private chat_id has an active sandbox session.
+
+        Sandbox sessions are keyed by Telegram chat_id; for private VIP
+        chats that equals ``telegram_user_id``.
+        """
+        if sandbox is None:
+            return False
+        vip = await vips.get_by_id(vip_id)
+        if vip is None:
+            return False
+        return sandbox.is_active(vip.telegram_user_id)
+
     recontact = RecontactService(
         feature_recontact_enabled=feature_recontact_enabled,
         schedules=recontact_schedules_repo,
@@ -339,7 +352,7 @@ def build_app(
         has_open_gray_zone=(
             _has_open_gray_zone if feature_gray_zone_enabled else None
         ),
-        is_sandbox_vip=None,
+        is_sandbox_vip=_is_sandbox_vip if sandbox is not None else None,
     )
 
     coordinator = TurnCoordinator(

@@ -732,3 +732,70 @@ async def test_route_resolver_uses_open_including_claimed() -> None:
     resolver = ApprovalsDeliveriesRouteResolver(approvals, deliveries)
     route = await resolver.resolve(vip_id)
     assert route == (42, "bc-claimed")
+
+
+
+@pytest.mark.asyncio
+async def test_is_blocked_sandbox_active_via_telegram_chat_id() -> None:
+    """Composition-style hook: vip.telegram_user_id is sandbox chat_id key."""
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {"label": "x", "description": "", "facts": {}, "notes": []},
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    vips = InMemoryVipStore()
+    vip = await _seed_vip(vips, telegram_user_id=555_001)
+    other = await _seed_vip(vips, telegram_user_id=555_002)
+    sandbox.activate(555_001, "nuevo")
+
+    async def is_sandbox_vip(vip_id: UUID) -> bool:
+        rec = await vips.get_by_id(vip_id)
+        if rec is None:
+            return False
+        return sandbox.is_active(rec.telegram_user_id)
+
+    svc, _ = _make_service(vips=vips, is_sandbox_vip=is_sandbox_vip)
+    assert await svc.is_blocked(vip.id) is True
+    assert await svc.is_blocked(other.id) is False
+    sandbox.deactivate(555_001)
+    assert await svc.is_blocked(vip.id) is False
+
+
+@pytest.mark.asyncio
+async def test_get_due_vips_skips_sandbox_active_vip() -> None:
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {"label": "x", "description": "", "facts": {}, "notes": []},
+    }
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    vips = InMemoryVipStore()
+    ok = await _seed_vip(vips, telegram_user_id=1)
+    sandboxed = await _seed_vip(vips, telegram_user_id=2)
+    sandbox.activate(2, "cercano")
+
+    async def is_sandbox_vip(vip_id: UUID) -> bool:
+        rec = await vips.get_by_id(vip_id)
+        return rec is not None and sandbox.is_active(rec.telegram_user_id)
+
+    svc, _ = _make_service(
+        schedules=schedules, vips=vips, clock=clock, is_sandbox_vip=is_sandbox_vip
+    )
+    past = clock.now() - timedelta(hours=1)
+    await schedules.upsert_pending(ok.id, past, past)
+    await schedules.upsert_pending(sandboxed.id, past, past)
+    due = await svc.get_due_vips()
+    assert due == [ok.id]
