@@ -1,8 +1,12 @@
 """Pure deterministic template matcher for short VIP replies (H6).
 
 No I/O, no LLM. Cognitive Core only — does not import application/telegram/behavior.
-Keyword hit semantics mirror application.j4_triggers.match_keywords (local copy).
+
+Local ``_kw_hit`` is inspired by ``application.j4_triggers.match_keywords`` but is
+stricter: multi-word phrases use non-word lookarounds on both sides (not bare
+substring), so ``eres real`` does not match ``eres realmente`` / ``realista``.
 """
+
 
 from __future__ import annotations
 
