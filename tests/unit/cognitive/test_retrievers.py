@@ -871,3 +871,49 @@ async def test_profile_retriever_returns_none_on_empty_content() -> None:
             }
         )
         assert await retriever.fetch(turn, _comprehension()) is None, empty_content
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_hollow_schema_envelope_is_none() -> None:
+    """Option A: empty facts+notes shell (or partial shell, no other keys) → None."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    retriever = ProfileRetriever(repo=AsyncMock())
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+
+    hollow_payloads = (
+        {"facts": {}, "notes": []},
+        {"facts": {}},
+        {"notes": []},
+    )
+    for content in hollow_payloads:
+        retriever._repo.get_by_vip_id = AsyncMock(
+            return_value={
+                "tipo": "summary",
+                "content": content,
+                "vip_id": str(vip_id),
+            }
+        )
+        assert await retriever.fetch(turn, _comprehension()) is None, content
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_legacy_flat_content_still_hits() -> None:
+    """Legacy flat ``{"fact": ...}`` must remain a hit (not hollow)."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    row = {
+        "vip_id": str(vip_id),
+        "tipo": "summary",
+        "content": {"fact": "prefers morning"},
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    repo = AsyncMock()
+    repo.get_by_vip_id = AsyncMock(return_value=row)
+    retriever = ProfileRetriever(repo=repo)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    result = await retriever.fetch(turn, _comprehension())
+    assert result == {"tipo": "summary", "content": {"fact": "prefers morning"}}

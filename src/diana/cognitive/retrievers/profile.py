@@ -22,6 +22,10 @@ def _is_null_like_content(content: Any) -> bool:
 
     Outer hit shape is always ``{"tipo", "content"}``; empty content must
     collapse to fetch ``None`` so D.5 does not emit a hollow profile envelope.
+
+    Hollow schema envelope (Option A): ``{"facts": {}, "notes": []}`` (or only
+    one of those keys empty, with no other top-level payload) is null-like.
+    Legacy flat shapes like ``{"fact": "prefers morning"}`` remain hits.
     """
     if content is None:
         return True
@@ -29,6 +33,15 @@ def _is_null_like_content(content: Any) -> bool:
         return True
     if isinstance(content, str) and not content.strip():
         return True
+    if isinstance(content, dict):
+        facts = content.get("facts")
+        notes = content.get("notes")
+        facts_empty = facts is None or (isinstance(facts, dict) and len(facts) == 0)
+        notes_empty = notes is None or (isinstance(notes, list) and len(notes) == 0)
+        if facts_empty and notes_empty:
+            other = {k: v for k, v in content.items() if k not in ("facts", "notes")}
+            if not other:
+                return True
     return False
 
 
