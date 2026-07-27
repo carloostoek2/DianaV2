@@ -1,9 +1,9 @@
-"""Admin commands — owner-only VIP add/remove /start /resumen /fp."""
+"""Admin commands — owner-only VIP add/remove /start /resumen /fp /vip_*."""
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -19,9 +19,17 @@ from diana.application.memory import (
     InMemoryVipStore,
 )
 from diana.application.owner_marks import InMemoryOwnerMarkStore
+from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
+from diana.infrastructure.db.repositories.profiles import (
+    apply_add_note,
+    apply_delete_fact,
+    apply_delete_note,
+    apply_set_fact,
+    empty_content,
+)
 from diana.telegram.handlers.admin import handle_admin_text
 from diana.telegram.handlers.callbacks import ADMIN_MENU_TEXT, CorrectSessionStore
 
@@ -29,6 +37,52 @@ OWNER = 999001
 OTHER = 111
 _WIDE_START = date(2000, 1, 1)
 _WIDE_END = date(2100, 1, 1)
+
+
+class _FakeProfilesRepo:
+    def __init__(self) -> None:
+        self.rows: dict[UUID, dict] = {}
+
+    async def get_by_vip_id(self, vip_id: UUID) -> dict | None:
+        content = self.rows.get(vip_id)
+        if content is None:
+            return None
+        return {
+            "vip_id": str(vip_id),
+            "tipo": "summary",
+            "content": dict(content),
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    async def set_fact(self, vip_id: UUID, key: str, value: str) -> dict:
+        base = self.rows.get(vip_id) or empty_content()
+        self.rows[vip_id] = apply_set_fact(base, key, value)
+        return await self.get_by_vip_id(vip_id)  # type: ignore[return-value]
+
+    async def delete_fact(self, vip_id: UUID, key: str) -> dict | None:
+        if vip_id not in self.rows:
+            return None
+        new_content, _ = apply_delete_fact(self.rows[vip_id], key)
+        self.rows[vip_id] = new_content
+        return await self.get_by_vip_id(vip_id)
+
+    async def add_note(
+        self, vip_id: UUID, text: str, *, date: str | None = None
+    ) -> dict:
+        note_date = date or "2026-07-27"
+        base = self.rows.get(vip_id) or empty_content()
+        self.rows[vip_id] = apply_add_note(base, text, note_date)
+        return await self.get_by_vip_id(vip_id)  # type: ignore[return-value]
+
+    async def delete_note(self, vip_id: UUID, index: int) -> dict | None:
+        if vip_id not in self.rows:
+            return None
+        new_content, deleted = apply_delete_note(self.rows[vip_id], index)
+        if not deleted:
+            return None
+        self.rows[vip_id] = new_content
+        return await self.get_by_vip_id(vip_id)
 
 
 class _FakeMetricsStore:
@@ -81,6 +135,13 @@ def admin_ctx() -> dict:
         store=metrics_store,
         clock=lambda: datetime(2026, 7, 29, 12, 0, tzinfo=UTC),
     )
+    profiles = _FakeProfilesRepo()
+    profile_admin = ProfileAdminService(
+        profiles=profiles,
+        vips=vips,
+        owner_telegram_id=OWNER,
+        clock=lambda: datetime(2026, 7, 27, 12, 0, tzinfo=UTC),
+    )
     return {
         "vips": vips,
         "admin": admin,
@@ -89,6 +150,8 @@ def admin_ctx() -> dict:
         "metrics_store": metrics_store,
         "admin_metrics": admin_metrics,
         "fp_marks": fp_marks,
+        "profiles": profiles,
+        "profile_admin": profile_admin,
     }
 
 
@@ -98,8 +161,10 @@ async def _dispatch(
     *,
     actor_id: int = OWNER,
     admin_metrics: AdminMetricsService | None | object = ...,
+    profile_admin: ProfileAdminService | None | object = ...,
 ) -> str:
     metrics = g["admin_metrics"] if admin_metrics is ... else admin_metrics
+    padmin = g["profile_admin"] if profile_admin is ... else profile_admin
     return await handle_admin_text(
         text=text,
         actor_id=actor_id,
@@ -108,6 +173,7 @@ async def _dispatch(
         admin=g["admin"],
         correct_sessions=g["sessions"],
         admin_metrics=metrics,  # type: ignore[arg-type]
+        profile_admin=padmin,  # type: ignore[arg-type]
     )
 
 
@@ -310,3 +376,82 @@ async def test_fp_store_exception_non_owner_still_ignored(admin_ctx: dict) -> No
 
 def test_admin_menu_lists_fp() -> None:
     assert "/fp" in ADMIN_MENU_TEXT
+
+
+def test_admin_menu_lists_vip_profile_commands() -> None:
+    assert "/vip_profile" in ADMIN_MENU_TEXT
+    assert "/vip_fact" in ADMIN_MENU_TEXT
+    assert "/vip_fact_del" in ADMIN_MENU_TEXT
+    assert "/vip_note" in ADMIN_MENU_TEXT
+    assert "/vip_note_del" in ADMIN_MENU_TEXT
+
+
+@pytest.mark.asyncio
+async def test_vip_fact_non_owner_ignored(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/vip_fact 555 city BA", actor_id=OTHER) == "ignored_non_owner"
+
+
+@pytest.mark.asyncio
+async def test_vip_profile_usage_missing_args(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/vip_profile") == "vip_profile_usage"
+
+
+@pytest.mark.asyncio
+async def test_vip_profile_empty_after_add(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/add_vip 555 Alice") == "vip_added"
+    assert await _dispatch(g, "/vip_profile 555") == "profile_empty"
+
+
+@pytest.mark.asyncio
+async def test_vip_fact_set_then_profile_ok(admin_ctx: dict) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555 Alice")
+    assert await _dispatch(g, "/vip_fact 555 city BA") == "fact_set"
+    assert await _dispatch(g, "/vip_profile 555") == "profile_ok"
+
+
+@pytest.mark.asyncio
+async def test_vip_fact_del_success_and_missing(admin_ctx: dict) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555")
+    await _dispatch(g, "/vip_fact 555 city BA")
+    assert await _dispatch(g, "/vip_fact_del 555 city") == "fact_deleted"
+    assert await _dispatch(g, "/vip_fact_del 555 city") == "fact_missing"
+
+
+@pytest.mark.asyncio
+async def test_vip_note_add_and_delete(admin_ctx: dict) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555")
+    assert await _dispatch(g, "/vip_note 555 met at event") == "note_added"
+    assert await _dispatch(g, "/vip_note_del 555 1") == "note_deleted"
+    assert await _dispatch(g, "/vip_note_del 555 1") == "note_missing"
+
+
+@pytest.mark.asyncio
+async def test_vip_profile_unknown_vip(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/vip_profile 404") == "vip_not_found"
+
+
+@pytest.mark.asyncio
+async def test_vip_commands_unavailable_without_service(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert (
+        await _dispatch(g, "/vip_profile 555", profile_admin=None)
+        == "profile_admin_unavailable"
+    )
+    assert (
+        await _dispatch(g, "/vip_fact 555 city BA", profile_admin=None)
+        == "profile_admin_unavailable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_vip_fact_usage(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/vip_fact 555") == "vip_fact_usage"
+    assert await _dispatch(g, "/vip_fact 555 city") == "vip_fact_usage"

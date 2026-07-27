@@ -193,6 +193,16 @@ def test_composition_admin_metrics_wired(_comp_src: str) -> None:
     assert "admin_metrics=admin_metrics" in _comp_src
 
 
+def test_composition_profile_admin_wired(_comp_src: str) -> None:
+    """ProfileAdminService constructed and forwarded into the dispatcher."""
+    assert "ProfileAdminService(" in _comp_src
+    assert "profile_admin=" in _comp_src
+    assert (
+        "from diana.application.profile_admin_service import ProfileAdminService"
+        in _comp_src
+    )
+
+
 def test_composition_app_container_has_pool3_fields() -> None:
     from diana.composition import AppContainer
 

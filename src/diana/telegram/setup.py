@@ -8,6 +8,7 @@ from typing import Any
 from aiogram import Dispatcher, Router
 
 from diana.application.admin_metrics_service import AdminMetricsService
+from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import (
@@ -81,6 +82,7 @@ def build_dispatcher(
     doctrine_router: Router | None = None,
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
+    profile_admin: ProfileAdminService | None = None,
     promo: PromoService | None = None,
     feature_promo_enabled: bool = False,
     rate_limit_max_events: int = 20,
@@ -155,6 +157,7 @@ def build_dispatcher(
             correct_sessions=sessions,
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
+            profile_admin=profile_admin,
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))

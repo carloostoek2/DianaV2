@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.calibration_service import CalibrationService
 from diana.application.gray_zone_service import GrayZoneService
@@ -188,6 +189,7 @@ class AppContainer:
     calibration: CalibrationService | None = None
     metrics: MetricsAggregationService | None = None
     admin_metrics: AdminMetricsService | None = None
+    profile_admin: ProfileAdminService | None = None
     runtime_thresholds: RuntimeThresholds | None = None
 
 
@@ -464,6 +466,11 @@ def build_app(
         fp_marks=owner_marks,
     )
     admin_metrics = AdminMetricsService(store=learning_metrics)
+    profile_admin = ProfileAdminService(
+        profiles=profiles_repo,
+        vips=vips,
+        owner_telegram_id=settings.owner_telegram_id,
+    )
 
     wiring = build_dispatcher(
         orchestrator=orchestrator,
@@ -479,6 +486,7 @@ def build_app(
         doctrine_router=doctrine_router,
         admin_trace=admin_trace,
         admin_metrics=admin_metrics,
+        profile_admin=profile_admin,
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
         rate_limit_max_events=settings.rate_limit_max_events,
@@ -513,6 +521,7 @@ def build_app(
         calibration=calibration,
         metrics=metrics,
         admin_metrics=admin_metrics,
+        profile_admin=profile_admin,
         runtime_thresholds=runtime_thresholds,
     )
 

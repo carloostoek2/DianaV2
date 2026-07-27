@@ -1,4 +1,4 @@
-"""Owner private commands: /start, /menu, VIP add/remove, /fp, /resumen, correct text."""
+"""Owner private commands: /start, /menu, VIP add/remove, /vip_*, /fp, /resumen."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import VipStore
+from diana.application.profile_admin_service import ProfileAdminService
 from diana.telegram.handlers.callbacks import (
     ADMIN_MENU_TEXT,
     SESSION_EXPIRED_UX,
@@ -30,7 +31,52 @@ logger = logging.getLogger("diana.telegram")
 
 _ADD_RE = re.compile(r"^/add_vip\s+(\d+)(?:\s+(.+))?$", re.IGNORECASE)
 _RM_RE = re.compile(r"^/remove_vip\s+(\d+)\s*$", re.IGNORECASE)
+_VIP_PROFILE_RE = re.compile(r"^/vip_profile(?:@\S+)?\s+(\d+)\s*$", re.I)
+_VIP_FACT_RE = re.compile(r"^/vip_fact(?:@\S+)?\s+(\d+)\s+(\S+)\s+(.+)$", re.I)
+_VIP_FACT_DEL_RE = re.compile(r"^/vip_fact_del(?:@\S+)?\s+(\d+)\s+(\S+)\s*$", re.I)
+_VIP_NOTE_RE = re.compile(r"^/vip_note(?:@\S+)?\s+(\d+)\s+(.+)$", re.I)
+_VIP_NOTE_DEL_RE = re.compile(r"^/vip_note_del(?:@\S+)?\s+(\d+)\s+(\d+)\s*$", re.I)
 _METRICS_CMDS = frozenset({"/resumen", "/metricas"})
+_PROFILE_CMD_PREFIXES = (
+    "/vip_profile",
+    "/vip_fact_del",
+    "/vip_fact",
+    "/vip_note_del",
+    "/vip_note",
+)
+
+
+def format_profile_body(
+    *,
+    telegram_user_id: int,
+    display_name: str | None,
+    content: dict | None,
+    empty: bool,
+) -> str:
+    """English profile render for owner DM."""
+    name_suffix = f" ({display_name})" if display_name else ""
+    header = f"VIP {telegram_user_id}{name_suffix}"
+    if empty or not content:
+        return f"{header}\nNo profile facts/notes yet."
+    facts = content.get("facts") or {}
+    notes = content.get("notes") or []
+    lines = [header, "Facts:"]
+    if isinstance(facts, dict) and facts:
+        for k, v in facts.items():
+            lines.append(f"  {k}: {v}")
+    else:
+        lines.append("  (none)")
+    lines.append("Notes:")
+    if isinstance(notes, list) and notes:
+        for i, note in enumerate(notes, start=1):
+            if not isinstance(note, dict):
+                continue
+            date = note.get("date", "")
+            text = note.get("text", "")
+            lines.append(f"  {i}. [{date}] {text}")
+    else:
+        lines.append("  (none)")
+    return "\n".join(lines)
 
 
 async def handle_admin_text(
@@ -43,6 +89,7 @@ async def handle_admin_text(
     correct_sessions: CorrectSessionStore,
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
+    profile_admin: ProfileAdminService | None = None,
 ) -> str:
     """Pure admin text dispatcher for unit tests. Returns honest status token."""
     if actor_id is None or actor_id != owner_telegram_id:
@@ -104,6 +151,65 @@ async def handle_admin_text(
         ok = await vips.deactivate(tg_id)
         return "vip_removed" if ok else "vip_not_found"
 
+    # /vip_* profile commands (owner enrichable facts/notes).
+    first_token = stripped.split(None, 1)[0].split("@", 1)[0].lower()
+    if first_token in {
+        "/vip_profile",
+        "/vip_fact",
+        "/vip_fact_del",
+        "/vip_note",
+        "/vip_note_del",
+    } or any(first_token.startswith(p) for p in _PROFILE_CMD_PREFIXES):
+        if profile_admin is None:
+            return "profile_admin_unavailable"
+
+        m_prof = _VIP_PROFILE_RE.match(stripped)
+        if m_prof:
+            tg_id = int(m_prof.group(1))
+            result = await profile_admin.show_profile(actor_id, tg_id)
+            return result.status
+        if first_token == "/vip_profile":
+            return "vip_profile_usage"
+
+        m_fact = _VIP_FACT_RE.match(stripped)
+        if m_fact:
+            tg_id = int(m_fact.group(1))
+            key = m_fact.group(2)
+            value = m_fact.group(3)
+            result = await profile_admin.set_fact(actor_id, tg_id, key, value)
+            return result.status
+        if first_token == "/vip_fact":
+            return "vip_fact_usage"
+
+        m_fact_del = _VIP_FACT_DEL_RE.match(stripped)
+        if m_fact_del:
+            tg_id = int(m_fact_del.group(1))
+            key = m_fact_del.group(2)
+            result = await profile_admin.delete_fact(actor_id, tg_id, key)
+            return result.status
+        if first_token == "/vip_fact_del":
+            return "vip_fact_del_usage"
+
+        m_note = _VIP_NOTE_RE.match(stripped)
+        if m_note:
+            tg_id = int(m_note.group(1))
+            note_text = m_note.group(2)
+            result = await profile_admin.add_note(actor_id, tg_id, note_text)
+            return result.status
+        if first_token == "/vip_note":
+            return "vip_note_usage"
+
+        m_note_del = _VIP_NOTE_DEL_RE.match(stripped)
+        if m_note_del:
+            tg_id = int(m_note_del.group(1))
+            index_1 = int(m_note_del.group(2))
+            result = await profile_admin.delete_note(actor_id, tg_id, index_1)
+            return result.status
+        if first_token == "/vip_note_del":
+            return "vip_note_del_usage"
+
+        return "ignored"
+
     # /fp <turn_id> — mark escalation false positive (owner mark store).
     # First token may include bot suffix (/fp@BotName).
     parts = stripped.split(None, 1)
@@ -140,6 +246,7 @@ def build_admin_router(
     correct_sessions: CorrectSessionStore | None = None,
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
+    profile_admin: ProfileAdminService | None = None,
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
@@ -147,6 +254,19 @@ def build_admin_router(
     def _is_owner(message: Message) -> bool:
         return bool(
             message.from_user and message.from_user.id == owner_telegram_id
+        )
+
+    async def _dispatch_token(message: Message) -> str:
+        return await handle_admin_text(
+            text=message.text or "",
+            actor_id=message.from_user.id if message.from_user else None,
+            owner_telegram_id=owner_telegram_id,
+            vips=vips,
+            admin=admin,
+            correct_sessions=sessions,
+            admin_trace=admin_trace,
+            admin_metrics=admin_metrics,
+            profile_admin=profile_admin,
         )
 
     @router.message(Command("start", "menu"))
@@ -283,6 +403,109 @@ def build_admin_router(
             # fp_usage and any unexpected
             await message.answer("Usage: /fp <turn_id>")
 
+    @router.message(Command("vip_profile"))
+    async def on_vip_profile(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        if profile_admin is None:
+            await message.answer("Profile module not available.")
+            return
+        status = await _dispatch_token(message)
+        if status == "vip_profile_usage":
+            await message.answer("Usage: /vip_profile <telegram_user_id>")
+            return
+        if status == "vip_not_found":
+            await message.answer("VIP not found")
+            return
+        if status == "profile_admin_unavailable":
+            await message.answer("Profile module not available.")
+            return
+        # profile_ok / profile_empty — render body from service
+        m = _VIP_PROFILE_RE.match((message.text or "").strip())
+        if not m:
+            await message.answer("Usage: /vip_profile <telegram_user_id>")
+            return
+        tg_id = int(m.group(1))
+        try:
+            result = await profile_admin.show_profile(
+                message.from_user.id if message.from_user else None, tg_id
+            )
+        except OwnerAuthError:
+            return
+        body = format_profile_body(
+            telegram_user_id=tg_id,
+            display_name=result.display_name,
+            content=result.content if isinstance(result.content, dict) else None,
+            empty=result.status == "profile_empty",
+        )
+        await message.answer(body)
+
+    @router.message(Command("vip_fact"))
+    async def on_vip_fact(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await _dispatch_token(message)
+        if status == "fact_set":
+            m = _VIP_FACT_RE.match((message.text or "").strip())
+            key = m.group(2) if m else ""
+            await message.answer(f"Fact set: {key}")
+        elif status == "vip_not_found":
+            await message.answer("VIP not found")
+        elif status == "invalid":
+            await message.answer("Usage: /vip_fact <telegram_user_id> <key> <value>")
+        elif status == "profile_admin_unavailable":
+            await message.answer("Profile module not available.")
+        else:
+            await message.answer("Usage: /vip_fact <telegram_user_id> <key> <value>")
+
+    @router.message(Command("vip_fact_del"))
+    async def on_vip_fact_del(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await _dispatch_token(message)
+        m = _VIP_FACT_DEL_RE.match((message.text or "").strip())
+        key = m.group(2) if m else ""
+        if status == "fact_deleted":
+            await message.answer(f"Fact deleted: {key}")
+        elif status == "fact_missing":
+            await message.answer(f"Fact not found: {key}")
+        elif status == "vip_not_found":
+            await message.answer("VIP not found")
+        elif status == "profile_admin_unavailable":
+            await message.answer("Profile module not available.")
+        else:
+            await message.answer("Usage: /vip_fact_del <telegram_user_id> <key>")
+
+    @router.message(Command("vip_note"))
+    async def on_vip_note(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await _dispatch_token(message)
+        if status == "note_added":
+            await message.answer("Note added")
+        elif status == "vip_not_found":
+            await message.answer("VIP not found")
+        elif status == "profile_admin_unavailable":
+            await message.answer("Profile module not available.")
+        else:
+            await message.answer("Usage: /vip_note <telegram_user_id> <text>")
+
+    @router.message(Command("vip_note_del"))
+    async def on_vip_note_del(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await _dispatch_token(message)
+        if status == "note_deleted":
+            await message.answer("Note deleted")
+        elif status == "note_missing":
+            await message.answer("Note not found")
+        elif status == "vip_not_found":
+            await message.answer("VIP not found")
+        elif status == "profile_admin_unavailable":
+            await message.answer("Profile module not available.")
+        else:
+            await message.answer("Usage: /vip_note_del <telegram_user_id> <index>")
+
     @router.message(Command("resumen", "metricas"))
     async def on_resumen(message: Message, **_: Any) -> None:
         if not _is_owner(message):
@@ -337,4 +560,4 @@ def build_admin_router(
     return router
 
 
-__all__ = ["build_admin_router", "handle_admin_text"]
+__all__ = ["build_admin_router", "format_profile_body", "handle_admin_text"]
