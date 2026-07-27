@@ -148,6 +148,42 @@ def admin_ctx() -> dict:
         owner_telegram_id=OWNER,
         clock=lambda: datetime(2026, 7, 27, 12, 0, tzinfo=UTC),
     )
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "Cold start", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "Warm",
+            "facts": {"name": "Mateo"},
+            "notes": [],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "Formal",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "Emotional",
+            "facts": {},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "Long",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "Adv",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
     return {
         "vips": vips,
         "admin": admin,
@@ -158,6 +194,8 @@ def admin_ctx() -> dict:
         "fp_marks": fp_marks,
         "profiles": profiles,
         "profile_admin": profile_admin,
+        "sandbox": sandbox,
+        "coordinator": coordinator,
     }
 
 
@@ -168,9 +206,13 @@ async def _dispatch(
     actor_id: int = OWNER,
     admin_metrics: AdminMetricsService | None | object = ...,
     profile_admin: ProfileAdminService | None | object = ...,
+    sandbox=...,
+    coordinator=...,
 ) -> str:
     metrics = g["admin_metrics"] if admin_metrics is ... else admin_metrics
     padmin = g["profile_admin"] if profile_admin is ... else profile_admin
+    sb = g.get("sandbox") if sandbox is ... else sandbox
+    coord = g.get("coordinator") if coordinator is ... else coordinator
     return await handle_admin_text(
         text=text,
         actor_id=actor_id,
@@ -180,6 +222,8 @@ async def _dispatch(
         correct_sessions=g["sessions"],
         admin_metrics=metrics,  # type: ignore[arg-type]
         profile_admin=padmin,  # type: ignore[arg-type]
+        sandbox=sb,
+        coordinator=coord,
     )
 
 
@@ -787,3 +831,92 @@ async def test_list_vips_private_owner_answers(admin_ctx: dict) -> None:
     msg.answer.assert_awaited()
     body = msg.answer.await_args.args[0]
     assert "100 — Alice" in body
+
+
+# ---------------------------------------------------------------------------
+# /sandbox commands (item4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sandbox_non_owner_ignored(admin_ctx: dict) -> None:
+    assert await _dispatch(admin_ctx, "/sandbox", actor_id=OTHER) == "ignored_non_owner"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_unavailable_when_none(admin_ctx: dict) -> None:
+    assert await _dispatch(admin_ctx, "/sandbox", sandbox=None) == "sandbox_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_help(admin_ctx: dict) -> None:
+    assert await _dispatch(admin_ctx, "/sandbox") == "sandbox_help"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_on_off_happy(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/sandbox on 555") == "sandbox_on"
+    assert g["sandbox"].is_active(555) is True
+    assert g["sandbox"].get_profile(555) == "nuevo"
+    assert await _dispatch(g, "/sandbox off 555") == "sandbox_off"
+    assert g["sandbox"].is_active(555) is False
+
+
+@pytest.mark.asyncio
+async def test_sandbox_on_with_profile(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/sandbox on 555 cercano") == "sandbox_on"
+    assert g["sandbox"].get_profile(555) == "cercano"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_on_unknown_profile_error(admin_ctx: dict) -> None:
+    assert await _dispatch(admin_ctx, "/sandbox on 555 nope") == "sandbox_error"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_off_not_active(admin_ctx: dict) -> None:
+    assert await _dispatch(admin_ctx, "/sandbox off 999") == "sandbox_not_active"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_perfil_perfiles_estado(admin_ctx: dict) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/sandbox on 100 cercano")
+    assert await _dispatch(g, "/sandbox perfil distante") == "sandbox_perfil"
+    assert g["sandbox"].get_profile(100) == "distante"
+    assert await _dispatch(g, "/sandbox perfiles") == "sandbox_perfiles"
+    assert await _dispatch(g, "/sandbox estado") == "sandbox_estado"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_reset_requires_focus(admin_ctx: dict) -> None:
+    assert await _dispatch(admin_ctx, "/sandbox reset") == "sandbox_not_active"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_reset_calls_coordinator_keeps_session(admin_ctx: dict) -> None:
+    from unittest.mock import AsyncMock
+
+    g = admin_ctx
+    await _dispatch(g, "/sandbox on 200 nuevo")
+    coord = AsyncMock()
+    coord.reset_chat_session = AsyncMock(return_value=1)
+    assert await _dispatch(g, "/sandbox reset", coordinator=coord) == "sandbox_reset"
+    coord.reset_chat_session.assert_awaited_once()
+    kwargs = coord.reset_chat_session.await_args
+    assert kwargs.args[0] == 200 or kwargs.kwargs.get("chat_id") == 200
+    assert g["sandbox"].is_active(200) is True
+
+
+@pytest.mark.asyncio
+async def test_sandbox_usage_on_bad_args(admin_ctx: dict) -> None:
+    assert await _dispatch(admin_ctx, "/sandbox on") == "sandbox_usage"
+    assert await _dispatch(admin_ctx, "/sandbox perfil") == "sandbox_usage"
+
+
+@pytest.mark.asyncio
+async def test_menu_documents_sandbox() -> None:
+    assert "/sandbox" in ADMIN_MENU_TEXT
+    assert "perfil" in ADMIN_MENU_TEXT or "on|off" in ADMIN_MENU_TEXT

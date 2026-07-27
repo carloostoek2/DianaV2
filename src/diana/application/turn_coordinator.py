@@ -270,6 +270,20 @@ class TurnCoordinator:
         )
         return CoordinateResult(action=action, turn_id=created.id)
 
+    async def reset_chat_session(
+        self, chat_id: int, *, reason: str = "sandbox_reset"
+    ) -> int:
+        """Supersede non-terminal turns for chat; cancel delivery/approvals.
+
+        Does not deactivate sandbox sessions (application concern).
+        Returns the count of superseded turns.
+        """
+        async with self.chat_scope(chat_id):
+            prior = await self._supersede_nonterminal(
+                chat_id, superseded_by=None, cancel_reason=reason
+            )
+            return len(prior)
+
     async def _supersede_nonterminal(
         self,
         chat_id: int,

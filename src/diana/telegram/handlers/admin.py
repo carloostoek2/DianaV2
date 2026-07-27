@@ -16,6 +16,8 @@ from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import VipRecord, VipStore
 from diana.application.profile_admin_service import ProfileAdminService
+from diana.application.sandbox import SandboxService
+from diana.application.turn_coordinator import TurnCoordinator
 from diana.telegram.handlers.callbacks import (
     ADMIN_MENU_TEXT,
     SESSION_EXPIRED_UX,
@@ -67,6 +69,119 @@ def format_vips_list(records: list[VipRecord]) -> str:
     return "\n".join(lines)
 
 
+SANDBOX_HELP_TEXT = (
+    "Sandbox admin:\n"
+    "/sandbox on <chat_id> [profile]\n"
+    "/sandbox off [chat_id]\n"
+    "/sandbox perfil <name>\n"
+    "/sandbox perfiles\n"
+    "/sandbox estado\n"
+    "/sandbox reset\n"
+    "Profiles: nuevo, cercano, distante, intenso, vip_largo, inyeccion_previa\n"
+    "Delivery is fake (no real user messages). Learning/staging disabled while ON."
+)
+
+
+def format_sandbox_help() -> str:
+    return SANDBOX_HELP_TEXT
+
+
+def format_sandbox_perfiles(items: list[dict[str, str]]) -> str:
+    lines = ["Sandbox profiles:"]
+    for item in items:
+        name = item.get("name", "?")
+        label = item.get("label", name)
+        lines.append(f"  {name} — {label}")
+    return "\n".join(lines)
+
+
+async def _dispatch_sandbox(
+    *,
+    stripped: str,
+    sandbox: SandboxService | None,
+    coordinator: TurnCoordinator | None,
+) -> tuple[str, str | None]:
+    """Handle /sandbox… after owner check. Returns (token, optional body)."""
+    if sandbox is None:
+        return "sandbox_unavailable", None
+
+    # Strip bot suffix on first token only.
+    parts = stripped.split()
+    if not parts:
+        return "sandbox_help", format_sandbox_help()
+    # Normalize command token (/sandbox@Bot → /sandbox)
+    cmd0 = parts[0].split("@", 1)[0].lower()
+    if cmd0 != "/sandbox":
+        return "ignored", None
+    sub = parts[1].lower() if len(parts) > 1 else ""
+
+    if sub == "" or sub == "help":
+        return "sandbox_help", format_sandbox_help()
+
+    if sub == "on":
+        if len(parts) < 3:
+            return "sandbox_usage", "Usage: /sandbox on <chat_id> [profile]"
+        try:
+            chat_id = int(parts[2])
+        except ValueError:
+            return "sandbox_usage", "Usage: /sandbox on <chat_id> [profile]"
+        profile = parts[3] if len(parts) > 3 else "nuevo"
+        ok, err = sandbox.activate(chat_id, profile)
+        if not ok:
+            return "sandbox_error", f"Sandbox error: {err}"
+        return "sandbox_on", f"Sandbox ON chat {chat_id} — profile: {profile}"
+
+    if sub == "off":
+        if len(parts) >= 3:
+            try:
+                chat_id = int(parts[2])
+            except ValueError:
+                return "sandbox_usage", "Usage: /sandbox off [chat_id]"
+        else:
+            chat_id = sandbox.get_focus_chat_id()
+            if chat_id is None:
+                return "sandbox_not_active", "No sandbox focus"
+        was = sandbox.deactivate(chat_id)
+        if not was:
+            return "sandbox_not_active", f"Sandbox not active for chat {chat_id}"
+        return "sandbox_off", f"Sandbox OFF chat {chat_id}"
+
+    if sub == "perfil":
+        if len(parts) < 3:
+            return "sandbox_usage", "Usage: /sandbox perfil <name>"
+        name = parts[2]
+        ok, err = sandbox.set_focus_profile(name)
+        if not ok:
+            if err and "No focused" in err:
+                return "sandbox_not_active", "No sandbox focus"
+            return "sandbox_error", f"Sandbox error: {err}"
+        focus = sandbox.get_focus_chat_id()
+        return "sandbox_perfil", f"Sandbox profile {name} on chat {focus}"
+
+    if sub == "perfiles":
+        body = format_sandbox_perfiles(sandbox.list_profiles())
+        return "sandbox_perfiles", body
+
+    if sub == "estado":
+        return "sandbox_estado", sandbox.format_estado()
+
+    if sub == "reset":
+        focus = sandbox.get_focus_chat_id()
+        if focus is None or not sandbox.is_active(focus):
+            return "sandbox_not_active", "No sandbox focus"
+        if coordinator is None:
+            return "sandbox_error", "Sandbox error: coordinator not wired"
+        await coordinator.reset_chat_session(focus, reason="sandbox_reset")
+        return (
+            "sandbox_reset",
+            f"Sandbox session reset for chat {focus} (sandbox still ON)",
+        )
+
+    return "sandbox_usage", (
+        "Usage: /sandbox on|off|perfil|perfiles|estado|reset"
+    )
+
+
 def format_profile_body(
     *,
     telegram_user_id: int,
@@ -111,6 +226,8 @@ async def handle_admin_text(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     profile_admin: ProfileAdminService | None = None,
+    sandbox: SandboxService | None = None,
+    coordinator: TurnCoordinator | None = None,
 ) -> str:
     """Pure admin text dispatcher for unit tests. Returns honest status token."""
     if actor_id is None or actor_id != owner_telegram_id:
@@ -150,6 +267,16 @@ async def handle_admin_text(
 
     if stripped in {"/start", "/menu"}:
         return "menu"
+
+    # Sandbox admin surface (owner-only; dedicated early block).
+    first_token = stripped.split(None, 1)[0].split("@", 1)[0].lower()
+    if first_token == "/sandbox":
+        token, _body = await _dispatch_sandbox(
+            stripped=stripped,
+            sandbox=sandbox,
+            coordinator=coordinator,
+        )
+        return token
 
     # Strip bot suffix if present (/resumen@BotName)
     cmd = stripped.split("@", 1)[0].split(None, 1)[0].lower()
@@ -299,6 +426,8 @@ def build_admin_router(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     profile_admin: ProfileAdminService | None = None,
+    sandbox: SandboxService | None = None,
+    coordinator: TurnCoordinator | None = None,
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
@@ -318,7 +447,37 @@ def build_admin_router(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             profile_admin=profile_admin,
+            sandbox=sandbox,
+            coordinator=coordinator,
         )
+
+    _SANDBOX_UX: dict[str, str] = {
+        "sandbox_unavailable": "Sandbox disabled",
+        "sandbox_usage": (
+            "Usage: /sandbox on|off|perfil|perfiles|estado|reset"
+        ),
+    }
+
+    @router.message(Command("sandbox"))
+    async def on_sandbox(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        token, body = await _dispatch_sandbox(
+            stripped=(message.text or "").strip(),
+            sandbox=sandbox,
+            coordinator=coordinator,
+        )
+        if body is not None:
+            await message.answer(body)
+            return
+        if token in _SANDBOX_UX:
+            await message.answer(_SANDBOX_UX[token])
+            return
+        # Fallback tokens without body (should be rare).
+        if token == "sandbox_help":
+            await message.answer(format_sandbox_help())
+            return
+        await message.answer(f"Sandbox: {token}")
 
     @router.message(Command("start", "menu"))
     async def on_menu(message: Message, **_: Any) -> None:
@@ -629,7 +788,10 @@ def build_admin_router(
 __all__ = [
     "build_admin_router",
     "format_profile_body",
+    "format_sandbox_help",
+    "format_sandbox_perfiles",
     "format_vips_list",
     "handle_admin_text",
     "is_private_owner_message",
+    "SANDBOX_HELP_TEXT",
 ]

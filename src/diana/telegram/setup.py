@@ -85,6 +85,7 @@ def build_dispatcher(
     profile_admin: ProfileAdminService | None = None,
     promo: PromoService | None = None,
     feature_promo_enabled: bool = False,
+    sandbox: object | None = None,
     rate_limit_max_events: int = 20,
     rate_limit_window_s: float = 10.0,
     dedup_ttl_s: float = 300.0,
@@ -122,6 +123,7 @@ def build_dispatcher(
             vips=vips,
             promo=promo,
             feature_promo_enabled=feature_promo_enabled,
+            sandbox=sandbox,
         ),
         forbidden_mw,
     ]
@@ -158,6 +160,8 @@ def build_dispatcher(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             profile_admin=profile_admin,
+            sandbox=sandbox,  # type: ignore[arg-type]
+            coordinator=coordinator,
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))

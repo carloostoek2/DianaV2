@@ -33,6 +33,8 @@ ADMIN_MENU_TEXT = (
     "/vip_fact_del <telegram_user_id> <key>\n"
     "/vip_note <telegram_user_id> <text>\n"
     "/vip_note_del <telegram_user_id> <index>\n"
+    "/sandbox — sandbox help\n"
+    "/sandbox on|off|perfil|perfiles|estado|reset\n"
     "Draft buttons: Approve / Correct / Escalate\n"
     "/turnos — recent turns\n"
     "/traza <id> — trace detail\n"

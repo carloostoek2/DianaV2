@@ -530,3 +530,16 @@ async def test_owner_coordinate_does_not_schedule_recontact() -> None:
     result = await coord.coordinate(chat_id=313, autor="owner", vip_id=vip_id)
     assert result.action == "discard_owner_message"
     assert recontact.schedule_calls == []
+
+
+
+@pytest.mark.asyncio
+async def test_reset_chat_session_supersedes_keeps_going(coordinator: tuple) -> None:
+    """reset_chat_session supersedes non-terminal turns under chat_scope."""
+    coord, turns, approvals, behavior = coordinator
+    t1 = await coord.begin_turn(chat_id=7, trigger_message_id=1)
+    n = await coord.reset_chat_session(7, reason="sandbox_reset")
+    assert n == 1
+    rec = await turns.get(t1.id)
+    assert rec is not None
+    assert rec.status == "superseded"
