@@ -475,3 +475,51 @@ async def test_vip_fact_value_may_contain_spaces(admin_ctx: dict) -> None:
     rec = await g["vips"].get_by_telegram_user_id(555)
     assert rec is not None
     assert g["profiles"].rows[rec.id]["facts"]["city"] == "Buenos Aires"
+
+
+@pytest.mark.asyncio
+async def test_vip_fact_key_is_single_token_rest_is_value(admin_ctx: dict) -> None:
+    """F5: multi-word 'key' is not supported — first token is key, rest is value."""
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555 Alice")
+    assert await _dispatch(g, "/vip_fact 555 favorite city BA") == "fact_set"
+    rec = await g["vips"].get_by_telegram_user_id(555)
+    assert rec is not None
+    assert g["profiles"].rows[rec.id]["facts"] == {"favorite": "city BA"}
+    assert "favorite city" not in g["profiles"].rows[rec.id]["facts"]
+
+
+def test_format_profile_body_empty_and_populated() -> None:
+    from diana.telegram.handlers.admin import format_profile_body
+
+    empty = format_profile_body(
+        telegram_user_id=555,
+        display_name="Alice",
+        content=None,
+        empty=True,
+    )
+    assert empty == "VIP 555 (Alice)\nNo profile facts/notes yet."
+
+    body = format_profile_body(
+        telegram_user_id=555,
+        display_name=None,
+        content={
+            "facts": {"city": "BA"},
+            "notes": [{"date": "2026-07-27", "text": "met at event"}],
+        },
+        empty=False,
+    )
+    assert "VIP 555" in body
+    assert "city: BA" in body
+    assert "1. [2026-07-27] met at event" in body
+
+
+@pytest.mark.asyncio
+async def test_vip_fact_oversize_value_invalid(admin_ctx: dict) -> None:
+    """Length cap (SEC): oversize value → invalid at service boundary."""
+    from diana.profile_content import MAX_FACT_VALUE_LEN
+
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555")
+    huge = "x" * (MAX_FACT_VALUE_LEN + 1)
+    assert await _dispatch(g, f"/vip_fact 555 city {huge}") == "invalid"

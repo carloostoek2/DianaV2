@@ -199,6 +199,68 @@ async def test_set_fact_invalid_empty_key(
 
 
 @pytest.mark.asyncio
+async def test_set_fact_invalid_empty_value(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, vips, _ = svc
+    await vips.add(555)
+    r = await service.set_fact(OWNER, 555, "city", "   ")
+    assert r.status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_set_fact_invalid_oversize_value(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    from diana.profile_content import MAX_FACT_VALUE_LEN
+
+    service, vips, _ = svc
+    await vips.add(555)
+    r = await service.set_fact(OWNER, 555, "city", "x" * (MAX_FACT_VALUE_LEN + 1))
+    assert r.status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_add_note_invalid_empty_text(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, vips, _ = svc
+    await vips.add(555)
+    r = await service.add_note(OWNER, 555, "  ")
+    assert r.status == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_set_fact_integrity_error_maps_to_vip_not_found(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """F3: FK / IntegrityError on write → vip_not_found (no unhandled bubble)."""
+    IntegrityError = type("IntegrityError", (Exception,), {})
+
+    service, vips, profiles = svc
+    await vips.add(555)
+
+    async def _boom(*_a, **_k):  # noqa: ANN001
+        raise IntegrityError("fk violation")
+
+    profiles.set_fact = _boom  # type: ignore[method-assign]
+    r = await service.set_fact(OWNER, 555, "city", "BA")
+    assert r.status == "vip_not_found"
+    assert r.detail == "integrity"
+
+
+@pytest.mark.asyncio
+async def test_show_profile_whitespace_facts_is_empty(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    service, vips, profiles = svc
+    rec = await vips.add(555)
+    profiles.rows[rec.id] = {"facts": {"city": "  "}, "notes": []}
+    r = await service.show_profile(OWNER, 555)
+    assert r.status == "profile_empty"
+
+
+@pytest.mark.asyncio
 async def test_delete_fact_missing_and_success(
     svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
 ) -> None:

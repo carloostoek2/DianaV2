@@ -917,3 +917,21 @@ async def test_profile_retriever_legacy_flat_content_still_hits() -> None:
     turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
     result = await retriever.fetch(turn, _comprehension())
     assert result == {"tipo": "summary", "content": {"fact": "prefers morning"}}
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_whitespace_only_facts_is_none() -> None:
+    """H2: whitespace-only structured facts are hollow → None (shared helper)."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    retriever = ProfileRetriever(repo=AsyncMock())
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    retriever._repo.get_by_vip_id = AsyncMock(
+        return_value={
+            "tipo": "summary",
+            "content": {"facts": {"city": "   "}, "notes": []},
+            "vip_id": str(vip_id),
+        }
+    )
+    assert await retriever.fetch(turn, _comprehension()) is None

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from diana.infrastructure.db.repositories.profiles import (
+from diana.profile_content import (
+    MAX_FACT_KEY_LEN,
+    MAX_FACT_VALUE_LEN,
+    MAX_NOTE_TEXT_LEN,
     apply_add_note,
     apply_delete_fact,
     apply_delete_note,
@@ -12,6 +15,10 @@ from diana.infrastructure.db.repositories.profiles import (
     empty_content,
     is_hollow_content,
     normalize_content,
+)
+# Re-export path still works for infra consumers.
+from diana.infrastructure.db.repositories.profiles import (
+    is_hollow_content as is_hollow_via_repo,
 )
 
 
@@ -55,6 +62,23 @@ def test_is_hollow_content() -> None:
     assert is_hollow_content({"facts": {}, "notes": []}) is True
     assert is_hollow_content({"facts": {"k": "v"}, "notes": []}) is False
     assert is_hollow_content({"facts": {}, "notes": [{"date": "2026-01-01", "text": "n"}]}) is False
+
+
+def test_is_hollow_whitespace_only_facts() -> None:
+    """Whitespace-only fact values normalize away → hollow (H2 parity)."""
+    assert is_hollow_content({"facts": {"city": "  "}, "notes": []}) is True
+    assert is_hollow_content({"facts": {"city": "  "}}) is True
+
+
+def test_is_hollow_legacy_flat_not_hollow() -> None:
+    """Legacy flat non-empty remains a hit for cognitive read."""
+    assert is_hollow_content({"fact": "prefers morning"}) is False
+    assert is_hollow_via_repo({"fact": "prefers morning"}) is False
+
+
+def test_is_hollow_shared_reexport_matches() -> None:
+    payload = {"facts": {"k": "v"}, "notes": []}
+    assert is_hollow_content(payload) is is_hollow_via_repo(payload)
 
 
 def test_apply_set_fact_sets_and_overwrites() -> None:
@@ -116,3 +140,16 @@ def test_apply_delete_note_zero_based() -> None:
     assert c3["notes"] == c2["notes"]
     c4, ok3 = apply_delete_note(c2, -1)
     assert ok3 is False
+
+
+def test_apply_set_fact_rejects_oversize() -> None:
+    c = empty_content()
+    with pytest.raises(ValueError, match="max length"):
+        apply_set_fact(c, "k" * (MAX_FACT_KEY_LEN + 1), "v")
+    with pytest.raises(ValueError, match="max length"):
+        apply_set_fact(c, "k", "v" * (MAX_FACT_VALUE_LEN + 1))
+
+
+def test_apply_add_note_rejects_oversize() -> None:
+    with pytest.raises(ValueError, match="max length"):
+        apply_add_note(empty_content(), "x" * (MAX_NOTE_TEXT_LEN + 1), "2026-07-27")
