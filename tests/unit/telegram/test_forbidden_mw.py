@@ -226,25 +226,14 @@ async def test_private_dm_no_j4() -> None:
 
 
 @pytest.mark.asyncio
-async def test_j4_ia_delivers_template_then_escalates() -> None:
-    from diana.application.j4_triggers import IA_TEMPLATE
-
+async def test_j4_ia_passes_to_handler() -> None:
+    """H6: pure IA probe is not middleware short-circuit; handler is awaited."""
     g = _graph()
     await g["vips"].add(100, display_name="Vip")
-    mw = ForbiddenKeywordsMiddleware(
-        keywords=[],
-        coordinator=g["coordinator"],
-        escalations=g["escalations"],
-        notifier=g["notifier"],
-        vips=g["vips"],
-        behavior=g["coordinator"]._behavior,  # noqa: SLF001 — test inject
-    )
-    # coordinator stores behavior; get from graph via rebuild
     from diana.behavior.engine import BehaviorEngine
     from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
     from diana.application.memory import InMemoryPendingDeliveryStore
 
-    # Use explicit behavior from a fresh graph field
     actuator = FakeTelegramActuator()
     deliveries = InMemoryPendingDeliveryStore()
     behavior = BehaviorEngine(
@@ -268,17 +257,16 @@ async def test_j4_ia_delivers_template_then_escalates() -> None:
         date=0,
         chat=Chat(id=42, type="private"),
         from_user=User(id=100, is_bot=False, first_name="V"),
-        text="sos un bot?",
+        text="eres una ia?",
         business_connection_id="bc-1",
     )
     handler = AsyncMock(return_value="orchestrator")
     result = await mw(handler, event, {"business_connection_id": "bc-1"})
-    assert result is None
-    handler.assert_not_awaited()
-    assert actuator.send_count() == 1
-    send_calls = [c for c in actuator.calls if c["op"] == "send_message"]
-    assert send_calls[0]["text"] == IA_TEMPLATE
-    assert g["escalations"].events[0]["tipo"] == "identidad_ia"
+    assert result == "orchestrator"
+    handler.assert_awaited_once()
+    assert actuator.send_count() == 0
+    assert g["escalations"].events == []
+
 
 
 

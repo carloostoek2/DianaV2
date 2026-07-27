@@ -1,9 +1,12 @@
-"""Unit tests for pure J.4 keyword classification."""
+"""Unit tests for pure J.4 keyword classification.
+
+H6: identidad_ia is no longer returned by classify_j4_text (migrated to TemplateGate).
+Remaining categories: pago_precio, compromiso_real. Hybrid IA+pago escalates as pago.
+"""
 
 from __future__ import annotations
 
 from diana.application.j4_triggers import (
-    IA_TEMPLATE,
     classify_j4_text,
     match_keywords,
 )
@@ -18,13 +21,21 @@ def test_pago_hit() -> None:
     assert any(k in hit.keywords_hit for k in ("precio", "suscripción", "suscripcion"))
 
 
-def test_ia_hit_sets_exact_template() -> None:
-    hit = classify_j4_text("sos un bot o qué?")
-    assert hit is not None
-    assert hit.category == "identidad_ia"
-    assert hit.tipo == "identidad_ia"
-    assert hit.template == IA_TEMPLATE
-    assert hit.template == "jsjsj si y sólo vivo en tu mente 😏"
+def test_pure_ia_returns_none() -> None:
+    """Pure identity probes are no longer J.4; TemplateGate handles annex set in Director."""
+    for text in (
+        "sos un bot o qué?",
+        "eres una ia?",
+        "eres real?",
+        "sos real",
+        "usás chatgpt?",
+        "eres un chatbot",
+        "sos humano?",
+        "eres humano",
+        "eres una ai?",
+        "sos ai",
+    ):
+        assert classify_j4_text(text) is None, text
 
 
 def test_compromiso_hit() -> None:
@@ -34,15 +45,19 @@ def test_compromiso_hit() -> None:
     assert hit.tipo == "compromiso_real"
 
 
-def test_ia_priority_over_pago() -> None:
+def test_hybrid_ia_pago_escalates_as_pago() -> None:
+    """IA + payment co-hit: pago wins (identity no longer classified)."""
     hit = classify_j4_text("eres un bot y cuánto cuesta?")
     assert hit is not None
-    assert hit.category == "identidad_ia"
+    assert hit.category == "pago_precio"
+    assert hit.tipo == "pago_precio"
+    assert hit.template is None
+    assert any("cuesta" in k or "cuánto cuesta" in k for k in hit.keywords_hit)
 
 
-def test_botella_not_identidad_ia() -> None:
+def test_botella_not_pago_or_compromiso() -> None:
     hit = classify_j4_text("me regalas una botella?")
-    assert hit is None or hit.category != "identidad_ia"
+    assert hit is None
     assert match_keywords("me regalas una botella?", ["bot"]) == []
 
 
@@ -64,18 +79,9 @@ def test_pago_expanded_phrases() -> None:
         assert hit.category == "pago_precio", text
 
 
-def test_ia_chatgpt_and_eres_real() -> None:
-    for text in ("eres real?", "sos real", "usás chatgpt?", "eres un chatbot"):
-        hit = classify_j4_text(text)
-        assert hit is not None, text
-        assert hit.category == "identidad_ia", text
-        assert hit.template == IA_TEMPLATE
-
-
-def test_bare_chatbot_alone_not_ia() -> None:
-    """Bare chatbot/IA terms without second person should not FP identity."""
+def test_bare_chatbot_alone_not_classified() -> None:
     hit = classify_j4_text("el chatbot del banco falló")
-    assert hit is None or hit.category != "identidad_ia"
+    assert hit is None
 
 
 def test_compromiso_quedemos_not_bare_quedar() -> None:
@@ -111,25 +117,3 @@ def test_pago_cuanto_te_sale_and_factura() -> None:
         hit = classify_j4_text(text)
         assert hit is not None, text
         assert hit.category == "pago_precio", text
-
-
-def test_ia_humano_and_eres_una_ai() -> None:
-    for text in ("sos humano?", "eres humano", "eres una ai?", "sos ai"):
-        hit = classify_j4_text(text)
-        assert hit is not None, text
-        assert hit.category == "identidad_ia", text
-        assert hit.template == IA_TEMPLATE
-
-
-def test_hybrid_ia_pago_includes_both_in_keywords() -> None:
-    from diana.application.j4_triggers import format_j4_motivo
-
-    hit = classify_j4_text("eres un bot y cuánto cuesta?")
-    assert hit is not None
-    assert hit.category == "identidad_ia"
-    assert "pago_precio" in hit.also_matched
-    # pago keyword must appear in keywords_hit for owner motivo
-    assert any("cuesta" in k or "cuánto cuesta" in k for k in hit.keywords_hit)
-    motivo = format_j4_motivo(hit)
-    assert "also: pago_precio" in motivo
-    assert any("bot" in k for k in hit.keywords_hit)

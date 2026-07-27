@@ -1,7 +1,10 @@
 """ForbiddenKeywordsMiddleware — business VIP short-circuit, zero Director.
 
-Order of classification (first win): J.4 identidad_ia → pago_precio →
-compromiso_real → system_config forbidden list (palabra_prohibida).
+Order of classification (first win): J.4 pago_precio → compromiso_real →
+system_config forbidden list (palabra_prohibida).
+
+H6: pure IA identity probes are not short-circuited here; they reach
+CognitiveDirector TemplateGate for supervised approve.
 """
 
 from __future__ import annotations
@@ -16,14 +19,12 @@ from aiogram.types import Message, TelegramObject
 
 from diana.application.deterministic_escalate import (
     handle_deterministic_escalation,
-    handle_deterministic_template_escalate,
 )
 from diana.application.j4_triggers import (
-    IA_TEMPLATE,
     classify_j4_text,
-    format_j4_motivo,
     match_keywords,
 )
+
 from diana.application.ports import (
     BehaviorDeliverer,
     EscalationStore,
@@ -129,53 +130,6 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
             rec = await self._vips.get_by_telegram_user_id(user.id)
             if rec is not None:
                 vip_id = rec.id
-
-        if j4 is not None and j4.category == "identidad_ia":
-            if self._behavior is None:
-                logger.warning(
-                    "j4_ia_no_behavior_fail_closed",
-                    extra={"chat_id": chat_id, "keywords": j4.keywords_hit},
-                )
-                motivo = format_j4_motivo(j4)
-                await handle_deterministic_escalation(
-                    coordinator=self._coordinator,
-                    escalations=self._escalations,
-                    notifier=self._notifier,
-                    chat_id=chat_id,
-                    text=text,
-                    vip_id=vip_id,
-                    business_connection_id=str(bc),
-                    message_id=event.message_id,
-                    keywords_hit=j4.keywords_hit,
-                    tipo=j4.tipo,
-                    reason=f"{j4.tipo}: {motivo}",
-                )
-            else:
-                motivo = format_j4_motivo(j4)
-                await handle_deterministic_template_escalate(
-                    coordinator=self._coordinator,
-                    escalations=self._escalations,
-                    notifier=self._notifier,
-                    behavior=self._behavior,
-                    chat_id=chat_id,
-                    text=text,
-                    vip_id=vip_id,
-                    business_connection_id=str(bc),
-                    message_id=event.message_id,
-                    keywords_hit=j4.keywords_hit,
-                    template=IA_TEMPLATE,
-                    tipo=j4.tipo,
-                    reason=f"{j4.tipo}: {motivo}",
-                )
-            logger.info(
-                "j4_ia_short_circuit",
-                extra={
-                    "chat_id": chat_id,
-                    "keywords": j4.keywords_hit,
-                    "vip_id": str(vip_id) if vip_id else None,
-                },
-            )
-            return None
 
         if j4 is not None:
             await handle_deterministic_escalation(

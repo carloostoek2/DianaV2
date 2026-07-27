@@ -1,11 +1,17 @@
 """J.4 deterministic text triggers (pre-Director) — pure match, no LLM.
 
 Identifiers in English; match strings and IA template are Spanish product content
-(Anexo J.4). Classification priority: identidad_ia → pago_precio → compromiso_real.
+(Anexo J.4). Classification priority: pago_precio → compromiso_real.
 
-When identidad_ia wins but pago/compromiso also match, co-hit keywords are
-appended to ``keywords_hit`` so owner motivo is not blind to payment signals.
+H6: ``identidad_ia`` is no longer returned by ``classify_j4_text``. Pure IA probes
+fall through to CognitiveDirector TemplateGate (supervised approve). Hybrid text
+with payment/commitment keywords escalates as pago/compromiso only.
+
+``IA_TEMPLATE`` / ``IDENTIDAD_IA_KEYWORDS`` / category literal value remain for
+historical labels and dead-path helper unit tests; the classifier never emits
+``identidad_ia``.
 """
+
 
 from __future__ import annotations
 
@@ -166,34 +172,16 @@ def match_keywords(text: str, keywords: list[str]) -> list[str]:
 
 
 def classify_j4_text(text: str) -> J4Hit | None:
-    """Classify VIP text into a J.4 category; first non-empty category wins.
+    """Classify VIP text into a residual J.4 category; first non-empty wins.
 
-    Identity wins over payment, but co-occurring pago/compromiso keywords are
-    folded into ``keywords_hit`` + ``also_matched`` for owner visibility.
+    Priority: pago_precio → compromiso_real. Never returns ``identidad_ia``
+    (H6 TemplateGate owns pure IA probes in Cognitive Core).
     """
     if not text or not str(text).strip():
         return None
 
-    ia_hits = match_keywords(text, IDENTIDAD_IA_KEYWORDS)
     pago_hits = match_keywords(text, PAGO_KEYWORDS)
     compromiso_hits = match_keywords(text, COMPROMISO_KEYWORDS)
-
-    if ia_hits:
-        keywords_hit = list(ia_hits)
-        also: list[str] = []
-        if pago_hits:
-            keywords_hit.extend(pago_hits)
-            also.append("pago_precio")
-        if compromiso_hits:
-            keywords_hit.extend(compromiso_hits)
-            also.append("compromiso_real")
-        return J4Hit(
-            category="identidad_ia",
-            tipo="identidad_ia",
-            keywords_hit=keywords_hit,
-            template=IA_TEMPLATE,
-            also_matched=tuple(also),
-        )
 
     if pago_hits:
         return J4Hit(
@@ -212,6 +200,7 @@ def classify_j4_text(text: str) -> J4Hit | None:
         )
 
     return None
+
 
 
 def format_j4_motivo(hit: J4Hit) -> str:
