@@ -100,9 +100,8 @@ class TurnOrchestrator:
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
 
-    def _effective_delivery_mode(self, chat_id: int) -> DeliveryMode:
-        if self._sandbox_active(chat_id):
-            return "fake_delivery"
+    def _effective_delivery_mode(self, _chat_id: int) -> DeliveryMode:
+        # Sandbox must not force fake_delivery; product isolation is should_persist.
         return self._delivery_mode
 
     async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
@@ -543,7 +542,7 @@ class TurnOrchestrator:
         mode = self._effective_delivery_mode(incoming.chat_id)
         if mode == "fake_delivery":
             logger.info(
-                "sandbox_fake_delivery",
+                "delivery_mode_fake",
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
             )
         ctx = DeliveryContext(

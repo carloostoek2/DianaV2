@@ -106,9 +106,8 @@ class AdminService:
             return reason
         return f"{prefix} | {reason}"
 
-    def _effective_delivery_mode(self, chat_id: int) -> DeliveryMode:
-        if self._sandbox is not None and self._sandbox.is_active(chat_id):
-            return "fake_delivery"
+    def _effective_delivery_mode(self, _chat_id: int) -> DeliveryMode:
+        # Sandbox must not force fake_delivery; product isolation is should_persist.
         return self._delivery_mode
 
     async def send_draft_for_approval(
@@ -447,7 +446,7 @@ class AdminService:
         mode = self._effective_delivery_mode(claimed.chat_id)
         if mode == "fake_delivery":
             logger.info(
-                "sandbox_fake_delivery",
+                "delivery_mode_fake",
                 extra={"turn_id": str(turn_id), "chat_id": claimed.chat_id},
             )
         # SEC-F2: is_frozen reflects gate result (False here; True never reaches deliver).
