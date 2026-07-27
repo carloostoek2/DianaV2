@@ -282,7 +282,43 @@ def test_composition_repetition_guard_wired(_comp_src: str) -> None:
     assert "repetition_guard=RepetitionGuard(threshold=3)" in _comp_src
 
 
+def test_composition_template_gate_wired(_comp_src: str) -> None:
+    """H6: Director receives TemplateGate with deteccion_ia before saludo_constante."""
+    assert "from diana.cognitive.template_gate import TemplateGate, TemplateRule" in _comp_src
+    assert 'id="deteccion_ia"' in _comp_src
+    assert 'id="saludo_constante"' in _comp_src
+    assert "template_gate=" in _comp_src
+    assert "TemplateGate(rules=" in _comp_src
+    # Rule order: deteccion_ia constructed/listed before saludo in rules list
+    ia_pos = _comp_src.find('id="deteccion_ia"')
+    saludo_pos = _comp_src.find('id="saludo_constante"')
+    assert ia_pos != -1 and saludo_pos != -1
+    assert ia_pos < saludo_pos
+    rules_list_pos = _comp_src.find("TemplateGate(rules=")
+    assert rules_list_pos != -1
+    rules_block = _comp_src[rules_list_pos : rules_list_pos + 120]
+    assert "deteccion_ia" in rules_block
+    assert "saludo_constante" in rules_block
+    assert rules_block.find("deteccion_ia") < rules_block.find("saludo_constante")
+
+
+def test_persona_reglas_estilo_no_j2_examples_note() -> None:
+    """H6.6.5: persona JSON style rules drop the (ver J.2 / examples) note."""
+    import json
+    from pathlib import Path
+
+    import diana
+
+    path = Path(diana.__file__).resolve().parent / "config" / "persona_diana.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rules = data["voz_configurada"]["reglas_estilo"]
+    joined = " ".join(rules)
+    assert "(ver J.2 / examples)" not in joined
+    assert any("expresión característica de voz" in r for r in rules)
+
+
 def test_setup_forbidden_middleware_receives_behavior() -> None:
+
     """H5/J.4: ForbiddenKeywordsMiddleware gets behavior for IA template path."""
     from pathlib import Path
 

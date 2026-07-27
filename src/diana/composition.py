@@ -45,7 +45,10 @@ from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.director import ANALYST_HISTORY_LIMIT, CognitiveDirector
 from diana.cognitive.repetition_guard import RepetitionGuard
+from diana.cognitive.template_gate import TemplateGate, TemplateRule
 from diana.cognitive.embedding import EmbeddingService
+from diana.application.j4_triggers import IA_TEMPLATE
+
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
 from diana.cognitive.planner import Planner
@@ -392,6 +395,39 @@ def build_app(
         voice_patterns=catalog["voice_patterns"],
         static_policies=catalog["policies"],
     )
+    # H6: pure TemplateGate pre-pipeline (deteccion_ia before saludo_constante).
+    deteccion_ia = TemplateRule(
+        id="deteccion_ia",
+        trigger_patterns=[
+            "eres una ia",
+            "eres un bot",
+            "eres ia",
+            "hablo con una ia",
+            "hablo con un bot",
+            "eres real",
+        ],
+        max_words=None,
+        response_pool=[IA_TEMPLATE],
+        reason="plantilla_deteccion_ia",
+    )
+    saludo_constante = TemplateRule(
+        id="saludo_constante",
+        trigger_patterns=[
+            "hola",
+            "holaa",
+            "holis",
+            "buenas",
+            "buenos días",
+            "buenas tardes",
+            "buenas noches",
+            "hey",
+            "qué tal",
+        ],
+        max_words=4,
+        response_pool=["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"],
+        reason="plantilla_saludo",
+    )
+    template_gate = TemplateGate(rules=[deteccion_ia, saludo_constante])
     director = CognitiveDirector(
         analyst=Analyst(provider),
         planner=Planner(),
@@ -412,10 +448,12 @@ def build_app(
         # H4: prior intents + pure guard for pregunta_repetida early-exit.
         recent_intents=traces,
         repetition_guard=RepetitionGuard(threshold=3),
+        template_gate=template_gate,
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
         knowledge_augmenter=knowledge_augmenter,
     )
+
     learning = LearningService(traces)
     orchestrator = TurnOrchestrator(
         coordinator=coordinator,
