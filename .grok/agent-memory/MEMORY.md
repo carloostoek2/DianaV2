@@ -31,6 +31,7 @@
 - [owner-admin-sandbox-item2-vip-crud](impact-analyzer/owner-admin-sandbox-item2-vip-crud.md) — 2026-07-27 — VIP list/rename + profiles purge on /remove_vip; soft deactivate; no sandbox; risk low
 - [owner-admin-sandbox-item3-sandbox-core](impact-analyzer/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — SandboxService session+catalog only; no pipeline gates; risk low
 - [owner-admin-sandbox-item4-sandbox-admin](impact-analyzer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — Owner sandbox commands + pipeline isolation (auth/fake_delivery/should_persist/inject); risk low–medium
+- [h6-template-gate](impact-analyzer/h6-template-gate.md) — 2026-07-27 — H6 TemplateGate pre-pipeline + migrate J.4 identidad_ia → approve; purity/hybrid/hola-fixture criticals; risk medium–high
 
 ## Arch Enforcer
 
@@ -68,6 +69,7 @@
 - [owner-admin-sandbox-item2-vip-crud](arch-enforcer/owner-admin-sandbox-item2-vip-crud.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; list/rename VipStore; profile purge on remove (BR-15); soft deactivate; no sandbox/cognitive
 - [owner-admin-sandbox-item3-sandbox-core](arch-enforcer/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; purity OK; no telegram; catalog 6 profiles; in-process session; F2 insert_sandbox removed
 - [owner-admin-sandbox-item4-sandbox-admin](arch-enforcer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Protocol inject; auth bypass; fake_delivery; should_persist learning skip; owner private `/sandbox`; no VIP pollution
+- [h6-template-gate](arch-enforcer/h6-template-gate.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; pure TemplateGate pre-pipeline; J.4 IA off middleware; pago/compromiso intact; no TO/Decider/Behavior/Learning; residuals dead helper + keyword coverage
 
 ## Test Guardian
 
@@ -104,6 +106,8 @@
 - [owner-admin-sandbox-item2-vip-crud](test-guardian/owner-admin-sandbox-item2-vip-crud.md) — 2026-07-27 — **suite protege adecuadamente**, list/rename/purge cascade + menu; 0 mocks prohibidos; focused 94 / full unit 1303 → paso 6
 - [owner-admin-sandbox-item3-sandbox-core](test-guardian/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — **suite protege adecuadamente**, catalog+session; 0 mocks prohibidos; focused 16 / wiring+purity 45 → paso 6 / item4 residual
 - [owner-admin-sandbox-item4-sandbox-admin](test-guardian/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — **suite protege adecuadamente**, auth/inject/delivery/learning/commands; 0 mocks prohibidos; focused 288 → documentador / pool close
+- [h6-template-gate](test-guardian/h6-template-gate.md) — 2026-07-27 — **suite protege adecuadamente**, 155 critical + 723 safety-net, 0 mocks prohibidos → paso 6
+
 
 ## Documentador
 
@@ -131,8 +135,12 @@
 - [owner-admin-sandbox](documentador/pool-2026-07-27-owner-admin-sandbox.md) — 2026-07-27 — Pool owner-admin-sandbox CLOSED: profile-write · vip-crud · sandbox-core · sandbox-admin; arch 0 critical ×4; TG OK ×4; product doc implemented; recontact skip + private gate
 - Consolidated SUMMARY: `.planning/quick/owner-admin-sandbox/POOL-SUMMARY.md`
 - Residuals: `.grok/agent-memory/residuals/owner-admin-sandbox.md`
+- [h6-template-gate](documentador/h6-template-gate.md) — 2026-07-27 — Pool h6-template-gate CLOSED: TemplateGate saludo+deteccion_ia · J.4 IA off middleware · effort 4 · 3 review rounds · 0 open · 9 commits · safety-net 729
+- Consolidated SUMMARY: `.planning/quick/h6-template-gate/POOL-SUMMARY.md`
+- Residuals: `.grok/agent-memory/residuals/h6-template-gate.md`
 
 ## Residuals
 
 - [residuals-polish](residuals/residuals-polish.md) — **CLOSED** residual index (docs-sync · `/fp` · naturalness 1× · profile REAL; profile writers/sandbox **closed by owner-admin-sandbox**)
 - [owner-admin-sandbox](residuals/owner-admin-sandbox.md) — **CLOSED** residual index (facts/notes · VIP CRUD · sandbox 6+session+isolation; follow-ups: orphan purge paths, staging composition)
+- [h6-template-gate](residuals/h6-template-gate.md) — **CLOSED** residual index (dead IA helper follow-up · IA keyword expand OOS · hostile short saludo needs-human · ANEXO-H eval doc · shared matcher OOS)

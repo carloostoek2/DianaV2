@@ -1,0 +1,6 @@
+=== gsd-documentador h6-template-gate 2026-07-27T08:10:25Z ===
+Action: pool close documentation
+Sources: SUMMARY, CLARIFY, PLAN, review, residuals, arch/TG/impact
+Mode: hardener-agile · effort 4 · review 3 rounds · 0 open final
+Commits in pool: 7674aa6 ce6ab78 e19865f d6221f7 271e11d 1aeb4cc 6dd3d18 f8f9166 7d1f1e2
+
