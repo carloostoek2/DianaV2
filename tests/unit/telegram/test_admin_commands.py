@@ -84,6 +84,12 @@ class _FakeProfilesRepo:
         self.rows[vip_id] = new_content
         return await self.get_by_vip_id(vip_id)
 
+    async def delete_by_vip_id(self, vip_id: UUID) -> bool:
+        if vip_id not in self.rows:
+            return False
+        del self.rows[vip_id]
+        return True
+
 
 class _FakeMetricsStore:
     def __init__(self) -> None:
@@ -386,6 +392,11 @@ def test_admin_menu_lists_vip_profile_commands() -> None:
     assert "/vip_note_del" in ADMIN_MENU_TEXT
 
 
+def test_admin_menu_lists_list_and_rename_vip() -> None:
+    assert "/list_vips" in ADMIN_MENU_TEXT
+    assert "/rename_vip" in ADMIN_MENU_TEXT
+
+
 @pytest.mark.asyncio
 async def test_vip_fact_non_owner_ignored(admin_ctx: dict) -> None:
     g = admin_ctx
@@ -523,3 +534,96 @@ async def test_vip_fact_oversize_value_invalid(admin_ctx: dict) -> None:
     await _dispatch(g, "/add_vip 555")
     huge = "x" * (MAX_FACT_VALUE_LEN + 1)
     assert await _dispatch(g, f"/vip_fact 555 city {huge}") == "invalid"
+
+
+# --- list_vips / rename_vip / remove cascade (item2 vip-crud) ---
+
+
+@pytest.mark.asyncio
+async def test_list_vips_non_owner_ignored(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/list_vips", actor_id=OTHER) == "ignored_non_owner"
+
+
+@pytest.mark.asyncio
+async def test_list_vips_empty(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/list_vips") == "vips_empty"
+
+
+@pytest.mark.asyncio
+async def test_list_vips_after_two_adds(admin_ctx: dict) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 100 Alice")
+    await _dispatch(g, "/add_vip 200 Bob")
+    assert await _dispatch(g, "/list_vips") == "vips_list"
+
+
+def test_format_vips_list_ids_names_and_no_name() -> None:
+    from diana.application.ports import VipRecord
+    from diana.telegram.handlers.admin import format_vips_list
+    from uuid import uuid4
+
+    records = [
+        VipRecord(id=uuid4(), telegram_user_id=100, display_name="Alice", is_active=True),
+        VipRecord(id=uuid4(), telegram_user_id=200, display_name=None, is_active=True),
+    ]
+    body = format_vips_list(records)
+    assert "Active VIPs (2):" in body
+    assert "100 — Alice" in body
+    assert "200 — (no name)" in body
+
+
+@pytest.mark.asyncio
+async def test_rename_vip_success(admin_ctx: dict) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555 Alice")
+    assert await _dispatch(g, "/rename_vip 555 Bob") == "vip_renamed"
+    rec = await g["vips"].get_by_telegram_user_id(555)
+    assert rec is not None
+    assert rec.display_name == "Bob"
+
+
+@pytest.mark.asyncio
+async def test_rename_vip_missing(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/rename_vip 404 Bob") == "vip_not_found"
+
+
+@pytest.mark.asyncio
+async def test_rename_vip_usage_bad_args(admin_ctx: dict) -> None:
+    g = admin_ctx
+    assert await _dispatch(g, "/rename_vip") == "rename_vip_usage"
+    assert await _dispatch(g, "/rename_vip 555") == "rename_vip_usage"
+    await _dispatch(g, "/add_vip 555")
+    huge = "x" * 65
+    assert await _dispatch(g, f"/rename_vip 555 {huge}") == "rename_vip_usage"
+
+
+@pytest.mark.asyncio
+async def test_remove_vip_purges_profile_when_profile_admin_wired(
+    admin_ctx: dict,
+) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555 Alice")
+    await _dispatch(g, "/vip_fact 555 city BA")
+    rec = await g["vips"].get_by_telegram_user_id(555)
+    assert rec is not None
+    assert rec.id in g["profiles"].rows
+
+    assert await _dispatch(g, "/remove_vip 555") == "vip_removed"
+    assert await g["vips"].is_allowed(555) is False
+    assert rec.id not in g["profiles"].rows
+    assert await g["profiles"].get_by_vip_id(rec.id) is None
+
+
+@pytest.mark.asyncio
+async def test_remove_vip_without_profile_admin_still_deactivates(
+    admin_ctx: dict,
+) -> None:
+    g = admin_ctx
+    await _dispatch(g, "/add_vip 555 Alice")
+    assert (
+        await _dispatch(g, "/remove_vip 555", profile_admin=None) == "vip_removed"
+    )
+    assert await g["vips"].is_allowed(555) is False

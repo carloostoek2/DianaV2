@@ -26,6 +26,8 @@ ADMIN_MENU_TEXT = (
     "Diana F1 admin\n"
     "/add_vip <telegram_user_id> [name]\n"
     "/remove_vip <telegram_user_id>\n"
+    "/list_vips\n"
+    "/rename_vip <telegram_user_id> <name>\n"
     "/vip_profile <telegram_user_id>\n"
     "/vip_fact <telegram_user_id> <key> <value>\n"
     "/vip_fact_del <telegram_user_id> <key>\n"

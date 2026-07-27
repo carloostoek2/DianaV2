@@ -14,7 +14,7 @@ from aiogram.types import Message
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
-from diana.application.ports import VipStore
+from diana.application.ports import VipRecord, VipStore
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.telegram.handlers.callbacks import (
     ADMIN_MENU_TEXT,
@@ -31,12 +31,15 @@ logger = logging.getLogger("diana.telegram")
 
 _ADD_RE = re.compile(r"^/add_vip\s+(\d+)(?:\s+(.+))?$", re.IGNORECASE)
 _RM_RE = re.compile(r"^/remove_vip\s+(\d+)\s*$", re.IGNORECASE)
+_LIST_RE = re.compile(r"^/list_vips(?:@\S+)?\s*$", re.I)
+_RENAME_RE = re.compile(r"^/rename_vip(?:@\S+)?\s+(\d+)\s+(.+)$", re.I)
 _VIP_PROFILE_RE = re.compile(r"^/vip_profile(?:@\S+)?\s+(\d+)\s*$", re.I)
 _VIP_FACT_RE = re.compile(r"^/vip_fact(?:@\S+)?\s+(\d+)\s+(\S+)\s+(.+)$", re.I)
 _VIP_FACT_DEL_RE = re.compile(r"^/vip_fact_del(?:@\S+)?\s+(\d+)\s+(\S+)\s*$", re.I)
 _VIP_NOTE_RE = re.compile(r"^/vip_note(?:@\S+)?\s+(\d+)\s+(.+)$", re.I)
 _VIP_NOTE_DEL_RE = re.compile(r"^/vip_note_del(?:@\S+)?\s+(\d+)\s+(\d+)\s*$", re.I)
 _METRICS_CMDS = frozenset({"/resumen", "/metricas"})
+_MAX_DISPLAY_NAME_LEN = 64
 _PROFILE_CMD_PREFIXES = (
     "/vip_profile",
     "/vip_fact_del",
@@ -44,6 +47,15 @@ _PROFILE_CMD_PREFIXES = (
     "/vip_note_del",
     "/vip_note",
 )
+
+
+def format_vips_list(records: list[VipRecord]) -> str:
+    """English multi-line body for active VIP allowlist."""
+    lines = [f"Active VIPs ({len(records)}):"]
+    for rec in records:
+        name = rec.display_name or "(no name)"
+        lines.append(f"  {rec.telegram_user_id} — {name}")
+    return "\n".join(lines)
 
 
 def format_profile_body(
@@ -149,7 +161,32 @@ async def handle_admin_text(
     if m_rm:
         tg_id = int(m_rm.group(1))
         ok = await vips.deactivate(tg_id)
-        return "vip_removed" if ok else "vip_not_found"
+        if not ok:
+            return "vip_not_found"
+        if profile_admin is not None:
+            try:
+                await profile_admin.purge_profile_for_telegram_user(actor_id, tg_id)
+            except OwnerAuthError:
+                return "forbidden"
+            # profile_purged / profile_absent / unexpected: allowlist change wins
+        return "vip_removed"
+
+    m_list = _LIST_RE.match(stripped)
+    if m_list:
+        active = await vips.list_active()
+        return "vips_empty" if not active else "vips_list"
+
+    m_ren = _RENAME_RE.match(stripped)
+    if m_ren:
+        tg_id = int(m_ren.group(1))
+        name = (m_ren.group(2) or "").strip()
+        if not name or len(name) > _MAX_DISPLAY_NAME_LEN:
+            return "rename_vip_usage"
+        rec = await vips.rename(tg_id, name)
+        return "vip_renamed" if rec is not None else "vip_not_found"
+    rename_first = stripped.split(None, 1)[0].split("@", 1)[0].lower()
+    if rename_first == "/rename_vip":
+        return "rename_vip_usage"
 
     # /vip_* profile commands (owner enrichable facts/notes).
     first_token = stripped.split(None, 1)[0].split("@", 1)[0].lower()
@@ -279,14 +316,7 @@ def build_admin_router(
     async def on_add_vip(message: Message, **_: Any) -> None:
         if not _is_owner(message):
             return
-        status = await handle_admin_text(
-            text=message.text or "",
-            actor_id=message.from_user.id if message.from_user else None,
-            owner_telegram_id=owner_telegram_id,
-            vips=vips,
-            admin=admin,
-            correct_sessions=sessions,
-        )
+        status = await _dispatch_token(message)
         if status == "vip_added":
             await message.answer("VIP added")
         else:
@@ -296,20 +326,42 @@ def build_admin_router(
     async def on_remove_vip(message: Message, **_: Any) -> None:
         if not _is_owner(message):
             return
-        status = await handle_admin_text(
-            text=message.text or "",
-            actor_id=message.from_user.id if message.from_user else None,
-            owner_telegram_id=owner_telegram_id,
-            vips=vips,
-            admin=admin,
-            correct_sessions=sessions,
-        )
+        status = await _dispatch_token(message)
         if status == "vip_removed":
             await message.answer("VIP deactivated")
         elif status == "vip_not_found":
             await message.answer("VIP not found")
+        elif status == "forbidden":
+            return
         else:
             await message.answer("Usage: /remove_vip <telegram_user_id>")
+
+    @router.message(Command("list_vips"))
+    async def on_list_vips(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await _dispatch_token(message)
+        if status == "vips_empty":
+            await message.answer("No active VIPs.")
+            return
+        if status == "vips_list":
+            records = await vips.list_active()
+            await message.answer(format_vips_list(records))
+            return
+
+    @router.message(Command("rename_vip"))
+    async def on_rename_vip(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        status = await _dispatch_token(message)
+        if status == "vip_renamed":
+            await message.answer("VIP renamed")
+        elif status == "vip_not_found":
+            await message.answer("VIP not found")
+        else:
+            await message.answer(
+                "Usage: /rename_vip <telegram_user_id> <name>"
+            )
 
     @router.message(Command("turnos"))
     async def on_turnos(message: Message, **_: Any) -> None:
@@ -560,4 +612,9 @@ def build_admin_router(
     return router
 
 
-__all__ = ["build_admin_router", "format_profile_body", "handle_admin_text"]
+__all__ = [
+    "build_admin_router",
+    "format_profile_body",
+    "format_vips_list",
+    "handle_admin_text",
+]
