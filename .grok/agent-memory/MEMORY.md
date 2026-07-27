@@ -33,6 +33,8 @@
 - [owner-admin-sandbox-item4-sandbox-admin](impact-analyzer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — Owner sandbox commands + pipeline isolation (auth/fake_delivery/should_persist/inject); risk low–medium
 - [h6-template-gate](impact-analyzer/h6-template-gate.md) — 2026-07-27 — H6 TemplateGate pre-pipeline + migrate J.4 identidad_ia → approve; purity/hybrid/hola-fixture criticals; risk medium–high
 - [sandbox-real-delivery](impact-analyzer/sandbox-real-delivery.md) — 2026-07-27 — Drop sandbox-forced `fake_delivery` only; keep should_persist / doctrine demote / recontact skip; risk medium (VIP chat mis-target)
+- [h7-corrections-history](impact-analyzer/h7-corrections-history.md) — 2026-07-27 — H7: wire save_correction + owner message_history; composition staging flag; risk low–medium
+- [h9-schedule](impact-analyzer/h9-schedule.md) — 2026-07-27 — H9: real knowledge.schedule from persona catalog + ClockPort + ContextBuilder typed render; risk medium
 
 ## Arch Enforcer
 
@@ -72,6 +74,8 @@
 - [owner-admin-sandbox-item4-sandbox-admin](arch-enforcer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Protocol inject; auth bypass; fake_delivery; should_persist learning skip; owner private `/sandbox`; no VIP pollution
 - [h6-template-gate](arch-enforcer/h6-template-gate.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; pure TemplateGate pre-pipeline; J.4 IA off middleware; pago/compromiso intact; no TO/Decider/Behavior/Learning; residuals dead helper + keyword coverage
 - [sandbox-real-delivery](arch-enforcer/sandbox-real-delivery.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; drop sandbox-forced fake_delivery; should_persist/doctrine demote/recontact intact; real Telegram under sandbox (CLARIFY supersedes item4 delivery claim)
+- [h7-corrections-history](arch-enforcer/h7-corrections-history.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; staging post-decision + owner history; flag-gated StagingService; no cognitive mid-pipeline
+- [h9-schedule](arch-enforcer/h9-schedule.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; ClockPort in cognitive/ports; UNIMPLEMENTED empty; catalog fail-loud; no Decider/Behavior
 
 ## Test Guardian
 
@@ -111,7 +115,8 @@
 - [owner-admin-sandbox-item3-sandbox-core](test-guardian/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — **suite protege adecuadamente**, catalog+session; 0 mocks prohibidos; focused 16 / wiring+purity 45 → paso 6 / item4 residual
 - [owner-admin-sandbox-item4-sandbox-admin](test-guardian/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — **suite protege adecuadamente**, auth/inject/delivery/learning/commands; 0 mocks prohibidos; focused 288 → documentador / pool close
 - [h6-template-gate](test-guardian/h6-template-gate.md) — 2026-07-27 — **suite protege adecuadamente**, 155 critical + 723 safety-net, 0 mocks prohibidos → paso 6
-
+- [h7-corrections-history](test-guardian/h7-corrections-history.md) — 2026-07-27 — **suite protege adecuadamente**, staging+owner history+sandbox gate; 0 mocks prohibidos → review/documentador
+- [h9-schedule](test-guardian/h9-schedule.md) — 2026-07-27 — **suite protege adecuadamente**, schedule real+gold half-open; 0 mocks prohibidos → review/documentador
 
 ## Documentador
 
@@ -145,6 +150,8 @@
 - [sandbox-real-delivery](documentador/sandbox-real-delivery.md) — 2026-07-27 — Pool sandbox-real-delivery CLOSED: drop sandbox-forced fake_delivery · real Telegram under sandbox · should_persist isolation · effort 3 · 2 review rounds · 0 open · 4 commits · unit 1372
 - Consolidated SUMMARY: `.planning/quick/sandbox-real-delivery/SUMMARY.md`
 - Residuals: `.grok/agent-memory/residuals/sandbox-real-delivery.md`
+- [h7-h9-pool](documentador/h7-h9-pool.md) — 2026-07-27 — Pool H7+H9 CLOSED: corrections+owner history · schedule real; effort 5 · 2 review rounds ×2 · 0 open · ANEXO-H 10/10
+- Residuals: `.grok/agent-memory/residuals/h7-h9-pool.md`
 
 ## Residuals
 
@@ -152,3 +159,4 @@
 - [owner-admin-sandbox](residuals/owner-admin-sandbox.md) — **CLOSED** residual index (facts/notes · VIP CRUD · sandbox 6+session+isolation; follow-ups: orphan purge paths, staging composition)
 - [h6-template-gate](residuals/h6-template-gate.md) — **CLOSED** residual index (dead IA helper follow-up · IA keyword expand OOS · hostile short saludo needs-human · ANEXO-H eval doc · shared matcher OOS)
 - [sandbox-real-delivery](residuals/sandbox-real-delivery.md) — **CLOSED** residual index (soft warn VIP chat OOS · multi-replica OOS · gray-zone no vip_id OOS · item4 fake_delivery isolation claim superseded for delivery)
+- [h7-h9-pool](residuals/h7-h9-pool.md) — **CLOSED** residual index (Promote UI OOS · multi-segment history deferred · VIP inbound sandbox OOS · recontact/promo history OOS · H9.5 UTC day polish OOS)
