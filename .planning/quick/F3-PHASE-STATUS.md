@@ -137,13 +137,25 @@ Plan root: `.planning/quick/residuals-polish/` · Summary: `.planning/quick/resi
 | **naturalness-mvp** | **done** | Director 1× redraft when naturalness < supervised 0.5; no `Decision.action=regenerate`; commits `cee38e1`…`97df474` |
 | **profile-real** | **done** | `ProfilesRepo` + ProfileRetriever REAL (BR-15); `needs_profile`; Schedule stays seat; commits `f2b908d`…`dc27f33` |
 
+### Owner admin + sandbox pack `owner-admin-sandbox` — **DONE** (2026-07-27)
+
+Plan root: `.planning/quick/owner-admin-sandbox/` · Summary: `.planning/quick/owner-admin-sandbox/POOL-SUMMARY.md` · Residual index: `.grok/agent-memory/residuals/owner-admin-sandbox.md` · Product: [`docs/PRODUCT_OWNER_ADMIN_SANDBOX.md`](../../docs/PRODUCT_OWNER_ADMIN_SANDBOX.md)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| **profile-write** | **done** | Real VIP facts/notes + `/vip_*` + hollow + prompt fence |
+| **vip-crud** | **done** | `/list_vips` `/rename_vip` remove+purge + private DM gate |
+| **sandbox-core** | **done** | 6-fixture package catalog + `SandboxService` session |
+| **sandbox-admin** | **done** | `/sandbox` commands + turn isolation + recontact skip |
+
 ### Follow-ups still open (not in residual packs)
 
 | Residual | Priority | Origin |
 |----------|----------|--------|
 | Exact Sunday 03:00 UTC cron (v1 = hourly + internal gates) | low | Pool3 |
 | Live hydrate supervised `naturalness_min` into RuntimeThresholds (optional) | low | residuals-polish item3 residual |
-| Profile writers / seed path (ops) | ops | residuals-polish item4 OOS |
+| StagingService composition wire + sandbox `chat_id` on correction | low | owner-admin-sandbox item4 |
+| Orphan profiles if VIP deactivated outside `/remove_vip` | low | owner-admin-sandbox item2 |
 | Schedule REAL / external calendar | product | residuals-polish CLARIFY OOS |
 
 ### Documented out-of-scope (do not expand without product ask)
@@ -155,7 +167,8 @@ Plan root: `.planning/quick/residuals-polish/` · Summary: `.planning/quick/resi
 | Gray-zone trigger name list in `/resumen` | Pool3 |
 | Multi-worker durable CAS / claim token — process-local inventory: [`docs/OPS_SINGLE_INSTANCE.md`](../../docs/OPS_SINGLE_INSTANCE.md) | Pool1 |
 | `system_config.behavior` runtime merge | Pool1 |
-| Profile writers / sandbox FakeProfiles production wire | residuals-polish item4 |
+| Profile writers / sandbox FakeProfiles production wire — **closed** in `owner-admin-sandbox` (facts/notes + catalog/session/isolation) | residuals-polish → owner-admin-sandbox |
+| Multi-replica sandbox session / live fixture catalog edit / VIP hard-delete CASCADE | owner-admin-sandbox CLARIFY OOS |
 
 ---
 
@@ -181,4 +194,5 @@ Rollback = set flag false (no redeploy required for kill-switch surfaces).
 > Pool `f3-pool3-metrics` closed — 4 items completed, tests passing, commits done, documentation updated.  
 > Residual pack `f3-residuals` (R1–R5) closed 2026-07-26.  
 > Residual polish pack `residuals-polish` (docs-sync · owner `/fp` · naturalness 1× · profile REAL) closed 2026-07-26.  
-> **Fase 3 implementation (Pools 1–3) + residual hardening + residual polish complete.** All F3 feature flags remain **default false**. Next: gradual ops enablement.
+> Owner admin + sandbox pack `owner-admin-sandbox` (profile-write · vip-crud · sandbox-core · sandbox-admin) closed 2026-07-27.  
+> **Fase 3 implementation (Pools 1–3) + residual hardening + residual polish + owner-admin-sandbox complete.** All F3 feature flags remain **default false** (`FEATURE_SANDBOX_ENABLED` wired, default false). Next: gradual ops enablement.

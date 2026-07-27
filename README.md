@@ -25,7 +25,7 @@ merge; those seeds are **not** live overrides today.
 | **F2** Memory | `feature_memory_enabled` / `FEATURE_MEMORY_ENABLED` | **no** | Settings stub only — not read in `src/`. `MemoryRetriever` always registered; runs when planner `needs_memory`. |
 | **F2** Gray zone | `feature_gray_zone_enabled` / `FEATURE_GRAY_ZONE_ENABLED` | **yes** | Doctrine consult (`consult_doctrine`) + VIP freeze path |
 | **F2** Staging | `feature_staging_enabled` / `FEATURE_STAGING_ENABLED` | **no** | Settings stub only — not read. `StagingService` not wired in composition; policy staging rows only via gray-zone path when gray zone is on |
-| **F2** Sandbox | `feature_sandbox_enabled` / `FEATURE_SANDBOX_ENABLED` | **partial** | Builds empty `SandboxService` on container only (no VIP-path callers). **FakeDelivery** is separate: `global_mode=fake_delivery`, not this flag |
+| **F2** Sandbox | `feature_sandbox_enabled` / `FEATURE_SANDBOX_ENABLED` | **yes** | Catalog (6 fixtures) + session + owner `/sandbox` commands + turn isolation (auth bypass, profile inject, `fake_delivery`, learning skip, recontact skip). Flag off → surface unavailable. Global `global_mode=fake_delivery` remains a separate ops mode |
 | **F3** Autonomous | `feature_autonomous_mode` / `FEATURE_AUTONOMOUS_MODE` | **yes** | Decider may emit `send` when flag on and autonomous score mins met; auto-**delivery** also needs autonomous mode service L1/L2 (else demote to approve) |
 | **F3** Recontact | `feature_recontact_enabled` / `FEATURE_RECONTACT_ENABLED` | **yes** | Silence recontact job + cancel-on-VIP-message path |
 | **F3** Promo | `feature_promo_enabled` / `FEATURE_PROMO_ENABLED` | **yes** | Non-VIP exact-match promo |
@@ -130,6 +130,7 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 - [`docs/ANEXO_T-TRAZABILIDAD.md`](docs/ANEXO_T-TRAZABILIDAD.md) — owner DM traceability (implemented)
 - [`.planning/quick/F3-PHASE-STATUS.md`](.planning/quick/F3-PHASE-STATUS.md) — F3 implementation status + flag ops order
 - [`docs/OPS_SINGLE_INSTANCE.md`](docs/OPS_SINGLE_INSTANCE.md) — single-process ops assumption
+- [`docs/PRODUCT_OWNER_ADMIN_SANDBOX.md`](docs/PRODUCT_OWNER_ADMIN_SANDBOX.md) — owner admin, real VIP facts/notes, sandbox fixtures (**implemented**; product source of truth)
 - [`AGENTS.md`](AGENTS.md) — hard module limits for agents
 
 ## Locked contracts
@@ -140,4 +141,4 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 | `Decision.action` | `approve` \| `escalate` \| `consult_doctrine` \| `send` — Decider emits `send` when autonomous **flag + mins** met; auto-**delivery** only if autonomous mode service L1/L2 enable (else demote to approve) |
 | Schema | F1 foundation + F2 knowledge + F3 tables via migrations **001–011** (see `alembic/versions`) |
 | Secrets | Env only; not in seed or repo |
-| Feature flags | Default **`false`** in Settings/env (runtime SoT). Not every Settings field is a live gate — see table (memory/staging stubs; sandbox partial) |
+| Feature flags | Default **`false`** in Settings/env (runtime SoT). Not every Settings field is a live gate — see table (memory/staging stubs; sandbox wired) |

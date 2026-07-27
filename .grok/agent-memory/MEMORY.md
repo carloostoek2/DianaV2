@@ -27,6 +27,10 @@
 - [residuals-polish-item2-owner-fp-ui](impact-analyzer/residuals-polish-item2-owner-fp-ui.md) — 2026-07-26 — Wire Telegram `/fp` → mark_false_positive; API/store done; thin admin handler only; risk LOW
 - [residuals-polish-item3-naturalness-mvp](impact-analyzer/residuals-polish-item3-naturalness-mvp.md) — 2026-07-26 — Director 1× re-gen+re-eval on low naturalness; no Decision.action regenerate; threshold default supervised 0.5; risk low–medium
 - [residuals-polish-item4-profile-real](impact-analyzer/residuals-polish-item4-profile-real.md) — 2026-07-26 — ProfileRetriever REAL mínimo (SQL profiles PK + anti-contam); Schedule stays no_implementado; recommend needs_profile optional; risk low–medium
+- [owner-admin-sandbox-item1-profile-write](impact-analyzer/owner-admin-sandbox-item1-profile-write.md) — 2026-07-27 — Real VIP facts/notes write + owner Telegram `/vip_*`; ProfilesRepo writers + ProfileAdminService; hollow-envelope lock; risk low–medium
+- [owner-admin-sandbox-item2-vip-crud](impact-analyzer/owner-admin-sandbox-item2-vip-crud.md) — 2026-07-27 — VIP list/rename + profiles purge on /remove_vip; soft deactivate; no sandbox; risk low
+- [owner-admin-sandbox-item3-sandbox-core](impact-analyzer/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — SandboxService session+catalog only; no pipeline gates; risk low
+- [owner-admin-sandbox-item4-sandbox-admin](impact-analyzer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — Owner sandbox commands + pipeline isolation (auth/fake_delivery/should_persist/inject); risk low–medium
 
 ## Arch Enforcer
 
@@ -60,6 +64,10 @@
 - [residuals-polish-item2-owner-fp-ui](arch-enforcer/residuals-polish-item2-owner-fp-ui.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; telegram thin `/fp` UI; dual fail-closed owner; no Decider/cognitive; mark via AdminService only
 - [residuals-polish-item3-naturalness-mvp](arch-enforcer/residuals-polish-item3-naturalness-mvp.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Director 1× redraft pre-Decider; no regenerate action; Decider order intact; cognitive purity OK
 - [residuals-polish-item4-profile-real](arch-enforcer/residuals-polish-item4-profile-real.md) — 2026-07-26 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; BR-15 vip short-circuit + PK WHERE; cognitive DI purity; Schedule no-touch; Option B `needs_profile` default False
+- [owner-admin-sandbox-item1-profile-write](arch-enforcer/owner-admin-sandbox-item1-profile-write.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; BR-15 vip-scoped writers; owner dual-gate; hollow Option A pure; no sandbox/Decider/Behavior/Learning
+- [owner-admin-sandbox-item2-vip-crud](arch-enforcer/owner-admin-sandbox-item2-vip-crud.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; list/rename VipStore; profile purge on remove (BR-15); soft deactivate; no sandbox/cognitive
+- [owner-admin-sandbox-item3-sandbox-core](arch-enforcer/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; purity OK; no telegram; catalog 6 profiles; in-process session; F2 insert_sandbox removed
+- [owner-admin-sandbox-item4-sandbox-admin](arch-enforcer/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; Protocol inject; auth bypass; fake_delivery; should_persist learning skip; owner private `/sandbox`; no VIP pollution
 
 ## Test Guardian
 
@@ -92,6 +100,10 @@
 - [residuals-polish-item2-owner-fp-ui](test-guardian/residuals-polish-item2-owner-fp-ui.md) — 2026-07-26 — **suite protege adecuadamente**, pure /fp dispatcher + store marks, 0 mocks prohibidos; critical 48 passed → paso 6 / review
 - [residuals-polish-item3-naturalness-mvp](test-guardian/residuals-polish-item3-naturalness-mvp.md) — 2026-07-26 — **suite protege adecuadamente**, Director 1× redraft matrix (7) + residual no-regenerate; FakeLLM only; 0 mocks prohibidos; naturalness 7 / dir+dec+mod 146 / cognitive 337 / orch 37 → paso 6
 - [residuals-polish-item4-profile-real](test-guardian/residuals-polish-item4-profile-real.md) — 2026-07-26 — **suite protege adecuadamente**, Profile REAL + needs_profile + BR-15 + schedule freeze; AsyncMock repo edge only; 0 mocks prohibidos; primary 203 / cognitive 348 / unit 1213 → paso 6
+- [owner-admin-sandbox-item1-profile-write](test-guardian/owner-admin-sandbox-item1-profile-write.md) — 2026-07-27 — **suite protege adecuadamente**, schema/repo/service/telegram + hollow Option A; 0 mocks prohibidos; +A8 multi-word/overwrite/update/BR-15 `_load` gap tests → paso 6
+- [owner-admin-sandbox-item2-vip-crud](test-guardian/owner-admin-sandbox-item2-vip-crud.md) — 2026-07-27 — **suite protege adecuadamente**, list/rename/purge cascade + menu; 0 mocks prohibidos; focused 94 / full unit 1303 → paso 6
+- [owner-admin-sandbox-item3-sandbox-core](test-guardian/owner-admin-sandbox-item3-sandbox-core.md) — 2026-07-27 — **suite protege adecuadamente**, catalog+session; 0 mocks prohibidos; focused 16 / wiring+purity 45 → paso 6 / item4 residual
+- [owner-admin-sandbox-item4-sandbox-admin](test-guardian/owner-admin-sandbox-item4-sandbox-admin.md) — 2026-07-27 — **suite protege adecuadamente**, auth/inject/delivery/learning/commands; 0 mocks prohibidos; focused 288 → documentador / pool close
 
 ## Documentador
 
@@ -116,7 +128,11 @@
 - [residuals-polish](documentador/pool-2026-07-26-residuals-polish.md) — 2026-07-26 — Pool residuals-polish CLOSED: docs-sync + owner `/fp` + naturalness 1× + profile REAL; arch 0 critical; review 0 open; OOS multi-replica/schedule REAL/profile writers/naturalness multi-retry
 - Consolidated SUMMARY: `.planning/quick/residuals-polish/POOL-SUMMARY.md`
 - Residuals: `.grok/agent-memory/residuals/residuals-polish.md`
+- [owner-admin-sandbox](documentador/pool-2026-07-27-owner-admin-sandbox.md) — 2026-07-27 — Pool owner-admin-sandbox CLOSED: profile-write · vip-crud · sandbox-core · sandbox-admin; arch 0 critical ×4; TG OK ×4; product doc implemented; recontact skip + private gate
+- Consolidated SUMMARY: `.planning/quick/owner-admin-sandbox/POOL-SUMMARY.md`
+- Residuals: `.grok/agent-memory/residuals/owner-admin-sandbox.md`
 
 ## Residuals
 
-- [residuals-polish](residuals/residuals-polish.md) — **CLOSED** residual index (docs-sync · `/fp` · naturalness 1× · profile REAL; open OOS listed inside)
+- [residuals-polish](residuals/residuals-polish.md) — **CLOSED** residual index (docs-sync · `/fp` · naturalness 1× · profile REAL; profile writers/sandbox **closed by owner-admin-sandbox**)
+- [owner-admin-sandbox](residuals/owner-admin-sandbox.md) — **CLOSED** residual index (facts/notes · VIP CRUD · sandbox 6+session+isolation; follow-ups: orphan purge paths, staging composition)

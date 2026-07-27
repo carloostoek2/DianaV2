@@ -42,11 +42,11 @@
 |----------|--------|
 | **Multi-replica** / multi-worker / Redis / advisory locks G.4 | CLARIFY · OPS_SINGLE_INSTANCE.md |
 | **Schedule REAL** / external calendar | CLARIFY · item4 no-touch |
-| **Profile writers** / seed path / sandbox FakeProfiles production wire | item4 A9 · OOS |
+| **Profile writers** / real VIP facts+notes + **sandbox catalog/UI** | **CLOSED** by pool `owner-admin-sandbox` (2026-07-27) — see `.grok/agent-memory/residuals/owner-admin-sandbox.md` |
 | **Naturalness multi-retry** / `Decision.action=regenerate` | CLARIFY locked |
 | Fuzzy J.4 / admin hot-edit catalogs | CLARIFY |
 | Promo hard rate-limit silence | CLARIFY |
-| Sandbox FakeDelivery UX complete | CLARIFY |
+| Sandbox FakeDelivery UX complete | **CLOSED** by pool `owner-admin-sandbox` item4 (session isolation + `fake_delivery` + learning skip) |
 | Ops production flag enablement | CLARIFY |
 | Mark FP without escalate-decision validation | item2 accepted residual |
 | Inline keyboard “mark FP” on escalate notifications | item2 non-goal |
@@ -57,3 +57,4 @@
 - Master F3 status: `.planning/quick/F3-PHASE-STATUS.md`
 - Documentador report: `.grok/agent-memory/documentador/pool-2026-07-26-residuals-polish.md`
 - Reviews: `.grok/agent-memory/review/residuals-polish-item*.md`
+- Promoted residual close: `.grok/agent-memory/residuals/owner-admin-sandbox.md` · `docs/PRODUCT_OWNER_ADMIN_SANDBOX.md`
