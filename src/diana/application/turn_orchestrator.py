@@ -269,12 +269,22 @@ class TurnOrchestrator:
         )
         turn_id = record.id
 
-        await self._history.append(
-            incoming.chat_id,
-            role="vip",
-            text=incoming.text,
-            telegram_message_id=incoming.telegram_message_id,
-        )
+        # Skip durable VIP inbound history when sandbox is active (should_persist false).
+        if (
+            self._sandbox is not None
+            and not self._sandbox.should_persist(incoming.chat_id)  # type: ignore[union-attr]
+        ):
+            logger.info(
+                "vip_history_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+        else:
+            await self._history.append(
+                incoming.chat_id,
+                role="vip",
+                text=incoming.text,
+                telegram_message_id=incoming.telegram_message_id,
+            )
 
         turn_ctx = IncomingTurn(
             turn_id=turn_id,
