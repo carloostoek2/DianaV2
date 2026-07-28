@@ -23,6 +23,7 @@ from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.telegram.handlers.admin import build_admin_router
 from diana.telegram.handlers.business import build_business_router
+from diana.telegram.handlers.menu import build_menu_router
 from diana.telegram.handlers.callbacks import (
     CorrectSessionStore,
     build_callback_router,
@@ -159,6 +160,17 @@ def build_dispatcher(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             owner_telegram_id=owner_telegram_id,
+        )
+    )
+    root.include_router(
+        build_menu_router(
+            owner_telegram_id=owner_telegram_id,
+            vips=vips,
+            admin_trace=admin_trace,
+            admin_metrics=admin_metrics,
+            sandbox=sandbox,  # type: ignore[arg-type]
+            staging=staging,
+            coordinator=coordinator,
         )
     )
     root.include_router(

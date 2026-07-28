@@ -24,6 +24,8 @@ _ACTION_METRICS_BACK = "mx:b"
 # Staging queue (sp: promote, sd: discard) — ≤64 bytes
 _ACTION_STAGING_PROMOTE = "sp"
 _ACTION_STAGING_DISCARD = "sd"
+# Hierarchical owner menu (m:<category> or m:<category>:<action>) — ≤64 bytes
+_ACTION_MENU = "m"
 
 
 def encode_callback(action: str, turn_id: UUID) -> str:
@@ -475,6 +477,122 @@ def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
     )
 
 
+# ---- Hierarchical owner menu (buttons instead of raw slash commands) ----
+
+MENU_ROOT_TEXT = "🌸 Panel de Diana\n\nElegí una categoría:"
+
+MENU_CATEGORY_TEXT: dict[str, str] = {
+    "vips": "👥 Mis VIPs\nGestioná quién tiene acceso especial y qué sabe Diana de cada uno.",
+    "review": (
+        "💬 Revisar mensajes\n\n"
+        "Aprobar, corregir o escalar un mensaje de Diana se hace con los botones "
+        "que aparecen debajo de cada mensaje propuesto — no hace falta ningún comando.\n\n"
+        "Acá abajo solo está la opción para cuando una escalación fue una falsa alarma."
+    ),
+    "sandbox": "🧪 Modo de prueba\nProbá cómo responde Diana sin avisar a nadie real.",
+    "metrics": "📊 Métricas y aprendizaje\nCómo está funcionando Diana esta semana.",
+    "history": "🔍 Historial y diagnóstico\nPara entender qué hizo Diana en un caso puntual.",
+}
+
+
+def encode_menu(category: str, action: str | None = None) -> str:
+    """Build callback_data for the owner menu: m:<category>[:<action>]."""
+    data = f"{_ACTION_MENU}:{category}" if action is None else f"{_ACTION_MENU}:{category}:{action}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_menu_callback(data: str) -> tuple[str, str | None] | None:
+    """Parse menu callback_data into (category, action|None), or None if not a menu callback."""
+    if not data or not data.startswith(f"{_ACTION_MENU}:"):
+        return None
+    rest = data[len(_ACTION_MENU) + 1 :]
+    if not rest:
+        return None
+    parts = rest.split(":", 1)
+    category = parts[0]
+    action = parts[1] if len(parts) > 1 else None
+    return category, action
+
+
+def _menu_back_row() -> list[InlineKeyboardButton]:
+    return [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu("root"))]
+
+
+def menu_root_keyboard() -> InlineKeyboardMarkup:
+    """Main menu: the 5 logical categories."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👥 Mis VIPs", callback_data=encode_menu("vips"))],
+            [InlineKeyboardButton(text="💬 Revisar mensajes", callback_data=encode_menu("review"))],
+            [InlineKeyboardButton(text="🧪 Modo de prueba", callback_data=encode_menu("sandbox"))],
+            [InlineKeyboardButton(text="📊 Métricas y aprendizaje", callback_data=encode_menu("metrics"))],
+            [InlineKeyboardButton(text="🔍 Historial y diagnóstico", callback_data=encode_menu("history"))],
+        ]
+    )
+
+
+def menu_vips_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Ver lista de VIPs", callback_data=encode_menu("vips", "list"))],
+            [InlineKeyboardButton(text="➕ Añadir VIP", callback_data=encode_menu("vips", "add"))],
+            [InlineKeyboardButton(text="➖ Quitar VIP", callback_data=encode_menu("vips", "remove"))],
+            [InlineKeyboardButton(text="✏️ Cambiar nombre", callback_data=encode_menu("vips", "rename"))],
+            [InlineKeyboardButton(text="🗂 Ver ficha de un VIP", callback_data=encode_menu("vips", "profile"))],
+            [InlineKeyboardButton(text="➕ Añadir dato a la ficha", callback_data=encode_menu("vips", "fact"))],
+            [InlineKeyboardButton(text="➖ Borrar dato de la ficha", callback_data=encode_menu("vips", "factdel"))],
+            [InlineKeyboardButton(text="➕ Añadir nota", callback_data=encode_menu("vips", "note"))],
+            [InlineKeyboardButton(text="➖ Borrar nota", callback_data=encode_menu("vips", "notedel"))],
+            _menu_back_row(),
+        ]
+    )
+
+
+def menu_review_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚩 Marcar falsa alarma", callback_data=encode_menu("review", "fp"))],
+            _menu_back_row(),
+        ]
+    )
+
+
+def menu_sandbox_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🟢 Cómo activar", callback_data=encode_menu("sandbox", "on"))],
+            [InlineKeyboardButton(text="🔴 Desactivar", callback_data=encode_menu("sandbox", "off"))],
+            [InlineKeyboardButton(text="📄 Ver perfiles de prueba", callback_data=encode_menu("sandbox", "profiles"))],
+            [InlineKeyboardButton(text="🎭 Cómo cambiar de perfil", callback_data=encode_menu("sandbox", "setprofile"))],
+            [InlineKeyboardButton(text="ℹ️ Ver estado actual", callback_data=encode_menu("sandbox", "status"))],
+            [InlineKeyboardButton(text="🔄 Reiniciar conversación de prueba", callback_data=encode_menu("sandbox", "reset"))],
+            _menu_back_row(),
+        ]
+    )
+
+
+def menu_metrics_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📈 Ver resumen semanal", callback_data=encode_menu("metrics", "summary"))],
+            [InlineKeyboardButton(text="🧠 Ejemplos pendientes", callback_data=encode_menu("metrics", "staging"))],
+            _menu_back_row(),
+        ]
+    )
+
+
+def menu_history_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🕓 Ver turnos recientes", callback_data=encode_menu("history", "turns"))],
+            [InlineKeyboardButton(text="🔬 Ver detalle de un turno", callback_data=encode_menu("history", "trace"))],
+            _menu_back_row(),
+        ]
+    )
+
+
 __all__ = [
     "TraceCallbackData",
     "doctrine_keyboard",
@@ -491,9 +609,11 @@ __all__ = [
     "encode_trace_detail",
     "encode_trace_page",
     "encode_trace_json",
+    "encode_menu",
     "metrics_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
+    "parse_menu_callback",
     "parse_metrics_callback",
     "parse_staging_callback",
     "parse_trace_callback",
@@ -501,4 +621,12 @@ __all__ = [
     "step_detail_keyboard",
     "trace_detail_keyboard",
     "trace_list_keyboard",
+    "MENU_ROOT_TEXT",
+    "MENU_CATEGORY_TEXT",
+    "menu_root_keyboard",
+    "menu_vips_keyboard",
+    "menu_review_keyboard",
+    "menu_sandbox_keyboard",
+    "menu_metrics_keyboard",
+    "menu_history_keyboard",
 ]
