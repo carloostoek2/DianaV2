@@ -23,7 +23,7 @@ from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.telegram.handlers.admin import build_admin_router
 from diana.telegram.handlers.business import build_business_router
-from diana.telegram.handlers.menu import build_menu_router
+from diana.telegram.handlers.menu import MenuSessionStore, build_menu_router
 from diana.telegram.handlers.callbacks import (
     CorrectSessionStore,
     build_callback_router,
@@ -50,6 +50,7 @@ class TelegramWiring:
     correct_sessions: CorrectSessionStore
     forbidden_middleware: ForbiddenKeywordsMiddleware
     registered_middlewares: list[Any]
+    menu_sessions: MenuSessionStore
 
 
 def middleware_class_names(middlewares: list[Any]) -> tuple[str, ...]:
@@ -97,6 +98,7 @@ def build_dispatcher(
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
     sessions = correct_sessions or CorrectSessionStore()
+    menu_sessions = MenuSessionStore()
 
     # first registered = outermost (aiogram wraps with reversed()).
     # Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Owner → Freeze → Auth → Forbidden.
@@ -154,15 +156,6 @@ def build_dispatcher(
         )
     )
     root.include_router(
-        build_callback_router(
-            admin=admin,
-            correct_sessions=sessions,
-            admin_trace=admin_trace,
-            admin_metrics=admin_metrics,
-            owner_telegram_id=owner_telegram_id,
-        )
-    )
-    root.include_router(
         build_menu_router(
             owner_telegram_id=owner_telegram_id,
             vips=vips,
@@ -171,6 +164,17 @@ def build_dispatcher(
             sandbox=sandbox,  # type: ignore[arg-type]
             staging=staging,
             coordinator=coordinator,
+            profile_admin=profile_admin,
+            menu_sessions=menu_sessions,
+        )
+    )
+    root.include_router(
+        build_callback_router(
+            admin=admin,
+            correct_sessions=sessions,
+            admin_trace=admin_trace,
+            admin_metrics=admin_metrics,
+            owner_telegram_id=owner_telegram_id,
         )
     )
     root.include_router(
@@ -195,6 +199,7 @@ def build_dispatcher(
         correct_sessions=sessions,
         forbidden_middleware=forbidden_mw,
         registered_middlewares=list(middlewares),
+        menu_sessions=menu_sessions,
     )
 
 

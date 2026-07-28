@@ -482,17 +482,27 @@ def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
 MENU_ROOT_TEXT = "🌸 Panel de Diana\n\nElegí una categoría:"
 
 MENU_CATEGORY_TEXT: dict[str, str] = {
-    "vips": "👥 Mis VIPs\nGestioná quién tiene acceso especial y qué sabe Diana de cada uno.",
+    "vips": "👥 Mis VIPs\nGestiona quién tiene acceso especial y qué sabe Diana de cada uno.",
     "review": (
         "💬 Revisar mensajes\n\n"
         "Aprobar, corregir o escalar un mensaje de Diana se hace con los botones "
         "que aparecen debajo de cada mensaje propuesto — no hace falta ningún comando.\n\n"
-        "Acá abajo solo está la opción para cuando una escalación fue una falsa alarma."
+        "Aquí abajo solo está la opción para cuando una escalación fue una falsa alarma."
     ),
-    "sandbox": "🧪 Modo de prueba\nProbá cómo responde Diana sin avisar a nadie real.",
+    "sandbox": "🧪 Modo de prueba\nPrueba cómo responde Diana sin avisar a nadie real.",
     "metrics": "📊 Métricas y aprendizaje\nCómo está funcionando Diana esta semana.",
     "history": "🔍 Historial y diagnóstico\nPara entender qué hizo Diana en un caso puntual.",
 }
+
+
+@dataclass
+class MenuCallback:
+    """Parsed menu callback data."""
+
+    category: str
+    action: str | None = None
+    vip_user_id: int | None = None
+    extra: str | None = None  # sandbox profile name, fact key, note index
 
 
 def encode_menu(category: str, action: str | None = None) -> str:
@@ -503,17 +513,58 @@ def encode_menu(category: str, action: str | None = None) -> str:
     return data
 
 
-def parse_menu_callback(data: str) -> tuple[str, str | None] | None:
-    """Parse menu callback_data into (category, action|None), or None if not a menu callback."""
+def encode_menu_vip(user_id: int) -> str:
+    """Build callback_data for VIP detail: m:vip:<user_id>."""
+    data = f"{_ACTION_MENU}:vip:{user_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_menu_vip_action(user_id: int, action: str) -> str:
+    """Build callback_data for VIP action: m:vip:<user_id>:<action>."""
+    data = f"{_ACTION_MENU}:vip:{user_id}:{action}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_menu_sandbox_profile(profile: str) -> str:
+    """Build callback_data for sandbox profile selection: m:sandbox:activate_p:<profile>."""
+    data = f"{_ACTION_MENU}:sandbox:activate_p:{profile}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_menu_callback(data: str) -> MenuCallback | None:
+    """Parse menu callback_data into MenuCallback, or None if not a menu callback."""
     if not data or not data.startswith(f"{_ACTION_MENU}:"):
         return None
     rest = data[len(_ACTION_MENU) + 1 :]
     if not rest:
         return None
-    parts = rest.split(":", 1)
+    parts = rest.split(":")
+
     category = parts[0]
+
+    if category == "vip" and len(parts) >= 2:
+        try:
+            vip_user_id = int(parts[1])
+        except ValueError:
+            return None
+        if len(parts) == 2:
+            return MenuCallback(category="vip", action=str(vip_user_id), vip_user_id=vip_user_id)
+        action = parts[2]
+        extra = ":".join(parts[3:]) if len(parts) > 3 else None
+        return MenuCallback(category="vip", action=action, vip_user_id=vip_user_id, extra=extra)
+
+    if category == "sandbox" and len(parts) >= 3 and parts[1] == "activate_p":
+        profile = ":".join(parts[2:])
+        return MenuCallback(category="sandbox", action="activate_p", extra=profile)
+
     action = parts[1] if len(parts) > 1 else None
-    return category, action
+    return MenuCallback(category=category, action=action)
 
 
 def _menu_back_row() -> list[InlineKeyboardButton]:
@@ -533,19 +584,53 @@ def menu_root_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def menu_vips_keyboard() -> InlineKeyboardMarkup:
+def menu_vip_list_keyboard(
+    vips_data: list[tuple[int, str | None]],
+) -> InlineKeyboardMarkup:
+    """One button per VIP with display name or user ID, plus back to root."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    for user_id, display_name in vips_data:
+        label = display_name or str(user_id)
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"👤 {label}",
+                callback_data=encode_menu_vip(user_id),
+            )
+        ])
+    buttons.append(_menu_back_row())
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def menu_vip_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Per-VIP actions: ficha, nota, dato, renombrar, eliminar, volver."""
+    uid = str(user_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Ver lista de VIPs", callback_data=encode_menu("vips", "list"))],
-            [InlineKeyboardButton(text="➕ Añadir VIP", callback_data=encode_menu("vips", "add"))],
-            [InlineKeyboardButton(text="➖ Quitar VIP", callback_data=encode_menu("vips", "remove"))],
-            [InlineKeyboardButton(text="✏️ Cambiar nombre", callback_data=encode_menu("vips", "rename"))],
-            [InlineKeyboardButton(text="🗂 Ver ficha de un VIP", callback_data=encode_menu("vips", "profile"))],
-            [InlineKeyboardButton(text="➕ Añadir dato a la ficha", callback_data=encode_menu("vips", "fact"))],
-            [InlineKeyboardButton(text="➖ Borrar dato de la ficha", callback_data=encode_menu("vips", "factdel"))],
-            [InlineKeyboardButton(text="➕ Añadir nota", callback_data=encode_menu("vips", "note"))],
-            [InlineKeyboardButton(text="➖ Borrar nota", callback_data=encode_menu("vips", "notedel"))],
-            _menu_back_row(),
+            [InlineKeyboardButton(text="👤 Ver ficha", callback_data=encode_menu_vip_action(user_id, "profile"))],
+            [
+                InlineKeyboardButton(text="📝 Agregar nota", callback_data=encode_menu_vip_action(user_id, "note_add")),
+            ],
+            [
+                InlineKeyboardButton(text="🏷 Agregar dato", callback_data=encode_menu_vip_action(user_id, "fact_add")),
+            ],
+            [InlineKeyboardButton(text="✏️ Renombrar", callback_data=encode_menu_vip_action(user_id, "rename"))],
+            [InlineKeyboardButton(text="🗑 Eliminar", callback_data=encode_menu_vip_action(user_id, "delete"))],
+            [
+                InlineKeyboardButton(text="🔙 Volver a lista", callback_data=encode_menu("vips")),
+                InlineKeyboardButton(text="🔙 Inicio", callback_data=encode_menu("root")),
+            ],
+        ]
+    )
+
+
+def menu_vip_profile_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Back to VIP detail after viewing profile/ficha."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔙 Volver al perfil", callback_data=encode_menu_vip(user_id)),
+                InlineKeyboardButton(text="🔙 Inicio", callback_data=encode_menu("root")),
+            ],
         ]
     )
 
@@ -562,13 +647,48 @@ def menu_review_keyboard() -> InlineKeyboardMarkup:
 def menu_sandbox_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🟢 Cómo activar", callback_data=encode_menu("sandbox", "on"))],
+            [InlineKeyboardButton(text="🟢 Activar", callback_data=encode_menu("sandbox", "activate"))],
             [InlineKeyboardButton(text="🔴 Desactivar", callback_data=encode_menu("sandbox", "off"))],
             [InlineKeyboardButton(text="📄 Ver perfiles de prueba", callback_data=encode_menu("sandbox", "profiles"))],
-            [InlineKeyboardButton(text="🎭 Cómo cambiar de perfil", callback_data=encode_menu("sandbox", "setprofile"))],
             [InlineKeyboardButton(text="ℹ️ Ver estado actual", callback_data=encode_menu("sandbox", "status"))],
-            [InlineKeyboardButton(text="🔄 Reiniciar conversación de prueba", callback_data=encode_menu("sandbox", "reset"))],
+            [InlineKeyboardButton(text="🔄 Reiniciar conversacion de prueba", callback_data=encode_menu("sandbox", "reset"))],
             _menu_back_row(),
+        ]
+    )
+
+
+def menu_sandbox_profile_picker_keyboard(
+    profiles: list[dict],
+) -> InlineKeyboardMarkup:
+    """Profile selection grid for sandbox activation step 3."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    for prof in profiles:
+        name = prof.get("name", "")
+        label = prof.get("label", name) or name
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎭 {label}",
+                callback_data=encode_menu_sandbox_profile(name),
+            )
+        ])
+    buttons.append([InlineKeyboardButton(text="🔙 Cancelar", callback_data=encode_menu("sandbox"))])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def menu_confirm_delete_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Confirm or cancel VIP deactivation."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Sí, desactivar",
+                    callback_data=encode_menu_vip_action(user_id, "delete_confirm"),
+                ),
+                InlineKeyboardButton(
+                    text="❌ No, cancelar",
+                    callback_data=encode_menu_vip(user_id),
+                ),
+            ],
         ]
     )
 
@@ -594,6 +714,7 @@ def menu_history_keyboard() -> InlineKeyboardMarkup:
 
 
 __all__ = [
+    "MenuCallback",
     "TraceCallbackData",
     "doctrine_keyboard",
     "draft_keyboard",
@@ -601,6 +722,10 @@ __all__ = [
     "encode_doctrine_callback",
     "encode_doctrine_resolve_callback",
     "encode_doctrine_escalate_callback",
+    "encode_menu",
+    "encode_menu_sandbox_profile",
+    "encode_menu_vip",
+    "encode_menu_vip_action",
     "encode_metrics_back",
     "encode_metrics_export",
     "encode_staging_discard",
@@ -609,7 +734,6 @@ __all__ = [
     "encode_trace_detail",
     "encode_trace_page",
     "encode_trace_json",
-    "encode_menu",
     "metrics_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
@@ -624,9 +748,13 @@ __all__ = [
     "MENU_ROOT_TEXT",
     "MENU_CATEGORY_TEXT",
     "menu_root_keyboard",
-    "menu_vips_keyboard",
+    "menu_vip_list_keyboard",
+    "menu_vip_detail_keyboard",
+    "menu_vip_profile_keyboard",
     "menu_review_keyboard",
     "menu_sandbox_keyboard",
+    "menu_sandbox_profile_picker_keyboard",
+    "menu_confirm_delete_keyboard",
     "menu_metrics_keyboard",
     "menu_history_keyboard",
 ]
