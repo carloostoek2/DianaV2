@@ -175,6 +175,7 @@ class DeliveryResult(BaseModel):
 
     success: bool
     message_ids: list[int] = Field(default_factory=list)
+    texts: list[str] = Field(default_factory=list)  # final prepared segments
     actual_delay_seconds: float = 0.0
     typing_duration_seconds: float = 0.0
     error: str | None = None
