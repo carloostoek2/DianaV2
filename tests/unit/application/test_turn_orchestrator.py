@@ -458,7 +458,7 @@ async def test_autonomous_no_owner_history_on_frozen_or_fail() -> None:
 
 @pytest.mark.asyncio
 async def test_autonomous_sandbox_skips_owner_history() -> None:
-    """Sandbox active: autonomous DELIVERED must not append durable owner history."""
+    """Sandbox active: autonomous DELIVERED leaves no durable vip or owner history."""
     from diana.application.sandbox import SandboxService
 
     decision = Decision(
@@ -498,8 +498,53 @@ async def test_autonomous_sandbox_skips_owner_history() -> None:
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "delivered"
     rows = await g["history"].get_recent(chat_id)
-    # VIP inbound may still be present (pre-H7 residual); owner outbound must not.
+    # Sandbox product isolation: no durable vip inbound and no owner outbound.
+    assert not any(r.get("role") == "vip" for r in rows)
     assert not any(r.get("role") == "owner" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_skips_vip_inbound_history(caplog: pytest.LogCaptureFixture) -> None:
+    """Sandbox active (supervised): VIP inbound must not append durable history."""
+    import logging
+
+    from diana.application.sandbox import SandboxService
+
+    decision = Decision(
+        action="approve",
+        reason="supervised",
+        evaluation=_eval(),
+        draft_text="pending for owner",
+    )
+    g = _build(FakeDirector(decision))
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {
+            "label": "x",
+            "description": "",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    chat_id = 100
+    sandbox.activate(chat_id, "nuevo")
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        turn_id = await g["orch"].handle_vip_message(
+            _vip(chat_id=chat_id, vip_id=uuid4(), text="hola sandbox")
+        )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    rows = await g["history"].get_recent(chat_id)
+    assert not any(r.get("role") == "vip" for r in rows)
+    assert any(
+        "vip_history_skipped_sandbox" in r.message for r in caplog.records
+    )
 
 
 class _MultiMidDeliverer:
