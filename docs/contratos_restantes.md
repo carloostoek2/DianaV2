@@ -16,8 +16,8 @@ needs_context  = true → "knowledge.context"
 needs_memory   = true → "knowledge.memory"
 needs_policy   = true → "knowledge.policy"
 needs_examples = true → "knowledge.examples"
-needs_schedule = true → "knowledge.schedule"   # no implementado en MVP (§1); se solicita igual,
-                                                 # el Capability Registry resuelve a stub/null
+needs_schedule = true → "knowledge.schedule"   # real desde Anexo H / H9 (ScheduleRetriever + agenda
+                                                 # semanal fija); ya no es half-seat / no_implementado
 ```
 
 ### C.3 Invariantes
@@ -185,7 +185,7 @@ Retriever.fetch(chat_id: string, comprension: ComprensionObject) → { capacidad
 | `MemoryRetriever` (stub) | — | Siempre `null` |
 | `PolicyRetriever` (stub) | — | Siempre `null` |
 | `ExamplesRetriever` (stub) | — | Siempre `null` |
-| `ScheduleRetriever` (no registrado en MVP) | — | El Registry ni siquiera tiene una entrada; si `needs_schedule=true`, el Planificador la solicita igual (Anexo C) y el Registry debe resolver esto a "capacidad reconocida pero sin implementación" (`resultado: null`, `fuente: "no_implementado"`), **no** a un error de arranque — es la única capacidad "a medias" permitida en el MVP porque está explícitamente en el roadmap de REQUIREMENTS (REQ-VIP-05, P1) |
+| `ScheduleRetriever` (real — Anexo H / H9) | `{ dia, hora_actual, tipo: "actividad"\|"respuesta_libre", actividad?\|respuesta_sugerida? }` desde agenda semanal fija (`fuente=agenda_semanal_fija`); ventanas half-open `[inicio, fin)` | Sin match de bloque → `tipo=respuesta_libre` con ancla de estilo; ya **no** es capacidad half-seat (`no_implementado`). Histórico MVP: se pedía igual y el Registry devolvía stub null — obsoleto tras H9. |
 
 ### H.4 Invariantes
 - Los stubs (`Memory`, `Policy`, `Examples`) **deben** implementar la interfaz completa y registrarse igual que un Retriever real — su existencia como código real (no como "capacidad ausente") es lo que garantiza que sustituirlos en MVP+ no toque a nadie más (REQ-NFR-14). No es válido que el Planificador tenga lógica especial tipo "si la capacidad es memoria, ni la pidas" — eso rompería la sustituibilidad.

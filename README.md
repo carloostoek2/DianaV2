@@ -24,7 +24,7 @@ merge; those seeds are **not** live overrides today.
 |---------|----------------------------------|--------|--------|
 | **F2** Memory | `feature_memory_enabled` / `FEATURE_MEMORY_ENABLED` | **no** | Settings stub only — not read in `src/`. `MemoryRetriever` always registered; runs when planner `needs_memory`. |
 | **F2** Gray zone | `feature_gray_zone_enabled` / `FEATURE_GRAY_ZONE_ENABLED` | **yes** | Doctrine consult (`consult_doctrine`) + VIP freeze path |
-| **F2** Staging | `feature_staging_enabled` / `FEATURE_STAGING_ENABLED` | **no** | Settings stub only — not read. `StagingService` not wired in composition; policy staging rows only via gray-zone path when gray zone is on |
+| **F2** Staging | `feature_staging_enabled` / `FEATURE_STAGING_ENABLED` | **yes** | `StagingService` wired when flag on: owner correct → staging candidates; gray-zone policy rows when gray zone on. Owner DM **`/staging`**: list pending **example** candidates + inline Promote/Discard (REQ-ADM-08). Flag off → staging deps `None`, surface unavailable. No auto-promote. |
 | **F2** Sandbox | `feature_sandbox_enabled` / `FEATURE_SANDBOX_ENABLED` | **yes** | Catalog (6 fixtures) + session + owner `/sandbox` commands + turn isolation (auth bypass, fixture profile inject, learning/`should_persist` skip, recontact skip). Delivery uses configured `global_mode` / `delivery_mode` (real Telegram when supervised\|autonomous). Flag off → surface unavailable. Global `global_mode=fake_delivery` remains a separate ops mode |
 | **F3** Autonomous | `feature_autonomous_mode` / `FEATURE_AUTONOMOUS_MODE` | **yes** | Decider may emit `send` when flag on and autonomous score mins met; auto-**delivery** also needs autonomous mode service L1/L2 (else demote to approve) |
 | **F3** Recontact | `feature_recontact_enabled` / `FEATURE_RECONTACT_ENABLED` | **yes** | Silence recontact job + cancel-on-VIP-message path |
@@ -141,4 +141,4 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 | `Decision.action` | `approve` \| `escalate` \| `consult_doctrine` \| `send` — Decider emits `send` when autonomous **flag + mins** met; auto-**delivery** only if autonomous mode service L1/L2 enable (else demote to approve) |
 | Schema | F1 foundation + F2 knowledge + F3 tables via migrations **001–011** (see `alembic/versions`) |
 | Secrets | Env only; not in seed or repo |
-| Feature flags | Default **`false`** in Settings/env (runtime SoT). Not every Settings field is a live gate — see table (memory/staging stubs; sandbox wired) |
+| Feature flags | Default **`false`** in Settings/env (runtime SoT). Not every Settings field is a live gate — see table (memory stub; staging/sandbox wired when flags on) |

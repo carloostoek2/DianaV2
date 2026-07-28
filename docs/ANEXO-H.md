@@ -63,20 +63,21 @@ Si en el futuro esto crece mucho (decenas/cientos de hechos) o quieres que la du
 
 ## Estado actual (para quien implemente — no re-hacer lo ya hecho)
 
-> **Última verificación de código:** 2026-07-27 (pool hardener H7+H9 cerrado) — estado contrastado contra SUMMARYs + commits del pool + tree actual (`src/`, `tests/`).
+> **Última verificación de código:** 2026-07-28 (pool residuales H7/H9 cerrado) — estado contrastado contra SUMMARYs residual-* + commits del pool + tree actual (`src/`, `tests/`). Hardener H7+H9: 2026-07-27.
 
 | Hito | Qué es | Estado |
 |---|---|---|
 | H0–H5 | persona_facts + voice_patterns + escalación (frustración/repetición) | ✅ **Implementado** — catálogo `persona_diana.json` (9 facts + 11 patterns), retrievers, wiring Planner/Registry/ContextBuilder/Analyst, `frustracion_directa` en Decider, `RepetitionGuard` + `get_recent_intents` en Director, composition + tests unitarios. |
 | H6 | Plantillas deterministas (saludo constante + "¿eres una IA?") | ✅ **Implementado** — `cognitive/template_gate.py`, reglas en `composition.py`, early-exit en `CognitiveDirector.handle_turn`, tests en `test_template_gate.py` / `test_director.py`. |
-| H7 | Captura de correcciones + historial de salida | ✅ **Implementado** — `handle_correct` → `StagingService.save_correction` (timing A); owner history `role="owner"` en admin (approve/correct) y orquestador autónomo; gate sandbox `should_persist`; `feature_staging_enabled` wire en composition. Commits: `b7b61da` · `3ee7607` · `f149665` · `212213e`. Review effort 5, 2 rounds, 0 open. |
+| H7 | Captura de correcciones + historial de salida | ✅ **Implementado** — `handle_correct` → `StagingService.save_correction` (timing A); owner history `role="owner"` en admin (approve/correct) y orquestador autónomo; gate sandbox `should_persist`; `feature_staging_enabled` wire en composition. Commits núcleo: `b7b61da` · `3ee7607` · `f149665` · `212213e`. **Residuales 2026-07-28:** VIP inbound history bajo sandbox (`0cb21db`/`a8212b1`); multi-segment owner history 1 fila/segmento (`16773ee`..`50178c4`); recontact owner history post-deliver (`84fcf69`/`73eaea6`); Promote UI REQ-ADM-08 (`df0f5fc`..`caa8cf4`). Promo **no** escribe history. |
 | H8 | Importar `diana_training.db` → tabla `examples` | ✅ **YA EJECUTADO** — 4,348 filas importadas, 455 saltadas por `contenido_pricing_excluido`. Script en `scripts/import_v1_training.py`. **No volver a correr** sin `--limit` salvo que se trunque la tabla `examples` a propósito — no hay chequeo de idempotencia (duplicaría filas). |
-| H9 | `knowledge.schedule` real (agenda semanal) | ✅ **Implementado** — `ScheduleRetriever` real (`fuente=agenda_semanal_fija`), catálogo `schedule` en `persona_diana.json`, `ClockPort` cognitivo, ContextBuilder typed render, ContextRetriever day/time CDMX, Analyst needs_schedule, `UNIMPLEMENTED_CAPABILITIES` vacío. Commits: `e6aaf47` · `08be3d4` · `d217e0e` · `0f4aa69` · `410ab74`. Review effort 5, 2 rounds (inicio inclusive gold), 0 open. |
+| H9 | `knowledge.schedule` real (agenda semanal) | ✅ **Implementado** — `ScheduleRetriever` real (`fuente=agenda_semanal_fija`), catálogo `schedule` en `persona_diana.json`, `ClockPort` cognitivo, ContextBuilder typed render, ContextRetriever day/time CDMX, Analyst needs_schedule, `UNIMPLEMENTED_CAPABILITIES` vacío. Commits núcleo: `e6aaf47` · `08be3d4` · `d217e0e` · `0f4aa69` · `410ab74`. **Residual H9.5 (2026-07-28):** `is_first_message_of_day` alineado a día civil America/Mexico_City (`65dcc22`/`5aae5be`). |
 
-**Resumen:** 10/10 hitos del plan Anexo H cerrados (H0–H9). Pool hardener H7+H9: tests green, self-check PASSED, review 0 open.
+**Resumen:** 10/10 hitos del plan Anexo H cerrados (H0–H9). Pool hardener H7+H9 (2026-07-27) + pool residuales H7/H9 (2026-07-28): tests green, self-check PASSED, review 0 open.
 
-Pendiente de investigar (no bloquea implementación, es diagnóstico posterior): `needs_examples` no se está activando en los traces de producción — el pool de H8 está cargado pero aún sin uso confirmado. Tras H7, las correcciones de dueña alimentan staging; promover a banco vivo de examples sigue siendo residual de producto (REQ-ADM-08).
+**Residuales H7/H9 — estado (pool 2026-07-28):** VIP sandbox history ✅ · multi-segment owner history ✅ · H9.5 CDMX ✅ · recontact owner history ✅ · Promote UI (REQ-ADM-08) ✅ · promo history ❌ (explícito out-of-scope). Índice: `.grok/agent-memory/residuals/h7-h9-pool.md`.
 
+Pendiente de investigar (no bloquea implementación, es diagnóstico posterior): `needs_examples` no se está activando en los traces de producción — el pool de H8 está cargado pero aún sin uso confirmado. Tras H7 + Promote UI, las correcciones de dueña alimentan staging y la dueña puede listar/promover/descartar ejemplos pendientes vía `/staging` (flag `FEATURE_STAGING_ENABLED`).
 ## Orden global sugerido
 
 ```
@@ -530,6 +531,8 @@ class ScheduleRetriever:
 ### H9.5 Día/hora siempre-presente (independiente de `needs_schedule`)
 
 Extiendo `ContextRetriever` (que ya corre seguido, cuando `needs_context=true`) para incluir `dia_semana`/`hora_actual` junto a lo que ya trae (`is_first_message_of_day`, `waiting_for_reply_since`) — barato, no necesita capacidad nueva. Esto reduce contradicciones incluso en turnos donde no se pidió `knowledge.schedule` explícitamente.
+
+> **Estado residual 2026-07-28:** `is_first_message_of_day` compara fechas en día civil **America/Mexico_City** (misma TZ que `dia_semana` / `hora_actual`). Commits: `65dcc22` · `5aae5be`. Antes usaba `.date()` en UTC y cruzaba el límite de día de forma inconsistente.
 
 ### H9.6 Fix al Analista — `needs_schedule` no dispara con "¿qué haces ahora?"
 
