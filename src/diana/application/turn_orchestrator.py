@@ -12,6 +12,7 @@ from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.observability import log_swallowed
+from diana.application.owner_history import append_owner_delivery_history
 from diana.application.ports import (
     BehaviorDeliverer,
     DeliveryContext,
@@ -603,6 +604,7 @@ class TurnOrchestrator:
                 )
             # H7.2: owner history for Diana outbound (role maps to autor=dueña).
             # Skip durable history when sandbox is active (should_persist false).
+            # Multi-segment: one owner row per message_id when texts align.
             if (
                 self._sandbox is not None
                 and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
@@ -612,21 +614,13 @@ class TurnOrchestrator:
                     extra={"turn_id": str(turn_id), "chat_id": chat_id},
                 )
             else:
-                try:
-                    mid = (
-                        result.message_ids[0] if result.message_ids else None
-                    )
-                    await self._history.append(
-                        chat_id,
-                        role="owner",
-                        text=text,
-                        telegram_message_id=mid,
-                    )
-                except Exception:
-                    logger.exception(
-                        "owner_history_append_failed",
-                        extra={"turn_id": str(turn_id), "chat_id": chat_id},
-                    )
+                await append_owner_delivery_history(
+                    self._history,
+                    chat_id,
+                    result=result,
+                    fallback_text=text,
+                    turn_id=turn_id,
+                )
             logger.info(
                 "autonomous_delivered",
                 extra={"turn_id": str(turn_id), "chat_id": chat_id},

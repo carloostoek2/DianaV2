@@ -26,6 +26,7 @@ from diana.application.ports import (
     VipStore,
 )
 from diana.application.escalation_labels import tipo_from_reason
+from diana.application.owner_history import append_owner_delivery_history
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.models import (
@@ -553,6 +554,7 @@ class AdminService:
                 )
                 # H7.2: append delivered outbound text for HistoryRetriever (owner→dueña).
                 # Skip durable history when sandbox is active (should_persist false).
+                # Multi-segment: one owner row per message_id when texts align.
                 if self._history is not None:
                     if (
                         self._sandbox is not None
@@ -566,26 +568,13 @@ class AdminService:
                             },
                         )
                     else:
-                        try:
-                            mid = (
-                                result.message_ids[0]
-                                if result.message_ids
-                                else None
-                            )
-                            await self._history.append(
-                                chat_id,
-                                role="owner",
-                                text=text,
-                                telegram_message_id=mid,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "owner_history_append_failed",
-                                extra={
-                                    "turn_id": str(turn_id),
-                                    "chat_id": chat_id,
-                                },
-                            )
+                        await append_owner_delivery_history(
+                            self._history,
+                            chat_id,
+                            result=result,
+                            fallback_text=text,
+                            turn_id=turn_id,
+                        )
                 logger.info(
                     "admin_delivered",
                     extra={
