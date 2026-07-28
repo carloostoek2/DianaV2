@@ -1,5 +1,7 @@
 # Agent Memory Index
 
+> Note (2026-07-28): arch+TG residual-promote-ui ITEM 5/5 PASS; prior recontact ITEM 4/5 closed in chain.
+
 ## Impact Analyzer
 
 - [01-foundation](impact-analyzer/01-foundation.md) — 2026-07-22 — Scaffold + config + DB F1 + domain models (ITEM 1/4)
@@ -35,6 +37,12 @@
 - [sandbox-real-delivery](impact-analyzer/sandbox-real-delivery.md) — 2026-07-27 — Drop sandbox-forced `fake_delivery` only; keep should_persist / doctrine demote / recontact skip; risk medium (VIP chat mis-target)
 - [h7-corrections-history](impact-analyzer/h7-corrections-history.md) — 2026-07-27 — H7: wire save_correction + owner message_history; composition staging flag; risk low–medium
 - [h9-schedule](impact-analyzer/h9-schedule.md) — 2026-07-27 — H9: real knowledge.schedule from persona catalog + ClockPort + ContextBuilder typed render; risk medium
+- [residuals-item1-multi-seg-history](impact-analyzer/residuals-item1-multi-seg-history.md) — 2026-07-28 — Multi-segment owner history
+- [residual-vip-sandbox-history](impact-analyzer/residual-vip-sandbox-history.md) — 2026-07-28 — Gate VIP inbound history.append with sandbox should_persist; risk LOW
+- [residual-h95-cdmx](impact-analyzer/residual-h95-cdmx.md) — 2026-07-28 — H9.5 America/Mexico_City day boundary
+- [residual-recontact-history](impact-analyzer/residual-recontact-history.md) — 2026-07-28 — ITEM 4/5 recontact outbound → role=owner via helper + should_persist; promo no-touch; risk LOW
+- [residuals-item4-promote-ui](impact-analyzer/residuals-item4-promote-ui.md) — 2026-07-28 — Prior promote UI impact (pre-WIP inventory)
+- [residual-promote-ui](impact-analyzer/residual-promote-ui.md) — 2026-07-28 — **CURRENT** ITEM 5/5 REQ-ADM-08: WIP callbacks exist; missing keyboards/list/wire; risk LOW–MEDIUM
 
 ## Arch Enforcer
 
@@ -76,6 +84,11 @@
 - [sandbox-real-delivery](arch-enforcer/sandbox-real-delivery.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; drop sandbox-forced fake_delivery; should_persist/doctrine demote/recontact intact; real Telegram under sandbox (CLARIFY supersedes item4 delivery claim)
 - [h7-corrections-history](arch-enforcer/h7-corrections-history.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; staging post-decision + owner history; flag-gated StagingService; no cognitive mid-pipeline
 - [h9-schedule](arch-enforcer/h9-schedule.md) — 2026-07-27 — **PASS WITH NOTES**, 0 critical → handoff test-guardian; ClockPort in cognitive/ports; UNIMPLEMENTED empty; catalog fail-loud; no Decider/Behavior
+- [residuals-i1-multi-seg](arch-enforcer/residuals-i1-multi-seg.md) — 2026-07-28 — multi-seg owner history
+- [residual-vip-sandbox-history](arch-enforcer/residual-vip-sandbox-history.md) — 2026-07-28 — **PASS**, 0 critical — VIP inbound sandbox history gate
+- [residual-h95-cdmx](arch-enforcer/residual-h95-cdmx.md) — 2026-07-28 — H9.5 CDMX
+- [residual-recontact-history](arch-enforcer/residual-recontact-history.md) — 2026-07-28 — **PASS**, 0 critical → handoff test-guardian; recontact owner history; promo no-touch
+- [residual-promote-ui](arch-enforcer/residual-promote-ui.md) — 2026-07-28 — **PASS**, 0 critical → handoff test-guardian; owner /staging promote UI; router before catch-all; no auto-promote
 
 ## Test Guardian
 
@@ -117,6 +130,11 @@
 - [h6-template-gate](test-guardian/h6-template-gate.md) — 2026-07-27 — **suite protege adecuadamente**, 155 critical + 723 safety-net, 0 mocks prohibidos → paso 6
 - [h7-corrections-history](test-guardian/h7-corrections-history.md) — 2026-07-27 — **suite protege adecuadamente**, staging+owner history+sandbox gate; 0 mocks prohibidos → review/documentador
 - [h9-schedule](test-guardian/h9-schedule.md) — 2026-07-27 — **suite protege adecuadamente**, schedule real+gold half-open; 0 mocks prohibidos → review/documentador
+- [residuals-i1-multi-seg](test-guardian/residuals-i1-multi-seg.md) — 2026-07-28 — multi-seg owner history
+- [residual-vip-sandbox-history](test-guardian/residual-vip-sandbox-history.md) — 2026-07-28 — **suite protege adecuadamente** VIP sandbox history
+- [residual-h95-cdmx](test-guardian/residual-h95-cdmx.md) — 2026-07-28 — H9.5 CDMX
+- [residual-recontact-history](test-guardian/residual-recontact-history.md) — 2026-07-28 — **suite protege adecuadamente**, 59 recontact+promo passed; promo no history; 0 mocks prohibidos
+- [residual-promote-ui](test-guardian/residual-promote-ui.md) — 2026-07-28 — **suite protege adecuadamente**, 68 passed (keyboards+callbacks+service+wiring); 0 mocks prohibidos
 
 ## Documentador
 

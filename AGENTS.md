@@ -1,23 +1,64 @@
 
 
-AGENTS.md — Límites de módulo y flujos vivos (v1.2)
+AGENTS.md — Límites de módulo y flujos vivos (v1.3)
 
 Diana Business Bot / Sistema de Automatización de Chats VIP
 
 Campo Valor
 Nivel Operación para agentes de desarrollo (humanos o IA)
 Basado en REQUERIMIENTOS.md v2.1 + SPEC.md v1.5 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0
-Audiencia Desarrolladores, agentes de código, revisores
-Versión 1.2 — Fase 3 (Producto Completo)
+Audiencia Chat con el usuario: dueño/a de producto. Cuerpo técnico de este doc: agentes de código y revisores.
+Versión 1.3 — Fase 3 (Producto Completo) + regla de comunicación con producto
 Idioma Español
+
+---
+
+0. Comunicación con el usuario (obligatorio)
+
+El interlocutor del chat **no es un desarrollador**: es el **dueño o dueña de producto** (quien opera el negocio, el bot y las decisiones de control). Toda la comunicación **agente ↔ usuario** (explicaciones, avances, dudas, opciones, resúmenes, errores, riesgos y pedidos de confirmación) debe usarse con **nivel técnico medio-bajo**, lenguaje **claro y práctico**.
+
+0.1 Principio
+
+Hablar de **qué pasa en el producto**, **qué gana o pierde el negocio**, **qué control tiene la dueña**, y **qué hay que decidir**. No hablar como a un equipo de ingeniería.
+
+0.2 Cómo debe sonar el chat
+
+· Frases cortas, concretas, orientadas a la decisión o al resultado.
+· Explicar con el mundo real del producto: VIP, Telegram, aprobación, corrección, sandbox, modo autónomo, recontacto, promo, “el bot manda solo o espera OK”.
+· Si aparece un concepto técnico inevitable, **traducirlo en una frase** al impacto de producto (ej. no “middleware fail-closed”: “si no podemos confirmar el estado, por seguridad no mandamos el mensaje”).
+· Las preguntas al usuario se formulan en lenguaje de negocio/producto, no de implementación.
+· Resumir avances como “qué cambió para vos / para el VIP / para el control”, no como lista de módulos.
+· Ante un error o bloqueo: qué falló en la práctica, qué se puede hacer ahora, y si hace falta una decisión de la dueña.
+
+0.3 Qué evitar en el chat (salvo que el usuario lo pida)
+
+· Jerga de implementación sin traducción: pipeline, middleware, DI, purity, locks, migraciones, firmas de funciones, paths de archivos como eje del mensaje.
+· Menús largos de opciones técnicas o “enfoques de arquitectura” cuando basta una recomendación práctica.
+· Asumir que el usuario lee código, specs o PRs.
+· Respuestas que suenen a code review o a clase de ingeniería.
+
+0.4 Qué NO cambia esta regla
+
+· El **código**, tests, commits, nombres de archivos, comentarios de código y docs técnicos de diseño **siguen siendo técnicos** y en el idioma/convención del artefacto (por defecto inglés en código; este AGENTS.md y specs de producto en español según corresponda).
+· Los **límites de módulo y flujos canónicos** de las secciones siguientes siguen siendo de cumplimiento estricto para quien implementa.
+· Si el usuario **pide explícitamente** detalle técnico, se puede subir el nivel solo en esa respuesta o tramo.
+
+0.5 Autocomprobación antes de enviar un mensaje al usuario
+
+1. ¿Lo entendería alguien que maneja el producto pero no programa?
+2. ¿Queda claro el impacto en VIP / dueña / control / riesgo?
+3. ¿La pregunta (si hay) se puede responder sin saber de código?
+4. Si usé un término técnico, ¿lo traduje al efecto práctico?
+
+Si alguna respuesta es “no”, reescribir el mensaje antes de enviarlo.
 
 ---
 
 1. Propósito de este documento
 
-Este archivo define límites duros de módulo y flujos canónicos que ningún agente (humano o IA) puede violar al modificar el código.
+Este archivo define límites duros de módulo y flujos canónicos que ningún agente (humano o IA) puede violar al modificar el código. También fija cómo debe hablar el agente con el dueño de producto (sección 0).
 
-Su objetivo es proteger las propiedades arquitectónicas críticas del sistema, respetando el carácter incremental por fases (Fase 1, 2 y 3).
+Su objetivo es proteger las propiedades arquitectónicas críticas del sistema, respetando el carácter incremental por fases (Fase 1, 2 y 3), y que las conversaciones de trabajo sean útiles para quien decide el producto.
 
 Principios rectores (no negociables):
 
@@ -337,10 +378,10 @@ SPEC-FASE2.md Cómo se implementa la Fase 2 (MVP+)
 SPEC-FASE3.md Cómo se implementa la Fase 3 (Producto Completo)
 Anexos_contratos.md Contratos detallados de todos los nodos
 Anexo T Sistema de trazabilidad interactiva
-AGENTS.md (este) Límites que ningún agente puede cruzar al tocar el código, clasificados por fase
+AGENTS.md (este) Límites que ningún agente puede cruzar al tocar el código, clasificados por fase; más regla de comunicación con dueño de producto (sección 0)
 
 ---
 
-Fin de AGENTS.md v1.2 (Fase 3)
+Fin de AGENTS.md v1.3 (Fase 3)
 Última actualización: Julio 2026
 Equipo de Arquitectura — Producto completo listo para desarrollo.
