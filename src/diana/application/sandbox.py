@@ -75,11 +75,24 @@ def parse_sandbox_catalog(raw: str | Mapping[str, Any]) -> dict[str, dict[str, A
         description = prof.get("description", "")
         if not isinstance(description, str):
             description = ""
+        # history: fixture conversation seed, NOT run through normalize_content
+        # (that helper only knows facts/notes and would silently drop it).
+        history_raw = prof.get("history")
+        history: list[dict[str, str]] = []
+        if isinstance(history_raw, list):
+            for turn in history_raw:
+                if not isinstance(turn, Mapping):
+                    continue
+                autor = str(turn.get("autor") or "").strip()
+                texto = str(turn.get("texto") or "").strip()
+                if autor in ("vip", "dueña") and texto:
+                    history.append({"autor": autor, "texto": texto})
         out[key] = {
             "label": label.strip(),
             "description": description.strip(),
             "facts": content["facts"],
             "notes": content["notes"],
+            "history": history,
         }
     return out
 
@@ -220,6 +233,20 @@ class SandboxService:
         profile_name = self._active[chat_id]
         prof = self._profiles.get(profile_name, {})
         return normalize_content(prof)
+
+    def get_profile_history(self, chat_id: int) -> list[dict[str, str]] | None:
+        """Fixture conversation seed for the active profile, or None if inactive.
+
+        Mirrors get_profile_content but for knowledge.history isolation —
+        without this, sandbox mode only fakes the profile while real chat
+        history keeps leaking through HistoryRetriever untouched.
+        """
+        if not self.is_active(chat_id):
+            return None
+        profile_name = self._active[chat_id]
+        prof = self._profiles.get(profile_name, {})
+        history = prof.get("history")
+        return list(history) if isinstance(history, list) else []
 
     def get_context_block(self, chat_id: int) -> str:
         if not self.is_active(chat_id):
