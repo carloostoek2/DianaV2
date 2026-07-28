@@ -93,6 +93,11 @@ class StagingService:
                 f"StagingCandidate {candidate_id} status is {candidate.status!r}, "
                 f"expected 'pending'"
             )
+        if candidate.candidate_type != "example":
+            raise ValueError(
+                f"StagingCandidate {candidate_id} type is "
+                f"{candidate.candidate_type!r}, expected 'example'"
+            )
 
         payload = candidate.payload
         example = await self._examples.insert(
@@ -161,14 +166,27 @@ class StagingService:
     async def discard(self, candidate_id: UUID) -> None:
         """Mark a staging candidate as discarded (no promotion).
 
-        Raises ValueError if candidate not found.
+        Raises ValueError if candidate not found or not in 'pending' status.
         """
-        updated = await self._staging.update_status(candidate_id, "discarded")
-        if not updated:
+        candidate = await self._staging.get_by_id(candidate_id)
+        if candidate is None:
             raise ValueError(f"StagingCandidate {candidate_id} not found")
+        if candidate.status != "pending":
+            raise ValueError(
+                f"StagingCandidate {candidate_id} status is {candidate.status!r}, "
+                f"expected 'pending'"
+            )
+        await self._staging.update_status(candidate_id, "discarded")
         logger.info(
             "candidate_discarded",
             extra={"candidate_id": str(candidate_id)},
+        )
+
+    async def list_pending_examples(self, limit: int = 10) -> list:
+        """Return pending example candidates oldest-first (FIFO queue)."""
+        return await self._staging.list_pending(
+            candidate_type="example",
+            limit=limit,
         )
 
 

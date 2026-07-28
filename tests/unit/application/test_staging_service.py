@@ -20,11 +20,13 @@ def _fake_staging_row(
     *,
     candidate_id: UUID | None = None,
     status: str = "pending",
+    candidate_type: str = "example",
     payload: dict | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=candidate_id or uuid4(),
         status=status,
+        candidate_type=candidate_type,
         payload=payload or {
             "original_draft": "old draft",
             "corrected_text": "new text",
@@ -245,10 +247,14 @@ async def test_discard_happy_path(
     service: StagingService, repos: dict[str, AsyncMock]
 ) -> None:
     candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, status="pending"
+    )
     repos["staging"].update_status.return_value = True
 
     await service.discard(candidate_id=candidate_id)
 
+    repos["staging"].get_by_id.assert_awaited_once_with(candidate_id)
     repos["staging"].update_status.assert_awaited_once_with(candidate_id, "discarded")
 
 
@@ -256,10 +262,80 @@ async def test_discard_happy_path(
 async def test_discard_candidate_not_found(
     service: StagingService, repos: dict[str, AsyncMock]
 ) -> None:
-    repos["staging"].update_status.return_value = False
+    repos["staging"].get_by_id.return_value = None
 
     with pytest.raises(ValueError, match="not found"):
         await service.discard(candidate_id=uuid4())
+
+    repos["staging"].update_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_discard_rejects_non_pending(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, status="promoted"
+    )
+
+    with pytest.raises(ValueError, match="expected 'pending'"):
+        await service.discard(candidate_id=candidate_id)
+
+    repos["staging"].update_status.assert_not_awaited()
+
+
+# --- list_pending_examples ---
+
+
+@pytest.mark.asyncio
+async def test_list_pending_examples_delegates_to_repo(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    rows = [
+        _fake_staging_row(candidate_id=uuid4()),
+        _fake_staging_row(candidate_id=uuid4()),
+    ]
+    repos["staging"].list_pending.return_value = rows
+
+    result = await service.list_pending_examples(limit=5)
+
+    repos["staging"].list_pending.assert_awaited_once_with(
+        candidate_type="example", limit=5
+    )
+    assert result is rows
+
+
+@pytest.mark.asyncio
+async def test_list_pending_examples_default_limit(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    repos["staging"].list_pending.return_value = []
+
+    result = await service.list_pending_examples()
+
+    repos["staging"].list_pending.assert_awaited_once_with(
+        candidate_type="example", limit=10
+    )
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_promote_to_example_rejects_non_example_type(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id,
+        candidate_type="policy",
+        status="pending",
+    )
+
+    with pytest.raises(ValueError, match="example"):
+        await service.promote_to_example(candidate_id=candidate_id)
+
+    repos["examples"].insert.assert_not_awaited()
+    repos["staging"].update_status.assert_not_awaited()
 
 
 # --- sandbox should_persist gate ---
