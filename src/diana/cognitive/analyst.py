@@ -38,7 +38,11 @@ _SYSTEM = (
     "limites, identidad, dinamica_novia_virtual; map foto/video requests to contenido. "
     "needs_schedule=true for direct questions about Diana's current activity/availability "
     "right now (qué haces, dónde andas, estás libre / \"ahora qué haces\"), "
-    "not only future appointments."
+    "not only future appointments. "
+    "needs_examples=true when a similar past VIP exchange (same situation/register, e.g. "
+    "flirty request, playful tease, mundane chat, emotional check-in) would help match "
+    "how Diana actually replied before — not for purely factual/policy-governed turns "
+    "(payment terms, schedule, biography) where those other fields already cover it."
 )
 
 _MAX_ATTEMPTS = 2  # initial try + exactly one retry (contrato A.6)
