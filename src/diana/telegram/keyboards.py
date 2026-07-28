@@ -21,6 +21,9 @@ _ACTION_TRACE_JSON = "tj"
 # Metrics dashboard callbacks (mx:e export, mx:b back) — ≤64 bytes
 _ACTION_METRICS_EXPORT = "mx:e"
 _ACTION_METRICS_BACK = "mx:b"
+# Staging queue (sp: promote, sd: discard) — ≤64 bytes
+_ACTION_STAGING_PROMOTE = "sp"
+_ACTION_STAGING_DISCARD = "sd"
 
 
 def encode_callback(action: str, turn_id: UUID) -> str:
@@ -418,6 +421,60 @@ def metrics_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+# ---- Staging queue helpers (sp: promote / sd: discard) ----
+
+
+def encode_staging_promote(candidate_id: UUID) -> str:
+    """Build callback_data for promote: sp:<uuid>."""
+    data = f"{_ACTION_STAGING_PROMOTE}:{candidate_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_staging_discard(candidate_id: UUID) -> str:
+    """Build callback_data for discard: sd:<uuid>."""
+    data = f"{_ACTION_STAGING_DISCARD}:{candidate_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_staging_callback(data: str) -> tuple[str, UUID] | None:
+    """Parse staging callback into (promote|discard, candidate_id) or None."""
+    if not data or ":" not in data:
+        return None
+    code, raw_id = data.split(":", 1)
+    action = {
+        _ACTION_STAGING_PROMOTE: "promote",
+        _ACTION_STAGING_DISCARD: "discard",
+    }.get(code)
+    if action is None:
+        return None
+    try:
+        return action, UUID(raw_id)
+    except ValueError:
+        return None
+
+
+def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
+    """Promote / Discard inline keyboard for one staging example candidate."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Promote",
+                    callback_data=encode_staging_promote(candidate_id),
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Discard",
+                    callback_data=encode_staging_discard(candidate_id),
+                ),
+            ]
+        ]
+    )
+
+
 __all__ = [
     "TraceCallbackData",
     "doctrine_keyboard",
@@ -428,6 +485,8 @@ __all__ = [
     "encode_doctrine_escalate_callback",
     "encode_metrics_back",
     "encode_metrics_export",
+    "encode_staging_discard",
+    "encode_staging_promote",
     "encode_trace_view",
     "encode_trace_detail",
     "encode_trace_page",
@@ -436,7 +495,9 @@ __all__ = [
     "parse_callback",
     "parse_doctrine_callback",
     "parse_metrics_callback",
+    "parse_staging_callback",
     "parse_trace_callback",
+    "staging_candidate_keyboard",
     "step_detail_keyboard",
     "trace_detail_keyboard",
     "trace_list_keyboard",
