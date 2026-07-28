@@ -18,6 +18,7 @@ from diana.application.ports import (
     VipStore,
 )
 from diana.application.promo_service import PromoService
+from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.telegram.handlers.admin import build_admin_router
@@ -26,6 +27,7 @@ from diana.telegram.handlers.callbacks import (
     CorrectSessionStore,
     build_callback_router,
 )
+from diana.telegram.handlers.staging import build_staging_router
 from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 from diana.telegram.middlewares import F2_MIDDLEWARE_ORDER
 from diana.telegram.middlewares.auth import AuthMiddleware
@@ -80,6 +82,7 @@ def build_dispatcher(
     forbidden_keywords: list[str],
     correct_sessions: CorrectSessionStore | None = None,
     doctrine_router: Router | None = None,
+    staging: StagingService | None = None,
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     profile_admin: ProfileAdminService | None = None,
@@ -142,6 +145,13 @@ def build_dispatcher(
     # so that doctrine-specific prefixes (dr:, dx:, de:) are handled first.
     if doctrine_router is not None:
         root.include_router(doctrine_router)
+    # Staging router (sp:/sd: + /staging) before catch-all callbacks.
+    root.include_router(
+        build_staging_router(
+            staging=staging,
+            owner_telegram_id=owner_telegram_id,
+        )
+    )
     root.include_router(
         build_callback_router(
             admin=admin,

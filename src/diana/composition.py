@@ -568,6 +568,7 @@ def build_app(
         forbidden_keywords=forbidden_keywords,
         correct_sessions=sessions,
         doctrine_router=doctrine_router,
+        staging=staging,
         admin_trace=admin_trace,
         admin_metrics=admin_metrics,
         profile_admin=profile_admin,

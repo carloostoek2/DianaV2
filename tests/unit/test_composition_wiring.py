@@ -376,6 +376,29 @@ def test_composition_admin_receives_staging_when_enabled(_comp_src: str) -> None
     assert "history=history" in admin_block
 
 
+def test_composition_dispatcher_receives_staging(_comp_src: str) -> None:
+    """REQ-ADM-08: staging service is passed into build_dispatcher for queue UI."""
+    disp_start = _comp_src.find("wiring = build_dispatcher(")
+    assert disp_start != -1
+    disp_block = _comp_src[disp_start : disp_start + 900]
+    assert "staging=staging" in disp_block
+
+
+def test_setup_includes_staging_router_before_callbacks() -> None:
+    from pathlib import Path
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    setup_src = (root / "telegram" / "setup.py").read_text(encoding="utf-8")
+    assert "build_staging_router" in setup_src
+    assert "staging=staging" in setup_src
+    # Staging router must be included before catch-all callback router.
+    staging_pos = setup_src.find("build_staging_router(")
+    callback_pos = setup_src.find("build_callback_router(")
+    assert staging_pos != -1 and callback_pos != -1
+    assert staging_pos < callback_pos
+
+
 def test_setup_auth_and_admin_receive_sandbox() -> None:
     from pathlib import Path
     import diana
