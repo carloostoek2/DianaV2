@@ -420,6 +420,107 @@ async def test_approve_sandbox_skips_owner_history() -> None:
     assert not any(r.get("role") == "owner" for r in rows)
 
 
+class _MultiMidDeliverer:
+    """Spy BehaviorDeliverer returning multi-segment DeliveryResult."""
+
+    def __init__(
+        self,
+        *,
+        message_ids: list[int] | None = None,
+        texts: list[str] | None = None,
+    ) -> None:
+        from diana.application.ports import DeliveryResult
+
+        self.message_ids = message_ids if message_ids is not None else [10, 11, 12]
+        self.segment_texts = (
+            texts if texts is not None else ["seg-a", "seg-b", "seg-c"]
+        )
+        self.ctxs: list = []
+        self._DeliveryResult = DeliveryResult
+
+    async def deliver(
+        self,
+        texts: list[str],
+        ctx: object,
+        turn_id: object,
+        decision: object | None = None,
+    ) -> object:
+        self.ctxs.append(ctx)
+        return self._DeliveryResult(
+            success=True,
+            message_ids=list(self.message_ids),
+            texts=list(self.segment_texts),
+        )
+
+
+@pytest.mark.asyncio
+async def test_approve_multi_message_ids_appends_all_owner_history() -> None:
+    """Successful multi-segment deliver writes one owner row per message_id."""
+    history = InMemoryMessageHistoryWriter()
+    spy = _MultiMidDeliverer(
+        message_ids=[10, 11, 12],
+        texts=["seg-a", "seg-b", "seg-c"],
+    )
+    g = _admin_graph(history=history, behavior_override=spy)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="full draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success
+    rows = await history.get_recent(42)
+    owner_rows = [r for r in rows if r.get("role") == "owner"]
+    assert len(owner_rows) == 3
+    assert [r["text"] for r in owner_rows] == ["seg-a", "seg-b", "seg-c"]
+    assert [r["telegram_message_id"] for r in owner_rows] == [10, 11, 12]
+
+
+@pytest.mark.asyncio
+async def test_approve_empty_message_ids_appends_owner_once_mid_none() -> None:
+    """Fake delivery (empty message_ids) still appends once with mid=None."""
+    history = InMemoryMessageHistoryWriter()
+    spy = _MultiMidDeliverer(message_ids=[], texts=[])
+    g = _admin_graph(history=history, behavior_override=spy)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="fake draft full"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success
+    rows = await history.get_recent(42)
+    owner_rows = [r for r in rows if r.get("role") == "owner"]
+    assert len(owner_rows) == 1
+    assert owner_rows[0]["text"] == "fake draft full"
+    assert owner_rows[0].get("telegram_message_id") is None
+
+
+@pytest.mark.asyncio
+async def test_approve_multi_mid_sandbox_skips_all_owner_history() -> None:
+    """Sandbox active + multi-mid success → zero owner rows (gate once)."""
+    from diana.application.sandbox import SandboxService
+
+    history = InMemoryMessageHistoryWriter()
+    sandbox = SandboxService(profiles=_MINIMAL_SIX)
+    sandbox.activate(42, "cercano")
+    spy = _MultiMidDeliverer(
+        message_ids=[10, 11, 12],
+        texts=["seg-a", "seg-b", "seg-c"],
+    )
+    g = _admin_graph(history=history, behavior_override=spy)
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="sandbox multi"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success
+    rows = await history.get_recent(42)
+    assert not any(r.get("role") == "owner" for r in rows)
+
+
 @pytest.mark.asyncio
 async def test_resolve_no_history_on_delivery_failure() -> None:
     """H7.2: frozen / failed resolve must not write owner history."""

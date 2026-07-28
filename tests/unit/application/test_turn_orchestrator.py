@@ -502,6 +502,78 @@ async def test_autonomous_sandbox_skips_owner_history() -> None:
     assert not any(r.get("role") == "owner" for r in rows)
 
 
+class _MultiMidDeliverer:
+    """Spy BehaviorDeliverer returning multi-segment DeliveryResult."""
+
+    def __init__(
+        self,
+        *,
+        message_ids: list[int] | None = None,
+        texts: list[str] | None = None,
+    ) -> None:
+        from diana.application.ports import DeliveryResult
+
+        self.message_ids = message_ids if message_ids is not None else [10, 11, 12]
+        self.segment_texts = (
+            texts if texts is not None else ["seg-a", "seg-b", "seg-c"]
+        )
+        self.ctxs: list = []
+        self._DeliveryResult = DeliveryResult
+
+    async def deliver(
+        self,
+        texts: list[str],
+        ctx: object,
+        turn_id: UUID,
+        decision: object | None = None,
+    ) -> object:
+        self.ctxs.append(ctx)
+        return self._DeliveryResult(
+            success=True,
+            message_ids=list(self.message_ids),
+            texts=list(self.segment_texts),
+        )
+
+
+@pytest.mark.asyncio
+async def test_autonomous_multi_message_ids_appends_all_owner_history() -> None:
+    """Autonomous multi-segment deliver writes one owner row per message_id."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto full draft",
+    )
+    spy = _MultiMidDeliverer(
+        message_ids=[10, 11, 12],
+        texts=["seg-a", "seg-b", "seg-c"],
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        behavior_override=spy,
+    )
+    chat_id = 100
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=chat_id, vip_id=uuid4(), text="hola diana")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    rows = await g["history"].get_recent(chat_id)
+    roles = [r["role"] for r in rows]
+    assert "vip" in roles
+    owner_rows = [r for r in rows if r.get("role") == "owner"]
+    assert len(owner_rows) == 3
+    assert [r["text"] for r in owner_rows] == ["seg-a", "seg-b", "seg-c"]
+    assert [r["telegram_message_id"] for r in owner_rows] == [10, 11, 12]
+    vip_idx = next(i for i, r in enumerate(rows) if r["role"] == "vip")
+    first_owner_idx = next(i for i, r in enumerate(rows) if r["role"] == "owner")
+    assert vip_idx < first_owner_idx
+
+
 @pytest.mark.asyncio
 async def test_send_ams_disabled_falls_back_to_approve() -> None:
     decision = Decision(
