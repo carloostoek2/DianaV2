@@ -373,6 +373,8 @@ def build_app(
             _has_open_gray_zone if feature_gray_zone_enabled else None
         ),
         is_sandbox_vip=_is_sandbox_vip if sandbox is not None else None,
+        history=history,
+        sandbox=sandbox,
     )
 
     coordinator = TurnCoordinator(

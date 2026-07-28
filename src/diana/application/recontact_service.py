@@ -12,10 +12,12 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from diana.application.autonomous_mode_service import AutonomousModeService
+from diana.application.owner_history import append_owner_delivery_history
 from diana.application.ports import (
     BehaviorDeliverer,
     DeliveryContext,
     DeliveryMode,
+    MessageHistoryWriter,
     OwnerNotifierPort,
     PendingApprovalStore,
     PendingDeliveryStore,
@@ -73,6 +75,8 @@ class RecontactService:
         delivery_mode: DeliveryMode = "supervised",
         has_open_gray_zone: Callable[[UUID], Awaitable[bool]] | None = None,
         is_sandbox_vip: Callable[[UUID], Awaitable[bool]] | None = None,
+        history: MessageHistoryWriter | None = None,
+        sandbox: object | None = None,
     ) -> None:
         self._enabled = feature_recontact_enabled
         self._schedules = schedules
@@ -88,6 +92,8 @@ class RecontactService:
         self._delivery_mode = delivery_mode
         self._has_open_gray_zone = has_open_gray_zone
         self._is_sandbox_vip = is_sandbox_vip
+        self._history = history
+        self._sandbox = sandbox
 
     async def schedule_recontact(self, vip_id: UUID) -> RecontactScheduleRecord | None:
         if not self._enabled:
@@ -249,6 +255,24 @@ class RecontactService:
 
         if getattr(result, "success", False):
             await self._turns.transition(turn.id, "delivered")
+            # Owner history after successful recontact deliver (parity admin/orch).
+            if self._history is not None:
+                if (
+                    self._sandbox is not None
+                    and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
+                ):
+                    logger.info(
+                        "owner_history_skipped_sandbox",
+                        extra={"turn_id": str(turn.id), "chat_id": chat_id},
+                    )
+                else:
+                    await append_owner_delivery_history(
+                        self._history,
+                        chat_id,
+                        result=result,
+                        fallback_text=text,
+                        turn_id=turn.id,
+                    )
             await self._complete_and_reschedule(vip_id, now=now, days=days)
             logger.info(
                 "recontact_delivered",
