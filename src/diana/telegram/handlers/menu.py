@@ -40,6 +40,9 @@ from diana.telegram.keyboards import (
     MENU_CATEGORY_TEXT,
     MENU_ROOT_TEXT,
     MenuCallback,
+    encode_menu,
+    encode_menu_vip,
+    menu_back_keyboard,
     menu_confirm_delete_keyboard,
     menu_history_keyboard,
     menu_metrics_keyboard,
@@ -458,17 +461,18 @@ async def _dispatch_action(
                 await _show(message, "Numero de nota invalido.", None)
                 return
             result = await profile_admin.delete_note(actor_id, user_id, idx)
+            kb = menu_back_keyboard(encode_menu_vip(user_id))
             if result.status == "note_deleted":
                 await _show(
                     message,
                     f"Nota {idx} eliminada de {result.display_name or user_id}.",
-                    None,
+                    kb,
                 )
             else:
                 await _show(
                     message,
                     f"No se pudo eliminar la nota: {result.status}",
-                    None,
+                    kb,
                 )
             return
 
@@ -503,17 +507,18 @@ async def _dispatch_action(
                 await _show(message, "Especifica la clave del dato a eliminar.", None)
                 return
             result = await profile_admin.delete_fact(actor_id, user_id, key)
+            kb = menu_back_keyboard(encode_menu_vip(user_id))
             if result.status == "fact_deleted":
                 await _show(
                     message,
                     f"Dato '{key}' eliminado de {result.display_name or user_id}.",
-                    None,
+                    kb,
                 )
             else:
                 await _show(
                     message,
                     f"No se pudo eliminar el dato: {result.status}",
-                    None,
+                    kb,
                 )
             return
 
@@ -547,10 +552,11 @@ async def _dispatch_action(
         # --- delete confirmed ---
         if action == "delete_confirm":
             ok = await vips.deactivate(user_id)
+            kb = menu_back_keyboard(encode_menu("vips"))
             if ok:
-                await _show(message, f"VIP {user_id} desactivado.", None)
+                await _show(message, f"VIP {user_id} desactivado.", kb)
             else:
-                await _show(message, f"No se encontro al VIP {user_id}.", None)
+                await _show(message, f"No se encontro al VIP {user_id}.", kb)
             return
 
         await _show(message, "Accion no disponible.", None)
@@ -598,7 +604,7 @@ async def _dispatch_action(
             await _show(
                 message,
                 f"Modo de prueba activado en chat {chat_id} con perfil '{profile}'.",
-                None,
+                menu_back_keyboard(encode_menu("sandbox")),
             )
             return
 
@@ -606,12 +612,16 @@ async def _dispatch_action(
             await _show(
                 message,
                 format_sandbox_perfiles(sandbox.list_profiles()),
-                None,
+                menu_back_keyboard(encode_menu("sandbox")),
             )
             return
 
         if action == "status":
-            await _show(message, sandbox.format_estado(), None)
+            await _show(
+                message,
+                sandbox.format_estado(),
+                menu_back_keyboard(encode_menu("sandbox")),
+            )
             return
 
         if action == "off":
@@ -625,7 +635,7 @@ async def _dispatch_action(
                 f"Modo de prueba desactivado (chat {focus})."
                 if was
                 else "No habia modo de prueba activo.",
-                None,
+                menu_back_keyboard(encode_menu("sandbox")),
             )
             return
 
@@ -638,18 +648,18 @@ async def _dispatch_action(
                 await _show(
                     message,
                     "Error del sistema: no se puede reiniciar ahora.",
-                    None,
+                    menu_back_keyboard(encode_menu("sandbox")),
                 )
                 return
             await coordinator.reset_chat_session(focus, reason="menu_reset")
             await _show(
                 message,
                 f"Conversacion de prueba reiniciada (chat {focus}).",
-                None,
+                menu_back_keyboard(encode_menu("sandbox")),
             )
             return
 
-        await _show(message, "Accion no disponible.", None)
+        await _show(message, "Accion no disponible.", menu_back_keyboard(encode_menu("sandbox")))
         return
 
     # ==================================================================
@@ -661,7 +671,7 @@ async def _dispatch_action(
             "Usa el comando:\n/fp <id_del_turno>\n\n"
             "Usalo cuando Diana escalo algo que en realidad no era un problema.\n"
             "El id del turno aparece en Historial -> Ver turnos recientes.",
-            None,
+            menu_back_keyboard(encode_menu("review")),
         )
         return
 
@@ -671,7 +681,11 @@ async def _dispatch_action(
     if category == "metrics":
         if action == "summary":
             if admin_metrics is None:
-                await _show(message, "Metricas no disponibles todavia.", None)
+                await _show(
+                    message,
+                    "Metricas no disponibles todavia.",
+                    menu_back_keyboard(encode_menu("metrics")),
+                )
                 return
             try:
                 body, status = await admin_metrics.render_week_summary()
@@ -680,10 +694,12 @@ async def _dispatch_action(
                 await _show(
                     message,
                     "Error del sistema al cargar metricas. Reintenta mas tarde.",
-                    None,
+                    menu_back_keyboard(encode_menu("metrics")),
                 )
                 return
-            kb = metrics_keyboard() if status == "ok" else None
+            kb = metrics_keyboard() if status == "ok" else menu_back_keyboard(
+                encode_menu("metrics")
+            )
             await _show(message, body, kb)
             return
 
@@ -693,14 +709,14 @@ async def _dispatch_action(
                 await _show(
                     message,
                     "El aprendizaje por ejemplos no esta disponible.",
-                    None,
+                    menu_back_keyboard(encode_menu("metrics")),
                 )
                 return
             if token == "empty":
                 await _show(
                     message,
                     "No hay ejemplos pendientes de revision.",
-                    None,
+                    menu_back_keyboard(encode_menu("metrics")),
                 )
                 return
             for i, candidate in enumerate(rows):
@@ -716,8 +732,9 @@ async def _dispatch_action(
     # History
     # ==================================================================
     if category == "history" and action == "turns":
+        back = menu_back_keyboard(encode_menu("history"))
         if admin_trace is None:
-            await _show(message, "El historial no esta disponible.", None)
+            await _show(message, "El historial no esta disponible.", back)
             return
         try:
             view = await admin_trace.render_turns_page(0)
@@ -726,11 +743,11 @@ async def _dispatch_action(
             await _show(
                 message,
                 "Error del sistema al consultar el historial. Reintenta mas tarde.",
-                None,
+                back,
             )
             return
         if view.empty:
-            await _show(message, "No hay turnos recientes.", None)
+            await _show(message, "No hay turnos recientes.", back)
             return
         kb = trace_list_keyboard(
             view.turns_data, page=view.page, total_pages=view.total_pages
@@ -742,12 +759,16 @@ async def _dispatch_action(
         await _show(
             message,
             "Usa el comando:\n/traza <id_del_turno>",
-            None,
+            menu_back_keyboard(encode_menu("history")),
         )
         return
 
     # Unknown / unmapped action — should not normally happen.
-    await _show(message, "Esa opcion todavia no esta disponible.", None)
+    await _show(
+        message,
+        "Esa opcion todavia no esta disponible.",
+        menu_back_keyboard(encode_menu("root")),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -804,17 +825,22 @@ async def _handle_note_text(
     session: MenuSession,
     profile_admin: ProfileAdminService | None,
 ) -> None:
+    back_kb = (
+        menu_back_keyboard(encode_menu_vip(session.vip_user_id))
+        if session.vip_user_id
+        else None
+    )
     if profile_admin is None or session.vip_user_id is None:
         await _edit_or_answer(
             bot, "Gestion de perfiles no disponible.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
         return
     text = (message.text or "").strip()
     if not text:
         await _edit_or_answer(
             bot, "El texto de la nota no puede estar vacio.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
         return
     result = await profile_admin.add_note(
@@ -826,12 +852,12 @@ async def _handle_note_text(
     if result.status == "note_added":
         await _edit_or_answer(
             bot, f"Nota agregada a {name}.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
     else:
         await _edit_or_answer(
             bot, f"No se pudo agregar la nota: {result.status}",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
 
 
@@ -841,17 +867,22 @@ async def _handle_fact_text(
     session: MenuSession,
     profile_admin: ProfileAdminService | None,
 ) -> None:
+    back_kb = (
+        menu_back_keyboard(encode_menu_vip(session.vip_user_id))
+        if session.vip_user_id
+        else None
+    )
     if profile_admin is None or session.vip_user_id is None:
         await _edit_or_answer(
             bot, "Gestion de perfiles no disponible.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
         return
     text = (message.text or "").strip()
     if ":" not in text:
         await _edit_or_answer(
             bot, "Formato incorrecto. Usa:\nclave: valor",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
         return
     key, _, value = text.partition(":")
@@ -860,7 +891,7 @@ async def _handle_fact_text(
     if not key or not value:
         await _edit_or_answer(
             bot, "La clave y el valor no pueden estar vacios.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
         return
     result = await profile_admin.set_fact(
@@ -873,12 +904,12 @@ async def _handle_fact_text(
     if result.status == "fact_set":
         await _edit_or_answer(
             bot, f"Dato '{key}' agregado a {name}.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
     else:
         await _edit_or_answer(
             bot, f"No se pudo agregar el dato: {result.status}",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
 
 
@@ -890,24 +921,25 @@ async def _handle_rename_text(
 ) -> None:
     if session.vip_user_id is None:
         return
+    back_kb = menu_back_keyboard(encode_menu_vip(session.vip_user_id))
     new_name = (message.text or "").strip()
     if not new_name:
         await _edit_or_answer(
             bot, "El nombre no puede estar vacio.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
         return
     result = await vips.rename(session.vip_user_id, new_name)
     if result is not None:
         await _edit_or_answer(
             bot, f"VIP renombrado a '{new_name}'.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
     else:
         await _edit_or_answer(
             bot,
             f"No se encontro al VIP {session.vip_user_id} o esta inactivo.",
-            session=session, fallback=message,
+            session=session, fallback=message, keyboard=back_kb,
         )
 
 

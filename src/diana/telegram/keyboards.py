@@ -635,6 +635,13 @@ def menu_vip_profile_keyboard(user_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def menu_back_keyboard(dest: str) -> InlineKeyboardMarkup:
+    """Simple back-only keyboard with a single Volver button for terminal actions."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🔙 Volver", callback_data=dest)]]
+    )
+
+
 def menu_review_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -747,6 +754,7 @@ __all__ = [
     "trace_list_keyboard",
     "MENU_ROOT_TEXT",
     "MENU_CATEGORY_TEXT",
+    "menu_back_keyboard",
     "menu_root_keyboard",
     "menu_vip_list_keyboard",
     "menu_vip_detail_keyboard",
