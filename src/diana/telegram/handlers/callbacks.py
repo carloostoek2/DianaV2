@@ -40,7 +40,8 @@ ADMIN_MENU_TEXT = (
     "/traza <id> — trace detail\n"
     "/fp <turn_id> — mark escalation false positive\n"
     "/resumen — weekly learning metrics\n"
-    "/metricas — alias of /resumen"
+    "/metricas — alias of /resumen\n"
+    "/staging — pending example candidates (promote/discard)"
 )
 
 SESSION_EXPIRED_UX = "Session expired — press Correct on the draft again"
