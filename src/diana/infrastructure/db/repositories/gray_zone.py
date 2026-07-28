@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import GrayZoneQuery
@@ -69,7 +69,10 @@ class GrayZoneQueryRepo:
     async def expire_older_than(self, timeout_hours: int) -> list[GrayZoneQuery]:
         """Mark open queries older than timeout_hours as expired. Returns expired rows."""
         async with self._sf() as session:
-            cutoff = func.now() - text("interval :hours hours").bindparams(hours=str(timeout_hours))
+            # Compute cutoff in Python: PostgreSQL rejects bind params inside
+            # INTERVAL literals (e.g. ``interval $1 hours`` → syntax error near $2).
+            now = datetime.now(UTC)
+            cutoff = now - timedelta(hours=int(timeout_hours))
             result = await session.execute(
                 select(GrayZoneQuery).where(
                     GrayZoneQuery.status == "open",
@@ -79,7 +82,7 @@ class GrayZoneQueryRepo:
             rows = list(result.scalars().all())
             for row in rows:
                 row.status = "expired"
-                row.resolved_at = func.now()
+                row.resolved_at = now
             await session.commit()
             return rows
 
