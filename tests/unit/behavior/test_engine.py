@@ -87,6 +87,8 @@ async def test_happy_path_sequence_order(
     assert result.success is True
     assert result.cancelled is False
     assert result.message_ids == [1]
+    assert result.texts == ["hola"]
+    assert len(result.texts) == len(result.message_ids)
     assert [c["op"] for c in actuator.calls] == [
         "read_business_message",
         "send_chat_action",
@@ -109,6 +111,8 @@ async def test_multi_text_sends_each(
     result = await engine.deliver(["a", "b", "c"], _ctx(), uuid4())
     assert result.success is True
     assert result.message_ids == [1, 2, 3]
+    assert result.texts == ["a", "b", "c"]
+    assert len(result.texts) == len(result.message_ids)
     sends = [c for c in actuator.calls if c["op"] == "send_message"]
     assert [s["text"] for s in sends] == ["a", "b", "c"]
 

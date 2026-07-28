@@ -282,6 +282,7 @@ class BehaviorEngine:
             return DeliveryResult(
                 success=True,
                 message_ids=message_ids,
+                texts=list(texts),
                 actual_delay_seconds=initial,
                 typing_duration_seconds=typing_secs,
             )
