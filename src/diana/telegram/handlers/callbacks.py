@@ -14,6 +14,8 @@ from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
 from diana.telegram.keyboards import (
+    MENU_ROOT_TEXT,
+    menu_root_keyboard,
     parse_callback,
     parse_metrics_callback,
     parse_trace_callback,
@@ -255,7 +257,7 @@ def build_callback_router(
                 return
             if metrics_action == "back":
                 if query.message:
-                    await query.message.answer(ADMIN_MENU_TEXT)
+                    await query.message.answer(MENU_ROOT_TEXT, reply_markup=menu_root_keyboard())
                 await query.answer()
                 return
             if metrics_action == "export":
