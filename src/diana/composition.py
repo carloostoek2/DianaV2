@@ -122,32 +122,46 @@ class SystemClock:
 
 
 class RandomDelayPolicy(DelayPolicy):
-    """Production-ish random delays (4–14s initial; typing ~text length).
+    """Mode-aware human-like delays (REQ-HUM-01/04).
 
-    REQ-NFR-01: initial_min must be > 0 (FixedDelayPolicy remains free for tests).
+    Supervised default: fixed 120s. Autonomous: uniform 180–480s.
+    Typing duration scales with text length (capped).
+
+    REQ-NFR-01: all range mins must be > 0 (FixedDelayPolicy free for tests).
     """
 
     def __init__(
         self,
         *,
-        initial_min: float = 4.0,
-        initial_max: float = 14.0,
+        supervised_min: float = 120.0,
+        supervised_max: float = 120.0,
+        autonomous_min: float = 180.0,
+        autonomous_max: float = 480.0,
         typing_per_char: float = 0.03,
         typing_max: float = 5.0,
         rng: random.Random | None = None,
     ) -> None:
-        if initial_min <= 0:
-            raise ValueError("initial_min must be > 0 (REQ-NFR-01)")
-        if initial_max < initial_min:
-            raise ValueError("initial_max must be >= initial_min")
-        self._min = initial_min
-        self._max = initial_max
+        for label, lo, hi in (
+            ("supervised", supervised_min, supervised_max),
+            ("autonomous", autonomous_min, autonomous_max),
+        ):
+            if lo <= 0:
+                raise ValueError(f"{label}_min must be > 0 (REQ-NFR-01)")
+            if hi < lo:
+                raise ValueError(f"{label}_max must be >= {label}_min")
+        self._supervised_min = supervised_min
+        self._supervised_max = supervised_max
+        self._autonomous_min = autonomous_min
+        self._autonomous_max = autonomous_max
         self._per_char = typing_per_char
         self._typing_max = typing_max
         self._rng = rng or random.Random()
 
-    def initial_delay_seconds(self) -> float:
-        return self._rng.uniform(self._min, self._max)
+    def initial_delay_seconds(self, mode: str = "supervised") -> float:
+        if mode == "autonomous":
+            return self._rng.uniform(self._autonomous_min, self._autonomous_max)
+        # supervised and fake_delivery share the supervised (owner-visible) wait
+        return self._rng.uniform(self._supervised_min, self._supervised_max)
 
     def typing_duration_seconds(self, text: str) -> float:
         return min(len(text or "") * self._per_char, self._typing_max)
@@ -230,8 +244,10 @@ def build_app(
     )
     clock = SystemClock()
     policy = delay_policy or RandomDelayPolicy(
-        initial_min=settings.delivery_initial_delay_min,
-        initial_max=settings.delivery_initial_delay_max,
+        supervised_min=settings.delivery_supervised_delay_min,
+        supervised_max=settings.delivery_supervised_delay_max,
+        autonomous_min=settings.delivery_autonomous_delay_min,
+        autonomous_max=settings.delivery_autonomous_delay_max,
     )
     feature_advanced_behavior = settings.feature_advanced_behavior
     behavior = BehaviorEngine(

@@ -41,8 +41,12 @@ class Settings(BaseSettings):
     global_mode: Literal["supervised", "autonomous", "fake_delivery"] = "supervised"
     delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3
     delivery_retry_backoff_seconds: Annotated[float, Field(gt=0)] = 0.05
-    delivery_initial_delay_min: Annotated[float, Field(gt=0)] = 4.0
-    delivery_initial_delay_max: Annotated[float, Field(gt=0)] = 14.0
+    # Human-like pre-send wait (REQ-HUM-01/04). Seconds.
+    # Supervised: fixed 2 min (min=max). Autonomous: randomized 3–8 min.
+    delivery_supervised_delay_min: Annotated[float, Field(gt=0)] = 120.0
+    delivery_supervised_delay_max: Annotated[float, Field(gt=0)] = 120.0
+    delivery_autonomous_delay_min: Annotated[float, Field(gt=0)] = 180.0
+    delivery_autonomous_delay_max: Annotated[float, Field(gt=0)] = 480.0
     trace_ttl_days: Annotated[int, Field(ge=1)] = 30
     log_level: LogLevel = "INFO"
 

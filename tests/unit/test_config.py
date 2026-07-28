@@ -217,8 +217,11 @@ def test_settings_delivery_retry_and_delay_defaults(
     settings = Settings()
     assert settings.delivery_max_send_attempts == 3
     assert settings.delivery_retry_backoff_seconds == 0.05
-    assert settings.delivery_initial_delay_min == 4.0
-    assert settings.delivery_initial_delay_max == 14.0
+    # Supervised: fixed 2 min; autonomous: 3–8 min (REQ-HUM-04)
+    assert settings.delivery_supervised_delay_min == 120.0
+    assert settings.delivery_supervised_delay_max == 120.0
+    assert settings.delivery_autonomous_delay_min == 180.0
+    assert settings.delivery_autonomous_delay_max == 480.0
 
 
 def test_settings_rejects_non_positive_delay_min(
@@ -228,7 +231,7 @@ def test_settings_rejects_non_positive_delay_min(
     from diana.config import Settings
 
     _set_required_env(monkeypatch)
-    monkeypatch.setenv("DELIVERY_INITIAL_DELAY_MIN", "0")
+    monkeypatch.setenv("DELIVERY_SUPERVISED_DELAY_MIN", "0")
     with pytest.raises(ValidationError):
         Settings()
 
@@ -286,17 +289,33 @@ def test_settings_f3_flag_env_override_true(
             assert getattr(settings, other) is False
 
 
-def test_random_delay_policy_rejects_zero_initial_min() -> None:
+def test_random_delay_policy_rejects_invalid_ranges() -> None:
     from diana.composition import RandomDelayPolicy
 
     with pytest.raises(ValueError):
-        RandomDelayPolicy(initial_min=0.0, initial_max=14.0)
+        RandomDelayPolicy(supervised_min=0.0, supervised_max=120.0)
     with pytest.raises(ValueError):
-        RandomDelayPolicy(initial_min=-1.0, initial_max=14.0)
+        RandomDelayPolicy(autonomous_min=-1.0, autonomous_max=480.0)
     with pytest.raises(ValueError):
-        RandomDelayPolicy(initial_min=10.0, initial_max=5.0)
-    policy = RandomDelayPolicy(initial_min=4.0, initial_max=14.0)
-    assert 4.0 <= policy.initial_delay_seconds() <= 14.0
+        RandomDelayPolicy(supervised_min=200.0, supervised_max=100.0)
+    with pytest.raises(ValueError):
+        RandomDelayPolicy(autonomous_min=500.0, autonomous_max=100.0)
+
+
+def test_random_delay_policy_mode_ranges() -> None:
+    from diana.composition import RandomDelayPolicy
+
+    policy = RandomDelayPolicy(
+        supervised_min=120.0,
+        supervised_max=120.0,
+        autonomous_min=180.0,
+        autonomous_max=480.0,
+        rng=__import__("random").Random(0),
+    )
+    assert policy.initial_delay_seconds("supervised") == 120.0
+    assert policy.initial_delay_seconds("fake_delivery") == 120.0
+    auto = policy.initial_delay_seconds("autonomous")
+    assert 180.0 <= auto <= 480.0
 
 
 @pytest.mark.parametrize(

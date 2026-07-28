@@ -160,7 +160,8 @@ class FixedDelayPolicy:
         self._initial = initial
         self._typing = typing
 
-    def initial_delay_seconds(self) -> float:
+    def initial_delay_seconds(self, mode: str = "supervised") -> float:
+        _ = mode
         return self._initial
 
     def typing_duration_seconds(self, text: str) -> float:
