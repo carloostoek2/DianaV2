@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import Command, Filter
 from aiogram.types import CallbackQuery, Message
 
@@ -76,6 +76,8 @@ class MenuSession:
     kind: MenuSessionKind
     vip_user_id: int | None = None
     sandbox_chat_id: int | None = None
+    last_bot_message_id: int | None = None
+    last_chat_id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -194,6 +196,30 @@ async def _show(message: Message, text: str, keyboard: Any) -> None:
         await message.edit_text(text, reply_markup=keyboard)
     except Exception:
         await message.answer(text, reply_markup=keyboard)
+
+
+async def _edit_or_answer(
+    bot: Bot,
+    text: str,
+    *,
+    session: MenuSession | None = None,
+    fallback: Message | None = None,
+    keyboard: Any = None,
+) -> None:
+    """Edit the stored session message; fall back to a new message."""
+    if session and session.last_chat_id and session.last_bot_message_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=session.last_chat_id,
+                message_id=session.last_bot_message_id,
+                text=text,
+                reply_markup=keyboard,
+            )
+            return
+        except Exception:
+            pass
+    if fallback is not None:
+        await fallback.answer(text, reply_markup=keyboard)
 
 
 def _extract_chat_id_from_forward(message: Message) -> int | None:
@@ -323,7 +349,7 @@ def build_menu_router(
     # ---- text capture for multi-step flows ----
 
     @router.message(HasActiveMenuSession(sessions))
-    async def on_menu_session_text(message: Message, **_: Any) -> None:
+    async def on_menu_session_text(message: Message, bot: Bot, **_: Any) -> None:
         if not _is_owner(message):
             return
         owner_id = message.from_user.id  # type: ignore[union-attr]
@@ -332,15 +358,18 @@ def build_menu_router(
             return
 
         if session.kind == "sandbox_forward":
-            await _handle_sandbox_forward(message, sandbox, sessions)
+            await _handle_sandbox_forward(message, bot, session, sandbox, sessions)
         elif session.kind == "sandbox_profile":
-            await message.answer("Usa los botones para seleccionar un perfil.")
+            await _edit_or_answer(
+                bot, "Usa los botones para seleccionar un perfil.",
+                session=session, fallback=message,
+            )
         elif session.kind == "note":
-            await _handle_note_text(message, session, profile_admin)
+            await _handle_note_text(message, bot, session, profile_admin)
         elif session.kind == "fact":
-            await _handle_fact_text(message, session, profile_admin)
+            await _handle_fact_text(message, bot, session, profile_admin)
         elif session.kind == "rename":
-            await _handle_rename_text(message, session, vips)
+            await _handle_rename_text(message, bot, session, vips)
 
     return router
 
@@ -388,92 +417,130 @@ async def _dispatch_action(
         # --- profile (view ficha) ---
         if action == "profile":
             if profile_admin is None:
-                await message.answer("Gestion de perfiles no disponible.")
+                await _show(message, "Gestion de perfiles no disponible.", None)
                 return
             result = await profile_admin.show_profile(actor_id, user_id)
-            await message.answer(
+            await _show(
+                message,
                 _format_vip_profile(result),
-                reply_markup=menu_vip_profile_keyboard(user_id),
+                menu_vip_profile_keyboard(user_id),
             )
             return
 
         # --- add note ---
         if action == "note_add":
             if profile_admin is None:
-                await message.answer("Gestion de perfiles no disponible.")
+                await _show(message, "Gestion de perfiles no disponible.", None)
                 return
-            sessions.start(actor_id, "note", vip_user_id=user_id)
-            await message.answer(
+            sessions.start(
+                actor_id,
+                "note",
+                vip_user_id=user_id,
+                last_bot_message_id=message.message_id,
+                last_chat_id=message.chat.id,
+            )
+            await _show(
+                message,
                 f"Escribe la nota para el VIP {user_id}.\n\n"
-                "Usa /cancelar para abortar."
+                "Usa /cancelar para abortar.",
+                None,
             )
             return
 
         # --- delete note ---
         if action == "note_del":
             if profile_admin is None:
-                await message.answer("Gestion de perfiles no disponible.")
+                await _show(message, "Gestion de perfiles no disponible.", None)
                 return
             try:
                 idx = int(parsed.extra or "0")
             except ValueError:
-                await message.answer("Numero de nota invalido.")
+                await _show(message, "Numero de nota invalido.", None)
                 return
             result = await profile_admin.delete_note(actor_id, user_id, idx)
             if result.status == "note_deleted":
-                await message.answer(
-                    f"Nota {idx} eliminada de {result.display_name or user_id}."
+                await _show(
+                    message,
+                    f"Nota {idx} eliminada de {result.display_name or user_id}.",
+                    None,
                 )
             else:
-                await message.answer(f"No se pudo eliminar la nota: {result.status}")
+                await _show(
+                    message,
+                    f"No se pudo eliminar la nota: {result.status}",
+                    None,
+                )
             return
 
         # --- add fact ---
         if action == "fact_add":
             if profile_admin is None:
-                await message.answer("Gestion de perfiles no disponible.")
+                await _show(message, "Gestion de perfiles no disponible.", None)
                 return
-            sessions.start(actor_id, "fact", vip_user_id=user_id)
-            await message.answer(
+            sessions.start(
+                actor_id,
+                "fact",
+                vip_user_id=user_id,
+                last_bot_message_id=message.message_id,
+                last_chat_id=message.chat.id,
+            )
+            await _show(
+                message,
                 f"Escribe el dato para el VIP {user_id} en formato:\n"
                 "clave: valor\n\n"
-                "Usa /cancelar para abortar."
+                "Usa /cancelar para abortar.",
+                None,
             )
             return
 
         # --- delete fact ---
         if action == "fact_del":
             if profile_admin is None:
-                await message.answer("Gestion de perfiles no disponible.")
+                await _show(message, "Gestion de perfiles no disponible.", None)
                 return
             key = (parsed.extra or "").strip()
             if not key:
-                await message.answer("Especifica la clave del dato a eliminar.")
+                await _show(message, "Especifica la clave del dato a eliminar.", None)
                 return
             result = await profile_admin.delete_fact(actor_id, user_id, key)
             if result.status == "fact_deleted":
-                await message.answer(
-                    f"Dato '{key}' eliminado de {result.display_name or user_id}."
+                await _show(
+                    message,
+                    f"Dato '{key}' eliminado de {result.display_name or user_id}.",
+                    None,
                 )
             else:
-                await message.answer(f"No se pudo eliminar el dato: {result.status}")
+                await _show(
+                    message,
+                    f"No se pudo eliminar el dato: {result.status}",
+                    None,
+                )
             return
 
         # --- rename ---
         if action == "rename":
-            sessions.start(actor_id, "rename", vip_user_id=user_id)
-            await message.answer(
+            sessions.start(
+                actor_id,
+                "rename",
+                vip_user_id=user_id,
+                last_bot_message_id=message.message_id,
+                last_chat_id=message.chat.id,
+            )
+            await _show(
+                message,
                 f"Escribe el nuevo nombre para el VIP {user_id}.\n\n"
-                "Usa /cancelar para abortar."
+                "Usa /cancelar para abortar.",
+                None,
             )
             return
 
         # --- delete confirmation ---
         if action == "delete":
-            await message.answer(
+            await _show(
+                message,
                 f"¿Desactivar al VIP {user_id}?\n\n"
                 "Se desactivara, no se borrara permanentemente.",
-                reply_markup=menu_confirm_delete_keyboard(user_id),
+                menu_confirm_delete_keyboard(user_id),
             )
             return
 
@@ -481,12 +548,12 @@ async def _dispatch_action(
         if action == "delete_confirm":
             ok = await vips.deactivate(user_id)
             if ok:
-                await message.answer(f"VIP {user_id} desactivado.")
+                await _show(message, f"VIP {user_id} desactivado.", None)
             else:
-                await message.answer(f"No se encontro al VIP {user_id}.")
+                await _show(message, f"No se encontro al VIP {user_id}.", None)
             return
 
-        await message.answer("Accion no disponible.")
+        await _show(message, "Accion no disponible.", None)
         return
 
     # ==================================================================
@@ -494,15 +561,22 @@ async def _dispatch_action(
     # ==================================================================
     if category == "sandbox":
         if sandbox is None:
-            await message.answer("El modo de prueba no esta disponible.")
+            await _show(message, "El modo de prueba no esta disponible.", None)
             return
 
         if action == "activate":
-            sessions.start(actor_id, "sandbox_forward")
-            await message.answer(
+            sessions.start(
+                actor_id,
+                "sandbox_forward",
+                last_bot_message_id=message.message_id,
+                last_chat_id=message.chat.id,
+            )
+            await _show(
+                message,
                 "Para activar el modo de prueba, reenvia un mensaje del chat "
                 "que quieres poner en modo sandbox.\n\n"
-                "Usa /cancelar para abortar."
+                "Usa /cancelar para abortar.",
+                None,
             )
             return
 
@@ -512,66 +586,82 @@ async def _dispatch_action(
             session = sessions.get(actor_id)
             chat_id = session.sandbox_chat_id if session else None
             if chat_id is None:
-                await message.answer(
-                    "No se encontro el chat. Inicia de nuevo la activacion."
+                await _show(
+                    message,
+                    "No se encontro el chat. Inicia de nuevo la activacion.",
+                    None,
                 )
                 sessions.cancel(actor_id)
                 return
             sessions.cancel(actor_id)
             sandbox.activate(chat_id, profile)
-            await message.answer(
-                f"Modo de prueba activado en chat {chat_id} con perfil '{profile}'."
+            await _show(
+                message,
+                f"Modo de prueba activado en chat {chat_id} con perfil '{profile}'.",
+                None,
             )
             return
 
         if action == "profiles":
-            await message.answer(format_sandbox_perfiles(sandbox.list_profiles()))
+            await _show(
+                message,
+                format_sandbox_perfiles(sandbox.list_profiles()),
+                None,
+            )
             return
 
         if action == "status":
-            await message.answer(sandbox.format_estado())
+            await _show(message, sandbox.format_estado(), None)
             return
 
         if action == "off":
             focus = sandbox.get_focus_chat_id()
             if focus is None:
-                await message.answer("No hay modo de prueba activo.")
+                await _show(message, "No hay modo de prueba activo.", None)
                 return
             was = sandbox.deactivate(focus)
-            await message.answer(
+            await _show(
+                message,
                 f"Modo de prueba desactivado (chat {focus})."
                 if was
-                else "No habia modo de prueba activo."
+                else "No habia modo de prueba activo.",
+                None,
             )
             return
 
         if action == "reset":
             focus = sandbox.get_focus_chat_id()
             if focus is None or not sandbox.is_active(focus):
-                await message.answer("No hay modo de prueba activo.")
+                await _show(message, "No hay modo de prueba activo.", None)
                 return
             if coordinator is None:
-                await message.answer(
-                    "Error del sistema: no se puede reiniciar ahora."
+                await _show(
+                    message,
+                    "Error del sistema: no se puede reiniciar ahora.",
+                    None,
                 )
                 return
             await coordinator.reset_chat_session(focus, reason="menu_reset")
-            await message.answer(
-                f"Conversacion de prueba reiniciada (chat {focus})."
+            await _show(
+                message,
+                f"Conversacion de prueba reiniciada (chat {focus}).",
+                None,
             )
             return
 
-        await message.answer("Accion no disponible.")
+        await _show(message, "Accion no disponible.", None)
         return
 
     # ==================================================================
     # Review
     # ==================================================================
     if category == "review" and action == "fp":
-        await message.answer(
+        await _show(
+            message,
             "Usa el comando:\n/fp <id_del_turno>\n\n"
             "Usalo cuando Diana escalo algo que en realidad no era un problema.\n"
-            "El id del turno aparece en Historial -> Ver turnos recientes."
+            "El id del turno aparece en Historial -> Ver turnos recientes.",
+            None,
         )
         return
 
@@ -581,35 +671,45 @@ async def _dispatch_action(
     if category == "metrics":
         if action == "summary":
             if admin_metrics is None:
-                await message.answer("Metricas no disponibles todavia.")
+                await _show(message, "Metricas no disponibles todavia.", None)
                 return
             try:
                 body, status = await admin_metrics.render_week_summary()
             except Exception:
                 logger.exception("Error loading metrics summary")
-                await message.answer(
-                    "Error del sistema al cargar metricas. Reintenta mas tarde."
+                await _show(
+                    message,
+                    "Error del sistema al cargar metricas. Reintenta mas tarde.",
+                    None,
                 )
                 return
             kb = metrics_keyboard() if status == "ok" else None
-            await message.answer(body, reply_markup=kb)
+            await _show(message, body, kb)
             return
 
         if action == "staging":
             token, rows = await load_pending_staging_list(staging=staging)
             if token == "unavailable":
-                await message.answer(
-                    "El aprendizaje por ejemplos no esta disponible."
+                await _show(
+                    message,
+                    "El aprendizaje por ejemplos no esta disponible.",
+                    None,
                 )
                 return
             if token == "empty":
-                await message.answer("No hay ejemplos pendientes de revision.")
-                return
-            for candidate in rows:
-                await message.answer(
-                    format_staging_candidate_body(candidate),
-                    reply_markup=staging_candidate_keyboard(candidate.id),
+                await _show(
+                    message,
+                    "No hay ejemplos pendientes de revision.",
+                    None,
                 )
+                return
+            for i, candidate in enumerate(rows):
+                text = format_staging_candidate_body(candidate)
+                kb = staging_candidate_keyboard(candidate.id)
+                if i == 0:
+                    await _show(message, text, kb)
+                else:
+                    await message.answer(text, reply_markup=kb)
             return
 
     # ==================================================================
@@ -617,31 +717,37 @@ async def _dispatch_action(
     # ==================================================================
     if category == "history" and action == "turns":
         if admin_trace is None:
-            await message.answer("El historial no esta disponible.")
+            await _show(message, "El historial no esta disponible.", None)
             return
         try:
             view = await admin_trace.render_turns_page(0)
         except Exception:
             logger.exception("Error querying traces")
-            await message.answer(
-                "Error del sistema al consultar el historial. Reintenta mas tarde."
+            await _show(
+                message,
+                "Error del sistema al consultar el historial. Reintenta mas tarde.",
+                None,
             )
             return
         if view.empty:
-            await message.answer("No hay turnos recientes.")
+            await _show(message, "No hay turnos recientes.", None)
             return
         kb = trace_list_keyboard(
             view.turns_data, page=view.page, total_pages=view.total_pages
         )
-        await message.answer(view.text, reply_markup=kb)
+        await _show(message, view.text, kb)
         return
 
     if category == "history" and action == "trace":
-        await message.answer("Usa el comando:\n/traza <id_del_turno>")
+        await _show(
+            message,
+            "Usa el comando:\n/traza <id_del_turno>",
+            None,
+        )
         return
 
     # Unknown / unmapped action — should not normally happen.
-    await message.answer("Esa opcion todavia no esta disponible.")
+    await _show(message, "Esa opcion todavia no esta disponible.", None)
 
 
 # ---------------------------------------------------------------------------
@@ -651,41 +757,65 @@ async def _dispatch_action(
 
 async def _handle_sandbox_forward(
     message: Message,
+    bot: Bot,
+    session: MenuSession,
     sandbox: SandboxService | None,
     sessions: MenuSessionStore,
 ) -> None:
     chat_id = _extract_chat_id_from_forward(message)
     if chat_id is None:
-        await message.answer(
+        await _edit_or_answer(
+            bot,
             "No se pudo extraer el ID del chat del mensaje reenviado. "
-            "Asegurate de reenviar un mensaje del chat que quieres activar."
+            "Asegurate de reenviar un mensaje del chat que quieres activar.",
+            session=session,
+            fallback=message,
         )
         return
 
     if sandbox is None:
-        await message.answer("El modo de prueba no esta disponible.")
+        await _edit_or_answer(
+            bot,
+            "El modo de prueba no esta disponible.",
+            session=session,
+            fallback=message,
+        )
         return
 
     profiles = sandbox.list_profiles()
     owner_id = message.from_user.id  # type: ignore[union-attr]
-    sessions.start(owner_id, "sandbox_profile", sandbox_chat_id=chat_id)
-    await message.answer(
-        f"Chat detectado: {chat_id}\n\nSelecciona el perfil de prueba:",
-        reply_markup=menu_sandbox_profile_picker_keyboard(profiles),
+    text = f"Chat detectado: {chat_id}\n\nSelecciona el perfil de prueba:"
+    kb = menu_sandbox_profile_picker_keyboard(profiles)
+    sessions.start(
+        owner_id,
+        "sandbox_profile",
+        sandbox_chat_id=chat_id,
+        last_bot_message_id=session.last_bot_message_id,
+        last_chat_id=session.last_chat_id,
+    )
+    await _edit_or_answer(
+        bot, text, session=session, fallback=message, keyboard=kb,
     )
 
 
 async def _handle_note_text(
     message: Message,
+    bot: Bot,
     session: MenuSession,
     profile_admin: ProfileAdminService | None,
 ) -> None:
     if profile_admin is None or session.vip_user_id is None:
-        await message.answer("Gestion de perfiles no disponible.")
+        await _edit_or_answer(
+            bot, "Gestion de perfiles no disponible.",
+            session=session, fallback=message,
+        )
         return
     text = (message.text or "").strip()
     if not text:
-        await message.answer("El texto de la nota no puede estar vacio.")
+        await _edit_or_answer(
+            bot, "El texto de la nota no puede estar vacio.",
+            session=session, fallback=message,
+        )
         return
     result = await profile_admin.add_note(
         message.from_user.id,  # type: ignore[union-attr]
@@ -694,28 +824,44 @@ async def _handle_note_text(
     )
     name = result.display_name or str(session.vip_user_id)
     if result.status == "note_added":
-        await message.answer(f"Nota agregada a {name}.")
+        await _edit_or_answer(
+            bot, f"Nota agregada a {name}.",
+            session=session, fallback=message,
+        )
     else:
-        await message.answer(f"No se pudo agregar la nota: {result.status}")
+        await _edit_or_answer(
+            bot, f"No se pudo agregar la nota: {result.status}",
+            session=session, fallback=message,
+        )
 
 
 async def _handle_fact_text(
     message: Message,
+    bot: Bot,
     session: MenuSession,
     profile_admin: ProfileAdminService | None,
 ) -> None:
     if profile_admin is None or session.vip_user_id is None:
-        await message.answer("Gestion de perfiles no disponible.")
+        await _edit_or_answer(
+            bot, "Gestion de perfiles no disponible.",
+            session=session, fallback=message,
+        )
         return
     text = (message.text or "").strip()
     if ":" not in text:
-        await message.answer("Formato incorrecto. Usa:\nclave: valor")
+        await _edit_or_answer(
+            bot, "Formato incorrecto. Usa:\nclave: valor",
+            session=session, fallback=message,
+        )
         return
     key, _, value = text.partition(":")
     key = key.strip()
     value = value.strip()
     if not key or not value:
-        await message.answer("La clave y el valor no pueden estar vacios.")
+        await _edit_or_answer(
+            bot, "La clave y el valor no pueden estar vacios.",
+            session=session, fallback=message,
+        )
         return
     result = await profile_admin.set_fact(
         message.from_user.id,  # type: ignore[union-attr]
@@ -725,13 +871,20 @@ async def _handle_fact_text(
     )
     name = result.display_name or str(session.vip_user_id)
     if result.status == "fact_set":
-        await message.answer(f"Dato '{key}' agregado a {name}.")
+        await _edit_or_answer(
+            bot, f"Dato '{key}' agregado a {name}.",
+            session=session, fallback=message,
+        )
     else:
-        await message.answer(f"No se pudo agregar el dato: {result.status}")
+        await _edit_or_answer(
+            bot, f"No se pudo agregar el dato: {result.status}",
+            session=session, fallback=message,
+        )
 
 
 async def _handle_rename_text(
     message: Message,
+    bot: Bot,
     session: MenuSession,
     vips: VipStore,
 ) -> None:
@@ -739,14 +892,22 @@ async def _handle_rename_text(
         return
     new_name = (message.text or "").strip()
     if not new_name:
-        await message.answer("El nombre no puede estar vacio.")
+        await _edit_or_answer(
+            bot, "El nombre no puede estar vacio.",
+            session=session, fallback=message,
+        )
         return
     result = await vips.rename(session.vip_user_id, new_name)
     if result is not None:
-        await message.answer(f"VIP renombrado a '{new_name}'.")
+        await _edit_or_answer(
+            bot, f"VIP renombrado a '{new_name}'.",
+            session=session, fallback=message,
+        )
     else:
-        await message.answer(
-            f"No se encontro al VIP {session.vip_user_id} o esta inactivo."
+        await _edit_or_answer(
+            bot,
+            f"No se encontro al VIP {session.vip_user_id} o esta inactivo.",
+            session=session, fallback=message,
         )
 
 
