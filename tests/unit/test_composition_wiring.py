@@ -394,3 +394,13 @@ def test_composition_recontact_sandbox_hook(_comp_src: str) -> None:
     assert "is_sandbox_vip=None" not in _comp_src
     assert "is_sandbox_vip=" in _comp_src
     assert "sandbox.is_active" in _comp_src
+
+
+def test_composition_recontact_history_and_sandbox_wired(_comp_src: str) -> None:
+    """Recontact owner history residual: inject history + sandbox into RecontactService."""
+    start = _comp_src.find("recontact = RecontactService(")
+    assert start != -1
+    # Bound the constructor call block (until next top-level assignment-ish).
+    block = _comp_src[start : start + 900]
+    assert "history=history" in block
+    assert "sandbox=sandbox" in block

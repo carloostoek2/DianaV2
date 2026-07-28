@@ -11,6 +11,7 @@ import pytest
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.memory import (
     FakeOwnerNotifier,
+    InMemoryMessageHistoryWriter,
     InMemoryPendingApprovalStore,
     InMemoryTurnStore,
     InMemoryVipStore,
@@ -122,9 +123,17 @@ class InMemoryRecontactScheduleStore:
 
 
 class FakeBehavior:
-    def __init__(self, *, success: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        success: bool = True,
+        message_ids: list[int] | None = None,
+        texts: list[str] | None = None,
+    ) -> None:
         self.deliver_calls: list[tuple[list[str], DeliveryContext, UUID]] = []
         self.success = success
+        self._message_ids = message_ids
+        self._texts = texts
 
     async def deliver(
         self,
@@ -134,10 +143,20 @@ class FakeBehavior:
         decision=None,
     ) -> DeliveryResult:
         self.deliver_calls.append((list(texts), ctx, turn_id))
+        if not self.success:
+            return DeliveryResult(
+                success=False,
+                message_ids=[],
+                texts=[],
+                error="send_failed",
+            )
+        mids = self._message_ids if self._message_ids is not None else [9001]
+        segs = self._texts if self._texts is not None else []
         return DeliveryResult(
-            success=self.success,
-            message_ids=[9001] if self.success else [],
-            error=None if self.success else "send_failed",
+            success=True,
+            message_ids=list(mids),
+            texts=list(segs),
+            error=None,
         )
 
     async def cancel_pending(self, chat_id: int, reason: str = "new_message") -> None:
@@ -207,6 +226,8 @@ def _make_service(
     delivery_mode: str = "supervised",
     has_open_gray_zone=None,
     is_sandbox_vip=None,
+    history: InMemoryMessageHistoryWriter | None = None,
+    sandbox=None,
 ) -> tuple[RecontactService, dict]:
     schedules = schedules or InMemoryRecontactScheduleStore()
     vips = vips or InMemoryVipStore()
@@ -233,6 +254,8 @@ def _make_service(
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
         has_open_gray_zone=has_open_gray_zone,
         is_sandbox_vip=is_sandbox_vip,
+        history=history,
+        sandbox=sandbox,
     )
     deps = {
         "schedules": schedules,
@@ -245,6 +268,8 @@ def _make_service(
         "route_resolver": route_resolver,
         "notifier": notifier,
         "clock": clock,
+        "history": history,
+        "sandbox": sandbox,
     }
     return svc, deps
 
@@ -799,3 +824,185 @@ async def test_get_due_vips_skips_sandbox_active_vip() -> None:
     await schedules.upsert_pending(sandboxed.id, past, past)
     due = await svc.get_due_vips()
     assert due == [ok.id]
+
+
+# ---------------------------------------------------------------------------
+# Owner history after successful recontact deliver (residual item 4/5)
+# ---------------------------------------------------------------------------
+
+
+async def _setup_deliverable_vip(
+    *,
+    chat_id: int = 42_001,
+    display_name: str = "Ana",
+    templates: list[str] | None = None,
+    behavior: FakeBehavior | None = None,
+    history: InMemoryMessageHistoryWriter | None = None,
+    sandbox=None,
+    feature: bool = True,
+    global_mode: str = "autonomous",
+    is_sandbox_vip=None,
+) -> tuple[RecontactService, dict, VipRecord, FakeBehavior, InMemoryMessageHistoryWriter | None]:
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    vips = InMemoryVipStore()
+    vip = await _seed_vip(vips, display_name=display_name)
+    past = clock.now() - timedelta(hours=1)
+    await schedules.upsert_pending(vip.id, past, past)
+    behavior = behavior or FakeBehavior(success=True)
+    ams = _ams(feature=True, global_mode=global_mode, vip_store=vips)
+    svc, deps = _make_service(
+        feature=feature,
+        schedules=schedules,
+        vips=vips,
+        ams=ams,
+        behavior=behavior,
+        route_resolver=FakeRouteResolver({vip.id: (chat_id, "bc-vip")}),
+        clock=clock,
+        config=FakeConfig(
+            inactivity_days=7,
+            templates=templates or ["Hola {nombre}, ¿cómo andás?"],
+        ),
+        delivery_mode="autonomous",
+        history=history,
+        sandbox=sandbox,
+        is_sandbox_vip=is_sandbox_vip,
+    )
+    return svc, deps, vip, behavior, history
+
+
+@pytest.mark.asyncio
+async def test_execute_success_appends_owner_history() -> None:
+    history = InMemoryMessageHistoryWriter()
+    svc, _, vip, behavior, _ = await _setup_deliverable_vip(history=history)
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "delivered"
+    assert len(behavior.deliver_calls) == 1
+    template_text = behavior.deliver_calls[0][0][0]
+
+    rows = await history.get_recent(42_001, limit=20)
+    assert len(rows) >= 1
+    assert all(r["role"] == "owner" for r in rows)
+    assert rows[0]["text"] == template_text
+    assert rows[0]["telegram_message_id"] == 9001
+
+
+@pytest.mark.asyncio
+async def test_execute_multi_seg_appends_n_owner_rows() -> None:
+    history = InMemoryMessageHistoryWriter()
+    segs = ["parte uno", "parte dos"]
+    mids = [101, 102]
+    behavior = FakeBehavior(success=True, message_ids=mids, texts=segs)
+    svc, _, vip, _, _ = await _setup_deliverable_vip(
+        history=history, behavior=behavior
+    )
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "delivered"
+
+    rows = await history.get_recent(42_001, limit=20)
+    assert len(rows) == 2
+    assert [r["role"] for r in rows] == ["owner", "owner"]
+    assert [r["text"] for r in rows] == segs
+    assert [r["telegram_message_id"] for r in rows] == mids
+
+
+@pytest.mark.asyncio
+async def test_execute_deliver_failure_no_owner_history() -> None:
+    history = InMemoryMessageHistoryWriter()
+    behavior = FakeBehavior(success=False)
+    svc, _, vip, _, _ = await _setup_deliverable_vip(
+        history=history, behavior=behavior
+    )
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "failed"
+    rows = await history.get_recent(42_001, limit=20)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_execute_supervised_skipped_no_owner_history() -> None:
+    history = InMemoryMessageHistoryWriter()
+    clock = FakeClock()
+    schedules = InMemoryRecontactScheduleStore()
+    vips = InMemoryVipStore()
+    notifier = FakeOwnerNotifier()
+    vip = await _seed_vip(vips, display_name="Lucía", auto_send=False)
+    past = clock.now() - timedelta(hours=2)
+    await schedules.upsert_pending(vip.id, past, past)
+    behavior = FakeBehavior()
+    ams = _ams(
+        feature=True,
+        global_mode="supervised",
+        vip_store=vips,
+        notifier=notifier,
+    )
+    svc, _ = _make_service(
+        schedules=schedules,
+        vips=vips,
+        ams=ams,
+        behavior=behavior,
+        route_resolver=FakeRouteResolver({vip.id: (55, "bc-x")}),
+        notifier=notifier,
+        clock=clock,
+        config=FakeConfig(templates=["Hola {nombre}"]),
+        history=history,
+    )
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "supervised_skipped"
+    assert behavior.deliver_calls == []
+    assert await history.get_recent(55, limit=20) == []
+
+
+@pytest.mark.asyncio
+async def test_execute_sandbox_skips_owner_history() -> None:
+    """History gate uses should_persist(chat_id); is_sandbox_vip=None so deliver runs."""
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {"label": "x", "description": "", "facts": {}, "notes": []},
+    }
+    history = InMemoryMessageHistoryWriter()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    chat_id = 77_001
+    sandbox.activate(chat_id, "nuevo")
+
+    svc, _, vip, behavior, _ = await _setup_deliverable_vip(
+        chat_id=chat_id,
+        history=history,
+        sandbox=sandbox,
+        is_sandbox_vip=None,
+    )
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "delivered"
+    assert len(behavior.deliver_calls) == 1
+    assert await history.get_recent(chat_id, limit=20) == []
+
+
+@pytest.mark.asyncio
+async def test_execute_history_none_still_delivered() -> None:
+    svc, _, vip, behavior, _ = await _setup_deliverable_vip(history=None)
+
+    status = await svc.execute_recontact(vip.id)
+    assert status == "delivered"
+    assert len(behavior.deliver_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_flag_off_execute_no_owner_history() -> None:
+    history = InMemoryMessageHistoryWriter()
+    svc, deps = _make_service(feature=False, history=history)
+    status = await svc.execute_recontact(uuid4())
+    assert status == "disabled"
+    assert deps["behavior"].deliver_calls == []
+    # No chat written — store empty
+    assert history._messages == {}  # noqa: SLF001 — test isolation check
