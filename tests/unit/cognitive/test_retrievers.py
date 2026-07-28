@@ -216,6 +216,84 @@ async def test_context_retriever_includes_dia_hora_mexico_city() -> None:
 
 
 @pytest.mark.asyncio
+async def test_context_first_message_cdmx_counts_same_local_day_across_utc_midnight() -> None:
+    """Window A: two VIP same CDMX day straddling 00:00Z → not first of day."""
+    # clock 2026-07-02T04:00Z → CDMX 2026-07-01 22:00
+    # vip1 2026-07-01T16:00Z → CDMX Jul 1 10:00
+    # vip2 2026-07-02T02:00Z → CDMX Jul 1 20:00
+    port = InMemoryMessageHistory(
+        {
+            11: [
+                {
+                    "role": "vip",
+                    "text": "morning",
+                    "timestamp": "2026-07-01T16:00:00+00:00",
+                },
+                {
+                    "role": "vip",
+                    "text": "evening",
+                    "timestamp": "2026-07-02T02:00:00+00:00",
+                },
+            ]
+        }
+    )
+    fixed = datetime(2026, 7, 2, 4, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed)
+    ctx = await retriever.fetch(_turn(11), _comprehension())
+    assert ctx["is_first_message_of_day"] is False
+    assert ctx["dia_semana"] == "miercoles"  # 2026-07-01 CDMX
+    assert ctx["hora_actual"] == "22:00"
+
+
+@pytest.mark.asyncio
+async def test_context_first_message_cdmx_excludes_previous_local_evening_after_cdmx_midnight() -> None:
+    """Window B: prev CDMX evening + one early CDMX morning → first of day True."""
+    # clock 2026-07-02T07:00Z → CDMX 2026-07-02 01:00
+    # vip_prev 2026-07-02T05:00Z → CDMX Jul 1 23:00 (yesterday)
+    # vip_now  2026-07-02T06:30Z → CDMX Jul 2 00:30 (today)
+    port = InMemoryMessageHistory(
+        {
+            12: [
+                {
+                    "role": "vip",
+                    "text": "late evening",
+                    "timestamp": "2026-07-02T05:00:00+00:00",
+                },
+                {
+                    "role": "vip",
+                    "text": "early morning",
+                    "timestamp": "2026-07-02T06:30:00+00:00",
+                },
+            ]
+        }
+    )
+    fixed = datetime(2026, 7, 2, 7, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed)
+    ctx = await retriever.fetch(_turn(12), _comprehension())
+    assert ctx["is_first_message_of_day"] is True
+    assert ctx["dia_semana"] == "jueves"  # 2026-07-02 CDMX
+    assert ctx["hora_actual"] == "01:00"
+
+
+@pytest.mark.asyncio
+async def test_context_first_message_naive_timestamp_treated_as_utc() -> None:
+    """Naive timestamps are UTC, then converted to CDMX civil day."""
+    # Same civil setup as Window A but with naive ISO (no offset).
+    port = InMemoryMessageHistory(
+        {
+            13: [
+                {"role": "vip", "text": "a", "timestamp": "2026-07-01T16:00:00"},
+                {"role": "vip", "text": "b", "timestamp": "2026-07-02T02:00:00"},
+            ]
+        }
+    )
+    fixed = datetime(2026, 7, 2, 4, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed)
+    ctx = await retriever.fetch(_turn(13), _comprehension())
+    assert ctx["is_first_message_of_day"] is False
+
+
+@pytest.mark.asyncio
 async def test_stubs_return_none() -> None:
     turn = _turn()
     c = _comprehension()
