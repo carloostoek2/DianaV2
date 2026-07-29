@@ -204,3 +204,30 @@ async def test_production_multi_signal_carinosa_extranar_reencuentro() -> None:
     )
     assert result is not None
     assert "aquí estoy" in result["patron"] or "Cariño pero" in result["patron"]
+
+
+@pytest.mark.asyncio
+async def test_production_catalog_carinosa_vulnerable_disclosure_prefers_calm_tone() -> None:
+    """Regression: production trace picked no voice_patterns for a warm-but-
+    vulnerable disclosure (motivo de estudiar psicología, ligado a ansiedad
+    propia). emotion=cariñosa alone ties 4 patterns (apodo_amor,
+    tono_dificil_sin_drama, espontaneidad_poetica, reencuentro_carino) —
+    tono_dificil_sin_drama must win once it also carries motivacion_personal,
+    not apodo_amor (which was winning on catalog list order before the fix).
+    """
+    from diana.cognitive.persona_catalog import load_persona_catalog
+
+    catalog = load_persona_catalog()
+    retriever = VoicePatternsRetriever(catalog["voice_patterns"])
+    result = await retriever.fetch(
+        _turn("...pero por qué te decidiste estudiar psicología?"),
+        _comp(
+            emotion="cariñosa",
+            intent="preguntar_motivo_estudios",
+            topics=["estudios", "motivacion_personal", "psicologia"],
+        ),
+    )
+    assert result is not None
+    assert "sin dramatizar" in result["uso"] or "con calma" in result["uso"], (
+        f"expected tono_dificil_sin_drama, got uso={result['uso']!r}"
+    )
