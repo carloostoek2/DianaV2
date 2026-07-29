@@ -142,3 +142,48 @@ async def test_production_catalog_familia_gold() -> None:
     assert result is not None
     assert "Laura" in result["hecho"]
     assert "nota_privada" not in result
+
+
+@pytest.mark.asyncio
+async def test_production_catalog_motivacion_beats_generic_estudios_tag() -> None:
+    """Regression: production trace picked estudios_psicologia (trayectoria/status)
+    instead of motivacion_psicologia (the actual "why did you choose this" fact)
+    for "qué te llevó a estudiar psicología?" — both facts share the generic
+    "estudios" tag, which used to tie plain intersection-count scoring. Tag-
+    specificity weighting must make the fact with the unique tag win.
+    """
+    from diana.cognitive.persona_catalog import load_persona_catalog
+
+    catalog = load_persona_catalog()
+    retriever = PersonaFactsRetriever(catalog["persona_facts"])
+    result = await retriever.fetch(
+        _turn("Oye y qué te llevo a estudiar psicología?"),
+        _comp(
+            intent="preguntar_motivacion_estudios",
+            topics=["trayectoria", "estudios", "motivacion_personal"],
+        ),
+    )
+    assert result is not None
+    assert "ansiedad" in result["hecho"].lower() or "entender" in result["hecho"].lower(), (
+        "expected the motivacion_psicologia fact (the 'why'), got: "
+        f"{result['hecho']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_weighted_score_prefers_specific_tag_over_shared_tag() -> None:
+    """Unit-level version of the regression, isolated from the real catalog."""
+    facts = [
+        {"id": "a_shared_plus_common", "tema": ["comun", "raro_a"], "hecho": "A"},
+        {"id": "b_shared_plus_rare", "tema": ["comun", "raro_b"], "hecho": "B"},
+        {"id": "c_only_common", "tema": ["comun"], "hecho": "C"},
+    ]
+    retriever = PersonaFactsRetriever(facts)
+    # "comun" appears in all 3 facts (weight 1/3 each); "raro_b" appears only
+    # in fact B (weight 1). Topics hit both "comun" and "raro_b" -> B should
+    # win over A (which only hits "comun") even though plain count would tie
+    # A and B at 1-each-intersection-with-"comun"-only... here it's simpler:
+    # B's weighted score (1/3 + 1) > A's weighted score (1/3 only, no raro_a hit).
+    result = await retriever.fetch(_turn(), _comp(topics=["comun", "raro_b"]))
+    assert result is not None
+    assert result["hecho"] == "B"
