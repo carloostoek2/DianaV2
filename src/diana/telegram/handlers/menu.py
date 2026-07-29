@@ -44,6 +44,7 @@ from diana.telegram.keyboards import (
     encode_menu_vip,
     menu_back_keyboard,
     menu_confirm_delete_keyboard,
+    menu_freeze_duration_keyboard,
     menu_history_keyboard,
     menu_metrics_keyboard,
     menu_register_confirm_keyboard,
@@ -611,12 +612,34 @@ async def _dispatch_action(
 
         # --- freeze (pausar) ---
         if action == "freeze":
+            duration = parsed.extra
+            # No duration yet — show the duration picker submenu
+            if duration is None:
+                vip = await vips.get_by_telegram_user_id(user_id)
+                name = vip.display_name if vip and vip.display_name else str(user_id)
+                await _show(
+                    message,
+                    f"⏸ Pausar a {name}\n\n"
+                    "Elegi la duracion de la pausa:",
+                    menu_freeze_duration_keyboard(user_id),
+                )
+                return
+
             vip = await vips.get_by_telegram_user_id(user_id)
             if vip is None or not vip.is_active:
                 await _show(message, f"VIP {user_id} no encontrado o inactivo.", None)
                 return
-            await vips.freeze_vip(vip.id, datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC))
-            # Re-query to get updated state
+
+            now = datetime.now(UTC)
+            if duration == "1d":
+                frozen_until = now + timedelta(days=1)
+            elif duration == "7d":
+                frozen_until = now + timedelta(days=7)
+            else:
+                frozen_until = datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC)
+
+            await vips.freeze_vip(vip.id, frozen_until)
+
             vip = await vips.get_by_telegram_user_id(user_id)
             is_frozen = bool(
                 vip and vip.frozen_until and vip.frozen_until > datetime.now(UTC)

@@ -636,6 +636,38 @@ def menu_vip_detail_keyboard(user_id: int, *, is_frozen: bool = False) -> Inline
     )
 
 
+def menu_freeze_duration_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Duration picker shown after tapping Pausar: 1 dia, 1 semana, indefinido."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📅 1 dia",
+                    callback_data=encode_menu_vip_action(user_id, "freeze:1d"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📅 1 semana",
+                    callback_data=encode_menu_vip_action(user_id, "freeze:7d"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="♾️ Indefinido",
+                    callback_data=encode_menu_vip_action(user_id, "freeze:indef"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Volver al perfil",
+                    callback_data=encode_menu_vip(user_id),
+                ),
+            ],
+        ]
+    )
+
+
 def menu_vip_profile_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Back to VIP detail after viewing profile/ficha."""
     return InlineKeyboardMarkup(
@@ -800,6 +832,7 @@ __all__ = [
     "menu_root_keyboard",
     "menu_sandbox_keyboard",
     "menu_sandbox_profile_picker_keyboard",
+    "menu_freeze_duration_keyboard",
     "menu_vip_detail_keyboard",
     "menu_vip_list_keyboard",
     "menu_vip_profile_keyboard",
