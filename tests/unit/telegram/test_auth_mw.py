@@ -360,6 +360,86 @@ async def test_sandbox_active_vip_still_sets_vip_id() -> None:
     assert data.get("sandbox_active") is True
 
 
+# ---------------------------------------------------------------------------
+# Training mode tests (F3 training mode gate — non-VIP passes through)
+# ---------------------------------------------------------------------------
+
+
+class _TrainingModeStore:
+    """In-memory TrainingModeStore protocol mock (no DB)."""
+
+    def __init__(self, enabled: bool = False) -> None:
+        self._enabled = enabled
+
+    async def is_enabled(self) -> bool:
+        return self._enabled
+
+    async def set_enabled(self, enabled: bool) -> None:
+        self._enabled = enabled
+
+
+@pytest.mark.asyncio
+async def test_training_mode_on_non_vip_passes() -> None:
+    """Non-VIP business message with training ON passes without vip_id."""
+    vips = InMemoryVipStore()
+    training = _TrainingModeStore(enabled=True)
+    mw = AuthMiddleware(vips=vips, training_mode=training)
+    handler = AsyncMock(return_value="orch")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111), data)
+    assert result == "orch"
+    handler.assert_awaited_once()
+    assert "vip_id" not in data
+    assert "vip_record" not in data
+
+
+@pytest.mark.asyncio
+async def test_training_mode_on_vip_still_works_normally() -> None:
+    """VIP still gets vip_id when training ON."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(222, display_name="Vip")
+    training = _TrainingModeStore(enabled=True)
+    mw = AuthMiddleware(vips=vips, training_mode=training)
+    handler = AsyncMock(return_value="ok")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(222), data)
+    assert result == "ok"
+    handler.assert_awaited_once()
+    assert data["vip_id"] == rec.id
+
+
+@pytest.mark.asyncio
+async def test_training_mode_off_legacy_drop() -> None:
+    """Non-VIP dropped when training OFF."""
+    vips = InMemoryVipStore()
+    training = _TrainingModeStore(enabled=False)
+    mw = AuthMiddleware(vips=vips, training_mode=training)
+    handler = AsyncMock(return_value="orch")
+    result = await mw(handler, _biz_msg(111), {"business_connection_id": "bc-1"})
+    assert result is None
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_training_mode_on_private_non_owner_still_dropped() -> None:
+    """Private DM from non-owner still dropped with training ON."""
+    vips = InMemoryVipStore()
+    training = _TrainingModeStore(enabled=True)
+    mw = AuthMiddleware(vips=vips, training_mode=training)
+    event = Message(
+        message_id=2,
+        date=0,
+        chat=Chat(id=111, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="X"),
+        text="hola",
+        business_connection_id=None,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    result = await mw(handler, event, {})
+    assert result is None
+    handler.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_sandbox_inactive_non_vip_still_dropped() -> None:
 

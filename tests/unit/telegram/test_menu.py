@@ -444,3 +444,114 @@ def test_parse_menu_callback_freeze_variants(
     assert result.action == expected_action
     assert result.vip_user_id == expected_vip_user_id
     assert result.extra == expected_extra
+
+
+# ---------------------------------------------------------------------------
+# Training mode / config menu tests
+# ---------------------------------------------------------------------------
+
+
+class _TrainingModeStore:
+    """In-memory TrainingModeStore protocol mock (no DB)."""
+
+    def __init__(self, enabled: bool = False) -> None:
+        self._enabled = enabled
+
+    async def is_enabled(self) -> bool:
+        return self._enabled
+
+    async def set_enabled(self, enabled: bool) -> None:
+        self._enabled = enabled
+
+
+def test_menu_root_has_config_button() -> None:
+    """The root menu has 6 buttons; the 6th is Configuracion."""
+    from diana.telegram.keyboards import menu_root_keyboard
+
+    kb = menu_root_keyboard()
+    rows = kb.inline_keyboard
+    assert len(rows) == 6
+    config_btn = rows[5][0]
+    assert config_btn.text == "⚙️ Configuración"
+    assert config_btn.callback_data == "m:config"
+
+
+@pytest.mark.asyncio
+async def test_config_toggle_activates_training_mode() -> None:
+    """Toggle with current=False calls set_enabled(True) and shows ON."""
+    config_store = _TrainingModeStore(enabled=False)
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("config", "toggle"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+        config_store=config_store,
+    )
+    assert config_store._enabled is True
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    # Should show the toggle keyboard with ON state
+    rendered = call_args[1].get("reply_markup")
+    assert rendered is not None
+    # The toggle button text should indicate ON
+    toggle_row = rendered.inline_keyboard[0]
+    assert "ON" in toggle_row[0].text
+
+
+@pytest.mark.asyncio
+async def test_config_toggle_deactivates_training_mode() -> None:
+    """Toggle with current=True calls set_enabled(False) and shows OFF."""
+    config_store = _TrainingModeStore(enabled=True)
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("config", "toggle"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+        config_store=config_store,
+    )
+    assert config_store._enabled is False
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    rendered = call_args[1].get("reply_markup")
+    assert rendered is not None
+    toggle_row = rendered.inline_keyboard[0]
+    assert "OFF" in toggle_row[0].text
+
+
+@pytest.mark.asyncio
+async def test_config_toggle_no_config_store_shows_unavailable() -> None:
+    """Toggle with config_store=None shows 'no disponible'."""
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("config", "toggle"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+        config_store=None,
+    )
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "no disponible" in call_args[0][0].lower()

@@ -73,6 +73,29 @@ async def test_set_supervised_thresholds_writes_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_training_mode_unset_returns_false() -> None:
+    store = _MemoryStore({})
+    assert await store.get_training_mode_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_set_training_mode_roundtrip() -> None:
+    store = _MemoryStore({})
+    # Set True → get True
+    await store.set_training_mode_enabled(True)
+    assert await store.get_training_mode_enabled() is True
+    assert await store.is_enabled() is True
+    # Set False → get False
+    await store.set_training_mode_enabled(False)
+    assert await store.get_training_mode_enabled() is False
+    assert await store.is_enabled() is False
+    # Protocol-compatible set_enabled also works
+    await store.set_enabled(True)
+    assert await store.is_enabled() is True
+    assert await store.get_training_mode_enabled() is True
+
+
+@pytest.mark.asyncio
 async def test_set_thresholds_copy_not_shared_mutation() -> None:
     store = _MemoryStore()
     value = {"safety_min": 0.5, "doctrine_min": 0.4, "naturalness_min": 0.5}
