@@ -454,12 +454,17 @@ async def _dispatch_action(
         if action == str(user_id):
             vip = await vips.get_by_telegram_user_id(user_id)
             name = vip.display_name if vip and vip.display_name else str(user_id)
+            is_frozen = bool(
+                vip and vip.frozen_until and vip.frozen_until > datetime.now(UTC)
+            )
+            status_line = "Estado: 🔒 Pausado\n" if is_frozen else "Estado: 🟢 Activo\n"
             text = (
                 f"👤 Perfil de {name}\n"
                 f"ID: {user_id}\n\n"
+                f"{status_line}"
                 "Selecciona una accion:"
             )
-            await _show(message, text, menu_vip_detail_keyboard(user_id))
+            await _show(message, text, menu_vip_detail_keyboard(user_id, is_frozen=is_frozen))
             return
 
         # --- profile (view ficha) ---
@@ -602,6 +607,52 @@ async def _dispatch_action(
                 await _show(message, f"VIP {user_id} desactivado.", kb)
             else:
                 await _show(message, f"No se encontro al VIP {user_id}.", kb)
+            return
+
+        # --- freeze (pausar) ---
+        if action == "freeze":
+            vip = await vips.get_by_telegram_user_id(user_id)
+            if vip is None or not vip.is_active:
+                await _show(message, f"VIP {user_id} no encontrado o inactivo.", None)
+                return
+            await vips.freeze_vip(vip.id, datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC))
+            # Re-query to get updated state
+            vip = await vips.get_by_telegram_user_id(user_id)
+            is_frozen = bool(
+                vip and vip.frozen_until and vip.frozen_until > datetime.now(UTC)
+            )
+            name = vip.display_name if vip and vip.display_name else str(user_id)
+            status_line = "Estado: 🔒 Pausado\n" if is_frozen else "Estado: 🟢 Activo\n"
+            text = (
+                f"👤 Perfil de {name}\n"
+                f"ID: {user_id}\n\n"
+                f"{status_line}"
+                "Selecciona una accion:"
+            )
+            await _show(
+                message, text, menu_vip_detail_keyboard(user_id, is_frozen=is_frozen)
+            )
+            return
+
+        # --- unfreeze (reanudar) ---
+        if action == "unfreeze":
+            vip = await vips.get_by_telegram_user_id(user_id)
+            if vip is None or not vip.is_active:
+                await _show(message, f"VIP {user_id} no encontrado o inactivo.", None)
+                return
+            await vips.unfreeze_vip(vip.id)
+            # Re-query to get updated state
+            vip = await vips.get_by_telegram_user_id(user_id)
+            name = vip.display_name if vip and vip.display_name else str(user_id)
+            text = (
+                f"👤 Perfil de {name}\n"
+                f"ID: {user_id}\n\n"
+                "Estado: 🟢 Activo\n"
+                "Selecciona una accion:"
+            )
+            await _show(
+                message, text, menu_vip_detail_keyboard(user_id, is_frozen=False)
+            )
             return
 
         await _show(message, "Accion no disponible.", None)

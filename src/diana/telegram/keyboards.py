@@ -607,9 +607,10 @@ def menu_vip_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def menu_vip_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Per-VIP actions: ficha, nota, dato, renombrar, eliminar, volver."""
-    uid = str(user_id)
+def menu_vip_detail_keyboard(user_id: int, *, is_frozen: bool = False) -> InlineKeyboardMarkup:
+    """Per-VIP actions: toggle pausa, ficha, nota, dato, renombrar, eliminar, volver."""
+    toggle_label = "🔓 Reanudar" if is_frozen else "🔒 Pausar"
+    toggle_action = "unfreeze" if is_frozen else "freeze"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="👤 Ver ficha", callback_data=encode_menu_vip_action(user_id, "profile"))],
@@ -621,6 +622,12 @@ def menu_vip_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton(text="✏️ Renombrar", callback_data=encode_menu_vip_action(user_id, "rename"))],
             [InlineKeyboardButton(text="🗑 Eliminar", callback_data=encode_menu_vip_action(user_id, "delete"))],
+            [
+                InlineKeyboardButton(
+                    text=toggle_label,
+                    callback_data=encode_menu_vip_action(user_id, toggle_action),
+                ),
+            ],
             [
                 InlineKeyboardButton(text="🔙 Volver a lista", callback_data=encode_menu("vips")),
                 InlineKeyboardButton(text="🔙 Inicio", callback_data=encode_menu("root")),
