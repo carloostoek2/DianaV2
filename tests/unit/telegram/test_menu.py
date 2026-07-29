@@ -1,0 +1,201 @@
+"""Freeze toggle keyboard, callback sizing, and handler tests."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+from aiogram.types import Chat, Message, User
+
+from diana.application.memory import InMemoryVipStore
+from diana.application.ports import VipRecord
+from diana.telegram.handlers.menu import _dispatch_action, MenuSessionStore
+from diana.telegram.keyboards import (
+    encode_menu_vip_action,
+    menu_vip_detail_keyboard,
+)
+
+
+# ---------------------------------------------------------------------------
+# Keyboard rendering
+# ---------------------------------------------------------------------------
+
+
+def test_keyboard_shows_pausar_when_not_frozen() -> None:
+    kb = menu_vip_detail_keyboard(123, is_frozen=False)
+    rows = kb.inline_keyboard
+    # Toggle row is the 6th row (0-indexed: profile, note, fact, rename, delete, toggle, back)
+    toggle_row = rows[5]
+    assert len(toggle_row) == 1
+    btn = toggle_row[0]
+    assert btn.text == "\U0001f512 Pausar"
+    assert "freeze" in btn.callback_data
+
+
+def test_keyboard_shows_reanudar_when_frozen() -> None:
+    kb = menu_vip_detail_keyboard(123, is_frozen=True)
+    rows = kb.inline_keyboard
+    toggle_row = rows[5]
+    assert len(toggle_row) == 1
+    btn = toggle_row[0]
+    assert btn.text == "\U0001f513 Reanudar"
+    assert "unfreeze" in btn.callback_data
+
+
+def test_keyboard_backward_compat_no_is_frozen() -> None:
+    """Calling without is_frozen defaults to not frozen -> shows Pausar."""
+    kb = menu_vip_detail_keyboard(123)
+    rows = kb.inline_keyboard
+    toggle_row = rows[5]
+    btn = toggle_row[0]
+    assert btn.text == "\U0001f512 Pausar"
+
+
+# ---------------------------------------------------------------------------
+# Callback data size (64-byte limit)
+# ---------------------------------------------------------------------------
+
+
+def test_freeze_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "freeze")
+    assert len(data.encode("utf-8")) <= 64
+
+
+def test_unfreeze_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "unfreeze")
+    assert len(data.encode("utf-8")) <= 64
+
+
+# ---------------------------------------------------------------------------
+# Handler logic
+# ---------------------------------------------------------------------------
+
+
+_OWNER_ID = 999
+
+
+def _callback(category: str, action: str, vip_user_id: int | None = None):
+    from diana.telegram.keyboards import MenuCallback
+
+    return MenuCallback(category=category, action=action, vip_user_id=vip_user_id or 0)
+
+
+def _msg(user_id: int = _OWNER_ID) -> AsyncMock:
+    msg = AsyncMock(spec=Message)
+    msg.message_id = 1
+    msg.chat = AsyncMock(spec=Chat)
+    msg.chat.id = 42
+    msg.edit_text = AsyncMock()
+    msg.answer = AsyncMock()
+    return msg
+
+
+@pytest.mark.asyncio
+async def test_freeze_handler_calls_freeze_vip_with_uuid() -> None:
+    vips = InMemoryVipStore()
+    rec = await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "freeze", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    # VIP should now be frozen until 2099
+    vip = await vips.get_by_telegram_user_id(123)
+    assert vip is not None
+    assert vip.frozen_until is not None
+    assert vip.frozen_until.year == 2099
+
+
+@pytest.mark.asyncio
+async def test_unfreeze_handler_calls_unfreeze_vip_with_uuid() -> None:
+    vips = InMemoryVipStore()
+    rec = await vips.add(123, display_name="VIP Test")
+    # Pre-freeze
+    await vips.freeze_vip(rec.id, datetime(2099, 12, 31, tzinfo=UTC))
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "unfreeze", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    # VIP should now be unfrozen
+    vip = await vips.get_by_telegram_user_id(123)
+    assert vip is not None
+    assert vip.frozen_until is None
+
+
+@pytest.mark.asyncio
+async def test_freeze_handler_vip_not_found_shows_error() -> None:
+    vips = InMemoryVipStore()
+    sessions = MenuSessionStore()
+    msg = _msg()
+
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "freeze", vip_user_id=99999),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    # Should show error via edit_text (no VIP exists)
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "no encontrado" in call_args[0][0] or "inactivo" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_unfreeze_handler_vip_not_found_shows_error() -> None:
+    vips = InMemoryVipStore()
+    sessions = MenuSessionStore()
+    msg = _msg()
+
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "unfreeze", vip_user_id=99999),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    # Should show error via edit_text (no VIP exists)
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "no encontrado" in call_args[0][0] or "inactivo" in call_args[0][0]
