@@ -125,7 +125,10 @@ class RandomDelayPolicy(DelayPolicy):
     """Mode-aware human-like delays (REQ-HUM-01/04).
 
     Supervised default: fixed 120s. Autonomous: uniform 180–480s.
-    Typing duration scales with text length (capped).
+    Typing duration scales with text length (8 chars/sec, 2–15s clamped).
+
+    Micro-delays match human typing cadence: pre-read pause, post-read
+    reaction time, and inter-message gap (diana v1 parity).
 
     REQ-NFR-01: all range mins must be > 0 (FixedDelayPolicy free for tests).
     """
@@ -137,8 +140,15 @@ class RandomDelayPolicy(DelayPolicy):
         supervised_max: float = 120.0,
         autonomous_min: float = 180.0,
         autonomous_max: float = 480.0,
-        typing_per_char: float = 0.03,
-        typing_max: float = 5.0,
+        typing_per_char: float = 0.125,
+        typing_min: float = 2.0,
+        typing_max: float = 15.0,
+        pre_read_min: float = 0.3,
+        pre_read_max: float = 1.0,
+        post_read_min: float = 1.5,
+        post_read_max: float = 4.0,
+        inter_gap_min: float = 1.5,
+        inter_gap_max: float = 3.0,
         rng: random.Random | None = None,
     ) -> None:
         for label, lo, hi in (
@@ -154,7 +164,14 @@ class RandomDelayPolicy(DelayPolicy):
         self._autonomous_min = autonomous_min
         self._autonomous_max = autonomous_max
         self._per_char = typing_per_char
+        self._typing_min = typing_min
         self._typing_max = typing_max
+        self._pre_read_min = pre_read_min
+        self._pre_read_max = pre_read_max
+        self._post_read_min = post_read_min
+        self._post_read_max = post_read_max
+        self._inter_gap_min = inter_gap_min
+        self._inter_gap_max = inter_gap_max
         self._rng = rng or random.Random()
 
     def initial_delay_seconds(self, mode: str = "supervised") -> float:
@@ -164,7 +181,17 @@ class RandomDelayPolicy(DelayPolicy):
         return self._rng.uniform(self._supervised_min, self._supervised_max)
 
     def typing_duration_seconds(self, text: str) -> float:
-        return min(len(text or "") * self._per_char, self._typing_max)
+        raw = len(text or "") * self._per_char
+        return min(max(raw, self._typing_min), self._typing_max)
+
+    def pre_read_delay_seconds(self) -> float:
+        return self._rng.uniform(self._pre_read_min, self._pre_read_max)
+
+    def post_read_delay_seconds(self) -> float:
+        return self._rng.uniform(self._post_read_min, self._post_read_max)
+
+    def inter_message_gap_seconds(self) -> float:
+        return self._rng.uniform(self._inter_gap_min, self._inter_gap_max)
 
 
 class TurnStoreStatusReader:
@@ -248,6 +275,15 @@ def build_app(
         supervised_max=settings.delivery_supervised_delay_max,
         autonomous_min=settings.delivery_autonomous_delay_min,
         autonomous_max=settings.delivery_autonomous_delay_max,
+        typing_per_char=settings.delivery_typing_per_char,
+        typing_min=settings.delivery_typing_min_seconds,
+        typing_max=settings.delivery_typing_max_seconds,
+        pre_read_min=settings.delivery_pre_read_delay_min,
+        pre_read_max=settings.delivery_pre_read_delay_max,
+        post_read_min=settings.delivery_post_read_delay_min,
+        post_read_max=settings.delivery_post_read_delay_max,
+        inter_gap_min=settings.delivery_inter_message_gap_min,
+        inter_gap_max=settings.delivery_inter_message_gap_max,
     )
     feature_advanced_behavior = settings.feature_advanced_behavior
     behavior = BehaviorEngine(

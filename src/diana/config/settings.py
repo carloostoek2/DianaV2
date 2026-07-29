@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     delivery_supervised_delay_max: Annotated[float, Field(gt=0)] = 120.0
     delivery_autonomous_delay_min: Annotated[float, Field(gt=0)] = 180.0
     delivery_autonomous_delay_max: Annotated[float, Field(gt=0)] = 480.0
+    # Micro-delays for humanized delivery cadence (REQ-HUM-01/04).
+    delivery_typing_per_char: Annotated[float, Field(gt=0)] = 0.125     # 8 chars/sec
+    delivery_typing_min_seconds: Annotated[float, Field(gt=0)] = 2.0
+    delivery_typing_max_seconds: Annotated[float, Field(gt=0)] = 15.0
+    delivery_pre_read_delay_min: Annotated[float, Field(gt=0)] = 0.3
+    delivery_pre_read_delay_max: Annotated[float, Field(gt=0)] = 1.0
+    delivery_post_read_delay_min: Annotated[float, Field(gt=0)] = 1.5
+    delivery_post_read_delay_max: Annotated[float, Field(gt=0)] = 4.0
+    delivery_inter_message_gap_min: Annotated[float, Field(gt=0)] = 1.5
+    delivery_inter_message_gap_max: Annotated[float, Field(gt=0)] = 3.0
     trace_ttl_days: Annotated[int, Field(ge=1)] = 30
     log_level: LogLevel = "INFO"
 

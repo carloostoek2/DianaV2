@@ -156,9 +156,20 @@ class ImmediateClock:
 class FixedDelayPolicy:
     """Deterministic delays for non-flaky unit tests."""
 
-    def __init__(self, *, initial: float = 0.0, typing: float = 0.0) -> None:
+    def __init__(
+        self,
+        *,
+        initial: float = 0.0,
+        typing: float = 0.0,
+        pre_read: float = 0.0,
+        post_read: float = 0.0,
+        inter_gap: float = 0.0,
+    ) -> None:
         self._initial = initial
         self._typing = typing
+        self._pre_read = pre_read
+        self._post_read = post_read
+        self._inter_gap = inter_gap
 
     def initial_delay_seconds(self, mode: str = "supervised") -> float:
         _ = mode
@@ -167,6 +178,15 @@ class FixedDelayPolicy:
     def typing_duration_seconds(self, text: str) -> float:
         _ = text
         return self._typing
+
+    def pre_read_delay_seconds(self) -> float:
+        return self._pre_read
+
+    def post_read_delay_seconds(self) -> float:
+        return self._post_read
+
+    def inter_message_gap_seconds(self) -> float:
+        return self._inter_gap
 
 
 __all__ = [

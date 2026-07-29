@@ -207,18 +207,26 @@ class BehaviorEngine:
                 )
 
             if ctx.telegram_message_id is not None:
+                pre_read = self._delay.pre_read_delay_seconds()
+                if pre_read > 0:
+                    await self._clock.sleep(pre_read)
                 await self._actuator.read_business_message(
                     ctx.chat_id,
                     ctx.telegram_message_id,
                     business_connection_id=bc,
                 )
+                post_read = self._delay.post_read_delay_seconds()
+                if post_read > 0:
+                    await self._clock.sleep(post_read)
 
             typing_secs = 0.0
             message_ids: list[int] = []
             for index, text in enumerate(texts):
                 if index == 0 or inter_message_gap:
                     if index > 0 and inter_message_gap:
-                        await self._clock.sleep(initial)
+                        gap = self._delay.inter_message_gap_seconds()
+                        if gap > 0:
+                            await self._clock.sleep(gap)
                     typing_secs = self._delay.typing_duration_seconds(text)
                     await self._actuator.send_chat_action(
                         ctx.chat_id,
