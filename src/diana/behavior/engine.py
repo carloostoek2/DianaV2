@@ -182,7 +182,10 @@ class BehaviorEngine:
                     success=False, cancelled=True, error="cancelled_before_start"
                 )
 
-            initial = self._delay.initial_delay_seconds(ctx.mode)
+            if ctx.skip_initial_delay:
+                initial = 0.0
+            else:
+                initial = self._delay.initial_delay_seconds(ctx.mode)
             await self._clock.sleep(initial)
 
             if quirk == "pause":

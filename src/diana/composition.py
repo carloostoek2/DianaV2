@@ -512,6 +512,7 @@ def build_app(
         delivery_mode=settings.global_mode,
         feature_advanced_behavior=feature_advanced_behavior,
         sandbox=sandbox,
+        delay_policy=policy,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).

@@ -528,6 +528,7 @@ class AdminService:
             telegram_message_id=trigger_message_id,
             mode=mode,
             is_frozen=False,
+            skip_initial_delay=True,
             allow_split=advanced,
             allow_human_quirks=advanced,
             split_chars=4096,

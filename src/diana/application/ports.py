@@ -163,6 +163,9 @@ class DeliveryContext(BaseModel):
     mode: DeliveryMode = "supervised"
     telegram_message_id: int | None = None
     is_frozen: bool = False
+    # When True the pre-send wait was already served before the pipeline,
+    # so BehaviorEngine delivers without extra initial delay (typing still applies).
+    skip_initial_delay: bool = False
     # Advanced behavior (H3.6) — fail-closed defaults; dual-gated in engine.
     allow_split: bool = False
     allow_human_quirks: bool = False

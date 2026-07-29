@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ from diana.application.ports import (
     VipInboundMessage,
     VipStore,
 )
+from diana.behavior.ports import DelayPolicy
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.exceptions import (
     AnalystSchemaInvalidError,
@@ -82,6 +84,7 @@ class TurnOrchestrator:
         delivery_mode: DeliveryMode = "supervised",
         feature_advanced_behavior: bool = False,
         sandbox: object | None = None,
+        delay_policy: DelayPolicy | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -97,6 +100,7 @@ class TurnOrchestrator:
         self._delivery_mode = delivery_mode
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
         self._sandbox = sandbox
+        self._delay_policy = delay_policy
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
@@ -104,6 +108,23 @@ class TurnOrchestrator:
     def _effective_delivery_mode(self, _chat_id: int) -> DeliveryMode:
         # Sandbox must not force fake_delivery; product isolation is should_persist.
         return self._delivery_mode
+
+    async def _resolve_effective_mode(
+        self, vip_id: UUID | None
+    ) -> DeliveryMode:
+        """Resolve the mode used for the pre-pipeline delay.
+
+        Autonomous mode must pass both L1 (feature flag) and L2
+        (global mode or per-VIP auto_send) gates. Falls back to
+        supervised otherwise.
+        """
+        mode = self._delivery_mode
+        if mode != "autonomous":
+            return mode
+        if self._autonomous_mode is None:
+            return "supervised"
+        enabled = await self._autonomous_mode.is_autonomous_enabled(vip_id)
+        return "autonomous" if enabled else "supervised"
 
     async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
         if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
@@ -148,6 +169,19 @@ class TurnOrchestrator:
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
         chat_id = incoming.chat_id
+
+        # Serve the human-like delay BEFORE the cognitive pipeline so the
+        # timer counts from message arrival, not from owner approval. Once
+        # the pipeline completes the message sends without extra wait.
+        mode = await self._resolve_effective_mode(incoming.vip_id)
+        pre_delay = (
+            self._delay_policy.initial_delay_seconds(mode)
+            if self._delay_policy is not None
+            else 0.0
+        )
+        if pre_delay > 0:
+            await asyncio.sleep(pre_delay)
+
         pending_deliver: _AutonomousDeliverJob | None
         async with self._coordinator.chat_scope(chat_id):
             turn_id, pending_deliver = await self._handle_vip_message_locked(
@@ -563,6 +597,7 @@ class TurnOrchestrator:
             telegram_message_id=incoming.telegram_message_id,
             mode=mode,
             is_frozen=False,
+            skip_initial_delay=True,
             allow_split=advanced,
             allow_human_quirks=advanced,
             split_chars=4096,
