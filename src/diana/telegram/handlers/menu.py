@@ -278,6 +278,16 @@ def _extract_user_from_forward(message: Message) -> tuple[int, str | None] | Non
     return None
 
 
+def _is_vip_frozen(vip) -> bool:
+    """True if vip.frozen_until is set and in the future (normalizes naive datetimes)."""
+    if vip is None or vip.frozen_until is None:
+        return False
+    frozen = vip.frozen_until
+    if frozen.tzinfo is None:
+        frozen = frozen.replace(tzinfo=UTC)
+    return frozen > datetime.now(UTC)
+
+
 # ---------------------------------------------------------------------------
 # build_menu_router
 # ---------------------------------------------------------------------------
@@ -455,9 +465,7 @@ async def _dispatch_action(
         if action == str(user_id):
             vip = await vips.get_by_telegram_user_id(user_id)
             name = vip.display_name if vip and vip.display_name else str(user_id)
-            is_frozen = bool(
-                vip and vip.frozen_until and vip.frozen_until > datetime.now(UTC)
-            )
+            is_frozen = _is_vip_frozen(vip)
             status_line = "Estado: 🔒 Pausado\n" if is_frozen else "Estado: 🟢 Activo\n"
             text = (
                 f"👤 Perfil de {name}\n"
@@ -616,6 +624,9 @@ async def _dispatch_action(
             # No duration yet — show the duration picker submenu
             if duration is None:
                 vip = await vips.get_by_telegram_user_id(user_id)
+                if vip is None or not vip.is_active:
+                    await _show(message, f"VIP {user_id} no encontrado o inactivo.", menu_back_keyboard(encode_menu("vips")))
+                    return
                 name = vip.display_name if vip and vip.display_name else str(user_id)
                 await _show(
                     message,
@@ -627,7 +638,7 @@ async def _dispatch_action(
 
             vip = await vips.get_by_telegram_user_id(user_id)
             if vip is None or not vip.is_active:
-                await _show(message, f"VIP {user_id} no encontrado o inactivo.", None)
+                await _show(message, f"VIP {user_id} no encontrado o inactivo.", menu_back_keyboard(encode_menu("vips")))
                 return
 
             now = datetime.now(UTC)
@@ -635,15 +646,20 @@ async def _dispatch_action(
                 frozen_until = now + timedelta(days=1)
             elif duration == "7d":
                 frozen_until = now + timedelta(days=7)
+            elif duration == "indef":
+                frozen_until = datetime(2099, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
             else:
-                frozen_until = datetime(2099, 12, 31, 23, 59, 59, tzinfo=UTC)
+                await _show(message, "Duracion no valida.", menu_back_keyboard(encode_menu_vip(user_id)))
+                return
 
-            await vips.freeze_vip(vip.id, frozen_until)
+            try:
+                await vips.freeze_vip(vip.id, frozen_until)
+            except ValueError:
+                await _show(message, "El VIP ya no existe o fue desactivado.", menu_back_keyboard(encode_menu("vips")))
+                return
 
             vip = await vips.get_by_telegram_user_id(user_id)
-            is_frozen = bool(
-                vip and vip.frozen_until and vip.frozen_until > datetime.now(UTC)
-            )
+            is_frozen = _is_vip_frozen(vip)
             name = vip.display_name if vip and vip.display_name else str(user_id)
             status_line = "Estado: 🔒 Pausado\n" if is_frozen else "Estado: 🟢 Activo\n"
             text = (
@@ -661,9 +677,13 @@ async def _dispatch_action(
         if action == "unfreeze":
             vip = await vips.get_by_telegram_user_id(user_id)
             if vip is None or not vip.is_active:
-                await _show(message, f"VIP {user_id} no encontrado o inactivo.", None)
+                await _show(message, f"VIP {user_id} no encontrado o inactivo.", menu_back_keyboard(encode_menu("vips")))
                 return
-            await vips.unfreeze_vip(vip.id)
+            try:
+                await vips.unfreeze_vip(vip.id)
+            except ValueError:
+                await _show(message, "El VIP ya no existe o fue desactivado.", menu_back_keyboard(encode_menu("vips")))
+                return
             # Re-query to get updated state
             vip = await vips.get_by_telegram_user_id(user_id)
             name = vip.display_name if vip and vip.display_name else str(user_id)

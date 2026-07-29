@@ -13,9 +13,11 @@ from diana.application.memory import InMemoryVipStore
 from diana.application.ports import VipRecord
 from diana.telegram.handlers.menu import _dispatch_action, MenuSessionStore
 from diana.telegram.keyboards import (
+    MenuCallback,
     encode_menu_vip_action,
     menu_freeze_duration_keyboard,
     menu_vip_detail_keyboard,
+    parse_menu_callback,
 )
 
 
@@ -307,3 +309,138 @@ async def test_unfreeze_handler_vip_not_found_shows_error() -> None:
     call_args = msg.edit_text.call_args
     assert call_args is not None
     assert "no encontrado" in call_args[0][0] or "inactivo" in call_args[0][0]
+
+
+def test_freeze_duration_keyboard_callback_data() -> None:
+    """Each freeze duration button has correct callback_data."""
+    kb = menu_freeze_duration_keyboard(123)
+    rows = kb.inline_keyboard
+    assert len(rows) == 4
+    assert rows[0][0].callback_data == "m:vip:123:freeze:1d"
+    assert rows[1][0].callback_data == "m:vip:123:freeze:7d"
+    assert rows[2][0].callback_data == "m:vip:123:freeze:indef"
+    assert rows[3][0].callback_data == "m:vip:123"
+
+
+@pytest.mark.asyncio
+async def test_freeze_handler_vip_inactive_shows_error() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123)
+    await vips.deactivate(123)
+    sessions = MenuSessionStore()
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "freeze", vip_user_id=123, extra="indef"),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "no encontrado" in call_args[0][0] or "inactivo" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_unfreeze_handler_vip_inactive_shows_error() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123)
+    await vips.deactivate(123)
+    sessions = MenuSessionStore()
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "unfreeze", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "no encontrado" in call_args[0][0] or "inactivo" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_freeze_handler_vip_not_found_at_picker_step() -> None:
+    """Freeze without extra (duration picker step) for a non-existent VIP shows error."""
+    vips = InMemoryVipStore()
+    sessions = MenuSessionStore()
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "freeze", vip_user_id=99999),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "no encontrado" in call_args[0][0] or "inactivo" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_freeze_with_unknown_duration_shows_error() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "freeze", vip_user_id=123, extra="xyz"),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "valida" in call_args[0][0]
+
+
+@pytest.mark.parametrize(
+    "data,expected_category,expected_action,expected_vip_user_id,expected_extra",
+    [
+        ("m:vip:123:freeze", "vip", "freeze", 123, None),
+        ("m:vip:123:freeze:1d", "vip", "freeze", 123, "1d"),
+        ("m:vip:123:freeze:7d", "vip", "freeze", 123, "7d"),
+        ("m:vip:123:freeze:indef", "vip", "freeze", 123, "indef"),
+        ("m:vip:123:unfreeze", "vip", "unfreeze", 123, None),
+    ],
+)
+def test_parse_menu_callback_freeze_variants(
+    data: str,
+    expected_category: str,
+    expected_action: str,
+    expected_vip_user_id: int,
+    expected_extra: str | None,
+) -> None:
+    """parse_menu_callback correctly parses all freeze/unfreeze callback variants."""
+    result = parse_menu_callback(data)
+    assert result is not None
+    assert result.category == expected_category
+    assert result.action == expected_action
+    assert result.vip_user_id == expected_vip_user_id
+    assert result.extra == expected_extra
