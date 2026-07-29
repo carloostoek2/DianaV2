@@ -620,7 +620,7 @@ async def _dispatch_action(
                 await _show(
                     message,
                     f"⏸ Pausar a {name}\n\n"
-                    "Elegi la duracion de la pausa:",
+                    "Selecciona la duracion de la pausa:",
                     menu_freeze_duration_keyboard(user_id),
                 )
                 return
