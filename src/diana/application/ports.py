@@ -407,6 +407,18 @@ class TraceabilityReader(Protocol):
     async def count_recent(self, chat_id: int | None = None) -> int: ...
 
 
+@runtime_checkable
+class TrainingModeStore(Protocol):
+    """Training mode flag for AuthMiddleware gate and config toggle.
+
+    When True, non-VIP business messages pass through the cognitive pipeline
+    without VIP attribution (no vip_id/vip_record set in data).
+    """
+
+    async def is_enabled(self) -> bool: ...
+    async def set_enabled(self, enabled: bool) -> None: ...
+
+
 # --- F3 proactivity (recontact + promo) ports ---------------------------------
 
 
@@ -545,6 +557,7 @@ __all__ = [
     "RecontactScheduleStore",
     "TraceabilityReader",
     "TraceReader",
+    "TrainingModeStore",
     "TurnRecord",
     "TurnStore",
     "VipInboundMessage",

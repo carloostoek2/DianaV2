@@ -97,6 +97,32 @@ class SqlSystemConfigStore:
         value = await self.get("promo")
         return dict(value) if isinstance(value, dict) else {}
 
+    async def get_training_mode_enabled(self) -> bool:
+        """Read training_mode_enabled flag from system_config.
+
+        Returns False when the key is missing.
+        """
+        value = await self.get("training_mode_enabled")
+        return bool(value) if value is not None else False
+
+    async def set_training_mode_enabled(self, enabled: bool) -> None:
+        """Persist training_mode_enabled flag (upsert)."""
+        await self.set("training_mode_enabled", bool(enabled))
+
+    async def is_enabled(self) -> bool:
+        """Protocol-compatible alias: ``TrainingModeStore.is_enabled``.
+
+        Delegates to get_training_mode_enabled so both return the same value.
+        """
+        return await self.get_training_mode_enabled()
+
+    async def set_enabled(self, enabled: bool) -> None:
+        """Protocol-compatible alias: ``TrainingModeStore.set_enabled``.
+
+        Delegates to set_training_mode_enabled so both write the same value.
+        """
+        await self.set_training_mode_enabled(enabled)
+
     async def get_feature_flags(self) -> dict[str, bool]:
         """Read all FEATURE_* keys from system_config. Returns {key: bool_value}.
 

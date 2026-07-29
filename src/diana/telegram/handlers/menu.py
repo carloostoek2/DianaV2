@@ -36,6 +36,7 @@ from diana.telegram.handlers.staging import (
     format_staging_candidate_body,
     load_pending_staging_list,
 )
+from diana.application.ports import TrainingModeStore
 from diana.telegram.keyboards import (
     MENU_CATEGORY_TEXT,
     MENU_ROOT_TEXT,
@@ -43,6 +44,7 @@ from diana.telegram.keyboards import (
     encode_menu,
     encode_menu_vip,
     menu_back_keyboard,
+    menu_config_keyboard,
     menu_confirm_delete_keyboard,
     menu_freeze_duration_keyboard,
     menu_history_keyboard,
@@ -311,6 +313,7 @@ def build_menu_router(
     coordinator: TurnCoordinator | None = None,
     profile_admin: ProfileAdminService | None = None,
     menu_sessions: MenuSessionStore | None = None,
+    config_store: TrainingModeStore | None = None,
 ) -> Router:
     """Build the router serving /start, /menu, m:* callbacks, and menu-session text."""
     router = Router(name="menu")
@@ -368,6 +371,14 @@ def build_menu_router(
                 )
                 return
 
+            if parsed.category == "config":
+                text = MENU_CATEGORY_TEXT.get(parsed.category)
+                if text is None:
+                    return
+                enabled = await config_store.is_enabled() if config_store else False
+                await _show(msg, text, menu_config_keyboard(enabled))
+                return
+
             build_kb = _CATEGORY_KEYBOARDS.get(parsed.category)
             text = MENU_CATEGORY_TEXT.get(parsed.category)
             if build_kb is None or text is None:
@@ -388,6 +399,7 @@ def build_menu_router(
             coordinator=coordinator,
             profile_admin=profile_admin,
             sessions=sessions,
+            config_store=config_store,
         )
 
     # ---- text capture for multi-step flows ----
@@ -458,6 +470,7 @@ async def _dispatch_action(
     coordinator: TurnCoordinator | None,
     profile_admin: ProfileAdminService | None,
     sessions: MenuSessionStore,
+    config_store: TrainingModeStore | None = None,
 ) -> None:
     category = parsed.category
     action = parsed.action
@@ -962,6 +975,25 @@ async def _dispatch_action(
             "Usa el comando:\n/traza <id_del_turno>",
             menu_back_keyboard(encode_menu("history")),
         )
+        return
+
+    # ==================================================================
+    # Config — training mode toggle
+    # ==================================================================
+    if category == "config" and action == "toggle":
+        if config_store is None:
+            await _show(
+                message,
+                "Configuracion no disponible.",
+                menu_back_keyboard(encode_menu("root")),
+            )
+            return
+        current = await config_store.is_enabled()
+        new_state = not current
+        await config_store.set_enabled(new_state)
+        logger.info("training_mode_toggle", extra={"enabled": new_state})
+        text = MENU_CATEGORY_TEXT.get("config", "Configuracion")
+        await _show(message, text, menu_config_keyboard(new_state))
         return
 
     # Unknown / unmapped action — should not normally happen.

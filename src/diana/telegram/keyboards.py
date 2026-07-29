@@ -506,6 +506,7 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
     "sandbox": "🧪 Modo de prueba\nPrueba cómo responde Diana sin avisar a nadie real.",
     "metrics": "📊 Métricas y aprendizaje\nCómo está funcionando Diana esta semana.",
     "history": "🔍 Historial y diagnóstico\nPara entender qué hizo Diana en un caso puntual.",
+    "config": "⚙️ Configuración\n\nControla el comportamiento del bot. Por ahora solo está disponible el Modo Entrenamiento.",
 }
 
 
@@ -587,7 +588,7 @@ def _menu_back_row() -> list[InlineKeyboardButton]:
 
 
 def menu_root_keyboard() -> InlineKeyboardMarkup:
-    """Main menu: the 5 logical categories."""
+    """Main menu: the 6 logical categories (VIPs, Review, Sandbox, Metrics, History, Config)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="👥 Mis VIPs", callback_data=encode_menu("vips"))],
@@ -595,6 +596,7 @@ def menu_root_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🧪 Modo de prueba", callback_data=encode_menu("sandbox"))],
             [InlineKeyboardButton(text="📊 Métricas y aprendizaje", callback_data=encode_menu("metrics"))],
             [InlineKeyboardButton(text="🔍 Historial y diagnóstico", callback_data=encode_menu("history"))],
+            [InlineKeyboardButton(text="⚙️ Configuración", callback_data=encode_menu("config"))],
         ]
     )
 
@@ -814,6 +816,17 @@ def menu_history_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def menu_config_keyboard(enabled: bool) -> InlineKeyboardMarkup:
+    """Configuration keyboard with a single toggle button for training mode."""
+    toggle_text = "Modo Entrenamiento: ON ✅" if enabled else "Modo Entrenamiento: OFF ❌"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data=encode_menu("config", "toggle"))],
+            _menu_back_row(),
+        ]
+    )
+
+
 __all__ = [
     "MenuCallback",
     "TraceCallbackData",
@@ -838,8 +851,8 @@ __all__ = [
     "encode_trace_detail",
     "encode_trace_page",
     "encode_trace_json",
-    "metrics_keyboard",
     "menu_back_keyboard",
+    "menu_config_keyboard",
     "menu_confirm_delete_keyboard",
     "menu_history_keyboard",
     "menu_metrics_keyboard",
@@ -852,6 +865,7 @@ __all__ = [
     "menu_vip_detail_keyboard",
     "menu_vip_list_keyboard",
     "menu_vip_profile_keyboard",
+    "metrics_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
     "parse_menu_callback",

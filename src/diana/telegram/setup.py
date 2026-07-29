@@ -15,6 +15,7 @@ from diana.application.ports import (
     BehaviorCanceller,
     EscalationStore,
     OwnerNotifierPort,
+    TrainingModeStore,
     VipStore,
 )
 from diana.application.promo_service import PromoService
@@ -91,6 +92,8 @@ def build_dispatcher(
     promo: PromoService | None = None,
     feature_promo_enabled: bool = False,
     sandbox: object | None = None,
+    training_mode: TrainingModeStore | None = None,
+    config_store: TrainingModeStore | None = None,
     rate_limit_max_events: int = 20,
     rate_limit_window_s: float = 10.0,
     dedup_ttl_s: float = 300.0,
@@ -131,6 +134,7 @@ def build_dispatcher(
             promo=promo,
             feature_promo_enabled=feature_promo_enabled,
             sandbox=sandbox,
+            training_mode=training_mode,
         ),
         forbidden_mw,
     ]
@@ -169,6 +173,7 @@ def build_dispatcher(
             coordinator=coordinator,
             profile_admin=profile_admin,
             menu_sessions=menu_sessions,
+            config_store=config_store,
         )
     )
     root.include_router(

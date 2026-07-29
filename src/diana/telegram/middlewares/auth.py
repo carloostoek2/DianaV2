@@ -13,7 +13,7 @@ from typing import Any, Protocol
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
-from diana.application.ports import PromoTriggerRecord, VipStore
+from diana.application.ports import PromoTriggerRecord, TrainingModeStore, VipStore
 
 logger = logging.getLogger("diana.telegram")
 
@@ -42,11 +42,13 @@ class AuthMiddleware(BaseMiddleware):
         promo: PromoMatcher | None = None,
         feature_promo_enabled: bool = False,
         sandbox: Any | None = None,
+        training_mode: TrainingModeStore | None = None,
     ) -> None:
         self._vips = vips
         self._promo = promo
         self._feature_promo_enabled = feature_promo_enabled
         self._sandbox = sandbox
+        self._training_mode = training_mode
 
     async def __call__(
         self,
@@ -100,6 +102,19 @@ class AuthMiddleware(BaseMiddleware):
 
         allowed = await self._vips.is_allowed(user.id)
         if not allowed:
+            # Training mode gate: non-VIP + training ON → pass through
+            # to the cognitive pipeline WITHOUT setting vip_id/vip_record.
+            # This gate fires BEFORE the promo check (training mode wins).
+            if self._training_mode is not None and await self._training_mode.is_enabled():
+                logger.info(
+                    "training_mode_bypass",
+                    extra={
+                        "telegram_user_id": user.id,
+                        "chat_id": chat_id,
+                    },
+                )
+                return await handler(event, data)
+
             if (
                 self._feature_promo_enabled
                 and self._promo is not None

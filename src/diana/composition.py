@@ -592,6 +592,8 @@ def build_app(
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
         sandbox=sandbox,
+        training_mode=config_store,
+        config_store=config_store,
         rate_limit_max_events=settings.rate_limit_max_events,
         rate_limit_window_s=settings.rate_limit_window_s,
         dedup_ttl_s=settings.dedup_ttl_s,
