@@ -564,7 +564,8 @@ def parse_menu_callback(data: str) -> MenuCallback | None:
         return MenuCallback(category="sandbox", action="activate_p", extra=profile)
 
     action = parts[1] if len(parts) > 1 else None
-    return MenuCallback(category=category, action=action)
+    extra = ":".join(parts[2:]) if len(parts) > 2 else None
+    return MenuCallback(category=category, action=action, extra=extra)
 
 
 def _menu_back_row() -> list[InlineKeyboardButton]:
