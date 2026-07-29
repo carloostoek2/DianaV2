@@ -105,13 +105,16 @@ async def test_startup_renotifies_waiting_approvals() -> None:
 
 @pytest.mark.asyncio
 async def test_startup_never_calls_deliver_or_approve() -> None:
-    """Guard: recovery helper has no deliver/approve surface."""
+    """Guard: recovery helper has no direct approve/Director surface.
+
+    Recovery MAY call BehaviorEngine.recover_pending_delivery to safely
+    re-schedule fresh pending deliveries, but must never auto-approve or
+    invoke the cognitive pipeline (Director).
+    """
     import inspect
 
     from diana.application import recovery_startup as mod
 
     src = inspect.getsource(mod.run_startup_recovery)
     assert "handle_approve" not in src
-    assert "behavior.deliver" not in src
-    assert "BehaviorEngine" not in src
     assert "Director" not in src

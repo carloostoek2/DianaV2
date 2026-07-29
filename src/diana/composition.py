@@ -683,13 +683,16 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:
-    """Expire mid-flight deliveries; re-notify waiting approvals."""
+    """Expire mid-flight deliveries; recover fresh ones; re-notify approvals."""
     return await run_startup_recovery(
         deliveries=app.deliveries,
         approvals=app.approvals,
         notifier=app.notifier,
         clock=app.clock,
         stale_after=DEFAULT_STALE_AFTER,
+        behavior=app.behavior,
+        vips=app.vips,
+        global_mode=app.settings.global_mode,
     )
 
 

@@ -612,6 +612,33 @@ class BehaviorEngine:
             extra={"chat_id": chat_id, "rows_cancelled": n, "reason": reason},
         )
 
+    async def recover_pending_delivery(
+        self,
+        record: DeliveryRecord,
+        ctx: DeliveryContext,
+    ) -> DeliveryResult:
+        """Resume a pending delivery that survived a restart.
+
+        Expires the stale row and re-enters the normal delivery path so all
+        safety gates (freeze, supersede, pre-send liveness) still apply.
+        Only call during startup recovery for rows still in ``pending`` status.
+        """
+        await self._safe_mark(record.id, "expired")
+        logger.info(
+            "delivery_recovered",
+            extra={
+                "turn_id": str(record.turn_id),
+                "chat_id": record.chat_id,
+                "old_delivery_id": str(record.id),
+            },
+        )
+        return await self.deliver(
+            texts=list(record.texts),
+            ctx=ctx,
+            turn_id=record.turn_id,
+            decision=record.decision,
+        )
+
     async def _safe_mark(self, delivery_id: UUID, status: str) -> None:
         try:
             await self._deliveries.update_status(delivery_id, status)
