@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from diana.application.ports import (
     TurnRecord,
     TurnStore,
 )
+from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.models import TERMINAL_TURN_STATUSES, TurnStatus, parse_turn_status
 
 logger = logging.getLogger("diana.application")
@@ -112,6 +114,8 @@ class TurnCoordinator:
         self._lock_acquire_retries = lock_acquire_retries
         self._recontact = recontact
         self._feature_recontact_enabled = feature_recontact_enabled
+        self._owner_interventions: dict[int, float] = {}
+        self._turn_chat_ids: dict[UUID, int] = {}
 
     @asynccontextmanager
     async def chat_scope(self, chat_id: int) -> AsyncIterator[None]:
@@ -148,6 +152,28 @@ class TurnCoordinator:
             yield
         finally:
             lock.release()
+
+    def mark_owner_intervened(self, chat_id: int) -> None:
+        """Record that the owner wrote in a VIP chat (no lock needed).
+
+        Called by OwnerDetectionMiddleware before attempting coordinate()
+        so the flag is set even when the chat lock is held by the pipeline.
+        """
+        self._owner_interventions[chat_id] = _time.monotonic()
+
+    def is_owner_intervened(
+        self, chat_id: int, since: float | None = None
+    ) -> bool:
+        """Check whether the owner wrote in *chat_id* during the current turn."""
+        ts = self._owner_interventions.get(chat_id)
+        if ts is None:
+            return False
+        if since is not None and ts < since:
+            return False
+        return True
+
+    def clear_owner_intervention(self, chat_id: int) -> None:
+        self._owner_interventions.pop(chat_id, None)
 
     async def coordinate(
         self,
@@ -341,6 +367,8 @@ class TurnCoordinator:
         assert result.turn_id is not None
         record = await self._turns.get(result.turn_id)
         assert record is not None
+        self._turn_chat_ids[record.id] = chat_id
+        self.clear_owner_intervention(chat_id)
         return record
 
     async def get_turn(self, turn_id: UUID) -> TurnRecord | None:
@@ -366,6 +394,8 @@ class TurnCoordinator:
         assert result.turn_id is not None
         record = await self._turns.get(result.turn_id)
         assert record is not None
+        self._turn_chat_ids[record.id] = chat_id
+        self.clear_owner_intervention(chat_id)
         return record
 
     async def transition(
@@ -392,7 +422,13 @@ class TurnCoordinator:
     async def transition_sink(
         self, turn_id: UUID, status: str | TurnStatus
     ) -> None:
-        """TurnStatusSink adapter for CognitiveDirector injection."""
+        """TurnStatusSink adapter — checks owner intervention before transition."""
+        chat_id = self._turn_chat_ids.get(turn_id)
+        if chat_id is not None and self.is_owner_intervened(chat_id):
+            await self._supersede_nonterminal(
+                chat_id, superseded_by=None, cancel_reason="owner_message"
+            )
+            raise TurnSupersededError()
         await self.transition(turn_id, status)
 
     def is_terminal_status(self, status: str) -> bool:

@@ -69,9 +69,18 @@ class GeneratorEmptyOutputError(Exception):
         return self.reason
 
 
+class TurnSupersededError(Exception):
+    """Raised when a live turn is superseded mid-pipeline by owner intervention.
+
+    The turn has already been transitioned to SUPERSEDED before this raises.
+    Callers must not mark FAILED on this exception.
+    """
+
+
 __all__ = [
     "AnalystSchemaInvalidError",
     "ContextExceedsLimitError",
     "EvaluatorSchemaInvalidError",
     "GeneratorEmptyOutputError",
+    "TurnSupersededError",
 ]

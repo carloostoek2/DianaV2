@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
@@ -31,6 +31,7 @@ from diana.cognitive.exceptions import (
     ContextExceedsLimitError,
     EvaluatorSchemaInvalidError,
     GeneratorEmptyOutputError,
+    TurnSupersededError,
 )
 from diana.cognitive.models import (
     Decision,
@@ -182,6 +183,14 @@ class TurnOrchestrator:
         if pre_delay > 0:
             await asyncio.sleep(pre_delay)
 
+        # Abort if owner replied directly in chat during the pre-pipeline delay.
+        if self._coordinator.is_owner_intervened(chat_id):
+            logger.info(
+                "turn_aborted_owner_intervened_pre_pipeline",
+                extra={"chat_id": chat_id, "vip_id": str(incoming.vip_id)},
+            )
+            return uuid4()  # no turn created; return a synthetic id for logging
+
         pending_deliver: _AutonomousDeliverJob | None
         async with self._coordinator.chat_scope(chat_id):
             turn_id, pending_deliver = await self._handle_vip_message_locked(
@@ -331,6 +340,12 @@ class TurnOrchestrator:
 
         try:
             decision = await self._director.handle_turn(turn_ctx)
+        except TurnSupersededError:
+            logger.info(
+                "turn_superseded_owner_intervened",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+            return turn_id, None
         except Exception as exc:
             # Terminal latch: no-ops if already superseded while Director ran
             # (should not happen under full chat_scope; still safe).

@@ -31,6 +31,7 @@ from diana.cognitive.models import (
     IncomingTurn,
     TurnStatus,
 )
+from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.repetition_guard import RepetitionGuard
 from diana.cognitive.template_gate import TemplateGate, TemplateRule
 from diana.cognitive.planner import Planner
@@ -146,6 +147,8 @@ class CognitiveDirector:
                 if rule is not None:
                     return await self._handle_template(turn, rule, gate)
             return await self._run_pipeline(turn)
+        except TurnSupersededError:
+            raise
         except Exception:
             await self._status.transition(turn_id, TurnStatus.FAILED)
             raise

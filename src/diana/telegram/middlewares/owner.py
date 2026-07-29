@@ -56,6 +56,7 @@ class OwnerDetectionMiddleware(BaseMiddleware):
             chat_id = getattr(chat, "id", None) if chat else None
             action: str | None = None
             if chat_id is not None:
+                self._coordinator.mark_owner_intervened(chat_id)
                 result = await self._coordinator.coordinate(
                     chat_id,
                     "owner",
