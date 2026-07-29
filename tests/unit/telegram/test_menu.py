@@ -104,7 +104,7 @@ _OWNER_ID = 999
 
 
 def _callback(
-    category: str, action: str, vip_user_id: int | None = None, extra: str | None = None
+    category: str, action: str | None = None, vip_user_id: int | None = None, extra: str | None = None
 ):
     from diana.telegram.keyboards import MenuCallback
 

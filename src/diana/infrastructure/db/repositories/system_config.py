@@ -103,7 +103,13 @@ class SqlSystemConfigStore:
         Returns False when the key is missing.
         """
         value = await self.get("training_mode_enabled")
-        return bool(value) if value is not None else False
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ("true", "1", "yes", "on")
+        return bool(value)
 
     async def set_training_mode_enabled(self, enabled: bool) -> None:
         """Persist training_mode_enabled flag (upsert)."""

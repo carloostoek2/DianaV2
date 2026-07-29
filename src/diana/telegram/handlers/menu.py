@@ -22,7 +22,7 @@ from aiogram.types import CallbackQuery, Message
 
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_trace_service import AdminTraceService
-from diana.application.ports import VipStore
+from diana.application.ports import TrainingModeStore, VipStore
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.sandbox import SandboxService
 from diana.application.staging_service import StagingService
@@ -36,7 +36,6 @@ from diana.telegram.handlers.staging import (
     format_staging_candidate_body,
     load_pending_staging_list,
 )
-from diana.application.ports import TrainingModeStore
 from diana.telegram.keyboards import (
     MENU_CATEGORY_TEXT,
     MENU_ROOT_TEXT,
@@ -153,7 +152,8 @@ class HasActiveMenuSession(Filter):
 
 
 # ---------------------------------------------------------------------------
-# Category keyboards — "vips" is dynamic, rest are static
+# Category keyboards — "vips" is dynamic, "config" is parameterized (needs state),
+# rest are static parameterless factories.
 # ---------------------------------------------------------------------------
 
 _CATEGORY_KEYBOARDS: dict[str, Any] = {
@@ -372,10 +372,17 @@ def build_menu_router(
                 return
 
             if parsed.category == "config":
+                if config_store is None:
+                    await _show(
+                        msg,
+                        "Configuracion no disponible.",
+                        menu_back_keyboard(encode_menu("root")),
+                    )
+                    return
                 text = MENU_CATEGORY_TEXT.get(parsed.category)
                 if text is None:
                     return
-                enabled = await config_store.is_enabled() if config_store else False
+                enabled = await config_store.is_enabled()
                 await _show(msg, text, menu_config_keyboard(enabled))
                 return
 
@@ -991,9 +998,14 @@ async def _dispatch_action(
         current = await config_store.is_enabled()
         new_state = not current
         await config_store.set_enabled(new_state)
-        logger.info("training_mode_toggle", extra={"enabled": new_state})
-        text = MENU_CATEGORY_TEXT.get("config", "Configuracion")
-        await _show(message, text, menu_config_keyboard(new_state))
+        logger.info(
+            "training_mode_toggle",
+            extra={
+                "actor_id": actor_id,
+                "enabled": new_state,
+            },
+        )
+        await _show(message, MENU_CATEGORY_TEXT["config"], menu_config_keyboard(new_state))
         return
 
     # Unknown / unmapped action — should not normally happen.

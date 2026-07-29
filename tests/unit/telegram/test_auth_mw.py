@@ -421,6 +421,17 @@ async def test_training_mode_off_legacy_drop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_training_mode_none() -> None:
+    """AuthMiddleware without training_mode drops non-VIP (legacy behavior)."""
+    vips = InMemoryVipStore()
+    mw = AuthMiddleware(vips=vips)  # no training_mode arg
+    handler = AsyncMock(return_value="orch")
+    result = await mw(handler, _biz_msg(111), {"business_connection_id": "bc-1"})
+    assert result is None
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_training_mode_on_private_non_owner_still_dropped() -> None:
     """Private DM from non-owner still dropped with training ON."""
     vips = InMemoryVipStore()
