@@ -351,11 +351,31 @@ def build_menu_router(
 
     # ---- text capture for multi-step flows ----
 
+    @router.message(Command("cancelar"))
+    async def on_cancel_command(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        owner_id = message.from_user.id  # type: ignore[union-attr]
+        if sessions.pop(owner_id) is not None:
+            await message.reply("Operacion cancelada.")
+        else:
+            await message.reply("No hay ninguna operacion activa para cancelar.")
+
     @router.message(HasActiveMenuSession(sessions))
     async def on_menu_session_text(message: Message, bot: Bot, **_: Any) -> None:
         if not _is_owner(message):
             return
         owner_id = message.from_user.id  # type: ignore[union-attr]
+
+        # Treat literal "/cancelar" as a cancel command, not as input text,
+        # so users who follow the "Usa /cancelar para abortar." instruction
+        # don't accidentally rename the VIP (or add a note/fact) to "/cancelar".
+        text = (message.text or "").strip()
+        if text == "/cancelar":
+            sessions.pop(owner_id)
+            await message.reply("Operacion cancelada.")
+            return
+
         session = sessions.pop(owner_id)
         if session is None:
             return
