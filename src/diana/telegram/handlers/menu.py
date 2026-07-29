@@ -46,6 +46,7 @@ from diana.telegram.keyboards import (
     menu_confirm_delete_keyboard,
     menu_history_keyboard,
     menu_metrics_keyboard,
+    menu_register_confirm_keyboard,
     menu_review_keyboard,
     menu_root_keyboard,
     menu_sandbox_keyboard,
@@ -68,7 +69,7 @@ logger = logging.getLogger("diana.telegram")
 DEFAULT_MENU_TTL = timedelta(minutes=15)
 
 MenuSessionKind = Literal[
-    "sandbox_forward", "sandbox_profile", "note", "fact", "rename"
+    "sandbox_forward", "sandbox_profile", "note", "fact", "rename", "register_vip"
 ]
 
 
@@ -254,6 +255,28 @@ def _extract_chat_id_from_forward(message: Message) -> int | None:
     return None
 
 
+def _extract_user_from_forward(message: Message) -> tuple[int, str | None] | None:
+    """Extract (user_id, display_name) from a forwarded user message, or None.
+
+    Returns ``None`` when the forwarded message is not from a user (e.g. chat,
+    channel, or hidden sender).
+    """
+    forward_origin = message.forward_origin
+    if forward_origin is not None:
+        sender_user = getattr(forward_origin, "sender_user", None)
+        if sender_user is not None:
+            display = sender_user.full_name or None
+            return (sender_user.id, display)
+        return None
+
+    # Legacy forward_from (User object)
+    fwd_user = getattr(message, "forward_from", None)
+    if fwd_user is not None:
+        display = fwd_user.full_name or None
+        return (fwd_user.id, display)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # build_menu_router
 # ---------------------------------------------------------------------------
@@ -387,6 +410,8 @@ def build_menu_router(
                 bot, "Usa los botones para seleccionar un perfil.",
                 session=session, fallback=message,
             )
+        elif session.kind == "register_vip":
+            await _handle_register_forward(message, bot, session, vips, sessions)
         elif session.kind == "note":
             await _handle_note_text(message, bot, session, profile_admin)
         elif session.kind == "fact":
@@ -580,6 +605,64 @@ async def _dispatch_action(
             return
 
         await _show(message, "Accion no disponible.", None)
+        return
+
+    # ==================================================================
+    # Register VIP (start the forward-flow)
+    # ==================================================================
+    if category == "vips" and action == "register":
+        sessions.start(
+            actor_id,
+            "register_vip",
+            last_bot_message_id=message.message_id,
+            last_chat_id=message.chat.id,
+        )
+        await _show(
+            message,
+            "Para registrar un nuevo VIP, reenvíame un mensaje "
+            "de la persona que quieras agregar.\n\n"
+            "Tiene que ser un mensaje reenviado desde el chat "
+            "con esa persona.\n\n"
+            "Usa /cancelar para abortar.",
+            None,
+        )
+        return
+
+    # ==================================================================
+    # Register confirm/cancel (buttons from confirmation)
+    # ==================================================================
+    if category == "register":
+        if action == "cancel":
+            await _show(
+                message,
+                "Registro cancelado.",
+                menu_back_keyboard(encode_menu("vips")),
+            )
+            return
+
+        if action == "confirm":
+            try:
+                user_id = int(parsed.extra or "0")
+            except (ValueError, TypeError):
+                await _show(message, "ID de usuario inválido.", None)
+                return
+
+            # Check if already exists (active or not)
+            existing = await vips.get_by_telegram_user_id(user_id)
+            display_name: str | None = None
+            if existing is not None:
+                display_name = existing.display_name
+
+            result = await vips.add(user_id)
+            name = display_name or result.display_name or str(user_id)
+            await _show(
+                message,
+                f"✅ VIP registrado: {name} (ID: {user_id})",
+                menu_back_keyboard(encode_menu("vips")),
+            )
+            return
+
+        await _show(message, "Acción no disponible.", None)
         return
 
     # ==================================================================
@@ -834,6 +917,54 @@ async def _handle_sandbox_forward(
         last_bot_message_id=session.last_bot_message_id,
         last_chat_id=session.last_chat_id,
     )
+    await _edit_or_answer(
+        bot, text, session=session, fallback=message, keyboard=kb,
+    )
+
+
+async def _handle_register_forward(
+    message: Message,
+    bot: Bot,
+    session: MenuSession,
+    vips: VipStore,
+    sessions: MenuSessionStore,
+) -> None:
+    user_info = _extract_user_from_forward(message)
+    if user_info is None:
+        await _edit_or_answer(
+            bot,
+            "No se pudo identificar al usuario. Asegurate de reenviar "
+            "un mensaje desde el chat de la persona que quieras agregar.",
+            session=session,
+            fallback=message,
+        )
+        return
+
+    user_id, display_name = user_info
+    name_str = display_name or str(user_id)
+
+    # Check if already an active VIP.
+    existing = await vips.get_by_telegram_user_id(user_id)
+    if existing is not None and existing.is_active:
+        await _edit_or_answer(
+            bot,
+            f"El usuario {name_str} (ID: {user_id}) ya es un VIP activo.",
+            session=session,
+            fallback=message,
+        )
+        return
+
+    # Build confirmation text.
+    text = (
+        f"📋 Datos del usuario:\n"
+        f"  ID: {user_id}\n"
+        f"  Nombre: {display_name or '(sin nombre)'}\n"
+    )
+    if existing is not None and not existing.is_active:
+        text += "\n⚠️ Este usuario estaba desactivado. Se reactivará."
+    text += "\n¿Agregar este usuario como VIP?"
+
+    kb = menu_register_confirm_keyboard(user_id)
     await _edit_or_answer(
         bot, text, session=session, fallback=message, keyboard=kb,
     )

@@ -587,7 +587,7 @@ def menu_root_keyboard() -> InlineKeyboardMarkup:
 def menu_vip_list_keyboard(
     vips_data: list[tuple[int, str | None]],
 ) -> InlineKeyboardMarkup:
-    """One button per VIP with display name or user ID, plus back to root."""
+    """One button per VIP with display name or user ID, plus register and back."""
     buttons: list[list[InlineKeyboardButton]] = []
     for user_id, display_name in vips_data:
         label = display_name or str(user_id)
@@ -597,6 +597,12 @@ def menu_vip_list_keyboard(
                 callback_data=encode_menu_vip(user_id),
             )
         ])
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Registrar nuevo VIP",
+            callback_data=encode_menu("vips", "register"),
+        ),
+    ])
     buttons.append(_menu_back_row())
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -682,6 +688,40 @@ def menu_sandbox_profile_picker_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def encode_register_confirm(user_id: int) -> str:
+    """Callback for register confirmation: m:register:confirm:<user_id>."""
+    data = f"{_ACTION_MENU}:register:confirm:{user_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_register_cancel() -> str:
+    """Callback for register cancel: m:register:cancel."""
+    data = f"{_ACTION_MENU}:register:cancel"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def menu_register_confirm_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Confirm or cancel VIP registration."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Confirmar",
+                    callback_data=encode_register_confirm(user_id),
+                ),
+                InlineKeyboardButton(
+                    text="❌ Cancelar",
+                    callback_data=encode_register_cancel(),
+                ),
+            ],
+        ]
+    )
+
+
 def menu_confirm_delete_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Confirm or cancel VIP deactivation."""
     return InlineKeyboardMarkup(
@@ -735,6 +775,8 @@ __all__ = [
     "encode_menu_vip_action",
     "encode_metrics_back",
     "encode_metrics_export",
+    "encode_register_cancel",
+    "encode_register_confirm",
     "encode_staging_discard",
     "encode_staging_promote",
     "encode_trace_view",
@@ -742,6 +784,18 @@ __all__ = [
     "encode_trace_page",
     "encode_trace_json",
     "metrics_keyboard",
+    "menu_back_keyboard",
+    "menu_confirm_delete_keyboard",
+    "menu_history_keyboard",
+    "menu_metrics_keyboard",
+    "menu_register_confirm_keyboard",
+    "menu_review_keyboard",
+    "menu_root_keyboard",
+    "menu_sandbox_keyboard",
+    "menu_sandbox_profile_picker_keyboard",
+    "menu_vip_detail_keyboard",
+    "menu_vip_list_keyboard",
+    "menu_vip_profile_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
     "parse_menu_callback",
@@ -754,15 +808,4 @@ __all__ = [
     "trace_list_keyboard",
     "MENU_ROOT_TEXT",
     "MENU_CATEGORY_TEXT",
-    "menu_back_keyboard",
-    "menu_root_keyboard",
-    "menu_vip_list_keyboard",
-    "menu_vip_detail_keyboard",
-    "menu_vip_profile_keyboard",
-    "menu_review_keyboard",
-    "menu_sandbox_keyboard",
-    "menu_sandbox_profile_picker_keyboard",
-    "menu_confirm_delete_keyboard",
-    "menu_metrics_keyboard",
-    "menu_history_keyboard",
 ]
