@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 
+from diana.application.missed_message_recovery import recover_missed_updates
 from diana.composition import (
     AppContainer,
     build_app,
@@ -60,6 +61,22 @@ async def async_main() -> None:
             "re_notified": report.re_notified_approvals,
         },
     )
+
+    # F4: recover any business messages that arrived while the bot was offline.
+    # Best-effort: polling loop provides the fallback if Telegram API is unavailable.
+    try:
+        missed = await recover_missed_updates(bot=app.bot, dispatcher=app.dispatcher)
+        if missed.total_updates:
+            logger.info(
+                "missed_updates_recovered",
+                extra={
+                    "business": missed.recovered_business_messages,
+                    "regular": missed.recovered_regular_messages,
+                    "total": missed.total_updates,
+                },
+            )
+    except Exception:
+        logger.exception("missed_message_recovery_failed")
 
     # F2 Item 4: start gray zone expiration background job.
     expiration_job = _setup_expiration_job(app)
