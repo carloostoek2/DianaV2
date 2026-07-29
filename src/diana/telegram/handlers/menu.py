@@ -100,6 +100,7 @@ class MenuSessionStore:
         clock: Any = None,
     ) -> None:
         self._sessions: dict[int, MenuSession] = {}
+        self._pending_vip_names: dict[int, str] = {}
         self._ttl = ttl
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -129,6 +130,12 @@ class MenuSessionStore:
 
     def cancel(self, owner_id: int) -> None:
         self._sessions.pop(owner_id, None)
+
+    def store_pending_vip_name(self, owner_id: int, name: str) -> None:
+        self._pending_vip_names[owner_id] = name
+
+    def pop_pending_vip_name(self, owner_id: int) -> str | None:
+        return self._pending_vip_names.pop(owner_id, None)
 
 
 class HasActiveMenuSession(Filter):
@@ -741,14 +748,11 @@ async def _dispatch_action(
                 await _show(message, "ID de usuario inválido.", None)
                 return
 
-            # Check if already exists (active or not)
-            existing = await vips.get_by_telegram_user_id(user_id)
-            display_name: str | None = None
-            if existing is not None:
-                display_name = existing.display_name
+            # Use the display name from the forwarded message if available.
+            pending_name = sessions.pop_pending_vip_name(actor_id)
 
-            result = await vips.add(user_id)
-            name = display_name or result.display_name or str(user_id)
+            result = await vips.add(user_id, display_name=pending_name)
+            name = result.display_name or str(user_id)
             await _show(
                 message,
                 f"✅ VIP registrado: {name} (ID: {user_id})",
@@ -1047,6 +1051,10 @@ async def _handle_register_forward(
             fallback=message,
         )
         return
+
+    # Store the display name so the confirm handler can save it.
+    if display_name is not None and message.from_user is not None:
+        sessions.store_pending_vip_name(message.from_user.id, display_name)
 
     # Build confirmation text.
     text = (
