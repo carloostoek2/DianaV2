@@ -135,10 +135,12 @@ def build_dispatcher(
         forbidden_mw,
     ]
 
-    # Apply to business messages (VIP path) and private messages/callbacks.
+    # Apply to business messages (VIP path), edited business messages,
+    # and private messages/callbacks.
     for mw in middlewares:
         dp.message.middleware(mw)
         dp.business_message.middleware(mw)
+        dp.edited_business_message.middleware(mw)
         # FreezeCheckMiddleware is a no-op for non-Message events so skip it on
         # callback_query to keep the middleware chain lean (LOW-3).
         if not isinstance(mw, FreezeCheckMiddleware):

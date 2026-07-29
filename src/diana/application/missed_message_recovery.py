@@ -51,7 +51,7 @@ async def recover_missed_updates(
         updates = await bot.get_updates(
             offset=offset,
             timeout=0,  # return immediately, no long-poll wait
-            allowed_updates=["business_message", "message", "callback_query"],
+            allowed_updates=["business_message", "edited_business_message", "message", "callback_query"],
         )
         if not updates:
             break
@@ -60,10 +60,18 @@ async def recover_missed_updates(
         for update in updates:
             if update.business_message:
                 recovered_business += 1
+            elif update.edited_business_message:
+                recovered_business += 1
             elif update.message:
                 recovered_regular += 1
 
-            await dispatcher.feed_update(bot, update)
+            try:
+                await dispatcher.feed_update(bot, update)
+            except BaseException:
+                logger.exception(
+                    "missed_message_recovery_feed_failed",
+                    extra={"update_id": update.update_id},
+                )
             offset = update.update_id + 1
             total += 1
 

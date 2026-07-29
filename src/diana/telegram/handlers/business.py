@@ -51,6 +51,41 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
                 },
             )
 
+    @router.edited_business_message()
+    async def on_edited_business_message(
+        message: Message,
+        business_connection_id: str | None = None,
+        vip_id: UUID | None = None,
+        **_: Any,
+    ) -> None:
+        bc = business_connection_id or message.business_connection_id
+        text = message.text or message.caption or ""
+        if not text:
+            return
+        inbound = VipInboundMessage(
+            chat_id=message.chat.id,
+            text=text,
+            telegram_message_id=message.message_id,
+            business_connection_id=bc,
+            vip_id=vip_id,
+        )
+        try:
+            turn_id = await orchestrator.handle_vip_message(inbound)
+            logger.info(
+                "edited_business_handled",
+                extra={"turn_id": str(turn_id), "chat_id": inbound.chat_id},
+            )
+        except Exception:
+            logger.exception(
+                "edited_business_handler_error",
+                extra={
+                    "chat_id": inbound.chat_id,
+                    "telegram_message_id": inbound.telegram_message_id,
+                    "vip_id": str(inbound.vip_id) if inbound.vip_id else None,
+                    "business_connection_id": inbound.business_connection_id,
+                },
+            )
+
     return router
 
 

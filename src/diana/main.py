@@ -75,7 +75,7 @@ async def async_main() -> None:
                     "total": missed.total_updates,
                 },
             )
-    except Exception:
+    except BaseException:
         logger.exception("missed_message_recovery_failed")
 
     # F2 Item 4: start gray zone expiration background job.
@@ -108,7 +108,7 @@ async def async_main() -> None:
         try:
             await app.dispatcher.start_polling(
                 app.bot,
-                allowed_updates=["message", "business_message", "callback_query"],
+                allowed_updates=["message", "business_message", "edited_business_message", "callback_query"],
             )
         finally:
             await health.stop()
