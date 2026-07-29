@@ -110,8 +110,8 @@ class TestTraceListKeyboard:
             total_pages=3,
         )
         buttons = [b.text for row in kb.inline_keyboard for b in row]
-        assert "Previous" not in buttons
-        assert "Next" in buttons
+        assert not any("Anterior" in b for b in buttons)
+        assert any("Siguiente" in b for b in buttons)
 
     def test_pagination_next_hidden_on_last_page(self) -> None:
         turn_id = uuid4()
@@ -121,8 +121,8 @@ class TestTraceListKeyboard:
             total_pages=3,
         )
         buttons = [b.text for row in kb.inline_keyboard for b in row]
-        assert "Previous" in buttons
-        assert "Next" not in buttons
+        assert any("Anterior" in b for b in buttons)
+        assert not any("Siguiente" in b for b in buttons)
 
 
 class TestTraceDetailKeyboard:
@@ -134,8 +134,8 @@ class TestTraceDetailKeyboard:
         assert "Generator" in all_text
         assert "Evaluator" in all_text
         assert "Decider" in all_text
-        assert "Export JSON" in all_text
-        assert "Back to turns" in all_text
+        assert "Exportar JSON" in all_text
+        assert "Volver a turnos" in all_text
 
     def test_shows_timings_when_present(self, turn_id: UUID) -> None:
         kb = trace_detail_keyboard(turn_id, timings={"analyst_ms": 100.0, "decider_ms": 0.5})
@@ -148,7 +148,7 @@ class TestStepDetailKeyboard:
     def test_has_back_button(self, turn_id: UUID) -> None:
         kb = step_detail_keyboard(turn_id)
         assert len(kb.inline_keyboard) == 1
-        assert kb.inline_keyboard[0][0].text == "Back to trace"
+        assert kb.inline_keyboard[0][0].text == "🔙 Volver a traza"
         assert "vt" in kb.inline_keyboard[0][0].callback_data
 
 
@@ -167,5 +167,5 @@ class TestDraftKeyboard:
         turn_id = uuid4()
         kb = draft_keyboard(turn_id)
         all_text = [b.text for row in kb.inline_keyboard for b in row]
-        assert "Trace" in all_text
+        assert any("Traza" in b for b in all_text)
         assert len(kb.inline_keyboard) >= 2  # original row + trace row

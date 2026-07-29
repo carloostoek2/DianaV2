@@ -42,12 +42,12 @@ class TestStagingKeyboards:
         assert parse_callback(encode_staging_promote(cid)) is None
         assert parse_callback(encode_staging_discard(cid)) is None
 
-    def test_keyboard_buttons_english(self) -> None:
+    def test_keyboard_buttons_spanish(self) -> None:
         cid = uuid4()
         kb = staging_candidate_keyboard(cid)
         row = kb.inline_keyboard[0]
         assert len(row) == 2
         assert row[0].callback_data == encode_staging_promote(cid)
         assert row[1].callback_data == encode_staging_discard(cid)
-        assert "Promote" in (row[0].text or "")
-        assert "Discard" in (row[1].text or "")
+        assert "Promover" in (row[0].text or "")
+        assert "Descartar" in (row[1].text or "")

@@ -141,6 +141,17 @@ class AdminService:
         )
         await self._approvals.create_waiting(record)
         reason = self._sandbox_reason(turn.chat_id, decision.reason)
+
+        # Look up the VIP display name for the draft header.
+        vip_name: str | None = None
+        if self._vip_store is not None:
+            if turn.vip_id is not None:
+                vip_rec = await self._vip_store.get_by_id(turn.vip_id)
+            else:
+                vip_rec = await self._vip_store.get_by_telegram_user_id(turn.chat_id)
+            if vip_rec is not None:
+                vip_name = vip_rec.display_name
+
         owner_mid = await self._notifier.notify_draft(
             DraftNotification(
                 turn_id=turn_id,
@@ -148,6 +159,7 @@ class AdminService:
                 vip_text=turn.text,
                 draft_text=draft,
                 reason=reason,
+                vip_display_name=vip_name,
                 evaluation_summary=_eval_summary(decision),
                 evaluation=decision.evaluation.model_dump(mode="json"),
                 business_connection_id=bc,

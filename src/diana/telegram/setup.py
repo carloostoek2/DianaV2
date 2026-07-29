@@ -98,6 +98,7 @@ def build_dispatcher(
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
     sessions = correct_sessions or CorrectSessionStore()
+    sessions_note: dict[int, int] = {}
     menu_sessions = MenuSessionStore()
 
     # first registered = outermost (aiogram wraps with reversed()).
@@ -175,6 +176,8 @@ def build_dispatcher(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             owner_telegram_id=owner_telegram_id,
+            note_sessions=sessions_note,
+            profile_admin=profile_admin,
         )
     )
     root.include_router(
@@ -186,6 +189,7 @@ def build_dispatcher(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             profile_admin=profile_admin,
+            note_sessions=sessions_note,
             sandbox=sandbox,  # type: ignore[arg-type]
             coordinator=coordinator,
         )

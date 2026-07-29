@@ -57,7 +57,7 @@ async def test_standard_owner_callback_answers_alert_on_exception() -> None:
     args, kwargs = query.answer.await_args
     assert kwargs.get("show_alert") is True
     text = args[0] if args else kwargs.get("text", "")
-    assert "Error processing action" in text
+    assert "Error al procesar la acción" in text
     mock_logger.exception.assert_called()
     assert mock_logger.exception.call_args.args[0] == "owner_callback_error"
     extra = mock_logger.exception.call_args.kwargs.get("extra") or {}

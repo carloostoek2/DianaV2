@@ -13,6 +13,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.profile_admin_service import ProfileAdminService
 from diana.telegram.keyboards import (
     MENU_ROOT_TEXT,
     menu_root_keyboard,
@@ -35,18 +36,18 @@ ADMIN_MENU_TEXT = (
     "/vip_fact_del <telegram_user_id> <key>\n"
     "/vip_note <telegram_user_id> <text>\n"
     "/vip_note_del <telegram_user_id> <index>\n"
-    "/sandbox — sandbox help\n"
+    "/sandbox — ayuda sandbox\n"
     "/sandbox on|off|perfil|perfiles|estado|reset\n"
-    "Draft buttons: Approve / Correct / Escalate\n"
-    "/turnos — recent turns\n"
-    "/traza <id> — trace detail\n"
-    "/fp <turn_id> — mark escalation false positive\n"
-    "/resumen — weekly learning metrics\n"
-    "/metricas — alias of /resumen\n"
-    "/staging — pending example candidates (promote/discard)"
+    "Botones del borrador: Aprobar / Corregir / Escalar\n"
+    "/turnos — turnos recientes\n"
+    "/traza <id> — detalle de traza\n"
+    "/fp <turn_id> — marar falsa alarma\n"
+    "/resumen — métricas semanales\n"
+    "/metricas — alias de /resumen\n"
+    "/staging — ejemplos pendientes (promover/descartar)"
 )
 
-SESSION_EXPIRED_UX = "Session expired — press Correct on the draft again"
+SESSION_EXPIRED_UX = "Sesión expirada — presioná Corregir de nuevo en el borrador"
 
 logger = logging.getLogger("diana.telegram")
 
@@ -240,9 +241,12 @@ def build_callback_router(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     owner_telegram_id: int | None = None,
+    note_sessions: dict[int, int] | None = None,
+    profile_admin: ProfileAdminService | None = None,
 ) -> Router:
     router = Router(name="callbacks")
     sessions = correct_sessions or CorrectSessionStore()
+    sessions_note = note_sessions or {}
 
     @router.callback_query()
     async def on_callback(query: CallbackQuery, **_: Any) -> None:
@@ -253,7 +257,7 @@ def build_callback_router(
         metrics_action = parse_metrics_callback(data)
         if metrics_action is not None:
             if owner_telegram_id is not None and actor_id != owner_telegram_id:
-                await query.answer("Not authorized", show_alert=True)
+                await query.answer("No autorizado", show_alert=True)
                 return
             if metrics_action == "back":
                 if query.message:
@@ -275,12 +279,35 @@ def build_callback_router(
                 await query.answer()
                 return
 
+        # ---- Add-note callback (an:<chat_id>) ----
+        if data.startswith("an:"):
+            if profile_admin is None:
+                await query.answer("Gestión de perfiles no disponible", show_alert=True)
+                return
+            if actor_id is None:
+                await query.answer("No autorizado", show_alert=True)
+                return
+            raw = data[3:]
+            try:
+                chat_id_val = int(raw)
+            except ValueError:
+                await query.answer("Dato inválido")
+                return
+            if chat_id_val == 0:
+                await query.answer("No se pudo identificar el chat", show_alert=True)
+                return
+            sessions_note[actor_id] = chat_id_val
+            await query.answer()
+            if query.message:
+                await query.message.answer("📝 Enviá el texto de la nota:")
+            return
+
         # ---- Trace callbacks (handled before standard dispatch) ----
         trace_parsed = parse_trace_callback(data)
         if trace_parsed is not None and admin_trace is not None:
             # Owner auth check for trace callbacks.
             if owner_telegram_id is not None and actor_id != owner_telegram_id:
-                await query.answer("Not authorized", show_alert=True)
+                await query.answer("No autorizado", show_alert=True)
                 return
 
             action = trace_parsed.action
@@ -288,15 +315,15 @@ def build_callback_router(
                 if action == "vt":
                     turn_id = trace_parsed.turn_id
                     if turn_id is None:
-                        await query.answer("Invalid trace data")
+                        await query.answer("Dato de traza inválido")
                         return
                     view = await admin_trace.render_trace_summary(turn_id)
                     if view is None:
-                        await query.answer("Turn not found", show_alert=True)
+                        await query.answer("Turno no encontrado", show_alert=True)
                         return
                     kb = trace_detail_keyboard(view.turn_id, timings=view.timings)
                     if query.message:
-                        await query.message.answer(view.text, reply_markup=kb)
+                        await query.message.edit_text(view.text, reply_markup=kb, parse_mode=None)
                     await query.answer()
                     return
 
@@ -304,15 +331,15 @@ def build_callback_router(
                     turn_id = trace_parsed.turn_id
                     step = trace_parsed.step or ""
                     if turn_id is None or not step:
-                        await query.answer("Invalid trace data")
+                        await query.answer("Dato de traza inválido")
                         return
                     view = await admin_trace.render_step_detail(turn_id, step)
                     if view is None:
-                        await query.answer("Turn not found", show_alert=True)
+                        await query.answer("Turno no encontrado", show_alert=True)
                         return
                     kb = step_detail_keyboard(view.turn_id)
                     if query.message:
-                        await query.message.answer(view.text, reply_markup=kb)
+                        await query.message.edit_text(view.text, reply_markup=kb, parse_mode=None)
                     await query.answer()
                     return
 
@@ -321,7 +348,7 @@ def build_callback_router(
                     # Global pagination (no chat_id filter) — residual vs /turnos filter.
                     view = await admin_trace.render_turns_page(page)
                     if view.empty:
-                        await query.answer("No turns on this page")
+                        await query.answer("No hay turnos en esta página")
                         return
                     kb = trace_list_keyboard(
                         view.turns_data,
@@ -336,7 +363,7 @@ def build_callback_router(
                 if action == "tj":
                     turn_id = trace_parsed.turn_id
                     if turn_id is None:
-                        await query.answer("Invalid trace data")
+                        await query.answer("Dato de traza inválido")
                         return
                     json_str = await admin_trace.export_trace_json(turn_id)
                     if query.message:
@@ -346,7 +373,7 @@ def build_callback_router(
                     return
             except Exception:
                 logger.exception("Error processing trace callback")
-                await query.answer("System error: unable to query traces. Try again later.", show_alert=True)
+                await query.answer("Error del sistema al consultar la traza. Reintentá más tarde.", show_alert=True)
                 return
 
         # ---- Standard owner callbacks ----
@@ -367,7 +394,7 @@ def build_callback_router(
             )
             try:
                 await query.answer(
-                    "Error processing action. Try again.",
+                    "Error al procesar la acción. Reintentá.",
                     show_alert=True,
                 )
             except Exception:
@@ -376,7 +403,7 @@ def build_callback_router(
 
         try:
             if status == "forbidden":
-                await query.answer("Not authorized", show_alert=True)
+                await query.answer("No autorizado", show_alert=True)
                 return
             if status == "awaiting_correct":
                 await query.answer()
@@ -384,7 +411,7 @@ def build_callback_router(
                 if query.message:
                     try:
                         await query.message.answer(
-                            f"Send corrected text for turn {data.split(':', 1)[-1]}"
+                            f"Enviá el texto corregido para el turno {data.split(':', 1)[-1]}"
                         )
                     except Exception:
                         logger.exception(
@@ -393,19 +420,29 @@ def build_callback_router(
                         )
                 return
             if status == "approved":
-                await query.answer("Approved")
+                if query.message:
+                    try:
+                        original = query.message.text or query.message.caption or ""
+                        await query.message.edit_text(
+                            f"✅ <b>Enviado</b>\n\n{original}",
+                            reply_markup=None,
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        logger.exception("Error al editar mensaje aprobado")
+                await query.answer()
                 return
             if status == "escalated":
-                await query.answer("Escalated")
+                await query.answer("Escalado al superior")
                 return
             if status == "stale":
                 await query.answer(
-                    "Already handled or superseded — no action taken",
+                    "Ya fue resuelto o reemplazado — no se realizó ninguna acción",
                     show_alert=True,
                 )
                 return
             if status == "deliver_failed":
-                await query.answer("Delivery failed — try again", show_alert=True)
+                await query.answer("Error al enviar — intentá de nuevo", show_alert=True)
                 return
             await query.answer()
         except Exception:

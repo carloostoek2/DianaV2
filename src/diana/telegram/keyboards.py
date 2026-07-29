@@ -18,6 +18,8 @@ _ACTION_VIEW_TRACE = "vt"
 _ACTION_TRACE_DETAIL = "td"
 _ACTION_TRACE_PAGE = "tp"
 _ACTION_TRACE_JSON = "tj"
+# Add note callback (an:<chat_id>) — ≤64 bytes
+_ACTION_ADD_NOTE = "an"
 # Metrics dashboard callbacks (mx:e export, mx:b back) — ≤64 bytes
 _ACTION_METRICS_EXPORT = "mx:e"
 _ACTION_METRICS_BACK = "mx:b"
@@ -36,6 +38,14 @@ def encode_callback(action: str, turn_id: UUID) -> str:
         "escalate": _ACTION_ESCALATE,
     }.get(action, action)
     data = f"{code}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_add_note(chat_id: int) -> str:
+    """Build callback_data for add-note button: an:<chat_id>."""
+    data = f"{_ACTION_ADD_NOTE}:{chat_id}"
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
     return data
@@ -105,20 +115,20 @@ def parse_doctrine_callback(data: str, prefix: str | None = None) -> UUID | None
 
 
 def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
-    """Approve / Correct / Escalate inline keyboard for owner DM."""
+    """Aprobar / Corregir / Escalar inline keyboard for owner DM."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Approve",
+                    text="✅ Aprobar",
                     callback_data=encode_callback("approve", turn_id),
                 ),
                 InlineKeyboardButton(
-                    text="✏️ Correct",
+                    text="✏️ Corregir",
                     callback_data=encode_callback("correct", turn_id),
                 ),
                 InlineKeyboardButton(
-                    text="⚠️ Escalate",
+                    text="⚠️ Escalar",
                     callback_data=encode_callback("escalate", turn_id),
                 ),
             ]
@@ -153,17 +163,17 @@ def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Respond to query",
+                    text="📝 Responder consulta",
                     callback_data=encode_doctrine_callback(turn_id),
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text="Use draft as-is",
+                    text="✅ Usar borrador",
                     callback_data=encode_doctrine_resolve_callback(turn_id),
                 ),
                 InlineKeyboardButton(
-                    text="Escalate",
+                    text="⚠️ Escalar",
                     callback_data=encode_doctrine_escalate_callback(turn_id),
                 ),
             ],
@@ -276,7 +286,7 @@ def trace_list_keyboard(
     for turn_id, short_id in turns:
         buttons.append([
             InlineKeyboardButton(
-                text=f"Trace {short_id}",
+                text=f"🔍 Traza {short_id}",
                 callback_data=encode_trace_view(turn_id),
             ),
         ])
@@ -286,14 +296,14 @@ def trace_list_keyboard(
     if page > 0:
         nav_row.append(
             InlineKeyboardButton(
-                text="Previous",
+                text="◀️ Anterior",
                 callback_data=encode_trace_page(page - 1),
             )
         )
     if page < total_pages - 1:
         nav_row.append(
             InlineKeyboardButton(
-                text="Next",
+                text="Siguiente ▶️",
                 callback_data=encode_trace_page(page + 1),
             )
         )
@@ -337,11 +347,11 @@ def trace_detail_keyboard(
     # Bottom row: export JSON + back to turns.
     buttons.append([
         InlineKeyboardButton(
-            text="Export JSON",
+            text="📥 Exportar JSON",
             callback_data=encode_trace_json(turn_id),
         ),
         InlineKeyboardButton(
-            text="Back to turns",
+            text="🔙 Volver a turnos",
             callback_data=encode_trace_page(0),
         ),
     ])
@@ -355,7 +365,7 @@ def step_detail_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Back to trace",
+                    text="🔙 Volver a traza",
                     callback_data=encode_trace_view(turn_id),
                 ),
             ],
@@ -367,16 +377,20 @@ def step_detail_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
 _draft_base = draft_keyboard
 
 
-def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
-    """Approve / Correct / Escalate / Trace inline keyboard for owner DM."""
+def draft_keyboard(turn_id: UUID, chat_id: int | None = None) -> InlineKeyboardMarkup:
+    """Aprobar / Corregir / Escalar / Traza / Nota inline keyboard."""
     base = _draft_base(turn_id)
-    trace_row = [
+    note_cb = encode_add_note(chat_id) if chat_id is not None else encode_add_note(0)
+    base.inline_keyboard.append([
         InlineKeyboardButton(
-            text="Trace",
+            text="🔍 Traza",
             callback_data=f"{_ACTION_VIEW_TRACE}:{turn_id}",
         ),
-    ]
-    base.inline_keyboard.append(trace_row)
+        InlineKeyboardButton(
+            text="📝 Agregar nota",
+            callback_data=note_cb,
+        ),
+    ])
     return base
 
 
@@ -465,11 +479,11 @@ def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Promote",
+                    text="✅ Promover",
                     callback_data=encode_staging_promote(candidate_id),
                 ),
                 InlineKeyboardButton(
-                    text="🗑 Discard",
+                    text="🗑 Descartar",
                     callback_data=encode_staging_discard(candidate_id),
                 ),
             ]
@@ -805,6 +819,7 @@ __all__ = [
     "TraceCallbackData",
     "doctrine_keyboard",
     "draft_keyboard",
+    "encode_add_note",
     "encode_callback",
     "encode_doctrine_callback",
     "encode_doctrine_resolve_callback",

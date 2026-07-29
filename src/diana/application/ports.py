@@ -74,6 +74,7 @@ class DraftNotification(BaseModel):
     vip_text: str
     draft_text: str
     reason: str
+    vip_display_name: str | None = None
     evaluation_summary: str | None = None
     evaluation: dict[str, Any] | None = None
     business_connection_id: str

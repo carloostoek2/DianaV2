@@ -553,7 +553,7 @@ def test_format_profile_body_empty_and_populated() -> None:
         content=None,
         empty=True,
     )
-    assert empty == "VIP 555 (Alice)\nNo profile facts/notes yet."
+    assert empty == "VIP 555 (Alice)\nSin datos de perfil todavía."
 
     body = format_profile_body(
         telegram_user_id=555,
@@ -613,9 +613,9 @@ def test_format_vips_list_ids_names_and_no_name() -> None:
         VipRecord(id=uuid4(), telegram_user_id=200, display_name=None, is_active=True),
     ]
     body = format_vips_list(records)
-    assert "Active VIPs (2):" in body
+    assert "VIPs activos (2):" in body
     assert "100 — Alice" in body
-    assert "200 — (no name)" in body
+    assert "200 — (sin nombre)" in body
 
 
 @pytest.mark.asyncio

@@ -61,10 +61,10 @@ _PROFILE_CMD_PREFIXES = (
 
 
 def format_vips_list(records: list[VipRecord]) -> str:
-    """English multi-line body for active VIP allowlist."""
-    lines = [f"Active VIPs ({len(records)}):"]
+    """Multi-line body for active VIP allowlist."""
+    lines = [f"VIPs activos ({len(records)}):"]
     for rec in records:
-        name = rec.display_name or "(no name)"
+        name = rec.display_name or "(sin nombre)"
         lines.append(f"  {rec.telegram_user_id} — {name}")
     return "\n".join(lines)
 
@@ -189,20 +189,20 @@ def format_profile_body(
     content: dict | None,
     empty: bool,
 ) -> str:
-    """English profile render for owner DM."""
+    """Profile render for owner DM."""
     name_suffix = f" ({display_name})" if display_name else ""
     header = f"VIP {telegram_user_id}{name_suffix}"
     if empty or not content:
-        return f"{header}\nNo profile facts/notes yet."
+        return f"{header}\nSin datos de perfil todavía."
     facts = content.get("facts") or {}
     notes = content.get("notes") or []
-    lines = [header, "Facts:"]
+    lines = [header, "Datos:"]
     if isinstance(facts, dict) and facts:
         for k, v in facts.items():
             lines.append(f"  {k}: {v}")
     else:
-        lines.append("  (none)")
-    lines.append("Notes:")
+        lines.append("  (ninguno)")
+    lines.append("Notas:")
     if isinstance(notes, list) and notes:
         for i, note in enumerate(notes, start=1):
             if not isinstance(note, dict):
@@ -211,7 +211,7 @@ def format_profile_body(
             text = note.get("text", "")
             lines.append(f"  {i}. [{date}] {text}")
     else:
-        lines.append("  (none)")
+        lines.append("  (ninguna)")
     return "\n".join(lines)
 
 
@@ -426,11 +426,13 @@ def build_admin_router(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     profile_admin: ProfileAdminService | None = None,
+    note_sessions: dict[int, int] | None = None,
     sandbox: SandboxService | None = None,
     coordinator: TurnCoordinator | None = None,
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
+    sessions_note = note_sessions or {}
 
     def _is_owner(message: Message) -> bool:
         # Owner identity + private DM only (SEC-VIP-01: no group leak).
@@ -452,9 +454,9 @@ def build_admin_router(
         )
 
     _SANDBOX_UX: dict[str, str] = {
-        "sandbox_unavailable": "Sandbox disabled",
+        "sandbox_unavailable": "Sandbox deshabilitado",
         "sandbox_usage": (
-            "Usage: /sandbox on|off|perfil|perfiles|estado|reset"
+            "Uso: /sandbox on|off|perfil|perfiles|estado|reset"
         ),
     }
 
@@ -491,9 +493,9 @@ def build_admin_router(
             return
         status = await _dispatch_token(message)
         if status == "vip_added":
-            await message.answer("VIP added")
+            await message.answer("VIP agregado")
         else:
-            await message.answer("Usage: /add_vip <telegram_user_id> [name]")
+            await message.answer("Uso: /add_vip <id_usuario> [nombre]")
 
     @router.message(Command("remove_vip"))
     async def on_remove_vip(message: Message, **_: Any) -> None:
@@ -501,13 +503,13 @@ def build_admin_router(
             return
         status = await _dispatch_token(message)
         if status == "vip_removed":
-            await message.answer("VIP deactivated")
+            await message.answer("VIP desactivado")
         elif status == "vip_not_found":
-            await message.answer("VIP not found")
+            await message.answer("VIP no encontrado")
         elif status == "forbidden":
             return
         else:
-            await message.answer("Usage: /remove_vip <telegram_user_id>")
+            await message.answer("Uso: /remove_vip <id_usuario>")
 
     @router.message(Command("list_vips"))
     async def on_list_vips(message: Message, **_: Any) -> None:
@@ -515,7 +517,7 @@ def build_admin_router(
             return
         status = await _dispatch_token(message)
         if status == "vips_empty":
-            await message.answer("No active VIPs.")
+            await message.answer("No hay VIPs activos.")
             return
         if status == "vips_list":
             records = await vips.list_active()
@@ -528,12 +530,12 @@ def build_admin_router(
             return
         status = await _dispatch_token(message)
         if status == "vip_renamed":
-            await message.answer("VIP renamed")
+            await message.answer("VIP renombrado")
         elif status == "vip_not_found":
-            await message.answer("VIP not found")
+            await message.answer("VIP no encontrado")
         else:
             await message.answer(
-                "Usage: /rename_vip <telegram_user_id> <name>"
+                "Uso: /rename_vip <id_usuario> <nombre>"
             )
 
     @router.message(Command("turnos"))
@@ -541,7 +543,7 @@ def build_admin_router(
         if not _is_owner(message):
             return
         if admin_trace is None:
-            await message.answer("Trace module not available.")
+            await message.answer("Módulo de trazas no disponible.")
             return
 
         filter_chat_id: int | None = None
@@ -550,7 +552,7 @@ def build_admin_router(
             try:
                 filter_chat_id = int(parts[1])
             except ValueError:
-                await message.answer("Usage: /turnos [chat_id]")
+                await message.answer("Uso: /turnos [id_chat]")
                 return
 
         try:
@@ -558,11 +560,11 @@ def build_admin_router(
         except Exception:
             logger.exception("Error querying traces")
             await message.answer(
-                "System error: unable to query traces. Try again later."
+                "Error del sistema al consultar las trazas. Reintentá más tarde."
             )
             return
         if view.empty:
-            await message.answer("No recent turns found.")
+            await message.answer("No se encontraron turnos recientes.")
             return
         kb = trace_list_keyboard(
             view.turns_data, page=view.page, total_pages=view.total_pages
@@ -574,18 +576,18 @@ def build_admin_router(
         if not _is_owner(message):
             return
         if admin_trace is None:
-            await message.answer("Trace module not available.")
+            await message.answer("Módulo de trazas no disponible.")
             return
 
         parts = (message.text or "").split(None, 1)
         if len(parts) < 2:
-            await message.answer("Usage: /traza <turn_id>")
+            await message.answer("Uso: /traza <id_turno>")
             return
         raw_id = parts[1].strip()
         try:
             turn_id = UUID(raw_id)
         except ValueError:
-            await message.answer(f"Invalid turn ID: {raw_id}")
+            await message.answer(f"ID de turno inválido: {raw_id}")
             return
 
         try:
@@ -593,11 +595,11 @@ def build_admin_router(
         except Exception:
             logger.exception("Error querying trace")
             await message.answer(
-                "System error: unable to query traces. Try again later."
+                "Error del sistema al consultar la traza. Reintentá más tarde."
             )
             return
         if view is None:
-            await message.answer("Turn not found.")
+            await message.answer("Turno no encontrado.")
             return
         kb = trace_detail_keyboard(view.turn_id, timings=view.timings)
         await message.answer(view.text, reply_markup=kb)
@@ -615,40 +617,40 @@ def build_admin_router(
             correct_sessions=sessions,
         )
         if status == "fp_marked":
-            await message.answer("False positive marked")
+            await message.answer("Falsa alarma marcada")
         elif status == "fp_unavailable":
-            await message.answer("False positive store not available.")
+            await message.answer("Almacén de falsas alarmas no disponible.")
         elif status == "fp_error":
             await message.answer(
-                "System error: unable to mark false positive. Try again later."
+                "Error del sistema al marcar falsa alarma. Reintentá más tarde."
             )
         elif status == "forbidden":
             return  # fail-closed silent
         else:
             # fp_usage and any unexpected
-            await message.answer("Usage: /fp <turn_id>")
+            await message.answer("Uso: /fp <id_turno>")
 
     @router.message(Command("vip_profile"))
     async def on_vip_profile(message: Message, **_: Any) -> None:
         if not _is_owner(message):
             return
         if profile_admin is None:
-            await message.answer("Profile module not available.")
+            await message.answer("Módulo de perfil no disponible.")
             return
         status = await _dispatch_token(message)
         if status == "vip_profile_usage":
-            await message.answer("Usage: /vip_profile <telegram_user_id>")
+            await message.answer("Uso: /vip_profile <id_usuario>")
             return
         if status == "vip_not_found":
-            await message.answer("VIP not found")
+            await message.answer("VIP no encontrado")
             return
         if status == "profile_admin_unavailable":
-            await message.answer("Profile module not available.")
+            await message.answer("Módulo de perfil no disponible.")
             return
         # profile_ok / profile_empty — render body from service
         m = _VIP_PROFILE_RE.match((message.text or "").strip())
         if not m:
-            await message.answer("Usage: /vip_profile <telegram_user_id>")
+            await message.answer("Uso: /vip_profile <id_usuario>")
             return
         tg_id = int(m.group(1))
         try:
@@ -673,15 +675,15 @@ def build_admin_router(
         if status == "fact_set":
             m = _VIP_FACT_RE.match((message.text or "").strip())
             key = m.group(2) if m else ""
-            await message.answer(f"Fact set: {key}")
+            await message.answer(f"Dato guardado: {key}")
         elif status == "vip_not_found":
-            await message.answer("VIP not found")
+            await message.answer("VIP no encontrado")
         elif status == "invalid":
-            await message.answer("Usage: /vip_fact <telegram_user_id> <key> <value>")
+            await message.answer("Uso: /vip_fact <id_usuario> <clave> <valor>")
         elif status == "profile_admin_unavailable":
-            await message.answer("Profile module not available.")
+            await message.answer("Módulo de perfil no disponible.")
         else:
-            await message.answer("Usage: /vip_fact <telegram_user_id> <key> <value>")
+            await message.answer("Uso: /vip_fact <id_usuario> <clave> <valor>")
 
     @router.message(Command("vip_fact_del"))
     async def on_vip_fact_del(message: Message, **_: Any) -> None:
@@ -691,15 +693,15 @@ def build_admin_router(
         m = _VIP_FACT_DEL_RE.match((message.text or "").strip())
         key = m.group(2) if m else ""
         if status == "fact_deleted":
-            await message.answer(f"Fact deleted: {key}")
+            await message.answer(f"Dato eliminado: {key}")
         elif status == "fact_missing":
-            await message.answer(f"Fact not found: {key}")
+            await message.answer(f"Dato no encontrado: {key}")
         elif status == "vip_not_found":
-            await message.answer("VIP not found")
+            await message.answer("VIP no encontrado")
         elif status == "profile_admin_unavailable":
-            await message.answer("Profile module not available.")
+            await message.answer("Módulo de perfil no disponible.")
         else:
-            await message.answer("Usage: /vip_fact_del <telegram_user_id> <key>")
+            await message.answer("Uso: /vip_fact_del <id_usuario> <clave>")
 
     @router.message(Command("vip_note"))
     async def on_vip_note(message: Message, **_: Any) -> None:
@@ -707,13 +709,13 @@ def build_admin_router(
             return
         status = await _dispatch_token(message)
         if status == "note_added":
-            await message.answer("Note added")
+            await message.answer("Nota agregada")
         elif status == "vip_not_found":
-            await message.answer("VIP not found")
+            await message.answer("VIP no encontrado")
         elif status == "profile_admin_unavailable":
-            await message.answer("Profile module not available.")
+            await message.answer("Módulo de perfil no disponible.")
         else:
-            await message.answer("Usage: /vip_note <telegram_user_id> <text>")
+            await message.answer("Uso: /vip_note <id_usuario> <texto>")
 
     @router.message(Command("vip_note_del"))
     async def on_vip_note_del(message: Message, **_: Any) -> None:
@@ -721,15 +723,15 @@ def build_admin_router(
             return
         status = await _dispatch_token(message)
         if status == "note_deleted":
-            await message.answer("Note deleted")
+            await message.answer("Nota eliminada")
         elif status == "note_missing":
-            await message.answer("Note not found")
+            await message.answer("Nota no encontrada")
         elif status == "vip_not_found":
-            await message.answer("VIP not found")
+            await message.answer("VIP no encontrado")
         elif status == "profile_admin_unavailable":
-            await message.answer("Profile module not available.")
+            await message.answer("Módulo de perfil no disponible.")
         else:
-            await message.answer("Usage: /vip_note_del <telegram_user_id> <index>")
+            await message.answer("Uso: /vip_note_del <id_usuario> <índice>")
 
     @router.message(Command("resumen", "metricas"))
     async def on_resumen(message: Message, **_: Any) -> None:
@@ -754,7 +756,27 @@ def build_admin_router(
         if not _is_owner(message):
             return
         actor_id = message.from_user.id if message.from_user else 0
-        # Only handle free-text correct; ignore never-started private chatter.
+
+        # Pending note session takes priority.
+        if actor_id in sessions_note:
+            chat_id = sessions_note.pop(actor_id)
+            note_text = (message.text or "").strip()
+            if not note_text:
+                await message.answer("La nota no puede estar vacía")
+                return
+            if profile_admin is not None:
+                try:
+                    await profile_admin.add_note(actor_id, chat_id, note_text)
+                except OwnerAuthError:
+                    return
+                except Exception:
+                    logger.exception("Error al agregar nota")
+                    await message.answer("Error del sistema al guardar la nota")
+                    return
+            await message.answer("Nota guardada")
+            return
+
+        # Existing correct session handling.
         state, _ = sessions.resolve(actor_id)
         if state == "none":
             return
@@ -770,15 +792,15 @@ def build_admin_router(
             correct_sessions=sessions,
         )
         if status == "corrected":
-            await message.answer("Corrected text delivered")
+            await message.answer("Texto corregido enviado")
         elif status == "invalid_correct":
-            await message.answer("Corrected text must be non-empty")
+            await message.answer("El texto corregido no puede estar vacío")
         elif status == "stale":
             await message.answer(
-                "Turn already handled or superseded — nothing delivered"
+                "El turno ya fue resuelto o reemplazado — no se envió nada"
             )
         elif status == "deliver_failed":
-            await message.answer("Delivery failed — try again from the draft buttons")
+            await message.answer("Error al enviar — intentá de nuevo desde los botones del borrador")
         elif status == "session_expired":
             await message.answer(SESSION_EXPIRED_UX)
 
