@@ -375,7 +375,7 @@ def build_menu_router(
                 if config_store is None:
                     await _show(
                         msg,
-                        "Configuracion no disponible.",
+                        "Configuración no disponible.",
                         menu_back_keyboard(encode_menu("root")),
                     )
                     return
@@ -991,7 +991,7 @@ async def _dispatch_action(
         if config_store is None:
             await _show(
                 message,
-                "Configuracion no disponible.",
+                "Configuración no disponible.",
                 menu_back_keyboard(encode_menu("root")),
             )
             return
