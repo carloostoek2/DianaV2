@@ -126,6 +126,26 @@ class SqlVipStore:
             row.frozen_until = None
             await session.commit()
 
+    async def pause_vip(self, vip_id: UUID, paused_until: datetime) -> None:
+        """Set paused_until column. Raises ValueError if VIP not found."""
+        async with self._sf() as session:
+            result = await session.execute(select(Vip).where(Vip.id == vip_id))
+            row = result.scalar_one_or_none()
+            if row is None:
+                raise ValueError(f"VIP {vip_id} not found")
+            row.paused_until = paused_until
+            await session.commit()
+
+    async def unpause_vip(self, vip_id: UUID) -> None:
+        """Clear paused_until column (set to NULL). Raises ValueError if VIP not found."""
+        async with self._sf() as session:
+            result = await session.execute(select(Vip).where(Vip.id == vip_id))
+            row = result.scalar_one_or_none()
+            if row is None:
+                raise ValueError(f"VIP {vip_id} not found")
+            row.paused_until = None
+            await session.commit()
+
     async def list_active(self) -> list[VipRecord]:
         async with self._sf() as session:
             result = await session.execute(

@@ -264,6 +264,14 @@ class VipStore(Protocol):
         """Clear frozen_until column (set to NULL). Raises ValueError if VIP not found."""
         ...
 
+    async def pause_vip(self, vip_id: UUID, paused_until: datetime) -> None:
+        """Set paused_until column. Raises ValueError if VIP not found."""
+        ...
+
+    async def unpause_vip(self, vip_id: UUID) -> None:
+        """Clear paused_until column (set to NULL). Raises ValueError if VIP not found."""
+        ...
+
     async def list_active(self) -> list[VipRecord]:
         """Active VIPs only (is_active True), ordered by telegram_user_id ASC."""
         ...

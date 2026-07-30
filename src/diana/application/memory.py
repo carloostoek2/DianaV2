@@ -444,6 +444,22 @@ class InMemoryVipStore:
         updated = rec.model_copy(update={"frozen_until": None})
         await self._upsert(updated)
 
+    async def pause_vip(self, vip_id: UUID, paused_until: datetime) -> None:
+        """Set paused_until. Raises ValueError if VIP not found."""
+        rec = self._by_id.get(vip_id)
+        if rec is None:
+            raise ValueError(f"VIP {vip_id} not found")
+        updated = rec.model_copy(update={"paused_until": paused_until})
+        await self._upsert(updated)
+
+    async def unpause_vip(self, vip_id: UUID) -> None:
+        """Clear paused_until. Raises ValueError if VIP not found."""
+        rec = self._by_id.get(vip_id)
+        if rec is None:
+            raise ValueError(f"VIP {vip_id} not found")
+        updated = rec.model_copy(update={"paused_until": None})
+        await self._upsert(updated)
+
     async def list_active(self) -> list[VipRecord]:
         """Active VIPs only, ordered by telegram_user_id ASC."""
         active = [r for r in self._by_tg.values() if r.is_active]
