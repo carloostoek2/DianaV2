@@ -18,15 +18,15 @@ def build_business_connection_router(*, store: BusinessConnectionStore) -> Route
 
     @router.business_connection()
     async def on_business_connection(event: BusinessConnection, **_: Any) -> None:
-        record = BusinessConnectionRecord(
-            business_connection_id=event.id,
-            user_id=event.user.id,
-            user_chat_id=event.user_chat_id,
-            date=event.date,
-            can_reply=event.can_reply,
-            is_enabled=event.is_enabled,
-        )
         try:
+            record = BusinessConnectionRecord(
+                business_connection_id=event.id,
+                user_id=event.user.id,
+                user_chat_id=event.user_chat_id,
+                date=event.date,
+                can_reply=event.can_reply,
+                is_enabled=event.is_enabled,
+            )
             await store.upsert(record)
             state = "enabled" if event.is_enabled else "disabled"
             logger.info(

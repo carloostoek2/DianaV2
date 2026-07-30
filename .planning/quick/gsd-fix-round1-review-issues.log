@@ -28,3 +28,36 @@ Tests: 459 passed, 0 failed
 - [x] 0 regressions attributable
 - [x] Commit: 7474b02
 - [x] Review file updated with all Status + Response fields
+
+## 2026-07-30T18:00:00Z — Fix Round 1
+Status: COMPLETED
+
+Changes:
+- bd86e87 — fix(recovery): run _recover_timers concurrently; eliminate message-loss window; fix orphaned notification
+- caa0308 — test(recovery): add positive timer assertion, re-schedule test; fix assertion strictness
+- c69654f — refactor: move lazy imports to top-level; remove unused delete_for_turn
+
+Issues fixed: 1, 2, 3 (both), 4, 5, 8, 13, 9 (imports), 10 (delete_for_turn)
+Issues deferred: 6, 7, 9 (inspect.getsource), 10 (ORM), 11, 12
+Issues acknowledged no-fix: 14, 15
+Residuals: 2 documented
+
+Tests: 66 passed, 0 failed
+
+## 2026-07-30 — Fix Round 2 (review round for BusinessConnection lifecycle)
+Review file: /tmp/grok-hardener-review-dfaa7cd3.md
+
+### Edits performed:
+- Issue 1: Moved record construction inside try/except in business_connection.py
+- Issue 2: Set updated_at = datetime.now(UTC) before merge in SqlBusinessConnectionStore.upsert
+- Issue 3: Added extra field assertions (business_connection_id, user_id) in exception test
+- Issue 4: Added log message string assertions (enabled/disabled) in handler tests
+- Issue 5: Added user_chat_id, can_reply, date assertions in store upsert create test
+- Issue 6: Removed _orm_to_record from __all__
+- Issue 7: Moved _orm_to_record(merged) before commit to avoid extra SELECT
+- Issue 8: Fixed naive datetime to use tzinfo=UTC in handler test fixture
+- Issue 9: Replaced private _connections access with public API (second upsert call) in deep copy test
+
+Commit: (pending)
+
+Tests: 16/16 passed (3 store tests + 4 handler tests + 2 middleware tests + 4 regressions + 3 business_handler)

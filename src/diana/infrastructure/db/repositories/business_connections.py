@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Text, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -62,13 +62,14 @@ class SqlBusinessConnectionStore:
                 can_reply=record.can_reply,
                 is_enabled=record.is_enabled,
             )
+            orm_row.updated_at = datetime.now(UTC)
             merged = await session.merge(orm_row)
+            result = _orm_to_record(merged)
             await session.commit()
-            return _orm_to_record(merged)
+            return result
 
 
 __all__ = [
     "BusinessConnection",
     "SqlBusinessConnectionStore",
-    "_orm_to_record",
 ]

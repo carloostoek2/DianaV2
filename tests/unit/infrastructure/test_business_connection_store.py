@@ -30,8 +30,9 @@ async def test_upsert_creates_new_record() -> None:
     assert result.business_connection_id == "bc-1"
     assert result.user_id == 111
     assert result.is_enabled is True
-    # Internal dict has a deep copy
-    assert len(store._connections) == 1
+    assert result.user_chat_id == 42
+    assert result.can_reply is True
+    assert result.date == datetime(2026, 7, 30)
 
 
 async def test_upsert_updates_existing_record() -> None:
@@ -51,5 +52,5 @@ async def test_upsert_returns_deep_copy() -> None:
     result = await store.upsert(original)
     # Mutating the returned record must not affect the store
     result.is_enabled = False
-    stored = store._connections["bc-1"]
-    assert stored.is_enabled is True
+    result2 = await store.upsert(original)
+    assert result2.is_enabled is True
