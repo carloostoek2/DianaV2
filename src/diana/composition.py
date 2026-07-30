@@ -76,6 +76,7 @@ from diana.infrastructure.db.repositories.escalations import SqlEscalationStore
 from diana.infrastructure.db.repositories.history import SqlMessageHistoryRepo
 from diana.infrastructure.db.repositories.promo_executions import PromoExecutionRepo
 from diana.infrastructure.db.repositories.promo_triggers import PromoTriggerRepo
+from diana.infrastructure.db.repositories.business_connections import SqlBusinessConnectionStore
 from diana.infrastructure.db.repositories.runtime_timers import SqlRuntimeTimerStore
 from diana.infrastructure.db.repositories.recontact_schedules import (
     RecontactScheduleRepo,
@@ -240,6 +241,7 @@ class AppContainer:
     runtime_thresholds: RuntimeThresholds | None = None
     turns: SqlTurnStore | None = None
     runtime_timers: SqlRuntimeTimerStore | None = None
+    business_connections: SqlBusinessConnectionStore | None = None
 
 
 def build_app(
@@ -289,6 +291,7 @@ def build_app(
         inter_gap_max=settings.delivery_inter_message_gap_max,
     )
     runtime_timers_store = SqlRuntimeTimerStore(sf)
+    bc_store = SqlBusinessConnectionStore(sf)
     feature_advanced_behavior = settings.feature_advanced_behavior
     behavior = BehaviorEngine(
         actuator,
@@ -638,6 +641,7 @@ def build_app(
         rate_limit_max_events=settings.rate_limit_max_events,
         rate_limit_window_s=settings.rate_limit_window_s,
         dedup_ttl_s=settings.dedup_ttl_s,
+        bc_store=bc_store,
     )
 
     return AppContainer(
@@ -671,6 +675,7 @@ def build_app(
         runtime_thresholds=runtime_thresholds,
         turns=turns,
         runtime_timers=runtime_timers_store,
+        business_connections=bc_store,
     )
 
 

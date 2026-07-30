@@ -108,7 +108,7 @@ async def async_main() -> None:
         try:
             await app.dispatcher.start_polling(
                 app.bot,
-                allowed_updates=["message", "business_message", "edited_business_message", "callback_query"],
+                allowed_updates=["business_connection", "message", "business_message", "edited_business_message", "callback_query"],
             )
         finally:
             await health.stop()

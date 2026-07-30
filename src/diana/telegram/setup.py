@@ -13,6 +13,7 @@ from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import (
     BehaviorCanceller,
+    BusinessConnectionStore,
     EscalationStore,
     OwnerNotifierPort,
     TrainingModeStore,
@@ -24,6 +25,7 @@ from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.telegram.handlers.admin import build_admin_router
 from diana.telegram.handlers.business import build_business_router
+from diana.telegram.handlers.business_connection import build_business_connection_router
 from diana.telegram.handlers.menu import MenuSessionStore, build_menu_router
 from diana.telegram.handlers.callbacks import (
     CorrectSessionStore,
@@ -97,6 +99,7 @@ def build_dispatcher(
     rate_limit_max_events: int = 20,
     rate_limit_window_s: float = 10.0,
     dedup_ttl_s: float = 300.0,
+    bc_store: BusinessConnectionStore | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -150,6 +153,11 @@ def build_dispatcher(
         if not isinstance(mw, FreezeCheckMiddleware):
             dp.callback_query.middleware(mw)
 
+    # Minimal middleware for BusinessConnection lifecycle (system event, not user message).
+    # Only ErrorHandler (outermost) + Logging. No Auth, FreezeCheck, RateLimit, Dedup.
+    for bc_mw in [ErrorHandlerMiddleware(), LoggingMiddleware()]:
+        dp.business_connection.middleware(bc_mw)
+
     root = Router(name="root")
     # Doctrine router must be included BEFORE the catch-all callback router
     # so that doctrine-specific prefixes (dr:, dx:, de:) are handled first.
@@ -202,6 +210,8 @@ def build_dispatcher(
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))
+    if bc_store is not None:
+        root.include_router(build_business_connection_router(store=bc_store))
     dp.include_router(root)
 
     return TelegramWiring(
