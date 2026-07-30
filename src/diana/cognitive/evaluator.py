@@ -20,6 +20,12 @@ _SYSTEM_BASE = (
     "Do not choose the system action (approve/escalate). "
     "Do not rewrite the draft. Do not use operating mode. "
     "Use comprehension.emotion when scoring empathy. "
+    "Communication standard: drafts must be warm/close without Mexican slang "
+    "or profanity/vulgarity. If the draft uses Mexican slang (güey/wey, no mames, "
+    "chido, qué pedo, etc.) or swear words, score naturalness low (and lower "
+    "safety when the content is vulgar or harsh). "
+    "When comprehension.emotion is triste or ansiosa, penalize empathy if the "
+    "draft is cold, flippant, or inappropriately cheerful. "
     "Compare draft precision and coverage against current_turn and only facts "
     "implied by the listed included capability names (do not invent external facts)."
 )

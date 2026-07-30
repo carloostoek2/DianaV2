@@ -131,6 +131,18 @@ async def test_evaluate_incomplete_dims_raise_validation_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluate_system_penalizes_mexican_slang_and_profanity() -> None:
+    """Communication standard: slang/profanity must lower naturalness (and related dims)."""
+    llm = FakeLLM(structured_responses=[_profile()])
+    await Evaluator(llm).evaluate(_input())
+    messages = llm.calls[0][1]["messages"]
+    system = next(m["content"] for m in messages if m["role"] == "system").lower()
+    assert "mexican slang" in system or "slang mexicano" in system
+    assert "profan" in system or "swear" in system or "vulgar" in system
+    assert "naturalness" in system
+
+
+@pytest.mark.asyncio
 async def test_evaluate_messages_include_draft_and_turno_and_emotion() -> None:
     llm = FakeLLM(structured_responses=[_profile()])
     await Evaluator(llm).evaluate(

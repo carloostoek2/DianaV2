@@ -58,6 +58,14 @@ Review file: /tmp/grok-hardener-review-dfaa7cd3.md
 - Issue 8: Fixed naive datetime to use tzinfo=UTC in handler test fixture
 - Issue 9: Replaced private _connections access with public API (second upsert call) in deep copy test
 
-Commit: (pending)
+Commit: bc0e538 — fix(bc-lifecycle): address review findings — updated_at, user guard, test assertions
 
-Tests: 16/16 passed (3 store tests + 4 handler tests + 2 middleware tests + 4 regressions + 3 business_handler)
+Tests: 16/16 passed (3 store tests + 4 handler tests + 2 middleware tests + 4 regression + 3 business_handler)
+
+## Self-Check: PASSED
+- [x] All 9 tasks completed
+- [x] Tests run: 16/16 passed
+- [x] 0 regressions attributable (7/7 regression tests passed)
+- [x] Project conventions respected
+- [x] Commit: bc0e538
+- [x] Review file updated with all Status + Response fields

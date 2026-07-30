@@ -67,6 +67,22 @@ def test_load_persona_catalog_counts_and_structure() -> None:
     # At least one rule mentions closing '?' without requiring opening '¿'
     assert any("?" in r for r in rules)
 
+    # Communication standard (product): zero Mexican slang / profanity; warm base.
+    joined_rules = " ".join(rules).lower()
+    persona_l = voz["persona"].lower()
+    assert "slang" in joined_rules or "slang" in persona_l
+    assert any(
+        token in joined_rules or token in persona_l
+        for token in ("groser", "vulgar", "profan")
+    )
+    assert any(
+        token in joined_rules or token in persona_l
+        for token in ("cálid", "calid", "cercan", "alegr", "risue")
+    )
+    # First variable style: sensitive tone → acompañamiento (emotion triste/ansiosa).
+    assert any("triste" in r.lower() or "ansiosa" in r.lower() for r in rules)
+    assert any("acompañ" in r.lower() or "acompagn" in r.lower() for r in rules)
+
     for fact in data["persona_facts"]:
         assert "id" in fact and fact["id"]
         assert "tema" in fact

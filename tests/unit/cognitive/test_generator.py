@@ -53,6 +53,17 @@ async def test_generate_system_prompt_is_owner_reply_question() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_system_forbids_mexican_slang_and_profanity() -> None:
+    """Communication standard: never Mexican slang or swear words in drafts."""
+    llm = FakeLLM(text_responses=["draft ok"])
+    await Generator(llm).generate("prompt body")
+    system = llm.calls[0][1]["messages"][0]["content"].lower()
+    assert "mexican slang" in system or "slang mexicano" in system
+    assert "profan" in system or "groser" in system or "swear" in system
+    assert "warm" in system or "cálid" in system
+
+
+@pytest.mark.asyncio
 async def test_generate_empty_then_success_retries_once() -> None:
     """E.4: empty first response → one retry → return second non-empty."""
     llm = FakeLLM(text_responses=["", "Hola ok"])
