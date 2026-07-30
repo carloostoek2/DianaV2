@@ -25,8 +25,8 @@ async def recover_zombie_turns(turns: TurnStore) -> int:
     """Mark all non-terminal turns as FAILED with error='crash_recovery'.
 
     Returns count of successfully marked turns.
-    Each transition is wrapped in try/except KeyError to handle
-    terminal-latch races between listing and transitioning.
+    Each transition is wrapped in try/except to handle
+    terminal-latch races and DB connectivity errors.
     """
     zombies = await list_zombie_turns(turns)
     count = 0
@@ -34,7 +34,7 @@ async def recover_zombie_turns(turns: TurnStore) -> int:
         try:
             await turns.transition(turn.id, "failed", error="crash_recovery")
             count += 1
-        except KeyError:
+        except Exception:
             # Turn was terminal-latched between list and transition; skip.
             pass
     _logger.info(
@@ -73,7 +73,20 @@ async def rematerialize_drafts(
                 },
             )
 
-            # Send owner notification first — if this fails, no approval row created
+            # Create approval record FIRST — if this fails, no notification sent.
+            # If notification fails, the approval exists and will be re-notified
+            # on next startup.
+            await approvals.create_waiting(
+                ApprovalRecord(
+                    id=draft_id,
+                    turn_id=turn.id,
+                    chat_id=turn.chat_id,
+                    business_connection_id="",
+                    draft_text=generated_text,
+                    status="waiting",
+                )
+            )
+
             await notifier.notify_draft(
                 DraftNotification(
                     turn_id=turn.id,
@@ -88,17 +101,6 @@ async def rematerialize_drafts(
                         "actions": ["approve", "correct", "escalate"],
                         "turn_id": str(turn.id),
                     },
-                )
-            )
-
-            await approvals.create_waiting(
-                ApprovalRecord(
-                    id=draft_id,
-                    turn_id=turn.id,
-                    chat_id=turn.chat_id,
-                    business_connection_id="",
-                    draft_text=generated_text,
-                    status="waiting",
                 )
             )
             count += 1

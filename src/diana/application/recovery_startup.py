@@ -22,6 +22,10 @@ from diana.application.ports import (
     TurnRecord,
     TurnStore,
 )
+from diana.application.cognitive_recovery import (
+    recover_zombie_turns,
+    rematerialize_drafts,
+)
 from diana.application.recovery import (
     RecoveryPlan,
     classify_pending_deliveries,
@@ -102,14 +106,10 @@ async def run_startup_recovery(
     # Zombie turn recovery: mark all non-terminal turns as FAILED.
     zombie_count = 0
     if turns is not None:
-        from diana.application.cognitive_recovery import recover_zombie_turns
-
         zombie_count = await recover_zombie_turns(turns)
 
     # Draft re-materialization: create pending_approval for turns with generated_text.
     if rematerializable:
-        from diana.application.cognitive_recovery import rematerialize_drafts
-
         remat_count = await rematerialize_drafts(
             rematerializable, approvals, notifier
         )
@@ -235,6 +235,75 @@ async def _recover_deliveries(
     return spawned
 
 
+async def _recover_one_timer(
+    timer: RuntimeTimerRecord,
+    timers: RuntimeTimerStore,
+    deliveries: PendingDeliveryStore,
+    behavior: object,
+    global_mode: str,
+    clock: ClockPort,
+) -> int:
+    """Recover a single active timer. Returns 1 if recovered, 0 if skipped.
+
+    The recovery sequence is ordered to eliminate the message-loss window:
+    1. Sleep remaining time (no state change — safe on crash)
+    2. Dispatch new delivery (create_task) — at this point the message is safe
+    3. Expire old delivery
+    4. Mark timer completed
+    """
+    now_val = clock.now()
+    elapsed = (now_val - timer.scheduled_at).total_seconds()
+    remaining = timer.initial_delay_seconds - elapsed
+    if remaining <= 5.0:
+        # Grace period exhausted; mark timer completed without re-scheduling.
+        try:
+            await timers.mark_completed(timer.id)
+        except Exception:
+            pass
+        return 0
+    try:
+        delivery = await deliveries.get(timer.delivery_id)
+        if delivery is None or delivery.status not in ("pending", "delivering"):
+            # Delivery already resolved; just mark timer completed.
+            await timers.mark_completed(timer.id)
+            return 0
+
+        # Step 1: sleep remaining time first — no state change, safe on crash.
+        await asyncio.sleep(remaining)
+
+        # Step 2: dispatch new delivery BEFORE expiring the old one.
+        ctx = DeliveryContext(
+            chat_id=delivery.chat_id,
+            business_connection_id=delivery.business_connection_id,
+            vip_id=delivery.vip_id,
+            mode=global_mode,  # type: ignore[arg-type]
+            skip_initial_delay=True,
+            allow_split=False,
+            allow_human_quirks=False,
+        )
+        _ = asyncio.create_task(
+            behavior.deliver(  # type: ignore[union-attr]
+                texts=list(delivery.texts),
+                ctx=ctx,
+                turn_id=delivery.turn_id,
+                decision=delivery.decision,
+            )
+        )
+
+        # Step 3: now it is safe to expire the old delivery.
+        await deliveries.update_status(delivery.id, "expired")
+
+        # Step 4: mark timer completed.
+        await timers.mark_completed(timer.id)
+        return 1
+    except Exception:
+        logger.exception(
+            "timer_recovery_failed",
+            extra={"timer_id": str(timer.id)},
+        )
+        return 0
+
+
 async def _recover_timers(
     timers: RuntimeTimerStore,
     deliveries: PendingDeliveryStore,
@@ -244,60 +313,23 @@ async def _recover_timers(
 ) -> int:
     """Recover active runtime timers by re-scheduling deliveries with reduced delay.
 
-    For each active timer with meaningful remaining time (>5s grace), marks the
-    old delivery as expired and re-creates it via ``behavior.deliver`` with
-    ``skip_initial_delay=True`` after sleeping the remaining time.
+    For each active timer with meaningful remaining time (>5s grace), sleeps the
+    remaining time then re-dispatches via ``behavior.deliver`` with
+    ``skip_initial_delay=True`` before expiring the old delivery.
     Returns count of successfully recovered timers.
+
+    Timer recoveries run concurrently via ``asyncio.gather`` so one timer's
+    sleep does not block other timers or the overall startup sequence.
     """
     active = await timers.list_active()
-    now_val = clock.now()
-    recovered = 0
-    for timer in active:
-        elapsed = (now_val - timer.scheduled_at).total_seconds()
-        remaining = timer.initial_delay_seconds - elapsed
-        if remaining <= 5.0:
-            # Grace period exhausted; mark timer completed without re-scheduling.
-            try:
-                await timers.mark_completed(timer.id)
-            except Exception:
-                pass
-            continue
-        try:
-            delivery = await deliveries.get(timer.delivery_id)
-            if delivery is None or delivery.status not in ("pending", "delivering"):
-                # Delivery already resolved; just mark timer completed.
-                await timers.mark_completed(timer.id)
-                continue
+    if not active:
+        return 0
 
-            # Mark old delivery as expired so recovery doesn't double-process it.
-            await deliveries.update_status(delivery.id, "expired")
-
-            # Sleep remaining time, then deliver with skip_initial_delay=True.
-            await asyncio.sleep(remaining)
-            ctx = DeliveryContext(
-                chat_id=delivery.chat_id,
-                business_connection_id=delivery.business_connection_id,
-                vip_id=delivery.vip_id,
-                mode=global_mode,  # type: ignore[arg-type]
-                skip_initial_delay=True,
-                allow_split=False,
-                allow_human_quirks=False,
-            )
-            _ = asyncio.create_task(
-                behavior.deliver(  # type: ignore[union-attr]
-                    texts=list(delivery.texts),
-                    ctx=ctx,
-                    turn_id=delivery.turn_id,
-                    decision=delivery.decision,
-                )
-            )
-            await timers.mark_completed(timer.id)
-            recovered += 1
-        except Exception:
-            logger.exception(
-                "timer_recovery_failed",
-                extra={"timer_id": str(timer.id)},
-            )
+    results = await asyncio.gather(*[
+        _recover_one_timer(t, timers, deliveries, behavior, global_mode, clock)
+        for t in active
+    ])
+    recovered = sum(results)
     if recovered:
         logger.info(
             "timers_recovered",
