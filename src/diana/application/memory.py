@@ -315,6 +315,10 @@ class InMemoryTraceReaderWriter:
     async def get_trace_keys(self, turn_id: UUID) -> set[str]:
         return set(self.data.get(turn_id, {}).keys())
 
+    async def get_full_trace(self, turn_id: UUID) -> dict | None:
+        bucket = self.data.get(turn_id)
+        return dict(bucket) if bucket else None
+
     def get_delivery_result(self, turn_id: UUID) -> dict | None:
         return self.delivery_results.get(turn_id)
 

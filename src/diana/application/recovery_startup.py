@@ -19,6 +19,7 @@ from diana.application.ports import (
     PendingDeliveryStore,
     RuntimeTimerStore,
     TraceReader,
+    TurnRecord,
     TurnStore,
 )
 from diana.application.recovery import (
@@ -26,7 +27,6 @@ from diana.application.recovery import (
     classify_pending_deliveries,
     list_rematerializable_turns,
     list_waiting_approvals,
-    list_zombie_turns,
 )
 
 logger = logging.getLogger("diana.application")
@@ -91,6 +91,14 @@ async def run_startup_recovery(
         deliveries, now=now, stale_after=stale_after
     )
 
+    # Draft re-materialization: capture rematerializable turns BEFORE zombie recovery,
+    # because recover_zombie_turns marks all non-terminal turns as FAILED, which would
+    # make list_rematerializable_turns return nothing.
+    remat_count = 0
+    rematerializable: list[tuple[TurnRecord, str]] = []
+    if turns is not None and traces is not None:
+        rematerializable = await list_rematerializable_turns(turns, traces)
+
     # Zombie turn recovery: mark all non-terminal turns as FAILED.
     zombie_count = 0
     if turns is not None:
@@ -99,15 +107,12 @@ async def run_startup_recovery(
         zombie_count = await recover_zombie_turns(turns)
 
     # Draft re-materialization: create pending_approval for turns with generated_text.
-    remat_count = 0
-    if turns is not None and traces is not None:
+    if rematerializable:
         from diana.application.cognitive_recovery import rematerialize_drafts
 
-        rematerializable = await list_rematerializable_turns(turns, traces)
-        if rematerializable:
-            remat_count = await rematerialize_drafts(
-                rematerializable, approvals, notifier
-            )
+        remat_count = await rematerialize_drafts(
+            rematerializable, approvals, notifier
+        )
 
     recovered = 0
     if behavior is not None and vips is not None:
