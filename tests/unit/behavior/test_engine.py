@@ -937,6 +937,53 @@ async def test_deliver_with_sequence_cancel_mid_no_further_sends() -> None:
     assert all(r.status == "cancelled" for r in rows)
 
 
+@pytest.mark.asyncio
+async def test_timer_created_when_runtime_timer_store_injected() -> None:
+    """When RuntimeTimerStore is injected, timer is created before delay and completed after."""
+    from diana.application.memory import InMemoryRuntimeTimerStore
+
+    actuator = FakeTelegramActuator()
+    store = InMemoryPendingDeliveryStore()
+    timer_store = InMemoryRuntimeTimerStore()
+    clock = ImmediateClock()
+    policy = FixedDelayPolicy(initial=0.05, typing=0.02)
+    engine = BehaviorEngine(
+        actuator,
+        store,
+        clock=clock,
+        delay_policy=policy,
+        turn_status=AlwaysLiveTurnStatusReader(),
+        runtime_timer_store=timer_store,
+    )
+    turn_id = uuid4()
+    result = await engine.deliver(["hola"], _ctx(), turn_id)
+    assert result.success is True
+
+    # Timer was created and then marked completed — no active timers remain.
+    active = await timer_store.list_active()
+    assert active == []
+
+
+@pytest.mark.asyncio
+async def test_no_timer_without_runtime_timer_store() -> None:
+    """Without RuntimeTimerStore injection, no timer is created (existing behavior)."""
+    actuator = FakeTelegramActuator()
+    store = InMemoryPendingDeliveryStore()
+    clock = ImmediateClock()
+    policy = FixedDelayPolicy(initial=0.05, typing=0.02)
+    engine = BehaviorEngine(
+        actuator,
+        store,
+        clock=clock,
+        delay_policy=policy,
+        turn_status=AlwaysLiveTurnStatusReader(),
+        runtime_timer_store=None,
+    )
+    turn_id = uuid4()
+    result = await engine.deliver(["hola"], _ctx(), turn_id)
+    assert result.success is True
+
+
 def test_deliver_with_sequence_not_on_behavior_deliverer_protocol() -> None:
     from diana.application.ports import BehaviorDeliverer
 

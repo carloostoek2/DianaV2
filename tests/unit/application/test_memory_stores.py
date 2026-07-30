@@ -198,3 +198,73 @@ async def test_list_open_includes_waiting_and_claimed() -> None:
     waiting_ids = {r.turn_id for r in waiting}
     assert waiting_id in waiting_ids
     assert claimed_id not in waiting_ids
+
+
+@pytest.mark.asyncio
+async def test_in_memory_runtime_timer_store_crud() -> None:
+    """InMemoryRuntimeTimerStore CRUD operations work correctly."""
+    from diana.application.memory import InMemoryRuntimeTimerStore
+    from diana.application.ports import RuntimeTimerRecord
+
+    store = InMemoryRuntimeTimerStore()
+    now = datetime.now(UTC)
+    rec = RuntimeTimerRecord(
+        id=uuid4(),
+        chat_id=1,
+        turn_id=uuid4(),
+        delivery_id=uuid4(),
+        scheduled_at=now,
+        initial_delay_seconds=30.0,
+        status="active",
+        created_at=now,
+    )
+    stored = await store.create_active(rec)
+    assert stored.id == rec.id
+    assert stored.status == "active"
+
+    # list_active returns it
+    active = await store.list_active()
+    assert len(active) == 1
+    assert active[0].id == rec.id
+
+    # mark_completed on existing returns True and removes from active
+    assert await store.mark_completed(rec.id) is True
+    assert await store.list_active() == []
+
+    # mark_completed on unknown returns False
+    assert await store.mark_completed(uuid4()) is False
+
+    # delete_for_turn
+    rec2 = RuntimeTimerRecord(
+        id=uuid4(),
+        chat_id=2,
+        turn_id=uuid4(),
+        delivery_id=uuid4(),
+        scheduled_at=now,
+        initial_delay_seconds=10.0,
+        status="active",
+        created_at=now,
+    )
+    await store.create_active(rec2)
+    assert len(await store.list_active()) == 1
+    await store.delete_for_turn(rec2.turn_id)
+    assert len(await store.list_active()) == 0
+
+
+@pytest.mark.asyncio
+async def test_in_memory_turn_store_list_all_non_terminal() -> None:
+    """InMemoryTurnStore.list_all_non_terminal returns non-terminal turns across all chats."""
+    store = InMemoryTurnStore()
+    t1 = TurnRecord(id=uuid4(), chat_id=1, status="analyzing")
+    t2 = TurnRecord(id=uuid4(), chat_id=2, status="generating")
+    t3 = TurnRecord(id=uuid4(), chat_id=1, status="delivered")  # terminal
+    t4 = TurnRecord(id=uuid4(), chat_id=2, status="failed")  # terminal
+    for t in (t1, t2, t3, t4):
+        await store.create(t)
+
+    non_term = await store.list_all_non_terminal()
+    ids = {r.id for r in non_term}
+    assert t1.id in ids
+    assert t2.id in ids
+    assert t3.id not in ids
+    assert t4.id not in ids
