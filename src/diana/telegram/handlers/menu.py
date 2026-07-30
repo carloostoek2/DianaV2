@@ -45,7 +45,7 @@ from diana.telegram.keyboards import (
     menu_back_keyboard,
     menu_config_keyboard,
     menu_confirm_delete_keyboard,
-    menu_freeze_duration_keyboard,
+    menu_pause_duration_keyboard,
     menu_history_keyboard,
     menu_metrics_keyboard,
     menu_register_confirm_keyboard,
@@ -287,14 +287,14 @@ def _extract_user_from_forward(message: Message) -> tuple[int, str | None] | Non
     return None
 
 
-def _is_vip_frozen(vip) -> bool:
-    """True if vip.frozen_until is set and in the future (normalizes naive datetimes)."""
-    if vip is None or vip.frozen_until is None:
+def _is_vip_paused(vip) -> bool:
+    """True if vip.paused_until is set and in the future (normalizes naive datetimes)."""
+    if vip is None or vip.paused_until is None:
         return False
-    frozen = vip.frozen_until
-    if frozen.tzinfo is None:
-        frozen = frozen.replace(tzinfo=UTC)
-    return frozen > datetime.now(UTC)
+    paused = vip.paused_until
+    if paused.tzinfo is None:
+        paused = paused.replace(tzinfo=UTC)
+    return paused > datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -492,15 +492,15 @@ async def _dispatch_action(
         if action == str(user_id):
             vip = await vips.get_by_telegram_user_id(user_id)
             name = vip.display_name if vip and vip.display_name else str(user_id)
-            is_frozen = _is_vip_frozen(vip)
-            status_line = "Estado: 🔒 Pausado\n" if is_frozen else "Estado: 🟢 Activo\n"
+            is_paused = _is_vip_paused(vip)
+            status_line = "Estado: 🔒 Pausado\n" if is_paused else "Estado: 🟢 Activo\n"
             text = (
                 f"👤 Perfil de {name}\n"
                 f"ID: {user_id}\n\n"
                 f"{status_line}"
                 "Selecciona una accion:"
             )
-            await _show(message, text, menu_vip_detail_keyboard(user_id, is_frozen=is_frozen))
+            await _show(message, text, menu_vip_detail_keyboard(user_id, is_paused=is_paused))
             return
 
         # --- profile (view ficha) ---
@@ -645,8 +645,8 @@ async def _dispatch_action(
                 await _show(message, f"No se encontro al VIP {user_id}.", kb)
             return
 
-        # --- freeze (pausar) ---
-        if action == "freeze":
+        # --- pause (pausar) ---
+        if action == "pause":
             duration = parsed.extra
             # No duration yet — show the duration picker submenu
             if duration is None:
@@ -659,7 +659,7 @@ async def _dispatch_action(
                     message,
                     f"⏸ Pausar a {name}\n\n"
                     "Selecciona la duracion de la pausa:",
-                    menu_freeze_duration_keyboard(user_id),
+                    menu_pause_duration_keyboard(user_id),
                 )
                 return
 
@@ -670,25 +670,29 @@ async def _dispatch_action(
 
             now = datetime.now(UTC)
             if duration == "1d":
-                frozen_until = now + timedelta(days=1)
+                paused_until = now + timedelta(days=1)
             elif duration == "7d":
-                frozen_until = now + timedelta(days=7)
+                paused_until = now + timedelta(days=7)
+            elif duration == "3d":
+                paused_until = now + timedelta(days=3)
+            elif duration == "1m":
+                paused_until = now + timedelta(days=30)
             elif duration == "indef":
-                frozen_until = datetime(2099, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+                paused_until = datetime(2099, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
             else:
                 await _show(message, "Duracion no valida.", menu_back_keyboard(encode_menu_vip(user_id)))
                 return
 
             try:
-                await vips.freeze_vip(vip.id, frozen_until)
+                await vips.pause_vip(vip.id, paused_until)
             except ValueError:
                 await _show(message, "El VIP ya no existe o fue desactivado.", menu_back_keyboard(encode_menu("vips")))
                 return
 
             vip = await vips.get_by_telegram_user_id(user_id)
-            is_frozen = _is_vip_frozen(vip)
+            is_paused = _is_vip_paused(vip)
             name = vip.display_name if vip and vip.display_name else str(user_id)
-            status_line = "Estado: 🔒 Pausado\n" if is_frozen else "Estado: 🟢 Activo\n"
+            status_line = "Estado: 🔒 Pausado\n" if is_paused else "Estado: 🟢 Activo\n"
             text = (
                 f"👤 Perfil de {name}\n"
                 f"ID: {user_id}\n\n"
@@ -696,18 +700,18 @@ async def _dispatch_action(
                 "Selecciona una accion:"
             )
             await _show(
-                message, text, menu_vip_detail_keyboard(user_id, is_frozen=is_frozen)
+                message, text, menu_vip_detail_keyboard(user_id, is_paused=is_paused)
             )
             return
 
-        # --- unfreeze (reanudar) ---
-        if action == "unfreeze":
+        # --- unpause (reanudar) ---
+        if action == "unpause":
             vip = await vips.get_by_telegram_user_id(user_id)
             if vip is None or not vip.is_active:
                 await _show(message, f"VIP {user_id} no encontrado o inactivo.", menu_back_keyboard(encode_menu("vips")))
                 return
             try:
-                await vips.unfreeze_vip(vip.id)
+                await vips.unpause_vip(vip.id)
             except ValueError:
                 await _show(message, "El VIP ya no existe o fue desactivado.", menu_back_keyboard(encode_menu("vips")))
                 return
@@ -721,7 +725,7 @@ async def _dispatch_action(
                 "Selecciona una accion:"
             )
             await _show(
-                message, text, menu_vip_detail_keyboard(user_id, is_frozen=False)
+                message, text, menu_vip_detail_keyboard(user_id, is_paused=False)
             )
             return
 

@@ -624,10 +624,10 @@ def menu_vip_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def menu_vip_detail_keyboard(user_id: int, *, is_frozen: bool = False) -> InlineKeyboardMarkup:
+def menu_vip_detail_keyboard(user_id: int, *, is_paused: bool = False) -> InlineKeyboardMarkup:
     """Per-VIP actions: toggle pausa, ficha, nota, dato, renombrar, eliminar, volver."""
-    toggle_label = "🔓 Reanudar" if is_frozen else "🔒 Pausar"
-    toggle_action = "unfreeze" if is_frozen else "freeze"
+    toggle_label = "🔓 Reanudar" if is_paused else "🔒 Pausar"
+    toggle_action = "unpause" if is_paused else "pause"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="👤 Ver ficha", callback_data=encode_menu_vip_action(user_id, "profile"))],
@@ -653,26 +653,38 @@ def menu_vip_detail_keyboard(user_id: int, *, is_frozen: bool = False) -> Inline
     )
 
 
-def menu_freeze_duration_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Duration picker shown after tapping Pausar: 1 dia, 1 semana, indefinido."""
+def menu_pause_duration_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Duration picker shown after tapping Pausar: 1 dia, 1 semana, 3 dias, 1 mes, indefinido."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📅 1 dia",
-                    callback_data=encode_menu_vip_action(user_id, "freeze:1d"),
+                    callback_data=encode_menu_vip_action(user_id, "pause:1d"),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="📅 1 semana",
-                    callback_data=encode_menu_vip_action(user_id, "freeze:7d"),
+                    callback_data=encode_menu_vip_action(user_id, "pause:7d"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📅 3 dias",
+                    callback_data=encode_menu_vip_action(user_id, "pause:3d"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📅 1 mes",
+                    callback_data=encode_menu_vip_action(user_id, "pause:1m"),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="♾️ Indefinido",
-                    callback_data=encode_menu_vip_action(user_id, "freeze:indef"),
+                    callback_data=encode_menu_vip_action(user_id, "pause:indef"),
                 ),
             ],
             [
@@ -861,7 +873,7 @@ __all__ = [
     "menu_root_keyboard",
     "menu_sandbox_keyboard",
     "menu_sandbox_profile_picker_keyboard",
-    "menu_freeze_duration_keyboard",
+    "menu_pause_duration_keyboard",
     "menu_vip_detail_keyboard",
     "menu_vip_list_keyboard",
     "menu_vip_profile_keyboard",
