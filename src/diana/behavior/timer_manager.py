@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Protocol, runtime_checkable
 from uuid import UUID
+
+
+@runtime_checkable
+class TimerManagerProtocol(Protocol):
+    """Structural protocol for the subset of TimerManager used by BehaviorEngine."""
+
+    async def register(self, chat_id: int, turn_id: UUID, task: asyncio.Task) -> None: ...
+
+    async def cancel_chat(self, chat_id: int) -> int: ...
 
 
 class TimerManager:

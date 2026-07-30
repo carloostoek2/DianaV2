@@ -21,7 +21,12 @@ import random
 from typing import Any
 from uuid import UUID, uuid4
 
-from diana.application.ports import DeliveryRecord, PendingDeliveryStore
+from diana.application.ports import (
+    DeliveryRecord,
+    PendingDeliveryStore,
+    RuntimeTimerRecord,
+    RuntimeTimerStore,
+)
 from diana.behavior.ports import (
     Clock,
     DelayPolicy,
@@ -33,7 +38,7 @@ from diana.behavior.ports import (
 )
 from diana.behavior.quirks import QuirkKind, apply_typo, natural_split_text, pick_quirk
 from diana.behavior.split import split_text
-from diana.behavior.timer_manager import TimerManager
+from diana.behavior.timer_manager import TimerManager, TimerManagerProtocol
 
 logger = logging.getLogger("diana.behavior")
 
@@ -55,7 +60,7 @@ class BehaviorEngine:
         *,
         clock: Clock,
         delay_policy: DelayPolicy,
-        timers: TimerManager | None = None,
+        timers: TimerManagerProtocol | None = None,
         turn_status: TurnStatusReader | None = None,
         max_send_attempts: int = 3,
         retry_backoff_seconds: float = 0.05,
@@ -63,6 +68,7 @@ class BehaviorEngine:
         quirk_probability: float = 0.0,
         quirk_force: str | None = None,
         rng: random.Random | None = None,
+        runtime_timer_store: RuntimeTimerStore | None = None,
     ) -> None:
         self._actuator = actuator
         self._deliveries = deliveries
@@ -70,6 +76,7 @@ class BehaviorEngine:
         self._delay = delay_policy
         self._timers = timers or TimerManager()
         self._turn_status = turn_status
+        self._runtime_timer_store = runtime_timer_store
         self._max_send_attempts = max(1, max_send_attempts)
         self._retry_backoff_seconds = retry_backoff_seconds
         self._advanced = bool(feature_advanced_behavior)
@@ -186,117 +193,140 @@ class BehaviorEngine:
                 initial = 0.0
             else:
                 initial = self._delay.initial_delay_seconds(ctx.mode)
-            await self._clock.sleep(initial)
 
-            if quirk == "pause":
-                logger.info(
-                    "delivery_quirk_pause",
-                    extra={
-                        "chat_id": ctx.chat_id,
-                        "seconds": _QUIRK_EXTRA_PAUSE_SECONDS,
-                    },
-                )
-                await self._clock.sleep(_QUIRK_EXTRA_PAUSE_SECONDS)
-
-            if ctx.mode == "fake_delivery":
-                return await self._deliver_fake(
-                    delivery_id=delivery_id,
+            # Persist runtime timer before initial delay (crash recovery for in-flight delays).
+            _timer_id: UUID | None = None
+            if self._runtime_timer_store is not None and initial > 0:
+                _timer_id = uuid4()
+                await self._runtime_timer_store.create_active(RuntimeTimerRecord(
+                    id=_timer_id,
+                    chat_id=ctx.chat_id,
                     turn_id=turn_id,
-                    ctx=ctx,
-                    initial=initial,
-                )
+                    delivery_id=delivery_id,
+                    scheduled_at=self._clock.now(),
+                    initial_delay_seconds=initial,
+                    status="active",
+                    created_at=self._clock.now(),
+                ))
 
-            if ctx.telegram_message_id is not None:
-                pre_read = self._delay.pre_read_delay_seconds()
-                if pre_read > 0:
-                    await self._clock.sleep(pre_read)
-                await self._actuator.read_business_message(
-                    ctx.chat_id,
-                    ctx.telegram_message_id,
-                    business_connection_id=bc,
-                )
-                post_read = self._delay.post_read_delay_seconds()
-                if post_read > 0:
-                    await self._clock.sleep(post_read)
+            try:
+                await self._clock.sleep(initial)
 
-            typing_secs = 0.0
-            message_ids: list[int] = []
-            for index, text in enumerate(texts):
-                if index == 0 or inter_message_gap:
-                    if index > 0 and inter_message_gap:
-                        gap = self._delay.inter_message_gap_seconds()
-                        if gap > 0:
-                            await self._clock.sleep(gap)
-                    typing_secs = self._delay.typing_duration_seconds(text)
-                    await self._actuator.send_chat_action(
+                if quirk == "pause":
+                    logger.info(
+                        "delivery_quirk_pause",
+                        extra={
+                            "chat_id": ctx.chat_id,
+                            "seconds": _QUIRK_EXTRA_PAUSE_SECONDS,
+                        },
+                    )
+                    await self._clock.sleep(_QUIRK_EXTRA_PAUSE_SECONDS)
+
+                if ctx.mode == "fake_delivery":
+                    return await self._deliver_fake(
+                        delivery_id=delivery_id,
+                        turn_id=turn_id,
+                        ctx=ctx,
+                        initial=initial,
+                    )
+
+                if ctx.telegram_message_id is not None:
+                    pre_read = self._delay.pre_read_delay_seconds()
+                    if pre_read > 0:
+                        await self._clock.sleep(pre_read)
+                    await self._actuator.read_business_message(
                         ctx.chat_id,
-                        "typing",
+                        ctx.telegram_message_id,
                         business_connection_id=bc,
                     )
-                    await self._clock.sleep(typing_secs)
+                    post_read = self._delay.post_read_delay_seconds()
+                    if post_read > 0:
+                        await self._clock.sleep(post_read)
 
-                frozen_mid = await self._frozen_abort_pending(
-                    delivery_id=delivery_id,
-                    ctx=ctx,
-                    initial=initial,
-                    typing_secs=typing_secs,
-                    message_ids=message_ids,
-                )
-                if frozen_mid is not None:
-                    return frozen_mid
+                typing_secs = 0.0
+                message_ids: list[int] = []
+                for index, text in enumerate(texts):
+                    if index == 0 or inter_message_gap:
+                        if index > 0 and inter_message_gap:
+                            gap = self._delay.inter_message_gap_seconds()
+                            if gap > 0:
+                                await self._clock.sleep(gap)
+                        typing_secs = self._delay.typing_duration_seconds(text)
+                        await self._actuator.send_chat_action(
+                            ctx.chat_id,
+                            "typing",
+                            business_connection_id=bc,
+                        )
+                        await self._clock.sleep(typing_secs)
 
-                abort = await self._presend_abort_if_not_live(
-                    delivery_id=delivery_id,
-                    turn_id=turn_id,
-                    ctx=ctx,
-                    initial=initial,
-                    typing_secs=typing_secs,
-                    message_ids=message_ids,
-                )
-                if abort is not None:
-                    return abort
+                    frozen_mid = await self._frozen_abort_pending(
+                        delivery_id=delivery_id,
+                        ctx=ctx,
+                        initial=initial,
+                        typing_secs=typing_secs,
+                        message_ids=message_ids,
+                    )
+                    if frozen_mid is not None:
+                        return frozen_mid
 
-                send_result = await self._send_with_retries(
-                    delivery_id=delivery_id,
-                    turn_id=turn_id,
-                    ctx=ctx,
-                    bc=bc,
-                    text=text,
-                    initial=initial,
-                    typing_secs=typing_secs,
-                    message_ids=message_ids,
-                )
-                if send_result is not None:
-                    return send_result
-                # last successful mid appended inside _send_with_retries
+                    abort = await self._presend_abort_if_not_live(
+                        delivery_id=delivery_id,
+                        turn_id=turn_id,
+                        ctx=ctx,
+                        initial=initial,
+                        typing_secs=typing_secs,
+                        message_ids=message_ids,
+                    )
+                    if abort is not None:
+                        return abort
 
-            # Never overwrite cancelled/expired with done (CAS).
-            applied = await self._deliveries.update_status(delivery_id, "done")
-            if not applied:
+                    send_result = await self._send_with_retries(
+                        delivery_id=delivery_id,
+                        turn_id=turn_id,
+                        ctx=ctx,
+                        bc=bc,
+                        text=text,
+                        initial=initial,
+                        typing_secs=typing_secs,
+                        message_ids=message_ids,
+                    )
+                    if send_result is not None:
+                        return send_result
+                    # last successful mid appended inside _send_with_retries
+
+                # Never overwrite cancelled/expired with done (CAS).
+                applied = await self._deliveries.update_status(delivery_id, "done")
+                if not applied:
+                    logger.info(
+                        "delivery_done_rejected",
+                        extra={"turn_id": str(turn_id), "chat_id": ctx.chat_id},
+                    )
+                    return DeliveryResult(
+                        success=False,
+                        cancelled=True,
+                        message_ids=message_ids,
+                        actual_delay_seconds=initial,
+                        typing_duration_seconds=typing_secs,
+                        error="status_rejected",
+                    )
+
                 logger.info(
-                    "delivery_done_rejected",
+                    "delivery_done",
                     extra={"turn_id": str(turn_id), "chat_id": ctx.chat_id},
                 )
                 return DeliveryResult(
-                    success=False,
-                    cancelled=True,
+                    success=True,
                     message_ids=message_ids,
+                    texts=list(texts),
                     actual_delay_seconds=initial,
                     typing_duration_seconds=typing_secs,
-                    error="status_rejected",
                 )
-
-            logger.info(
-                "delivery_done",
-                extra={"turn_id": str(turn_id), "chat_id": ctx.chat_id},
-            )
-            return DeliveryResult(
-                success=True,
-                message_ids=message_ids,
-                texts=list(texts),
-                actual_delay_seconds=initial,
-                typing_duration_seconds=typing_secs,
-            )
+            finally:
+                if _timer_id is not None and self._runtime_timer_store is not None:
+                    try:
+                        await self._runtime_timer_store.mark_completed(_timer_id)
+                    except Exception:
+                        logger.debug("timer_cleanup_failed", exc_info=True)
         except asyncio.CancelledError:
             await self._safe_mark(delivery_id, "cancelled")
             logger.info(
