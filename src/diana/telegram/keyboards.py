@@ -659,7 +659,7 @@ def menu_pause_duration_keyboard(user_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📅 1 dia",
+                    text="📅 1 día",
                     callback_data=encode_menu_vip_action(user_id, "pause:1d"),
                 ),
             ],
@@ -671,7 +671,7 @@ def menu_pause_duration_keyboard(user_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="📅 3 dias",
+                    text="📅 3 días",
                     callback_data=encode_menu_vip_action(user_id, "pause:3d"),
                 ),
             ],
