@@ -29,6 +29,7 @@ def _delivery(
     *,
     status: str = "pending",
     scheduled_at: datetime | None = None,
+    turn_id=None,
 ) -> DeliveryRecord:
     return DeliveryRecord(
         id=uuid4(),
@@ -38,7 +39,7 @@ def _delivery(
         decision={},
         scheduled_at=scheduled_at or datetime.now(UTC),
         status=status,
-        turn_id=uuid4(),
+        turn_id=turn_id or uuid4(),
     )
 
 
@@ -63,7 +64,6 @@ async def test_startup_expires_delivering_and_recoverable() -> None:
     clock = ImmediateClock(now=now)
 
     mid = _delivery(status="pending")
-    mid = mid.model_copy(update={"status": "pending"})
     await deliveries.insert_pending(mid)
     # force delivering
     await deliveries.update_status(mid.id, "delivering")
@@ -78,8 +78,8 @@ async def test_startup_expires_delivering_and_recoverable() -> None:
         clock=clock,
         stale_after=timedelta(minutes=30),
     )
-    assert report.expired_delivering_or_stale >= 1
-    assert report.expired_recoverable >= 1
+    assert report.expired_delivering_or_stale == 1
+    assert report.expired_recoverable == 1
     got_mid = await deliveries.get(mid.id)
     got_fresh = await deliveries.get(fresh.id)
     assert got_mid is not None and got_mid.status == "expired"
@@ -237,3 +237,72 @@ async def test_startup_without_turns_traces_timers_backwards_compat() -> None:
     assert report.timers_recovered == 0
     assert report.expired_delivering_or_stale == 0
     assert report.re_notified_approvals == 0
+
+
+@pytest.mark.asyncio
+async def test_startup_timer_recovery_reschedules_active_timer() -> None:
+    """Timer with remaining > 5s is re-scheduled: delivery dispatched, old expired, timer completed."""
+    from unittest.mock import patch
+
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    timers = InMemoryRuntimeTimerStore()
+    clock = ImmediateClock()
+    now = clock.now()
+
+    class _MockBehavior:
+        def __init__(self) -> None:
+            self.deliver_calls: list[dict] = []
+
+        async def deliver(self, **kwargs: object) -> None:
+            self.deliver_calls.append(kwargs)
+
+    behavior = _MockBehavior()
+
+    # Create a delivery record
+    turn_id = uuid4()
+    delivery = _delivery(status="pending", turn_id=turn_id)
+    delivery = await deliveries.insert_pending(delivery)
+
+    # Create a timer with remaining > 5s (scheduled_at=now, initial_delay=6.0)
+    timer = RuntimeTimerRecord(
+        id=uuid4(),
+        chat_id=1,
+        turn_id=turn_id,
+        delivery_id=delivery.id,
+        scheduled_at=now,
+        initial_delay_seconds=6.0,
+        status="active",
+        created_at=now,
+    )
+    await timers.create_active(timer)
+    assert len(await timers.list_active()) == 1
+
+    # Patch asyncio.sleep to avoid actual waiting during recovery.
+    with patch("asyncio.sleep", return_value=None):
+        report = await run_startup_recovery(
+            deliveries=deliveries,
+            approvals=approvals,
+            notifier=notifier,
+            clock=clock,
+            stale_after=timedelta(minutes=30),
+            timers=timers,
+            behavior=behavior,
+            global_mode="supervised",
+        )
+
+    assert report.timers_recovered == 1
+
+    # Timer was marked completed.
+    assert len(await timers.list_active()) == 0
+
+    # Old delivery was expired.
+    expired = await deliveries.get(delivery.id)
+    assert expired is not None and expired.status == "expired"
+
+    # behavior.deliver was called with the correct texts/turn_id.
+    assert len(behavior.deliver_calls) == 1
+    call = behavior.deliver_calls[0]
+    assert call["texts"] == list(delivery.texts)
+    assert call["turn_id"] == delivery.turn_id

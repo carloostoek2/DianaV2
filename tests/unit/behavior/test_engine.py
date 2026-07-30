@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from diana.application.memory import InMemoryPendingDeliveryStore
+from diana.application.ports import RuntimeTimerRecord
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import (
     AlwaysLiveTurnStatusReader,
@@ -962,6 +964,23 @@ async def test_timer_created_when_runtime_timer_store_injected() -> None:
     # Timer was created and then marked completed — no active timers remain.
     active = await timer_store.list_active()
     assert active == []
+
+    # Positive assertion: manually create a timer; list_active must detect it.
+    # This proves the empty result above is not because list_active is broken.
+    second_timer_id = uuid4()
+    await timer_store.create_active(RuntimeTimerRecord(
+        id=second_timer_id,
+        chat_id=1,
+        turn_id=uuid4(),
+        delivery_id=uuid4(),
+        scheduled_at=datetime.now(UTC),
+        initial_delay_seconds=60.0,
+        status="active",
+        created_at=datetime.now(UTC),
+    ))
+    active = await timer_store.list_active()
+    assert len(active) == 1
+    assert active[0].id == second_timer_id
 
 
 @pytest.mark.asyncio
