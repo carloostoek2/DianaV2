@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from diana.application.ports import (
     ApprovalRecord,
+    BusinessConnectionRecord,
     DeliveryRecord,
     RuntimeTimerRecord,
     TurnRecord,
@@ -119,6 +120,18 @@ class InMemoryRuntimeTimerStore:
             for r in self._timers.values()
             if r.status == "active"
         ]
+
+class InMemoryBusinessConnectionStore:
+    """Dict-backed BusinessConnectionStore for unit tests."""
+
+    def __init__(self) -> None:
+        self._connections: dict[str, BusinessConnectionRecord] = {}
+
+    async def upsert(self, record: BusinessConnectionRecord) -> BusinessConnectionRecord:
+        stored = record.model_copy(deep=True)
+        self._connections[stored.business_connection_id] = stored
+        return stored.model_copy(deep=True)
+
 
 class InMemoryPendingApprovalStore:
     """Dict-backed PendingApprovalStore keyed by turn_id (CAS claim supported)."""
@@ -468,6 +481,7 @@ __all__ = [
     "InMemoryMessageHistoryWriter",
     "InMemoryPendingApprovalStore",
     "InMemoryPendingDeliveryStore",
+    "InMemoryBusinessConnectionStore",
     "InMemoryRuntimeTimerStore",
     "InMemoryTraceReaderWriter",
     "InMemoryTurnStore",

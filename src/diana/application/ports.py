@@ -367,6 +367,26 @@ class RuntimeTimerStore(Protocol):
     async def list_active(self) -> list[RuntimeTimerRecord]: ...
 
 
+class BusinessConnectionRecord(BaseModel):
+    """business_connections row shape for BC lifecycle persistence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    business_connection_id: str
+    user_id: int
+    user_chat_id: int
+    date: datetime
+    can_reply: bool
+    is_enabled: bool
+
+
+@runtime_checkable
+class BusinessConnectionStore(Protocol):
+    """Upsert business connection state by business_connection_id."""
+
+    async def upsert(self, record: BusinessConnectionRecord) -> BusinessConnectionRecord: ...
+
+
 @runtime_checkable
 class EscalationStore(Protocol):
     async def create(
@@ -568,6 +588,8 @@ __all__ = [
     "ApprovalRecord",
     "BehaviorCanceller",
     "BehaviorDeliverer",
+    "BusinessConnectionRecord",
+    "BusinessConnectionStore",
     "DeliveryContext",
     "DeliveryMode",
     "DeliveryRecord",
