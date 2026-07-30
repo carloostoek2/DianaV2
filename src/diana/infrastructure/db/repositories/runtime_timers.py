@@ -92,16 +92,6 @@ class SqlRuntimeTimerStore:
             )
             return [_orm_to_record(r) for r in result.scalars().all()]
 
-    async def delete_for_turn(self, turn_id: UUID) -> None:
-        async with self._sf() as session:
-            result = await session.execute(
-                select(RuntimeTimer).where(RuntimeTimer.turn_id == turn_id)
-            )
-            for row in result.scalars().all():
-                await session.delete(row)
-            await session.commit()
-
-
 __all__ = [
     "RuntimeTimer",
     "SqlRuntimeTimerStore",

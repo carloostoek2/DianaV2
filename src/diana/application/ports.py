@@ -366,8 +366,6 @@ class RuntimeTimerStore(Protocol):
 
     async def list_active(self) -> list[RuntimeTimerRecord]: ...
 
-    async def delete_for_turn(self, turn_id: UUID) -> None: ...
-
 
 @runtime_checkable
 class EscalationStore(Protocol):

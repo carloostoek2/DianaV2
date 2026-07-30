@@ -120,12 +120,6 @@ class InMemoryRuntimeTimerStore:
             if r.status == "active"
         ]
 
-    async def delete_for_turn(self, turn_id: UUID) -> None:
-        keys = [k for k, v in self._timers.items() if v.turn_id == turn_id]
-        for k in keys:
-            self._timers.pop(k, None)
-
-
 class InMemoryPendingApprovalStore:
     """Dict-backed PendingApprovalStore keyed by turn_id (CAS claim supported)."""
 
