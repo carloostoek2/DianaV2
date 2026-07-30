@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from diana.application.ports import (
     ApprovalRecord,
     DeliveryRecord,
+    RuntimeTimerRecord,
     TurnRecord,
     VipRecord,
 )
@@ -59,6 +60,13 @@ class InMemoryTurnStore:
             if t.chat_id == chat_id and not _is_terminal(t.status)
         ]
 
+    async def list_all_non_terminal(self) -> list[TurnRecord]:
+        return [
+            t.model_copy(deep=True)
+            for t in self._turns.values()
+            if not _is_terminal(t.status)
+        ]
+
     async def transition(
         self,
         turn_id: UUID,
@@ -85,6 +93,37 @@ class InMemoryTurnStore:
         updated = TurnRecord(**data)
         self._turns[turn_id] = updated
         return updated.model_copy(deep=True)
+
+
+class InMemoryRuntimeTimerStore:
+    """Dict-backed RuntimeTimerStore for unit tests."""
+
+    def __init__(self) -> None:
+        self._timers: dict[UUID, RuntimeTimerRecord] = {}
+
+    async def create_active(self, record: RuntimeTimerRecord) -> RuntimeTimerRecord:
+        stored = record.model_copy(deep=True)
+        self._timers[stored.id] = stored
+        return stored.model_copy(deep=True)
+
+    async def mark_completed(self, timer_id: UUID) -> bool:
+        rec = self._timers.get(timer_id)
+        if rec is None:
+            return False
+        self._timers[timer_id] = rec.model_copy(update={"status": "completed"})
+        return True
+
+    async def list_active(self) -> list[RuntimeTimerRecord]:
+        return [
+            r.model_copy(deep=True)
+            for r in self._timers.values()
+            if r.status == "active"
+        ]
+
+    async def delete_for_turn(self, turn_id: UUID) -> None:
+        keys = [k for k, v in self._timers.items() if v.turn_id == turn_id]
+        for k in keys:
+            self._timers.pop(k, None)
 
 
 class InMemoryPendingApprovalStore:
@@ -431,6 +470,7 @@ __all__ = [
     "InMemoryMessageHistoryWriter",
     "InMemoryPendingApprovalStore",
     "InMemoryPendingDeliveryStore",
+    "InMemoryRuntimeTimerStore",
     "InMemoryTraceReaderWriter",
     "InMemoryTurnStore",
     "InMemoryVipStore",

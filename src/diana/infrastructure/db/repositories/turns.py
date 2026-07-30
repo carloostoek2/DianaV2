@@ -79,6 +79,16 @@ class SqlTurnStore:
                 if not is_terminal_status(r.status)
             ]
 
+    async def list_all_non_terminal(self) -> list[TurnRecord]:
+        async with self._sf() as session:
+            result = await session.execute(select(Turn))
+            rows = result.scalars().all()
+            return [
+                turn_orm_to_record(r)
+                for r in rows
+                if not is_terminal_status(r.status)
+            ]
+
     async def transition(
         self,
         turn_id: UUID,

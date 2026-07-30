@@ -9,6 +9,21 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class RuntimeTimerRecord(BaseModel):
+    """runtime_timers row shape for crash-recovery persistence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    chat_id: int
+    turn_id: UUID
+    delivery_id: UUID
+    scheduled_at: datetime
+    initial_delay_seconds: float
+    status: str  # "active" | "completed" | "recovered"
+    created_at: datetime
+
+
 class TurnRecord(BaseModel):
     """Durable turn row shape used by application stores."""
 
@@ -283,6 +298,10 @@ class TurnStore(Protocol):
 
     async def list_non_terminal(self, chat_id: int) -> list[TurnRecord]: ...
 
+    async def list_all_non_terminal(self) -> list[TurnRecord]:
+        """All non-terminal turns across all chats (for zombie turn detection)."""
+        ...
+
     async def transition(
         self,
         turn_id: UUID,
@@ -338,6 +357,19 @@ class PendingDeliveryStore(Protocol):
 
 
 @runtime_checkable
+class RuntimeTimerStore(Protocol):
+    """Persistent runtime timer store for crash-recovery of in-flight delays."""
+
+    async def create_active(self, record: RuntimeTimerRecord) -> RuntimeTimerRecord: ...
+
+    async def mark_completed(self, timer_id: UUID) -> bool: ...
+
+    async def list_active(self) -> list[RuntimeTimerRecord]: ...
+
+    async def delete_for_turn(self, turn_id: UUID) -> None: ...
+
+
+@runtime_checkable
 class EscalationStore(Protocol):
     async def create(
         self, turn_id: UUID, *, tipo: str, motivo: str | None
@@ -371,6 +403,10 @@ class DeliveryResultWriter(Protocol):
 @runtime_checkable
 class TraceReader(Protocol):
     async def get_trace_keys(self, turn_id: UUID) -> set[str]: ...
+
+    async def get_full_trace(self, turn_id: UUID) -> dict | None:
+        """Full pipeline_trace row as dict, including generated_text."""
+        ...
 
 
 @runtime_checkable
@@ -555,6 +591,8 @@ __all__ = [
     "PromoTriggerStore",
     "RecontactScheduleRecord",
     "RecontactScheduleStore",
+    "RuntimeTimerRecord",
+    "RuntimeTimerStore",
     "TraceabilityReader",
     "TraceReader",
     "TrainingModeStore",
