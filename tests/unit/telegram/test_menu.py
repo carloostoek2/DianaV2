@@ -59,9 +59,9 @@ def test_pause_duration_keyboard_has_six_buttons() -> None:
     rows = kb.inline_keyboard
     assert len(rows) == 6
     labels = [r[0].text for r in rows]
-    assert "\U0001f4c5 1 dia" in labels
+    assert "\U0001f4c5 1 día" in labels
     assert "\U0001f4c5 1 semana" in labels
-    assert "\U0001f4c5 3 dias" in labels
+    assert "\U0001f4c5 3 días" in labels
     assert "\U0001f4c5 1 mes" in labels
     assert "♾️ Indefinido" in labels
     assert "\U0001f519 Volver al perfil" in labels
