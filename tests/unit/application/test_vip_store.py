@@ -108,6 +108,46 @@ async def test_unfreeze_vip_unknown_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pause_vip_sets_paused_until() -> None:
+    """pause_vip sets paused_until on the record."""
+    store = InMemoryVipStore()
+    rec = await store.add(3001)
+    paused_until = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    await store.pause_vip(rec.id, paused_until)
+    loaded = await store.get_by_id(rec.id)
+    assert loaded is not None
+    assert loaded.paused_until == paused_until
+
+
+@pytest.mark.asyncio
+async def test_pause_vip_unknown_raises() -> None:
+    store = InMemoryVipStore()
+    from uuid import uuid4
+    with pytest.raises(ValueError, match="not found"):
+        await store.pause_vip(uuid4(), datetime.now(UTC))
+
+
+@pytest.mark.asyncio
+async def test_unpause_vip_clears_paused_until() -> None:
+    store = InMemoryVipStore()
+    rec = await store.add(3002)
+    paused_until = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    await store.pause_vip(rec.id, paused_until)
+    await store.unpause_vip(rec.id)
+    loaded = await store.get_by_id(rec.id)
+    assert loaded is not None
+    assert loaded.paused_until is None
+
+
+@pytest.mark.asyncio
+async def test_unpause_vip_unknown_raises() -> None:
+    store = InMemoryVipStore()
+    from uuid import uuid4
+    with pytest.raises(ValueError, match="not found"):
+        await store.unpause_vip(uuid4())
+
+
+@pytest.mark.asyncio
 async def test_add_updates_both_indexes() -> None:
     """After add, both get_by_telegram_user_id and get_by_id find the record."""
     store = InMemoryVipStore()

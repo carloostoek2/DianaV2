@@ -1,4 +1,4 @@
-"""Freeze toggle keyboard, duration picker, callback sizing, and handler tests."""
+"""Data pause toggle keyboard, duration picker, callback sizing, and handler tests."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from diana.telegram.handlers.menu import _dispatch_action, MenuSessionStore
 from diana.telegram.keyboards import (
     MenuCallback,
     encode_menu_vip_action,
-    menu_freeze_duration_keyboard,
+    menu_pause_duration_keyboard,
     menu_vip_detail_keyboard,
     parse_menu_callback,
 )
@@ -26,24 +26,24 @@ from diana.telegram.keyboards import (
 # ---------------------------------------------------------------------------
 
 
-def test_keyboard_shows_pausar_when_not_frozen() -> None:
-    kb = menu_vip_detail_keyboard(123, is_frozen=False)
+def test_keyboard_shows_pausar_when_not_paused() -> None:
+    kb = menu_vip_detail_keyboard(123, is_paused=False)
     rows = kb.inline_keyboard
     toggle_row = rows[5]
     assert len(toggle_row) == 1
     btn = toggle_row[0]
     assert btn.text == "\U0001f512 Pausar"
-    assert "freeze" in btn.callback_data
+    assert "pause" in btn.callback_data
 
 
-def test_keyboard_shows_reanudar_when_frozen() -> None:
-    kb = menu_vip_detail_keyboard(123, is_frozen=True)
+def test_keyboard_shows_reanudar_when_paused() -> None:
+    kb = menu_vip_detail_keyboard(123, is_paused=True)
     rows = kb.inline_keyboard
     toggle_row = rows[5]
     assert len(toggle_row) == 1
     btn = toggle_row[0]
     assert btn.text == "\U0001f513 Reanudar"
-    assert "unfreeze" in btn.callback_data
+    assert "unpause" in btn.callback_data
 
 
 def test_keyboard_backward_compat_no_is_frozen() -> None:
@@ -54,13 +54,15 @@ def test_keyboard_backward_compat_no_is_frozen() -> None:
     assert btn.text == "\U0001f512 Pausar"
 
 
-def test_freeze_duration_keyboard_has_four_buttons() -> None:
-    kb = menu_freeze_duration_keyboard(123)
+def test_pause_duration_keyboard_has_six_buttons() -> None:
+    kb = menu_pause_duration_keyboard(123)
     rows = kb.inline_keyboard
-    assert len(rows) == 4
+    assert len(rows) == 6
     labels = [r[0].text for r in rows]
     assert "\U0001f4c5 1 dia" in labels
     assert "\U0001f4c5 1 semana" in labels
+    assert "\U0001f4c5 3 dias" in labels
+    assert "\U0001f4c5 1 mes" in labels
     assert "♾️ Indefinido" in labels
     assert "\U0001f519 Volver al perfil" in labels
 
@@ -70,28 +72,38 @@ def test_freeze_duration_keyboard_has_four_buttons() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_freeze_callback_data_under_64_bytes() -> None:
-    data = encode_menu_vip_action(2147483647, "freeze")
+def test_pause_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "pause")
     assert len(data.encode("utf-8")) <= 64
 
 
-def test_unfreeze_callback_data_under_64_bytes() -> None:
-    data = encode_menu_vip_action(2147483647, "unfreeze")
+def test_unpause_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "unpause")
     assert len(data.encode("utf-8")) <= 64
 
 
-def test_freeze_1d_callback_data_under_64_bytes() -> None:
-    data = encode_menu_vip_action(2147483647, "freeze:1d")
+def test_pause_1d_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "pause:1d")
     assert len(data.encode("utf-8")) <= 64
 
 
-def test_freeze_7d_callback_data_under_64_bytes() -> None:
-    data = encode_menu_vip_action(2147483647, "freeze:7d")
+def test_pause_7d_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "pause:7d")
     assert len(data.encode("utf-8")) <= 64
 
 
-def test_freeze_indef_callback_data_under_64_bytes() -> None:
-    data = encode_menu_vip_action(2147483647, "freeze:indef")
+def test_pause_3d_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "pause:3d")
+    assert len(data.encode("utf-8")) <= 64
+
+
+def test_pause_1m_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "pause:1m")
+    assert len(data.encode("utf-8")) <= 64
+
+
+def test_pause_indef_callback_data_under_64_bytes() -> None:
+    data = encode_menu_vip_action(2147483647, "pause:indef")
     assert len(data.encode("utf-8")) <= 64
 
 
@@ -124,8 +136,8 @@ def _msg(user_id: int = _OWNER_ID) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_freeze_without_duration_shows_picker() -> None:
-    """Freeze action without extra shows the duration picker keyboard."""
+async def test_pause_without_duration_shows_picker() -> None:
+    """Pause action without extra shows the duration picker keyboard."""
     vips = InMemoryVipStore()
     await vips.add(123, display_name="VIP Test")
     sessions = MenuSessionStore()
@@ -133,7 +145,7 @@ async def test_freeze_without_duration_shows_picker() -> None:
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=123),
+        parsed=_callback("vip", "pause", vip_user_id=123),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -152,7 +164,7 @@ async def test_freeze_without_duration_shows_picker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_freeze_with_1d_duration() -> None:
+async def test_pause_with_1d_duration() -> None:
     vips = InMemoryVipStore()
     await vips.add(123, display_name="VIP Test")
     sessions = MenuSessionStore()
@@ -160,7 +172,7 @@ async def test_freeze_with_1d_duration() -> None:
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=123, extra="1d"),
+        parsed=_callback("vip", "pause", vip_user_id=123, extra="1d"),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -174,13 +186,13 @@ async def test_freeze_with_1d_duration() -> None:
 
     vip = await vips.get_by_telegram_user_id(123)
     assert vip is not None
-    assert vip.frozen_until is not None
-    delta = vip.frozen_until - datetime.now(UTC)
+    assert vip.paused_until is not None
+    delta = vip.paused_until - datetime.now(UTC)
     assert timedelta(hours=23) < delta < timedelta(days=1, hours=1)
 
 
 @pytest.mark.asyncio
-async def test_freeze_with_7d_duration() -> None:
+async def test_pause_with_3d_duration() -> None:
     vips = InMemoryVipStore()
     await vips.add(123, display_name="VIP Test")
     sessions = MenuSessionStore()
@@ -188,7 +200,7 @@ async def test_freeze_with_7d_duration() -> None:
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=123, extra="7d"),
+        parsed=_callback("vip", "pause", vip_user_id=123, extra="3d"),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -202,13 +214,69 @@ async def test_freeze_with_7d_duration() -> None:
 
     vip = await vips.get_by_telegram_user_id(123)
     assert vip is not None
-    assert vip.frozen_until is not None
-    delta = vip.frozen_until - datetime.now(UTC)
+    assert vip.paused_until is not None
+    delta = vip.paused_until - datetime.now(UTC)
+    assert timedelta(days=2, hours=23) < delta < timedelta(days=3, hours=1)
+
+
+@pytest.mark.asyncio
+async def test_pause_with_1m_duration() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "pause", vip_user_id=123, extra="1m"),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    vip = await vips.get_by_telegram_user_id(123)
+    assert vip is not None
+    assert vip.paused_until is not None
+    delta = vip.paused_until - datetime.now(UTC)
+    assert timedelta(days=29, hours=23) < delta < timedelta(days=30, hours=1)
+
+
+@pytest.mark.asyncio
+async def test_pause_with_7d_duration() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "pause", vip_user_id=123, extra="7d"),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    vip = await vips.get_by_telegram_user_id(123)
+    assert vip is not None
+    assert vip.paused_until is not None
+    delta = vip.paused_until - datetime.now(UTC)
     assert timedelta(days=6, hours=23) < delta < timedelta(days=7, hours=1)
 
 
 @pytest.mark.asyncio
-async def test_freeze_with_indef_duration() -> None:
+async def test_pause_with_indef_duration() -> None:
     vips = InMemoryVipStore()
     await vips.add(123, display_name="VIP Test")
     sessions = MenuSessionStore()
@@ -216,7 +284,7 @@ async def test_freeze_with_indef_duration() -> None:
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=123, extra="indef"),
+        parsed=_callback("vip", "pause", vip_user_id=123, extra="indef"),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -230,21 +298,21 @@ async def test_freeze_with_indef_duration() -> None:
 
     vip = await vips.get_by_telegram_user_id(123)
     assert vip is not None
-    assert vip.frozen_until is not None
-    assert vip.frozen_until.year == 2099
+    assert vip.paused_until is not None
+    assert vip.paused_until.year == 2099
 
 
 @pytest.mark.asyncio
-async def test_unfreeze_handler_calls_unfreeze_vip_with_uuid() -> None:
+async def test_unpause_handler_calls_unpause_vip_with_uuid() -> None:
     vips = InMemoryVipStore()
     rec = await vips.add(123, display_name="VIP Test")
-    await vips.freeze_vip(rec.id, datetime(2099, 12, 31, tzinfo=UTC))
+    await vips.pause_vip(rec.id, datetime(2099, 12, 31, tzinfo=UTC))
     sessions = MenuSessionStore()
 
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "unfreeze", vip_user_id=123),
+        parsed=_callback("vip", "unpause", vip_user_id=123),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -258,18 +326,18 @@ async def test_unfreeze_handler_calls_unfreeze_vip_with_uuid() -> None:
 
     vip = await vips.get_by_telegram_user_id(123)
     assert vip is not None
-    assert vip.frozen_until is None
+    assert vip.paused_until is None
 
 
 @pytest.mark.asyncio
-async def test_freeze_handler_vip_not_found_shows_error() -> None:
+async def test_pause_handler_vip_not_found_shows_error() -> None:
     vips = InMemoryVipStore()
     sessions = MenuSessionStore()
     msg = _msg()
 
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=99999, extra="indef"),
+        parsed=_callback("vip", "pause", vip_user_id=99999, extra="indef"),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -287,14 +355,14 @@ async def test_freeze_handler_vip_not_found_shows_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unfreeze_handler_vip_not_found_shows_error() -> None:
+async def test_unpause_handler_vip_not_found_shows_error() -> None:
     vips = InMemoryVipStore()
     sessions = MenuSessionStore()
     msg = _msg()
 
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "unfreeze", vip_user_id=99999),
+        parsed=_callback("vip", "unpause", vip_user_id=99999),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -311,19 +379,21 @@ async def test_unfreeze_handler_vip_not_found_shows_error() -> None:
     assert "no encontrado" in call_args[0][0] or "inactivo" in call_args[0][0]
 
 
-def test_freeze_duration_keyboard_callback_data() -> None:
-    """Each freeze duration button has correct callback_data."""
-    kb = menu_freeze_duration_keyboard(123)
+def test_pause_duration_keyboard_callback_data() -> None:
+    """Each pause duration button has correct callback_data."""
+    kb = menu_pause_duration_keyboard(123)
     rows = kb.inline_keyboard
-    assert len(rows) == 4
-    assert rows[0][0].callback_data == "m:vip:123:freeze:1d"
-    assert rows[1][0].callback_data == "m:vip:123:freeze:7d"
-    assert rows[2][0].callback_data == "m:vip:123:freeze:indef"
-    assert rows[3][0].callback_data == "m:vip:123"
+    assert len(rows) == 6
+    assert rows[0][0].callback_data == "m:vip:123:pause:1d"
+    assert rows[1][0].callback_data == "m:vip:123:pause:7d"
+    assert rows[2][0].callback_data == "m:vip:123:pause:3d"
+    assert rows[3][0].callback_data == "m:vip:123:pause:1m"
+    assert rows[4][0].callback_data == "m:vip:123:pause:indef"
+    assert rows[5][0].callback_data == "m:vip:123"
 
 
 @pytest.mark.asyncio
-async def test_freeze_handler_vip_inactive_shows_error() -> None:
+async def test_pause_handler_vip_inactive_shows_error() -> None:
     vips = InMemoryVipStore()
     await vips.add(123)
     await vips.deactivate(123)
@@ -331,7 +401,7 @@ async def test_freeze_handler_vip_inactive_shows_error() -> None:
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=123, extra="indef"),
+        parsed=_callback("vip", "pause", vip_user_id=123, extra="indef"),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -348,7 +418,7 @@ async def test_freeze_handler_vip_inactive_shows_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unfreeze_handler_vip_inactive_shows_error() -> None:
+async def test_unpause_handler_vip_inactive_shows_error() -> None:
     vips = InMemoryVipStore()
     await vips.add(123)
     await vips.deactivate(123)
@@ -356,7 +426,7 @@ async def test_unfreeze_handler_vip_inactive_shows_error() -> None:
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "unfreeze", vip_user_id=123),
+        parsed=_callback("vip", "unpause", vip_user_id=123),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -373,14 +443,14 @@ async def test_unfreeze_handler_vip_inactive_shows_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_freeze_handler_vip_not_found_at_picker_step() -> None:
-    """Freeze without extra (duration picker step) for a non-existent VIP shows error."""
+async def test_pause_handler_vip_not_found_at_picker_step() -> None:
+    """Pause without extra (duration picker step) for a non-existent VIP shows error."""
     vips = InMemoryVipStore()
     sessions = MenuSessionStore()
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=99999),
+        parsed=_callback("vip", "pause", vip_user_id=99999),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -397,14 +467,14 @@ async def test_freeze_handler_vip_not_found_at_picker_step() -> None:
 
 
 @pytest.mark.asyncio
-async def test_freeze_with_unknown_duration_shows_error() -> None:
+async def test_pause_with_unknown_duration_shows_error() -> None:
     vips = InMemoryVipStore()
     await vips.add(123, display_name="VIP Test")
     sessions = MenuSessionStore()
     msg = _msg()
     await _dispatch_action(
         msg,
-        parsed=_callback("vip", "freeze", vip_user_id=123, extra="xyz"),
+        parsed=_callback("vip", "pause", vip_user_id=123, extra="xyz"),
         actor_id=_OWNER_ID,
         vips=vips,
         admin_trace=None,
@@ -423,21 +493,23 @@ async def test_freeze_with_unknown_duration_shows_error() -> None:
 @pytest.mark.parametrize(
     "data,expected_category,expected_action,expected_vip_user_id,expected_extra",
     [
-        ("m:vip:123:freeze", "vip", "freeze", 123, None),
-        ("m:vip:123:freeze:1d", "vip", "freeze", 123, "1d"),
-        ("m:vip:123:freeze:7d", "vip", "freeze", 123, "7d"),
-        ("m:vip:123:freeze:indef", "vip", "freeze", 123, "indef"),
-        ("m:vip:123:unfreeze", "vip", "unfreeze", 123, None),
+        ("m:vip:123:pause", "vip", "pause", 123, None),
+        ("m:vip:123:pause:1d", "vip", "pause", 123, "1d"),
+        ("m:vip:123:pause:3d", "vip", "pause", 123, "3d"),
+        ("m:vip:123:pause:7d", "vip", "pause", 123, "7d"),
+        ("m:vip:123:pause:1m", "vip", "pause", 123, "1m"),
+        ("m:vip:123:pause:indef", "vip", "pause", 123, "indef"),
+        ("m:vip:123:unpause", "vip", "unpause", 123, None),
     ],
 )
-def test_parse_menu_callback_freeze_variants(
+def test_parse_menu_callback_pause_variants(
     data: str,
     expected_category: str,
     expected_action: str,
     expected_vip_user_id: int,
     expected_extra: str | None,
 ) -> None:
-    """parse_menu_callback correctly parses all freeze/unfreeze callback variants."""
+    """parse_menu_callback correctly parses all pause/unpause callback variants."""
     result = parse_menu_callback(data)
     assert result is not None
     assert result.category == expected_category
