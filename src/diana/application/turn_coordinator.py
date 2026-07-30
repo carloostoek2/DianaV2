@@ -213,6 +213,7 @@ class TurnCoordinator:
                 superseded_by=None,
                 cancel_reason="owner_message",
             )
+            self.clear_owner_intervention(chat_id)
             result = CoordinateResult(action="discard_owner_message", turn_id=None)
             logger.info(
                 "coordinate_result",

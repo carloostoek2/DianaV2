@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -180,15 +181,17 @@ class TurnOrchestrator:
             if self._delay_policy is not None
             else 0.0
         )
+        before_sleep = time.monotonic()
         if pre_delay > 0:
             await asyncio.sleep(pre_delay)
 
         # Abort if owner replied directly in chat during the pre-pipeline delay.
-        if self._coordinator.is_owner_intervened(chat_id):
+        if self._coordinator.is_owner_intervened(chat_id, since=before_sleep):
             logger.info(
                 "turn_aborted_owner_intervened_pre_pipeline",
                 extra={"chat_id": chat_id, "vip_id": str(incoming.vip_id)},
             )
+            self._coordinator.clear_owner_intervention(chat_id)
             return uuid4()  # no turn created; return a synthetic id for logging
 
         pending_deliver: _AutonomousDeliverJob | None
