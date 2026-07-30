@@ -15,6 +15,9 @@ from diana.application.ports import (
     DeliveryRecord,
     PendingApprovalStore,
     PendingDeliveryStore,
+    TraceReader,
+    TurnRecord,
+    TurnStore,
 )
 
 logger = logging.getLogger("diana.application")
@@ -85,8 +88,38 @@ async def list_waiting_approvals(
     return await approvals.list_waiting()
 
 
+async def list_zombie_turns(turns: TurnStore) -> list[TurnRecord]:
+    """Return all non-terminal turns (zombies) for FAILED marking."""
+    return await turns.list_all_non_terminal()
+
+
+async def list_rematerializable_turns(
+    turns: TurnStore,
+    traces: TraceReader,
+) -> list[tuple[TurnRecord, str]]:
+    """Return (turn, generated_text) for turns in {GENERATING, EVALUATING, DECIDING}
+    that have generated_text in pipeline_traces.
+
+    Uses string values for status to avoid importing cognitive.models.
+    """
+    non_terminal = await turns.list_all_non_terminal()
+    rematerializable: list[tuple[TurnRecord, str]] = []
+    for turn in non_terminal:
+        if turn.status not in {"generating", "evaluating", "deciding"}:
+            continue
+        trace = await traces.get_full_trace(turn.id)
+        if trace is None:
+            continue
+        generated = trace.get("generated_text")
+        if generated and isinstance(generated, str) and generated.strip():
+            rematerializable.append((turn, generated))
+    return rematerializable
+
+
 __all__ = [
     "RecoveryPlan",
     "classify_pending_deliveries",
+    "list_rematerializable_turns",
     "list_waiting_approvals",
+    "list_zombie_turns",
 ]
