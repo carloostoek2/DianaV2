@@ -76,6 +76,7 @@ from diana.infrastructure.db.repositories.escalations import SqlEscalationStore
 from diana.infrastructure.db.repositories.history import SqlMessageHistoryRepo
 from diana.infrastructure.db.repositories.promo_executions import PromoExecutionRepo
 from diana.infrastructure.db.repositories.promo_triggers import PromoTriggerRepo
+from diana.infrastructure.db.repositories.runtime_timers import SqlRuntimeTimerStore
 from diana.infrastructure.db.repositories.recontact_schedules import (
     RecontactScheduleRepo,
 )
@@ -237,6 +238,8 @@ class AppContainer:
     admin_metrics: AdminMetricsService | None = None
     profile_admin: ProfileAdminService | None = None
     runtime_thresholds: RuntimeThresholds | None = None
+    turns: SqlTurnStore | None = None
+    runtime_timers: SqlRuntimeTimerStore | None = None
 
 
 def build_app(
@@ -285,6 +288,7 @@ def build_app(
         inter_gap_min=settings.delivery_inter_message_gap_min,
         inter_gap_max=settings.delivery_inter_message_gap_max,
     )
+    runtime_timers_store = SqlRuntimeTimerStore(sf)
     feature_advanced_behavior = settings.feature_advanced_behavior
     behavior = BehaviorEngine(
         actuator,
@@ -296,6 +300,7 @@ def build_app(
         retry_backoff_seconds=settings.delivery_retry_backoff_seconds,
         feature_advanced_behavior=feature_advanced_behavior,
         quirk_probability=0.05 if feature_advanced_behavior else 0.0,
+        runtime_timer_store=runtime_timers_store,
     )
 
     if llm is not None:
@@ -664,6 +669,8 @@ def build_app(
         admin_metrics=admin_metrics,
         profile_admin=profile_admin,
         runtime_thresholds=runtime_thresholds,
+        turns=turns,
+        runtime_timers=runtime_timers_store,
     )
 
 
@@ -721,7 +728,11 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:
-    """Expire mid-flight deliveries; recover fresh ones; re-notify approvals."""
+    """Expire mid-flight deliveries; recover fresh ones; re-notify approvals.
+
+    Also recovers zombie turns, re-materializes drafts from traces, and
+    recovers active runtime timers when the respective stores are available.
+    """
     return await run_startup_recovery(
         deliveries=app.deliveries,
         approvals=app.approvals,
@@ -731,6 +742,9 @@ async def run_app_startup_recovery(app: AppContainer) -> Any:
         behavior=app.behavior,
         vips=app.vips,
         global_mode=app.settings.global_mode,
+        turns=app.turns,
+        traces=app.trace_store,
+        timers=app.runtime_timers,
     )
 
 
