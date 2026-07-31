@@ -150,7 +150,8 @@ class DeepSeekProvider:
         **kwargs: Any,
     ) -> BaseModel:
         temperature = float(kwargs.get("temperature", 0.0))
-        max_tokens = int(kwargs.get("max_tokens", 1024))
+        # Structured nodes need headroom; default higher than free-text generate.
+        max_tokens = int(kwargs.get("max_tokens", 2048))
         schema_hint = json.dumps(schema_hint_for_llm(schema), ensure_ascii=False)
         instruction = (
             "Respond with a single JSON object only (no markdown fences) that "
@@ -173,13 +174,34 @@ class DeepSeekProvider:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
+            # DeepSeek v4 defaults thinking=enabled; CoT can exhaust max_tokens
+            # and leave content empty → Analyst/Evaluator schema failures.
+            "thinking": {"type": "disabled"},
         }
         data = await self._chat_completions(payload)
         content = self._extract_content(data)
         cleaned = strip_json_fences(content)
+        if not cleaned.strip():
+            logger.error(
+                "deepseek structured empty content",
+                extra={
+                    "model": self._model,
+                    "finish_reason": _finish_reason(data),
+                    "content_preview": repr(content)[:200],
+                },
+            )
+            raise ValueError("assistant content is empty after structured call")
         try:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError as exc:
+            logger.error(
+                "deepseek structured invalid JSON",
+                extra={
+                    "model": self._model,
+                    "content_preview": cleaned[:500],
+                    "json_error": str(exc),
+                },
+            )
             raise ValueError(
                 "assistant content is not valid JSON after fence strip"
             ) from exc
@@ -213,12 +235,13 @@ class DeepSeekProvider:
     @staticmethod
     def _extract_content(data: dict[str, Any]) -> str:
         try:
-            content = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message.get("content")
         except (KeyError, IndexError, TypeError) as exc:
             # Avoid dumping full completion bodies into exception messages.
             raise ValueError("unexpected chat completion shape") from exc
         if content is None:
-            raise ValueError("assistant content is null")
+            content = ""
         if isinstance(content, list):
             parts: list[str] = []
             for part in content:
@@ -227,4 +250,17 @@ class DeepSeekProvider:
                 elif isinstance(part, dict) and "text" in part:
                     parts.append(str(part["text"]))
             content = "".join(parts)
-        return str(content)
+        text = str(content)
+        # Thinking models may leave content empty and put JSON in reasoning_content.
+        if not text.strip():
+            reasoning = message.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                return reasoning
+        return text
+
+
+def _finish_reason(data: dict[str, Any]) -> str | None:
+    try:
+        return data["choices"][0].get("finish_reason")
+    except (KeyError, IndexError, TypeError):
+        return None

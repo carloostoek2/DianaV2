@@ -132,6 +132,81 @@ async def test_generate_structured_invalid_json_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_structured_disables_thinking_mode() -> None:
+    """DeepSeek v4 defaults thinking=on; empty content after CoT breaks Analyst JSON."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return _openai_chat_response(json.dumps({"value": "ok", "count": 1}))
+
+    provider = _provider_with_transport(handler)
+    client = provider._client
+    try:
+        await provider.generate_structured(
+            [{"role": "user", "content": "x"}],
+            _TinySchema,
+        )
+    finally:
+        await provider.aclose()
+        await client.aclose()
+    assert seen["payload"].get("thinking") == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_generate_structured_empty_content_raises_clearly() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _openai_chat_response("")
+
+    provider = _provider_with_transport(handler)
+    client = provider._client
+    try:
+        with pytest.raises(ValueError, match="empty|null|valid JSON"):
+            await provider.generate_structured(
+                [{"role": "user", "content": "x"}],
+                _TinySchema,
+            )
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_extract_content_falls_back_to_reasoning_json() -> None:
+    """If content is empty but reasoning_content holds JSON, use it."""
+    body = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": 'Here is the object: {"value": "from-cot", "count": 9}',
+                },
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
+
+    provider = _provider_with_transport(handler)
+    client = provider._client
+    try:
+        result = await provider.generate_structured(
+            [{"role": "user", "content": "x"}],
+            _TinySchema,
+        )
+        assert result == _TinySchema(value="from-cot", count=9)
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_generate_structured_schema_mismatch_raises_validation_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _openai_chat_response(json.dumps({"value": "only"}))
