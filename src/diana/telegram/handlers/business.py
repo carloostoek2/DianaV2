@@ -68,8 +68,11 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             telegram_message_id=message.message_id,
             business_connection_id=bc,
             vip_id=vip_id,
+            is_edit=True,
         )
         try:
+            # Same path as new message: bumps VIP epoch → cancels in-flight
+            # turn for the original text; history upsert keeps only latest text.
             turn_id = await orchestrator.handle_vip_message(inbound)
             logger.info(
                 "edited_business_handled",

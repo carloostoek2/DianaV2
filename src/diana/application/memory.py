@@ -172,6 +172,26 @@ class InMemoryPendingApprovalStore:
             raise KeyError(f"approval not found for turn: {turn_id}")
         self._by_turn[turn_id] = rec.model_copy(update={"owner_message_id": message_id})
 
+    async def update_draft(
+        self,
+        turn_id: UUID,
+        *,
+        draft_text: str,
+        evaluation: dict | None = None,
+        cognitive_summary: str | None = None,
+    ) -> ApprovalRecord:
+        rec = self._by_turn.get(turn_id)
+        if rec is None:
+            raise KeyError(f"approval not found for turn: {turn_id}")
+        data: dict[str, Any] = {"draft_text": draft_text}
+        if evaluation is not None:
+            data["evaluation"] = evaluation
+        if cognitive_summary is not None:
+            data["cognitive_summary"] = cognitive_summary
+        updated = rec.model_copy(update=data)
+        self._by_turn[turn_id] = updated
+        return updated.model_copy(deep=True)
+
     async def cancel_waiting_for_chat(self, chat_id: int) -> int:
         count = 0
         for turn_id, rec in list(self._by_turn.items()):
@@ -298,6 +318,44 @@ class InMemoryMessageHistoryWriter:
         }
         self._messages.setdefault(chat_id, []).append(entry)
 
+    async def upsert_vip_message(
+        self,
+        chat_id: int,
+        *,
+        text: str,
+        telegram_message_id: int | None,
+        timestamp: datetime | None = None,
+    ) -> str:
+        ts = (timestamp or datetime.now(UTC)).isoformat()
+        if telegram_message_id is not None:
+            rows = self._messages.setdefault(chat_id, [])
+            matched = [
+                i
+                for i, row in enumerate(rows)
+                if row.get("role") == "vip"
+                and row.get("telegram_message_id") == telegram_message_id
+            ]
+            if matched:
+                keep = matched[0]
+                rows[keep] = {
+                    "role": "vip",
+                    "text": text,
+                    "telegram_message_id": telegram_message_id,
+                    "timestamp": ts,
+                }
+                # Drop accidental duplicates of the same message id.
+                for i in reversed(matched[1:]):
+                    del rows[i]
+                return "updated"
+        await self.append(
+            chat_id,
+            role="vip",
+            text=text,
+            telegram_message_id=telegram_message_id,
+            timestamp=timestamp,
+        )
+        return "inserted"
+
     async def get_recent(self, chat_id: int, *, limit: int = 20) -> list[dict]:
         history = self._messages.get(chat_id, [])
         if limit <= 0:
@@ -356,6 +414,16 @@ class FakeOwnerNotifier:
 
     async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
         self.infos.append((text, chat_id))
+
+    async def edit_draft(
+        self,
+        *,
+        owner_message_id: int,
+        text: str,
+        turn_id: Any,
+        chat_id: int,
+    ) -> None:
+        self.infos.append((f"edit_draft:{owner_message_id}:{text[:40]}", chat_id))
 
     async def notify_doctrine(self, payload: Any) -> int | None:
         self.doctrines.append(payload)

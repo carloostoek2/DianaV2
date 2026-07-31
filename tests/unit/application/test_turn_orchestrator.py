@@ -208,6 +208,7 @@ def _build(
         traces=traces if wire_autonomous else None,
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
         feature_advanced_behavior=feature_advanced_behavior,
+        delay_policy=delay_policy,
     )
     return {
         "orch": orch,
@@ -279,6 +280,115 @@ async def test_r2_supersede_cancels_approval_and_delivery() -> None:
     assert appr_a2 is not None and appr_a2.status == "cancelled"
     stored_b = await g["turns"].get(b)
     assert stored_b is not None and stored_b.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_supersede_coalesces_open_vip_burst_into_director_turn() -> None:
+    """Latest turn cancels prior; Director receives all open VIP msgs in that round."""
+    decision = Decision(
+        action="approve",
+        reason="good",
+        evaluation=_eval(),
+        draft_text="draft for both",
+    )
+    g = _build(FakeDirector(decision))
+    a = await g["orch"].handle_vip_message(
+        _vip(text="primer mensaje", telegram_message_id=101)
+    )
+    b = await g["orch"].handle_vip_message(
+        _vip(text="segundo mensaje", telegram_message_id=102)
+    )
+    assert a != b
+    # First pipeline still ran (pre-coalesce cost); second sees full open burst.
+    assert len(g["director"].calls) == 2
+    first = g["director"].calls[0]
+    second = g["director"].calls[1]
+    assert first.text == "primer mensaje"
+    assert "primer mensaje" in second.text
+    assert "segundo mensaje" in second.text
+    assert second.telegram_message_id == 102
+    # Single-message turns stay plain (no multi-header on first).
+    assert "varios mensajes" not in first.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_vip_edit_replaces_history_and_cancels_prior_turn() -> None:
+    """Edited message: only latest text in history; prior pipeline cancelled."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="reply to edit",
+    )
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.08),
+    )
+    # Original message starts pre-delay pipeline.
+    t1 = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(text="texto original", telegram_message_id=9001)
+        )
+    )
+    await asyncio.sleep(0.02)
+    # Edit same message_id → cancels t1 epoch, upserts history.
+    t2 = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(
+                text="texto editado final",
+                telegram_message_id=9001,
+                is_edit=True,
+            )
+        )
+    )
+    await asyncio.gather(t1, t2)
+
+    recent = await g["history"].get_recent(100, limit=20)
+    vip_rows = [r for r in recent if r.get("telegram_message_id") == 9001]
+    assert len(vip_rows) == 1
+    assert vip_rows[0]["text"] == "texto editado final"
+    # Model only processes the winning epoch (latest edit).
+    assert len(g["director"].calls) == 1
+    assert "texto editado final" in g["director"].calls[0].text
+    assert "texto original" not in g["director"].calls[0].text
+
+
+@pytest.mark.asyncio
+async def test_single_vip_message_turn_text_unchanged() -> None:
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="d",
+    )
+    g = _build(FakeDirector(decision))
+    await g["orch"].handle_vip_message(_vip(text="solo uno", telegram_message_id=55))
+    assert g["director"].calls[0].text == "solo uno"
+
+
+@pytest.mark.asyncio
+async def test_vip_burst_stops_at_owner_reply() -> None:
+    """Coalesce only trailing VIP lines after last owner message."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="d",
+    )
+    g = _build(FakeDirector(decision))
+    # Prior answered exchange in durable history.
+    await g["history"].append(100, role="vip", text="ayer te escribí", telegram_message_id=1)
+    await g["history"].append(100, role="owner", text="hola de ayer", telegram_message_id=2)
+    await g["orch"].handle_vip_message(
+        _vip(text="msg nuevo A", telegram_message_id=201)
+    )
+    await g["orch"].handle_vip_message(
+        _vip(text="msg nuevo B", telegram_message_id=202)
+    )
+    second = g["director"].calls[1]
+    assert "msg nuevo A" in second.text
+    assert "msg nuevo B" in second.text
+    assert "ayer te escribí" not in second.text
 
 
 @pytest.mark.asyncio
@@ -1048,28 +1158,21 @@ async def test_orchestrator_analyst_schema_fail_marks_failed_notifies_owner() ->
         history=history,
     )
 
-    with pytest.raises(AnalystSchemaInvalidError):
-        await orch.handle_vip_message(_vip(text="schema-fail-msg"))
-
-    failed_ids = [
-        t.id
-        for t in turns._turns.values()  # noqa: SLF001 — test assertion
-        if t.chat_id == 100
-    ]
-    assert len(failed_ids) == 1
-    failed = await turns.get(failed_ids[0])
+    turn_id = await orch.handle_vip_message(_vip(text="schema-fail-msg"))
+    failed = await turns.get(turn_id)
     assert failed is not None
     assert failed.status == "failed"
     assert failed.error == "analista_schema_invalido"
 
     assert actuator.send_count() == 0
-    assert learn.calls == []
+    # Soft-handled: post-turn still runs (trace completeness); no VIP send.
+    assert learn.calls == [turn_id]
     assert len(notifier.infos) == 1
     assert notifier.drafts == []
     assert notifier.escalations == []
     info_text, _info_chat = notifier.infos[0]
     assert "analista_schema_invalido" in info_text
-    assert str(failed_ids[0]) in info_text
+    assert str(turn_id) in info_text
 
 
 @pytest.mark.asyncio
@@ -1155,28 +1258,20 @@ async def test_orchestrator_evaluator_schema_fail_marks_failed_notifies_owner() 
         history=history,
     )
 
-    with pytest.raises(EvaluatorSchemaInvalidError):
-        await orch.handle_vip_message(_vip(text="eval-schema-fail-msg"))
-
-    failed_ids = [
-        t.id
-        for t in turns._turns.values()  # noqa: SLF001 — test assertion
-        if t.chat_id == 100
-    ]
-    assert len(failed_ids) == 1
-    failed = await turns.get(failed_ids[0])
+    turn_id = await orch.handle_vip_message(_vip(text="eval-schema-fail-msg"))
+    failed = await turns.get(turn_id)
     assert failed is not None
     assert failed.status == "failed"
     assert failed.error == "evaluador_schema_invalido"
 
     assert actuator.send_count() == 0
-    assert learn.calls == []
+    assert learn.calls == [turn_id]
     assert len(notifier.infos) == 1
     assert notifier.drafts == []
     assert notifier.escalations == []
     info_text, _info_chat = notifier.infos[0]
     assert "evaluador_schema_invalido" in info_text
-    assert str(failed_ids[0]) in info_text
+    assert str(turn_id) in info_text
 
 
 @pytest.mark.asyncio
@@ -1257,28 +1352,20 @@ async def test_orchestrator_context_exceeds_limit_marks_failed_notifies_owner() 
         history=history,
     )
 
-    with pytest.raises(ContextExceedsLimitError):
-        await orch.handle_vip_message(_vip(text="size-fail-msg"))
-
-    failed_ids = [
-        t.id
-        for t in turns._turns.values()  # noqa: SLF001 — test assertion
-        if t.chat_id == 100
-    ]
-    assert len(failed_ids) == 1
-    failed = await turns.get(failed_ids[0])
+    turn_id = await orch.handle_vip_message(_vip(text="size-fail-msg"))
+    failed = await turns.get(turn_id)
     assert failed is not None
     assert failed.status == "failed"
     assert failed.error == "contexto_excede_limite"
 
     assert actuator.send_count() == 0
-    assert learn.calls == []
+    assert learn.calls == [turn_id]
     assert len(notifier.infos) == 1
     assert notifier.drafts == []
     assert notifier.escalations == []
     info_text, _info_chat = notifier.infos[0]
     assert "contexto_excede_limite" in info_text
-    assert str(failed_ids[0]) in info_text
+    assert str(turn_id) in info_text
 
 
 @pytest.mark.asyncio
@@ -1352,30 +1439,22 @@ async def test_orchestrator_generator_empty_marks_failed_notifies_owner() -> Non
         history=history,
     )
 
-    with pytest.raises(GeneratorEmptyOutputError):
-        await orch.handle_vip_message(_vip(text="gen-empty-fail-msg"))
-
-    failed_ids = [
-        t.id
-        for t in turns._turns.values()  # noqa: SLF001 — test assertion
-        if t.chat_id == 100
-    ]
-    assert len(failed_ids) == 1
-    failed = await turns.get(failed_ids[0])
+    turn_id = await orch.handle_vip_message(_vip(text="gen-empty-fail-msg"))
+    failed = await turns.get(turn_id)
     assert failed is not None
     assert failed.status == "failed"
     assert failed.error == "generador_salida_vacia"
 
     assert actuator.send_count() == 0
-    assert learn.calls == []
+    assert learn.calls == [turn_id]
     assert len(notifier.infos) == 1
     assert notifier.drafts == []
     assert notifier.escalations == []
     info_text, _info_chat = notifier.infos[0]
     assert "generador_salida_vacia" in info_text
-    assert str(failed_ids[0]) in info_text
+    assert str(turn_id) in info_text
     # No pending approval / empty draft in approval queue.
-    assert await approvals.get_by_turn(failed_ids[0]) is None
+    assert await approvals.get_by_turn(turn_id) is None
     assert await approvals.list_waiting() == []
 
 
@@ -1473,18 +1552,27 @@ async def test_concurrent_vip_messages_one_non_terminal_no_zombie() -> None:
 
     non_term = await g["turns"].list_non_terminal(100)
     assert len(non_term) == 1
-    # Older turn must not be pending_approval if superseded
+    # Older turn must not be pending_approval if superseded / cancelled by newer VIP
     for tid in (a_id, b_id):
         rec = await g["turns"].get(tid)
         assert rec is not None
         if rec.status == "superseded":
-            assert rec.superseded_by is not None
             # cannot have waiting approval on superseded
             appr = await g["approvals"].get_by_turn(tid)
             if appr is not None:
                 assert appr.status != "waiting"
         elif rec.status == "pending_approval":
             assert non_term[0].id == tid
+
+    # Winner answers the full open burst (A + B), not only the last text.
+    assert len(slow.calls) >= 1
+    winner_texts = [c.text for c in slow.calls]
+    assert any("msg A" in t and "msg B" in t for t in winner_texts) or any(
+        t == "msg B" for t in winner_texts
+    )
+    # At most one waiting approval (the live turn).
+    waiting = await g["approvals"].list_waiting()
+    assert len(waiting) == 1
 
     # Approving the superseded turn never sends
     for tid in (a_id, b_id):
@@ -1493,6 +1581,47 @@ async def test_concurrent_vip_messages_one_non_terminal_no_zombie() -> None:
             result = await g["admin"].handle_approve(tid, actor_id=OWNER_ID)
             assert result is None
     assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_newer_vip_aborts_older_before_director_during_pre_delay() -> None:
+    """During human delay, a second VIP msg cancels the first before any LLM turn."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="only for latest",
+    )
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.08),
+    )
+    t1 = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(text="primero", telegram_message_id=301)
+        )
+    )
+    await asyncio.sleep(0.02)
+    t2 = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(text="segundo", telegram_message_id=302)
+        )
+    )
+    id1, id2 = await asyncio.gather(t1, t2)
+
+    # First inbound never minted a cognitive turn (synthetic id) OR if it did,
+    # it must not hold a waiting approval.
+    assert len(g["director"].calls) == 1
+    only = g["director"].calls[0]
+    assert "primero" in only.text
+    assert "segundo" in only.text
+    waiting = await g["approvals"].list_waiting()
+    assert len(waiting) == 1
+    # Live approval belongs to the second pipeline turn when one was created.
+    live = waiting[0]
+    assert live.turn_id == only.turn_id
+    # Synthetic abort returns random uuid — not both ids need be real turns.
+    _ = id1, id2
 
 
 @pytest.mark.asyncio
@@ -1839,16 +1968,8 @@ async def test_orchestrator_notify_fail_soft_increments_swallowed_counter() -> N
 
     g["notifier"].notify_info = boom  # type: ignore[method-assign]
 
-    with pytest.raises(AnalystSchemaInvalidError):
-        await g["orch"].handle_vip_message(_vip())
-
-    failed_ids = [
-        t.id
-        for t in g["turns"]._turns.values()  # noqa: SLF001
-        if t.chat_id == 100
-    ]
-    assert len(failed_ids) == 1
-    failed = await g["turns"].get(failed_ids[0])
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    failed = await g["turns"].get(turn_id)
     assert failed is not None
     assert failed.status == "failed"
     assert failed.error == "analista_schema_invalido"

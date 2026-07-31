@@ -43,6 +43,33 @@ from diana.cognitive.models import (
 
 logger = logging.getLogger("diana.application")
 
+# Open VIP burst: trailing consecutive role=vip lines since last owner/bot reply.
+_BURST_HISTORY_LIMIT = 40
+_MULTI_VIP_BURST_HEADER = "(el VIP envió varios mensajes seguidos)"
+
+
+def trailing_vip_texts(history_rows: list[dict]) -> list[str]:
+    """Extract chronological texts of the open trailing VIP burst from history."""
+    texts_rev: list[str] = []
+    for row in reversed(history_rows):
+        if not isinstance(row, dict):
+            break
+        if row.get("role") != "vip":
+            break
+        texts_rev.append(str(row.get("text") or ""))
+    texts_rev.reverse()
+    return [t for t in texts_rev if t.strip()]
+
+
+def format_vip_burst_text(texts: list[str], *, fallback: str) -> str:
+    """Build IncomingTurn.text for a single msg or multi-msg open burst."""
+    cleaned = [t.strip() for t in texts if isinstance(t, str) and t.strip()]
+    if not cleaned:
+        return fallback
+    if len(cleaned) == 1:
+        return cleaned[0]
+    return "\n".join([_MULTI_VIP_BURST_HEADER, *cleaned])
+
 
 class DirectorPort(Protocol):
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision: ...
@@ -171,6 +198,18 @@ class TurnOrchestrator:
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
         chat_id = incoming.chat_id
+        bc = incoming.business_connection_id
+        if bc is None or not str(bc).strip():
+            # Fail under lock without advancing VIP epoch / durable history.
+            async with self._coordinator.chat_scope(chat_id):
+                turn_id, _ = await self._handle_vip_message_locked(
+                    incoming, vip_epoch=None
+                )
+            return turn_id
+
+        # Newer VIP message invalidates older in-flight work for this chat.
+        vip_epoch = self._coordinator.bump_vip_epoch(chat_id)
+        await self._append_vip_history_if_persist(incoming)
 
         # Serve the human-like delay BEFORE the cognitive pipeline so the
         # timer counts from message arrival, not from owner approval. Once
@@ -194,10 +233,35 @@ class TurnOrchestrator:
             self._coordinator.clear_owner_intervention(chat_id)
             return uuid4()  # no turn created; return a synthetic id for logging
 
+        # Total cancel: a newer VIP message arrived — do not mint a turn or run LLM.
+        if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
+            logger.info(
+                "turn_aborted_newer_vip_pre_pipeline",
+                extra={
+                    "chat_id": chat_id,
+                    "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
+                    "vip_epoch": vip_epoch,
+                    "current_epoch": self._coordinator.current_vip_epoch(chat_id),
+                },
+            )
+            return uuid4()
+
         pending_deliver: _AutonomousDeliverJob | None
         async with self._coordinator.chat_scope(chat_id):
+            if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
+                logger.info(
+                    "turn_aborted_newer_vip_at_lock",
+                    extra={
+                        "chat_id": chat_id,
+                        "vip_epoch": vip_epoch,
+                        "current_epoch": self._coordinator.current_vip_epoch(
+                            chat_id
+                        ),
+                    },
+                )
+                return uuid4()
             turn_id, pending_deliver = await self._handle_vip_message_locked(
-                incoming
+                incoming, vip_epoch=vip_epoch
             )
             if pending_deliver is None:
                 await self._maybe_post_turn(turn_id, chat_id)
@@ -293,8 +357,83 @@ class TurnOrchestrator:
         )
         return turn_id
 
+    async def _append_vip_history_if_persist(self, incoming: VipInboundMessage) -> None:
+        """Persist VIP inbound early so aborted rounds still join the open burst.
+
+        Edits (same telegram_message_id) **replace** the prior row so the model
+        never sees original + edited as two messages.
+        """
+        if (
+            self._sandbox is not None
+            and not self._sandbox.should_persist(incoming.chat_id)  # type: ignore[union-attr]
+        ):
+            logger.info(
+                "vip_history_skipped_sandbox",
+                extra={"chat_id": incoming.chat_id},
+            )
+            return
+        upsert = getattr(self._history, "upsert_vip_message", None)
+        if callable(upsert) and (
+            incoming.is_edit or incoming.telegram_message_id is not None
+        ):
+            action = await upsert(
+                incoming.chat_id,
+                text=incoming.text,
+                telegram_message_id=incoming.telegram_message_id,
+            )
+            if action == "updated" or incoming.is_edit:
+                logger.info(
+                    "vip_history_message_updated",
+                    extra={
+                        "chat_id": incoming.chat_id,
+                        "telegram_message_id": incoming.telegram_message_id,
+                        "is_edit": incoming.is_edit,
+                    },
+                )
+            return
+        await self._history.append(
+            incoming.chat_id,
+            role="vip",
+            text=incoming.text,
+            telegram_message_id=incoming.telegram_message_id,
+        )
+
+    async def _coalesce_open_vip_turn_text(
+        self, chat_id: int, *, fallback: str
+    ) -> str:
+        """Join trailing unanswered VIP messages for the cognitive turn payload.
+
+        History is the source of truth after append. When sandbox skips durable
+        history, get_recent is empty and we keep ``fallback`` (current text only).
+        """
+        try:
+            recent = await self._history.get_recent(
+                chat_id, limit=_BURST_HISTORY_LIMIT
+            )
+        except Exception:
+            logger.exception(
+                "vip_burst_history_read_failed",
+                extra={"chat_id": chat_id},
+            )
+            return fallback
+        burst = trailing_vip_texts(recent)
+        text = format_vip_burst_text(burst, fallback=fallback)
+        if len(burst) > 1:
+            logger.info(
+                "vip_open_burst_coalesced",
+                extra={
+                    "chat_id": chat_id,
+                    "burst_count": len(burst),
+                    "text_chars": len(text),
+                },
+            )
+        return text
+
     async def _handle_vip_message_locked(
-        self, incoming: VipInboundMessage
+        self,
+        incoming: VipInboundMessage,
+        *,
+        vip_epoch: int | None,
     ) -> tuple[UUID, _AutonomousDeliverJob | None]:
         bc = incoming.business_connection_id
         if bc is None or not str(bc).strip():
@@ -314,29 +453,25 @@ class TurnOrchestrator:
             vip_id=incoming.vip_id,
         )
         turn_id = record.id
+        if vip_epoch is not None:
+            self._coordinator.bind_turn_vip_epoch(
+                turn_id, incoming.chat_id, vip_epoch
+            )
 
-        # Skip durable VIP inbound history when sandbox is active (should_persist false).
-        if (
-            self._sandbox is not None
-            and not self._sandbox.should_persist(incoming.chat_id)  # type: ignore[union-attr]
-        ):
-            logger.info(
-                "vip_history_skipped_sandbox",
-                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
-            )
-        else:
-            await self._history.append(
-                incoming.chat_id,
-                role="vip",
-                text=incoming.text,
-                telegram_message_id=incoming.telegram_message_id,
-            )
+        # History already appended at inbound (early) so cancelled rounds still
+        # join the open burst. Sandbox skips are handled there too.
+
+        # Coalesce open VIP burst into turn text so a superseding turn answers
+        # all unanswered VIP lines in this round (not only the latest message).
+        turn_text = await self._coalesce_open_vip_turn_text(
+            incoming.chat_id, fallback=incoming.text
+        )
 
         turn_ctx = IncomingTurn(
             turn_id=turn_id,
             chat_id=incoming.chat_id,
             vip_id=incoming.vip_id,
-            text=incoming.text,
+            text=turn_text,
             telegram_message_id=incoming.telegram_message_id,
             business_connection_id=str(bc).strip(),
         )
@@ -345,14 +480,15 @@ class TurnOrchestrator:
             decision = await self._director.handle_turn(turn_ctx)
         except TurnSupersededError:
             logger.info(
-                "turn_superseded_owner_intervened",
+                "turn_cancelled_mid_pipeline",
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
             )
             return turn_id, None
         except Exception as exc:
             # Terminal latch: no-ops if already superseded while Director ran
             # (should not happen under full chat_scope; still safe).
-            # A.6 Analyst schema fail: stable reason + owner notify (no VIP send).
+            # Typed cognitive failures: mark failed + notify owner, do NOT re-raise
+            # (avoids business_handler_error double-log; VIP gets no send).
             if isinstance(exc, AnalystSchemaInvalidError):
                 await self._fail_director_typed(
                     turn_id,
@@ -360,34 +496,91 @@ class TurnOrchestrator:
                     error="analista_schema_invalido",
                     notify_event="owner_notify_failed_after_analyst_schema_invalid",
                 )
-            elif isinstance(exc, EvaluatorSchemaInvalidError):
+                logger.warning(
+                    "director_failed_typed",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": incoming.chat_id,
+                        "error": "analista_schema_invalido",
+                    },
+                )
+                return turn_id, None
+            if isinstance(exc, EvaluatorSchemaInvalidError):
                 await self._fail_director_typed(
                     turn_id,
                     incoming.chat_id,
                     error="evaluador_schema_invalido",
                     notify_event="owner_notify_failed_after_evaluator_schema_invalid",
                 )
-            elif isinstance(exc, ContextExceedsLimitError):
+                logger.warning(
+                    "director_failed_typed",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": incoming.chat_id,
+                        "error": "evaluador_schema_invalido",
+                    },
+                )
+                return turn_id, None
+            if isinstance(exc, ContextExceedsLimitError):
                 await self._fail_director_typed(
                     turn_id,
                     incoming.chat_id,
                     error="contexto_excede_limite",
                     notify_event="owner_notify_failed_after_context_exceeds_limit",
                 )
-            elif isinstance(exc, GeneratorEmptyOutputError):
+                logger.warning(
+                    "director_failed_typed",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": incoming.chat_id,
+                        "error": "contexto_excede_limite",
+                    },
+                )
+                return turn_id, None
+            if isinstance(exc, GeneratorEmptyOutputError):
                 await self._fail_director_typed(
                     turn_id,
                     incoming.chat_id,
                     error="generador_salida_vacia",
                     notify_event="owner_notify_failed_after_generator_empty_output",
                 )
-            else:
-                await self._coordinator.mark_failed(turn_id, error=str(exc))
+                logger.warning(
+                    "director_failed_typed",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": incoming.chat_id,
+                        "error": "generador_salida_vacia",
+                    },
+                )
+                return turn_id, None
+            await self._coordinator.mark_failed(turn_id, error=str(exc))
             logger.exception(
                 "director_failed",
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
             )
             raise
+
+        # Total cancel: newer VIP message while this turn was running (even if
+        # the Director port is a stub that never hits status_sink transitions).
+        if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
+            incoming.chat_id, vip_epoch
+        ):
+            await self._coordinator.transition(
+                turn_id,
+                TurnStatus.SUPERSEDED,
+            )
+            logger.info(
+                "turn_cancelled_stale_epoch_post_director",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": incoming.chat_id,
+                    "vip_epoch": vip_epoch,
+                    "current_epoch": self._coordinator.current_vip_epoch(
+                        incoming.chat_id
+                    ),
+                },
+            )
+            return turn_id, None
 
         # Post-Director liveness check (defense in depth vs zombie pipeline).
         live = await self._coordinator.get_turn(turn_id)

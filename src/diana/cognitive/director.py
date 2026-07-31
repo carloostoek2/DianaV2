@@ -346,24 +346,44 @@ class CognitiveDirector:
 
         - Over-fetches raw rows so bot/unknown filtering still yields up to
           ``analyst_history_limit`` vip/dueña lines when available.
-        - Excludes the current VIP trigger message (by telegram_message_id, or
-          trailing identical vip text fallback) so it is not duplicated with
-          ``turno_actual``.
+        - Excludes the open trailing VIP burst (consecutive role=vip at the tail
+          after the last owner/bot line). Orchestrator coalesces that burst into
+          ``turno_actual`` so it must not also appear in historial.
         """
         limit = self._analyst_history_limit
         # Oversample raw rows; filter roles; then trim to limit human messages.
         # Bot-heavy tails need headroom beyond limit (A.2 short window is human lines).
         fetch_limit = max(limit * 8, 32) if limit > 0 else 0
         raw = await self._history.get_recent(turn.chat_id, limit=fetch_limit)
-        raw = self._drop_current_turn_rows(raw, turn)
+        raw = self._drop_open_vip_burst(raw)
         mapped = self._map_history_messages(raw)
         if limit > 0 and len(mapped) > limit:
             mapped = mapped[-limit:]
         return AnalystInput(turno_actual=turn.text, historial_reciente=mapped)
 
     @staticmethod
+    def _drop_open_vip_burst(raw: list[dict]) -> list[dict]:
+        """Remove trailing consecutive VIP rows (open burst already in turno_actual)."""
+        if not raw:
+            return raw
+        i = len(raw) - 1
+        while i >= 0:
+            row = raw[i]
+            if isinstance(row, dict) and row.get("role") == "vip":
+                i -= 1
+                continue
+            break
+        if i == len(raw) - 1:
+            return list(raw)
+        return list(raw[: i + 1])
+
+    @staticmethod
     def _drop_current_turn_rows(raw: list[dict], turn: IncomingTurn) -> list[dict]:
-        """Remove the triggering VIP message already appended by the application."""
+        """Legacy helper: drop single current VIP row (kept for unit access).
+
+        Production path uses ``_drop_open_vip_burst`` so multi-message rounds
+        do not double-count unanswered VIP lines in historial_reciente.
+        """
         mid = turn.telegram_message_id
         if mid is not None:
             return [

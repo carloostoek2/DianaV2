@@ -214,6 +214,8 @@ class VipInboundMessage(BaseModel):
     telegram_message_id: int | None = None
     business_connection_id: str | None = None
     vip_id: UUID | None = None
+    # True for edited_business_message: replace history row, cancel prior turn.
+    is_edit: bool = False
 
 
 class VipRecord(BaseModel):
@@ -419,6 +421,21 @@ class MessageHistoryWriter(Protocol):
     ) -> None: ...
 
     async def get_recent(self, chat_id: int, *, limit: int = 20) -> list[dict]: ...
+
+    async def upsert_vip_message(
+        self,
+        chat_id: int,
+        *,
+        text: str,
+        telegram_message_id: int | None,
+        timestamp: datetime | None = None,
+    ) -> str:
+        """Insert VIP row, or update text if ``telegram_message_id`` already exists.
+
+        Returns ``\"inserted\"`` or ``\"updated\"``. Used for VIP edits so the
+        model only sees the latest version of a message, never both.
+        """
+        ...
 
 
 @runtime_checkable

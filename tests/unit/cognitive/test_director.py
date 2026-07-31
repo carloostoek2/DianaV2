@@ -628,7 +628,12 @@ async def test_director_passes_historial_to_analyst() -> None:
 
 @pytest.mark.asyncio
 async def test_director_analyst_history_respects_limit_8() -> None:
-    """Default analyst_history_limit=8: only the last 8 human (vip/dueña) lines."""
+    """Default analyst_history_limit=8: only the last 8 human (vip/dueña) lines.
+
+    History ends with an owner line so the open VIP burst is empty (current turn
+    text is not yet appended). Otherwise trailing VIP rows would be stripped as
+    the open burst and historial would be empty.
+    """
     older = [
         {
             "role": "vip",
@@ -645,7 +650,15 @@ async def test_director_analyst_history_respects_limit_8() -> None:
         }
         for i in range(8)
     ]
-    history = InMemoryMessageHistory({42: older + window})
+    closed = [
+        {
+            "role": "owner",
+            "text": "hist-owner-end-KEEP",
+            "timestamp": "2026-01-01T11:00:00Z",
+        }
+    ]
+    # 5 older + 8 window + 1 owner = 14 human; limit 8 → last 8 = win1..win7 + owner
+    history = InMemoryMessageHistory({42: older + window + closed})
     llm = FakeLLM(
         structured_responses=[_comprehension(), _profile()],
         text_responses=["draft"],
@@ -657,8 +670,10 @@ async def test_director_analyst_history_respects_limit_8() -> None:
     flat = " ".join(m.get("content", "") for m in analyst_messages)
     for i in range(5):
         assert f"hist-old-{i:02d}-SHOULD-ABSENT" not in flat
-    for i in range(8):
+    assert "hist-win-00-KEEP" not in flat  # falls off 8-line window
+    for i in range(1, 8):
         assert f"hist-win-{i:02d}-KEEP" in flat
+    assert "hist-owner-end-KEEP" in flat
 
 
 @pytest.mark.asyncio
@@ -672,6 +687,12 @@ async def test_director_excludes_current_vip_message_from_historial() -> None:
                     "text": "older-vip",
                     "timestamp": "2026-01-01T10:00:00Z",
                     "telegram_message_id": 10,
+                },
+                {
+                    "role": "owner",
+                    "text": "owner replied",
+                    "timestamp": "2026-01-01T10:02:00Z",
+                    "telegram_message_id": 11,
                 },
                 {
                     "role": "vip",
@@ -701,10 +722,62 @@ async def test_director_excludes_current_vip_message_from_historial() -> None:
     # Only one occurrence of current-msg overall (turno_actual), not also in history.
     assert user.count("current-msg") == 1
     assert "older-vip" in user
+    assert "owner replied" in user
+
+
+@pytest.mark.asyncio
+async def test_director_excludes_entire_open_vip_burst_from_historial() -> None:
+    """Open trailing VIP burst lives only in turno_actual (orchestrator coalesce)."""
+    history = InMemoryMessageHistory(
+        {
+            42: [
+                {
+                    "role": "owner",
+                    "text": "prev owner",
+                    "timestamp": "2026-01-01T09:00:00Z",
+                    "telegram_message_id": 1,
+                },
+                {
+                    "role": "vip",
+                    "text": "burst-1",
+                    "timestamp": "2026-01-01T10:00:00Z",
+                    "telegram_message_id": 10,
+                },
+                {
+                    "role": "vip",
+                    "text": "burst-2",
+                    "timestamp": "2026-01-01T10:05:00Z",
+                    "telegram_message_id": 99,
+                },
+            ]
+        }
+    )
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    turn = IncomingTurn(
+        turn_id=uuid4(),
+        chat_id=42,
+        text="(el VIP envió varios mensajes seguidos)\nburst-1\nburst-2",
+        telegram_message_id=99,
+    )
+    await director.handle_turn(turn)
+
+    analyst_messages = llm.calls[0][1]["messages"]
+    user = next(m["content"] for m in analyst_messages if m.get("role") == "user")
+    assert "burst-1" in user
+    assert "burst-2" in user
+    # Burst lines only in turno_actual, not duplicated as historial rows.
+    assert user.count("burst-1") == 1
+    assert user.count("burst-2") == 1
+    assert "prev owner" in user
 
 
 @pytest.mark.asyncio
 async def test_director_excludes_trailing_vip_text_when_message_id_missing() -> None:
+    """Open VIP tail is dropped even without telegram_message_id (burst contract)."""
     history = InMemoryMessageHistory(
         {
             42: [
@@ -718,12 +791,19 @@ async def test_director_excludes_trailing_vip_text_when_message_id_missing() -> 
         text_responses=["draft"],
     )
     director, _, _ = make_director(llm, history_port=history)
-    await director.handle_turn(_turn(chat_id=42, text="dup-current"))
+    # Orchestrator coalesce puts the full open burst in turno_actual.
+    await director.handle_turn(
+        _turn(
+            chat_id=42,
+            text="(el VIP envió varios mensajes seguidos)\nprior\ndup-current",
+        )
+    )
     user = next(
         m["content"] for m in llm.calls[0][1]["messages"] if m.get("role") == "user"
     )
     assert user.count("dup-current") == 1
-    assert "prior" in user
+    assert user.count("prior") == 1
+    assert "turno_actual:" in user
 
 
 @pytest.mark.asyncio

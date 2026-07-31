@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import MessageHistory
@@ -61,6 +61,57 @@ class SqlMessageHistoryRepo:
                 )
             )
             await session.commit()
+
+    async def upsert_vip_message(
+        self,
+        chat_id: int,
+        *,
+        text: str,
+        telegram_message_id: int | None,
+        timestamp: datetime | None = None,
+    ) -> str:
+        """Update VIP text for an existing telegram_message_id, else insert."""
+        ts = timestamp or datetime.now(UTC)
+        if telegram_message_id is None:
+            await self.append(
+                chat_id,
+                role="vip",
+                text=text,
+                telegram_message_id=None,
+                timestamp=ts,
+            )
+            return "inserted"
+        async with self._sf() as session:
+            result = await session.execute(
+                select(MessageHistory)
+                .where(MessageHistory.chat_id == chat_id)
+                .where(MessageHistory.role == "vip")
+                .where(MessageHistory.telegram_message_id == telegram_message_id)
+                .order_by(MessageHistory.id.asc())
+            )
+            rows = list(result.scalars().all())
+            if not rows:
+                session.add(
+                    MessageHistory(
+                        chat_id=chat_id,
+                        telegram_message_id=telegram_message_id,
+                        role="vip",
+                        text=text,
+                        timestamp=ts,
+                    )
+                )
+                await session.commit()
+                return "inserted"
+            keep = rows[0]
+            keep.text = text
+            keep.timestamp = ts
+            if len(rows) > 1:
+                extra_ids = [r.id for r in rows[1:]]
+                await session.execute(
+                    delete(MessageHistory).where(MessageHistory.id.in_(extra_ids))
+                )
+            await session.commit()
+            return "updated"
 
     async def get_recent(self, chat_id: int, *, limit: int = 20) -> list[dict]:
         if limit <= 0:

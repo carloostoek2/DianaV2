@@ -116,6 +116,9 @@ class TurnCoordinator:
         self._feature_recontact_enabled = feature_recontact_enabled
         self._owner_interventions: dict[int, float] = {}
         self._turn_chat_ids: dict[UUID, int] = {}
+        # Per-chat VIP inbound epoch: newer message aborts older in-flight work.
+        self._vip_epochs: dict[int, int] = {}
+        self._turn_vip_epochs: dict[UUID, int] = {}
 
     @asynccontextmanager
     async def chat_scope(self, chat_id: int) -> AsyncIterator[None]:
@@ -174,6 +177,23 @@ class TurnCoordinator:
 
     def clear_owner_intervention(self, chat_id: int) -> None:
         self._owner_interventions.pop(chat_id, None)
+
+    def bump_vip_epoch(self, chat_id: int) -> int:
+        """Advance VIP inbound generation for *chat_id*; return new epoch token."""
+        n = self._vip_epochs.get(chat_id, 0) + 1
+        self._vip_epochs[chat_id] = n
+        return n
+
+    def current_vip_epoch(self, chat_id: int) -> int:
+        return self._vip_epochs.get(chat_id, 0)
+
+    def bind_turn_vip_epoch(self, turn_id: UUID, chat_id: int, epoch: int) -> None:
+        """Associate a live turn with the VIP epoch that minted it."""
+        self._turn_chat_ids[turn_id] = chat_id
+        self._turn_vip_epochs[turn_id] = epoch
+
+    def is_vip_epoch_current(self, chat_id: int, epoch: int) -> bool:
+        return self._vip_epochs.get(chat_id, 0) == epoch
 
     async def coordinate(
         self,
@@ -405,7 +425,16 @@ class TurnCoordinator:
         status: str | TurnStatus,
         **meta: object,
     ) -> TurnRecord:
+        """Director status sink + durable transitions.
+
+        Before applying a non-terminal progress status, abort if the owner
+        intervened or a newer VIP message advanced the chat epoch — total
+        cancel (no approve/send from the stale turn).
+        """
         value = status.value if isinstance(status, TurnStatus) else str(status)
+        # Terminal writes (failed/superseded/…) skip stale checks so cleanup works.
+        if value not in {s.value for s in TERMINAL_TURN_STATUSES}:
+            await self._raise_if_turn_cancelled(turn_id)
         superseded_by = meta.get("superseded_by")
         error = meta.get("error")
         return await self._turns.transition(
@@ -420,16 +449,27 @@ class TurnCoordinator:
     ) -> TurnRecord:
         return await self.transition(turn_id, TurnStatus.FAILED, error=error)
 
-    async def transition_sink(
-        self, turn_id: UUID, status: str | TurnStatus
-    ) -> None:
-        """TurnStatusSink adapter — checks owner intervention before transition."""
+    async def _raise_if_turn_cancelled(self, turn_id: UUID) -> None:
+        """Supersede + raise when owner or newer VIP invalidated this turn."""
         chat_id = self._turn_chat_ids.get(turn_id)
-        if chat_id is not None and self.is_owner_intervened(chat_id):
+        if chat_id is None:
+            return
+        if self.is_owner_intervened(chat_id):
             await self._supersede_nonterminal(
                 chat_id, superseded_by=None, cancel_reason="owner_message"
             )
             raise TurnSupersededError()
+        bound = self._turn_vip_epochs.get(turn_id)
+        if bound is not None and self._vip_epochs.get(chat_id, 0) != bound:
+            await self._supersede_nonterminal(
+                chat_id, superseded_by=None, cancel_reason="new_message"
+            )
+            raise TurnSupersededError()
+
+    async def transition_sink(
+        self, turn_id: UUID, status: str | TurnStatus
+    ) -> None:
+        """TurnStatusSink adapter — same cancel checks as ``transition``."""
         await self.transition(turn_id, status)
 
     def is_terminal_status(self, status: str) -> bool:
