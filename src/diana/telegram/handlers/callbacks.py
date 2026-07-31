@@ -161,6 +161,7 @@ async def dispatch_owner_callback(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     owner_telegram_id: int | None = None,
+    draft_variants: Any | None = None,
 ) -> str:
     """Domain dispatch for unit tests. Returns honest status token."""
 
@@ -229,6 +230,18 @@ async def dispatch_owner_callback(
             applied = await admin.handle_owner_escalate(turn_id, actor_id=actor_id)
             correct_sessions.cancel_turn(turn_id)
             return "escalated" if applied else "stale"
+        if action in {"regen", "prev", "next"}:
+            if draft_variants is None:
+                return "ignored"
+            if action == "regen":
+                result = await draft_variants.regenerate(turn_id, actor_id=actor_id)
+            else:
+                delta = -1 if action == "prev" else 1
+                result = await draft_variants.navigate(
+                    turn_id, actor_id=actor_id, delta=delta
+                )
+            # Token used by Telegram handler for toast UX.
+            return result.token
     except OwnerAuthError:
         return "forbidden"
     return "ignored"
@@ -243,6 +256,7 @@ def build_callback_router(
     owner_telegram_id: int | None = None,
     note_sessions: dict[int, int] | None = None,
     profile_admin: ProfileAdminService | None = None,
+    draft_variants: Any | None = None,
 ) -> Router:
     router = Router(name="callbacks")
     sessions = correct_sessions or CorrectSessionStore()
@@ -386,6 +400,7 @@ def build_callback_router(
                 callback_data=data,
                 actor_id=actor_id,
                 admin_trace=admin_trace,
+                draft_variants=draft_variants,
             )
         except Exception:
             logger.exception(
@@ -443,6 +458,28 @@ def build_callback_router(
                 return
             if status == "deliver_failed":
                 await query.answer("Error al enviar — intentá de nuevo", show_alert=True)
+                return
+            # Draft versioning (regen / prev / next)
+            if status == "regen_ok":
+                await query.answer("Nueva versión lista")
+                return
+            if status == "nav_ok":
+                await query.answer()
+                return
+            if status == "blocked_regenerating":
+                await query.answer("Esperá a que termine la regeneración", show_alert=True)
+                return
+            if status == "blocked_max":
+                await query.answer("Máximo de versiones alcanzado", show_alert=True)
+                return
+            if status == "blocked_first":
+                await query.answer("Primera versión")
+                return
+            if status == "blocked_last":
+                await query.answer("Última versión")
+                return
+            if status == "error":
+                await query.answer("No se pudo regenerar — reintentá", show_alert=True)
                 return
             await query.answer()
         except Exception:

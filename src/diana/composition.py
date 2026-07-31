@@ -123,6 +123,43 @@ class SystemClock:
         await asyncio.sleep(seconds)
 
 
+def _build_vip_history_seed(
+    settings: Settings, *, history: Any, notifier: Any = None
+) -> Any:
+    """Wire Telethon VIP history seed when API credentials + session path are set."""
+    from diana.application.vip_history_seed import VipHistorySeedService
+
+    api_id = settings.telethon_api_id
+    api_hash = settings.telethon_api_hash.get_secret_value().strip()
+    session_path = (settings.telethon_session_path or "").strip()
+    fetcher = None
+    if api_id and api_hash and session_path:
+        from diana.infrastructure.telethon.vip_history_fetcher import (
+            TelethonVipHistoryFetcher,
+        )
+
+        fetcher = TelethonVipHistoryFetcher(
+            api_id=int(api_id),
+            api_hash=api_hash,
+            session_path=session_path,
+        )
+        logger.info(
+            "vip_history_seed_enabled",
+            extra={
+                "session_path": session_path,
+                "limit": settings.vip_history_seed_limit,
+            },
+        )
+    else:
+        logger.info("vip_history_seed_disabled_missing_telethon_config")
+    return VipHistorySeedService(
+        history=history,
+        fetcher=fetcher,
+        limit=settings.vip_history_seed_limit,
+        notifier=notifier,
+    )
+
+
 class RandomDelayPolicy(DelayPolicy):
     """Mode-aware human-like delays (REQ-HUM-01/04).
 
@@ -617,6 +654,22 @@ def build_app(
         owner_telegram_id=settings.owner_telegram_id,
     )
 
+    # VIP DM history seed (Telethon personal session) — optional until env is set.
+    history_seed = _build_vip_history_seed(
+        settings, history=history, notifier=notifier
+    )
+
+    from diana.application.draft_variants import DraftVariantService
+
+    draft_variants = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=notifier,
+        owner_telegram_id=settings.owner_telegram_id,
+        history=history,
+    )
+
     wiring = build_dispatcher(
         orchestrator=orchestrator,
         admin=admin,
@@ -642,6 +695,8 @@ def build_app(
         rate_limit_window_s=settings.rate_limit_window_s,
         dedup_ttl_s=settings.dedup_ttl_s,
         bc_store=bc_store,
+        history_seed=history_seed,
+        draft_variants=draft_variants,
     )
 
     return AppContainer(

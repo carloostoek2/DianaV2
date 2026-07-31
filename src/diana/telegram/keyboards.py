@@ -11,6 +11,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 _ACTION_APPROVE = "a"
 _ACTION_CORRECT = "c"
 _ACTION_ESCALATE = "e"
+_ACTION_REGEN = "rg"
+_ACTION_PREV = "pv"
+_ACTION_NEXT = "nx"
 _ACTION_DOCTRINE_RESPOND = "dr"
 _ACTION_DOCTRINE_RESOLVE = "dx"
 _ACTION_DOCTRINE_ESCALATE = "de"
@@ -31,11 +34,14 @@ _ACTION_MENU = "m"
 
 
 def encode_callback(action: str, turn_id: UUID) -> str:
-    """Build callback_data: a|c|e : <uuid>."""
+    """Build callback_data: a|c|e|rg|pv|nx : <uuid>."""
     code = {
         "approve": _ACTION_APPROVE,
         "correct": _ACTION_CORRECT,
         "escalate": _ACTION_ESCALATE,
+        "regen": _ACTION_REGEN,
+        "prev": _ACTION_PREV,
+        "next": _ACTION_NEXT,
     }.get(action, action)
     data = f"{code}:{turn_id}"
     if len(data.encode("utf-8")) > 64:
@@ -78,6 +84,9 @@ def parse_callback(data: str) -> tuple[str, UUID] | None:
         _ACTION_APPROVE: "approve",
         _ACTION_CORRECT: "correct",
         _ACTION_ESCALATE: "escalate",
+        _ACTION_REGEN: "regen",
+        _ACTION_PREV: "prev",
+        _ACTION_NEXT: "next",
     }.get(code)
     if action is None:
         return None
@@ -378,8 +387,25 @@ _draft_base = draft_keyboard
 
 
 def draft_keyboard(turn_id: UUID, chat_id: int | None = None) -> InlineKeyboardMarkup:
-    """Aprobar / Corregir / Escalar / Traza / Nota inline keyboard."""
+    """Aprobar / Corregir / Escalar + versiones + Traza / Nota."""
     base = _draft_base(turn_id)
+    # Version nav row (v1 port): prev | regenerate | next
+    base.inline_keyboard.append(
+        [
+            InlineKeyboardButton(
+                text="◀ Anterior",
+                callback_data=encode_callback("prev", turn_id),
+            ),
+            InlineKeyboardButton(
+                text="🔄 Regenerar",
+                callback_data=encode_callback("regen", turn_id),
+            ),
+            InlineKeyboardButton(
+                text="Siguiente ▶",
+                callback_data=encode_callback("next", turn_id),
+            ),
+        ]
+    )
     note_cb = encode_add_note(chat_id) if chat_id is not None else encode_add_note(0)
     base.inline_keyboard.append([
         InlineKeyboardButton(

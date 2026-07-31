@@ -25,6 +25,7 @@ from diana.application.ports import (
     TurnStore,
     VipStore,
 )
+from diana.application.draft_variants import ensure_versions
 from diana.application.escalation_labels import tipo_from_reason
 from diana.application.owner_history import append_owner_delivery_history
 from diana.application.staging_service import StagingService
@@ -127,6 +128,12 @@ class AdminService:
         if not bc:
             raise ValueError("business_connection_id is required for approval")
         draft = decision.draft_text or ""
+        eval_dict = ensure_versions(
+            decision.evaluation.model_dump(mode="json"),
+            draft_text=draft,
+            reason=decision.reason or "",
+            vip_text=turn.text,
+        )
         record = ApprovalRecord(
             id=uuid4(),
             turn_id=turn_id,
@@ -136,7 +143,7 @@ class AdminService:
             status="waiting",
             vip_id=turn.vip_id,
             cognitive_summary=decision.reason,
-            evaluation=decision.evaluation.model_dump(mode="json"),
+            evaluation=eval_dict,
             trigger_message_id=turn.telegram_message_id,
         )
         await self._approvals.create_waiting(record)

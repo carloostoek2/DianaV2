@@ -98,6 +98,8 @@ def build_dispatcher(
     config_store: TrainingModeStore | None = None,
     rate_limit_max_events: int = 20,
     rate_limit_window_s: float = 10.0,
+    history_seed: object | None = None,
+    draft_variants: object | None = None,
     dedup_ttl_s: float = 300.0,
     bc_store: BusinessConnectionStore | None = None,
 ) -> TelegramWiring:
@@ -182,6 +184,7 @@ def build_dispatcher(
             profile_admin=profile_admin,
             menu_sessions=menu_sessions,
             config_store=config_store,
+            history_seed=history_seed,
         )
     )
     root.include_router(
@@ -193,6 +196,7 @@ def build_dispatcher(
             owner_telegram_id=owner_telegram_id,
             note_sessions=sessions_note,
             profile_admin=profile_admin,
+            draft_variants=draft_variants,
         )
     )
     root.include_router(
@@ -207,6 +211,7 @@ def build_dispatcher(
             note_sessions=sessions_note,
             sandbox=sandbox,  # type: ignore[arg-type]
             coordinator=coordinator,
+            history_seed=history_seed,
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))

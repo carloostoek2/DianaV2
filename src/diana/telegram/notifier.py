@@ -13,6 +13,7 @@ from diana.application.ports import (
     EscalationNotification,
 )
 from diana.application.escalation_labels import label_es_for_tipo
+from diana.application.draft_variants import format_draft_owner_text, read_versions
 from diana.telegram.keyboards import doctrine_keyboard, draft_keyboard
 
 logger = logging.getLogger("diana.telegram")
@@ -33,17 +34,19 @@ class AiogramOwnerNotifier:
     async def notify_draft(self, payload: DraftNotification) -> int | None:
         turn_id = payload.turn_id if isinstance(payload.turn_id, UUID) else UUID(str(payload.turn_id))
         name = payload.vip_display_name or str(payload.chat_id)
-        text = (
-            f"<b>Propuesta de respuesta para {_esc(name)}</b>\n"
-            f"[usuario]: {_esc(payload.vip_text)}\n"
-            f"[propuesta]: {_esc(payload.draft_text)}"
+        versions = read_versions(payload.evaluation)
+        items = versions.get("items") or []
+        selected = int(versions.get("selected") or 0)
+        count = max(len(items), 1)
+        text = format_draft_owner_text(
+            vip_name=name,
+            vip_text=payload.vip_text,
+            draft_text=payload.draft_text,
+            reason=payload.reason or "",
+            evaluation_summary=payload.evaluation_summary or "",
+            version_index=selected if items else 0,
+            version_count=count,
         )
-        if payload.reason:
-            safe_reason = _esc(payload.reason)
-            text += f"\n\nMotivo: {safe_reason}"
-        if payload.evaluation_summary:
-            safe_eval = _esc(payload.evaluation_summary)
-            text += f"\nEvaluación: {safe_eval}"
         msg = await self._bot.send_message(
             chat_id=self._owner_id,
             text=text,
@@ -51,6 +54,23 @@ class AiogramOwnerNotifier:
             parse_mode="HTML",
         )
         return int(msg.message_id)
+
+    async def edit_draft(
+        self,
+        *,
+        owner_message_id: int,
+        text: str,
+        turn_id: UUID,
+        chat_id: int,
+    ) -> None:
+        """Update the existing owner draft message in place (regen / prev / next)."""
+        await self._bot.edit_message_text(
+            chat_id=self._owner_id,
+            message_id=owner_message_id,
+            text=text,
+            reply_markup=draft_keyboard(turn_id, chat_id=chat_id),
+            parse_mode="HTML",
+        )
 
     async def notify_escalation(self, payload: EscalationNotification) -> None:
         label = label_es_for_tipo(payload.tipo)
