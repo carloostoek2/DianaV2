@@ -83,6 +83,10 @@ def test_load_persona_catalog_counts_and_structure() -> None:
     assert any("triste" in r.lower() or "ansiosa" in r.lower() for r in rules)
     assert any("acompañ" in r.lower() or "acompagn" in r.lower() for r in rules)
 
+    # Always-on laughter voice: jsjs family, never classic jaja/haha.
+    assert any("jsjs" in r.lower() for r in rules)
+    assert any("jaja" in r.lower() for r in rules)
+
     for fact in data["persona_facts"]:
         assert "id" in fact and fact["id"]
         assert "tema" in fact
