@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from diana.application.ports import (
     ApprovalRecord,
-    DraftNotification,
     OwnerNotifierPort,
     PendingApprovalStore,
     TurnRecord,
@@ -22,11 +21,10 @@ _logger = logging.getLogger("diana.application")
 
 
 async def recover_zombie_turns(turns: TurnStore) -> int:
-    """Mark all non-terminal turns as FAILED with error='crash_recovery'.
+    """Mark mid-pipeline crash zombies as FAILED with error='crash_recovery'.
 
+    Does **not** fail ``pending_approval`` / ``gray_zone`` (owner still deciding).
     Returns count of successfully marked turns.
-    Each transition is wrapped in try/except to handle
-    terminal-latch races and DB connectivity errors.
     """
     zombies = await list_zombie_turns(turns)
     count = 0
@@ -48,21 +46,31 @@ async def rematerialize_drafts(
     rematerializable: list[tuple[TurnRecord, str]],
     approvals: PendingApprovalStore,
     notifier: OwnerNotifierPort,
+    turns: TurnStore | None = None,
 ) -> int:
-    """Create PendingApproval rows + re-notify for each rematerializable draft.
+    """Create waiting approvals and park turns as ``pending_approval``.
 
-    ``rematerializable`` is a list of (turn, generated_text) tuples from
-    ``list_rematerializable_turns``.
+    Call **before** zombie recovery so turns are still non-terminal and can
+    transition to ``pending_approval``. Notification is left to the startup
+    re-notify pass (avoids double DMs).
 
-    ``business_connection_id`` is set to ``""`` for re-materialized drafts.
-    The actual BC is set by ``Admin.send_approve`` when the draft is approved.
-    The BC is not available on ``TurnRecord`` at recovery time.
+    ``business_connection_id`` may be empty when unknown at recovery time;
+    owner re-notify still works; deliver needs a real BC when present on the
+    waiting approval row from a normal supervised path.
 
     Returns count of successfully rematerialized drafts.
     """
     count = 0
     for turn, generated_text in rematerializable:
         try:
+            existing = await approvals.get_by_turn(turn.id)
+            if existing is not None and existing.status == "waiting":
+                # Already have a waiting draft — just ensure turn status.
+                if turns is not None:
+                    await turns.transition(turn.id, "pending_approval")
+                count += 1
+                continue
+
             draft_id = uuid4()
             _logger.info(
                 "rematerialize_draft",
@@ -73,9 +81,6 @@ async def rematerialize_drafts(
                 },
             )
 
-            # Create approval record FIRST — if this fails, no notification sent.
-            # If notification fails, the approval exists and will be re-notified
-            # on next startup.
             await approvals.create_waiting(
                 ApprovalRecord(
                     id=draft_id,
@@ -84,25 +89,15 @@ async def rematerialize_drafts(
                     business_connection_id="",
                     draft_text=generated_text,
                     status="waiting",
+                    vip_id=turn.vip_id,
+                    trigger_message_id=turn.trigger_message_id,
                 )
             )
 
-            await notifier.notify_draft(
-                DraftNotification(
-                    turn_id=turn.id,
-                    chat_id=turn.chat_id,
-                    vip_text="(crash recovery)",
-                    draft_text=generated_text,
-                    reason="crash_rematerialized",
-                    evaluation_summary=None,
-                    evaluation=None,
-                    business_connection_id="",
-                    reply_markup_spec={
-                        "actions": ["approve", "correct", "escalate"],
-                        "turn_id": str(turn.id),
-                    },
-                )
-            )
+            # Keep Approve path non-terminal: owner is still deciding.
+            if turns is not None:
+                await turns.transition(turn.id, "pending_approval")
+
             count += 1
         except Exception:
             _logger.exception(

@@ -88,9 +88,29 @@ async def list_waiting_approvals(
     return await approvals.list_waiting()
 
 
+# Mid-pipeline only. Owner-waiting states must survive restart so Approve works.
+# pending_approval / gray_zone wait on the owner — never treat as crash zombies.
+ZOMBIE_PIPELINE_STATUSES: frozenset[str] = frozenset(
+    {
+        "received",
+        "analyzing",
+        "planning",
+        "retrieving",
+        "building_context",
+        "generating",
+        "evaluating",
+        "deciding",
+    }
+)
+
+
 async def list_zombie_turns(turns: TurnStore) -> list[TurnRecord]:
-    """Return all non-terminal turns (zombies) for FAILED marking."""
-    return await turns.list_all_non_terminal()
+    """Return mid-pipeline turns for FAILED marking after crash.
+
+    Excludes ``pending_approval`` and ``gray_zone`` (owner is still deciding).
+    """
+    non_terminal = await turns.list_all_non_terminal()
+    return [t for t in non_terminal if t.status in ZOMBIE_PIPELINE_STATUSES]
 
 
 async def list_rematerializable_turns(
@@ -118,6 +138,7 @@ async def list_rematerializable_turns(
 
 __all__ = [
     "RecoveryPlan",
+    "ZOMBIE_PIPELINE_STATUSES",
     "classify_pending_deliveries",
     "list_rematerializable_turns",
     "list_waiting_approvals",

@@ -43,12 +43,12 @@ def _delivery(
     )
 
 
-def _approval(turn_id=None) -> ApprovalRecord:
+def _approval(turn_id=None, *, chat_id: int = 42) -> ApprovalRecord:
     tid = turn_id or uuid4()
     return ApprovalRecord(
         id=uuid4(),
         turn_id=tid,
-        chat_id=42,
+        chat_id=chat_id,
         business_connection_id="bc",
         draft_text="draft",
         status="waiting",
@@ -109,6 +109,39 @@ async def test_startup_renotifies_waiting_approvals() -> None:
     for a in (a1, a2):
         stored = await approvals.get_by_turn(a.turn_id)
         assert stored is not None and stored.status == "waiting"
+        # New DM message id persisted so regen/edit targets the fresh message
+        assert stored.owner_message_id is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_keeps_pending_approval_turns_approvable() -> None:
+    """Owner-waiting drafts survive restart: turn stays pending_approval."""
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    turns = InMemoryTurnStore()
+    turn_id = uuid4()
+    await turns.create(
+        TurnRecord(id=turn_id, chat_id=42, status="pending_approval")
+    )
+    await approvals.create_waiting(
+        _approval(turn_id=turn_id, chat_id=42)
+    )
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+        turns=turns,
+    )
+    assert report.zombie_turns_expired == 0
+    assert report.re_notified_approvals == 1
+    rec = await turns.get(turn_id)
+    assert rec is not None
+    assert rec.status == "pending_approval"
+    stored = await approvals.get_by_turn(turn_id)
+    assert stored is not None and stored.status == "waiting"
 
 
 @pytest.mark.asyncio
@@ -158,18 +191,23 @@ async def test_startup_reports_zombie_and_remat_counters() -> None:
         turns=turns,
         traces=traces,
     )
-    # All 3 non-terminal turns marked as FAILED
-    assert report.zombie_turns_expired == 3
-    # Only t1 had generated_text in traces
+    # t1 rematerialized → pending_approval (not zombie); t2+t3 mid-pipeline failed
+    assert report.zombie_turns_expired == 2
     assert report.drafts_rematerialized == 1
-    # No timers passed
     assert report.timers_recovered == 0
 
-    # Verify t1 was actually rematerialized
     stored = await approvals.get_by_turn(t1.id)
     assert stored is not None
     assert stored.draft_text == "draft from t1"
     assert stored.status == "waiting"
+    rec1 = await turns.get(t1.id)
+    assert rec1 is not None
+    assert rec1.status == "pending_approval"
+    # t2/t3 pure zombies
+    for tid in (t2.id, t3.id):
+        rec = await turns.get(tid)
+        assert rec is not None
+        assert rec.status == "failed"
 
 
 @pytest.mark.asyncio

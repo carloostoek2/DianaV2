@@ -20,20 +20,22 @@ from diana.application.ports import TurnRecord
 
 
 @pytest.mark.asyncio
-async def test_recover_zombie_turns_marks_non_terminal_as_failed() -> None:
-    """recover_zombie_turns marks all non-terminal turns as FAILED with error='crash_recovery'."""
+async def test_recover_zombie_turns_marks_pipeline_only_as_failed() -> None:
+    """recover_zombie_turns fails mid-pipeline zombies, keeps pending_approval alive."""
     turns = InMemoryTurnStore()
     t1 = TurnRecord(id=uuid4(), chat_id=1, status="analyzing")
     t2 = TurnRecord(id=uuid4(), chat_id=2, status="generating")
     t3 = TurnRecord(id=uuid4(), chat_id=1, status="deciding")
     t4 = TurnRecord(id=uuid4(), chat_id=2, status="failed")  # already terminal
+    t5 = TurnRecord(id=uuid4(), chat_id=3, status="pending_approval")  # owner waiting
     await turns.create(t1)
     await turns.create(t2)
     await turns.create(t3)
     await turns.create(t4)
+    await turns.create(t5)
 
     count = await recover_zombie_turns(turns)
-    assert count == 3  # t1, t2, t3 marked; t4 skipped (terminal latch)
+    assert count == 3  # t1, t2, t3 only
 
     for turn_id in (t1.id, t2.id, t3.id):
         rec = await turns.get(turn_id)
@@ -41,38 +43,43 @@ async def test_recover_zombie_turns_marks_non_terminal_as_failed() -> None:
         assert rec.status == "failed"
         assert rec.error == "crash_recovery"
 
-    # Terminal turn unchanged (terminal latch prevents re-transition)
     rec4 = await turns.get(t4.id)
     assert rec4 is not None
     assert rec4.status == "failed"
-    # error is None because the original TurnRecord was created without error,
-    # and the terminal latch skips the transition entirely
     assert rec4.error is None
+
+    rec5 = await turns.get(t5.id)
+    assert rec5 is not None
+    assert rec5.status == "pending_approval"
 
 
 @pytest.mark.asyncio
-async def test_rematerialize_drafts_creates_approval_and_notifies() -> None:
-    """rematerialize_drafts creates pending approval records and notifies owner."""
+async def test_rematerialize_drafts_creates_approval_and_parks_turn() -> None:
+    """rematerialize creates waiting approval and sets turn to pending_approval."""
     approvals = InMemoryPendingApprovalStore()
     notifier = FakeOwnerNotifier()
+    turns = InMemoryTurnStore()
     t1 = TurnRecord(id=uuid4(), chat_id=1, status="generating")
     t2 = TurnRecord(id=uuid4(), chat_id=2, status="deciding")
+    await turns.create(t1)
+    await turns.create(t2)
 
     rematerializable = [(t1, "generated text 1"), (t2, "generated text 2")]
-    count = await rematerialize_drafts(rematerializable, approvals, notifier)
+    count = await rematerialize_drafts(
+        rematerializable, approvals, notifier, turns=turns
+    )
     assert count == 2
-
-    assert len(notifier.drafts) == 2
-    for notif in notifier.drafts:
-        assert notif.reason == "crash_rematerialized"
-        assert notif.business_connection_id == ""
+    # Notify is deferred to startup re-notify pass (avoid double DMs).
+    assert len(notifier.drafts) == 0
 
     for turn, text in rematerializable:
         stored = await approvals.get_by_turn(turn.id)
         assert stored is not None
         assert stored.draft_text == text
         assert stored.status == "waiting"
-        assert stored.business_connection_id == ""
+        rec = await turns.get(turn.id)
+        assert rec is not None
+        assert rec.status == "pending_approval"
 
 
 @pytest.mark.asyncio
@@ -87,23 +94,26 @@ async def test_rematerialize_drafts_empty_noop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_zombie_turns_returns_all_non_terminal() -> None:
-    """list_zombie_turns returns non-terminal turns only."""
+async def test_list_zombie_turns_excludes_owner_waiting() -> None:
+    """list_zombie_turns is mid-pipeline only — not pending_approval / gray_zone."""
     from diana.application.recovery import list_zombie_turns
 
     turns = InMemoryTurnStore()
     t1 = TurnRecord(id=uuid4(), chat_id=1, status="analyzing")
     t2 = TurnRecord(id=uuid4(), chat_id=1, status="delivered")  # terminal
-    t3 = TurnRecord(id=uuid4(), chat_id=2, status="pending_approval")  # non-terminal
+    t3 = TurnRecord(id=uuid4(), chat_id=2, status="pending_approval")  # owner waiting
+    t4 = TurnRecord(id=uuid4(), chat_id=2, status="gray_zone")  # owner waiting
     await turns.create(t1)
     await turns.create(t2)
     await turns.create(t3)
+    await turns.create(t4)
 
     zombies = await list_zombie_turns(turns)
     ids = {z.id for z in zombies}
     assert t1.id in ids
     assert t2.id not in ids
-    assert t3.id in ids
+    assert t3.id not in ids
+    assert t4.id not in ids
 
 
 @pytest.mark.asyncio

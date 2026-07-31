@@ -95,24 +95,21 @@ async def run_startup_recovery(
         deliveries, now=now, stale_after=stale_after
     )
 
-    # Draft re-materialization: capture rematerializable turns BEFORE zombie recovery,
-    # because recover_zombie_turns marks all non-terminal turns as FAILED, which would
-    # make list_rematerializable_turns return nothing.
+    # Draft re-materialization BEFORE zombie kill:
+    # 1) mid-pipeline turns with generated_text → waiting approval + pending_approval
+    # 2) then fail only true pipeline zombies (not pending_approval / gray_zone)
     remat_count = 0
-    rematerializable: list[tuple[TurnRecord, str]] = []
     if turns is not None and traces is not None:
         rematerializable = await list_rematerializable_turns(turns, traces)
+        if rematerializable:
+            remat_count = await rematerialize_drafts(
+                rematerializable, approvals, notifier, turns=turns
+            )
 
-    # Zombie turn recovery: mark all non-terminal turns as FAILED.
+    # Zombie recovery: mid-pipeline only (owner-waiting turns stay alive).
     zombie_count = 0
     if turns is not None:
         zombie_count = await recover_zombie_turns(turns)
-
-    # Draft re-materialization: create pending_approval for turns with generated_text.
-    if rematerializable:
-        remat_count = await rematerialize_drafts(
-            rematerializable, approvals, notifier
-        )
 
     recovered = 0
     if behavior is not None and vips is not None:
@@ -138,7 +135,15 @@ async def run_startup_recovery(
     waiting = await list_waiting_approvals(approvals)
     re_notified = 0
     for approval in waiting:
-        await _renotify_approval(notifier, approval)
+        mid = await _renotify_approval(notifier, approval)
+        if mid is not None:
+            try:
+                await approvals.set_owner_message_id(approval.turn_id, mid)
+            except Exception:
+                logger.exception(
+                    "recovery_set_owner_message_id_failed",
+                    extra={"turn_id": str(approval.turn_id)},
+                )
         re_notified += 1
 
     report = RecoveryStartupReport(
@@ -380,14 +385,17 @@ async def _notify_recovery_summary(
     ):
         lines.append("  Nada que recuperar.")
     lines.append("")
-    lines.append("Revisa borradores anteriores si los botones no responden.")
+    lines.append(
+        "Los borradores re-notificados se pueden aprobar desde el mensaje nuevo."
+    )
     await notifier.notify_info("\n".join(lines))
 
 
 async def _renotify_approval(
     notifier: OwnerNotifierPort, approval: ApprovalRecord
-) -> None:
-    await notifier.notify_draft(
+) -> int | None:
+    """Re-send draft keyboard; return new owner message id when available."""
+    return await notifier.notify_draft(
         DraftNotification(
             turn_id=approval.turn_id,
             chat_id=approval.chat_id,
