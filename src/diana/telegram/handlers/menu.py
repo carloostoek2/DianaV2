@@ -314,6 +314,7 @@ def build_menu_router(
     profile_admin: ProfileAdminService | None = None,
     menu_sessions: MenuSessionStore | None = None,
     config_store: TrainingModeStore | None = None,
+    history_seed: object | None = None,
 ) -> Router:
     """Build the router serving /start, /menu, m:* callbacks, and menu-session text."""
     router = Router(name="menu")
@@ -407,6 +408,7 @@ def build_menu_router(
             profile_admin=profile_admin,
             sessions=sessions,
             config_store=config_store,
+            history_seed=history_seed,
         )
 
     # ---- text capture for multi-step flows ----
@@ -478,6 +480,7 @@ async def _dispatch_action(
     profile_admin: ProfileAdminService | None,
     sessions: MenuSessionStore,
     config_store: TrainingModeStore | None = None,
+    history_seed: object | None = None,
 ) -> None:
     category = parsed.category
     action = parsed.action
@@ -776,6 +779,9 @@ async def _dispatch_action(
             pending_name = sessions.pop_pending_vip_name(actor_id)
 
             result = await vips.add(user_id, display_name=pending_name)
+            schedule = getattr(history_seed, "schedule_seed_for_new_vip", None)
+            if callable(schedule):
+                schedule(user_id)
             name = result.display_name or str(user_id)
             await _show(
                 message,

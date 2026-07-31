@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     rate_limit_window_s: Annotated[float, Field(gt=0)] = 10.0
     dedup_ttl_s: Annotated[float, Field(gt=0)] = 300.0
 
+    # VIP history seed via Telethon (personal Diana account session).
+    # When api_id + api_hash + session_path are set, adding a VIP imports
+    # recent DM history into message_history (skip if chat already has rows).
+    telethon_api_id: int | None = None
+    telethon_api_hash: SecretStr = SecretStr("")
+    telethon_session_path: str = ""  # e.g. /path/to/diana_session (no .session)
+    vip_history_seed_limit: Annotated[int, Field(ge=1, le=100)] = 20
+
     @field_validator("health_host", mode="after")
     @classmethod
     def require_loopback_health_host(cls, value: str) -> str:

@@ -461,6 +461,31 @@ async def test_vip_profile_empty_after_add(admin_ctx: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_add_vip_schedules_history_seed(admin_ctx: dict) -> None:
+    """On VIP allowlist add, schedule Telethon history seed (fire-and-forget)."""
+    class _Seed:
+        def __init__(self) -> None:
+            self.scheduled: list[int] = []
+
+        def schedule_seed_for_new_vip(self, telegram_user_id: int, **_: object) -> None:
+            self.scheduled.append(telegram_user_id)
+
+    g = admin_ctx
+    seed = _Seed()
+    status = await handle_admin_text(
+        text="/add_vip 777001",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        history_seed=seed,
+    )
+    assert status == "vip_added"
+    assert seed.scheduled == [777001]
+
+
+@pytest.mark.asyncio
 async def test_vip_fact_set_then_profile_ok(admin_ctx: dict) -> None:
     g = admin_ctx
     await _dispatch(g, "/add_vip 555 Alice")
