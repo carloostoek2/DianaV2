@@ -139,7 +139,7 @@ def upgrade() -> None:
         INSERT INTO promo_triggers (trigger_text, response_sequence, repeat_first_message, is_active)
         VALUES
         (
-          'quiero información',
+          'Quiero más información 🔥',
           '["Hola! Te cuento mis promos de esta semana 😊", "Tengo opciones pensadas para vos y las armo a tu ritmo.", "Si te copa, escribime y lo vemos juntas 💕"]'::jsonb,
           'Holis 😁 claro, te mando de nuevo mis promos...',
           true
@@ -148,7 +148,7 @@ def upgrade() -> None:
           'promociones',
           '["Hola! Acá te dejo mis promociones vigentes ✨", "Las armé pensando en lo que más piden y las adapto a vos.", "Cualquier duda, escribime y te ayudo con gusto 💕"]'::jsonb,
           'Holis de nuevo 😊 te reenvío mis promociones por si no las viste...',
-          true
+          false
         )
         """
     )
