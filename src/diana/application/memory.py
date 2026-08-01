@@ -121,6 +121,11 @@ class InMemoryRuntimeTimerStore:
             if r.status == "active"
         ]
 
+    async def delete_for_turn(self, turn_id: UUID) -> None:
+        self._timers = {
+            k: v for k, v in self._timers.items() if v.turn_id != turn_id
+        }
+
 class InMemoryBusinessConnectionStore:
     """Dict-backed BusinessConnectionStore for unit tests."""
 
