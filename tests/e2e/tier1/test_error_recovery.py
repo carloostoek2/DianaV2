@@ -25,32 +25,44 @@ class FailingDirector:
 
 @pytest.mark.asyncio
 async def test_analyst_schema_invalid_marks_failed():
-    """AnalystSchemaInvalidError marks turn FAILED and notifies owner."""
+    """AnalystSchemaInvalidError is caught, turn marked FAILED, owner notified."""
     d = FailingDirector(AnalystSchemaInvalidError("bad schema"))
     g = build_e2e([], behavior_override=None)
     g["orch"]._director = d
 
     msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip")
-    with pytest.raises(AnalystSchemaInvalidError):
-        await g["orch"].handle_vip_message(msg)
+    turn_id = await g["orch"].handle_vip_message(msg)
 
-    assert len(g["notifier"].infos) >= 1
-    assert "analista_schema_invalido" in g["notifier"].infos[0][0]
+    assert turn_id is not None
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "failed"
+    assert turn.error == "analista_schema_invalido"
+    assert any(
+        "analista_schema_invalido" in info[0]
+        for info in g["notifier"].infos
+    )
 
 
 @pytest.mark.asyncio
 async def test_evaluator_schema_invalid_marks_failed():
-    """EvaluatorSchemaInvalidError marks turn FAILED."""
+    """EvaluatorSchemaInvalidError is caught, turn marked FAILED, owner notified."""
     d = FailingDirector(EvaluatorSchemaInvalidError("bad eval"))
     g = build_e2e([], behavior_override=None)
     g["orch"]._director = d
 
     msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip")
-    with pytest.raises(EvaluatorSchemaInvalidError):
-        await g["orch"].handle_vip_message(msg)
+    turn_id = await g["orch"].handle_vip_message(msg)
 
-    assert len(g["notifier"].infos) >= 1
-    assert "evaluador_schema_invalido" in g["notifier"].infos[0][0]
+    assert turn_id is not None
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "failed"
+    assert turn.error == "evaluador_schema_invalido"
+    assert any(
+        "evaluador_schema_invalido" in info[0]
+        for info in g["notifier"].infos
+    )
 
 
 @pytest.mark.asyncio
