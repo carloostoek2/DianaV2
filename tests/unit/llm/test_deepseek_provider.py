@@ -154,6 +154,25 @@ async def test_generate_structured_disables_thinking_mode() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_disables_thinking_mode() -> None:
+    """Free-text generate() must also disable thinking to prevent CoT leak into drafts."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return _openai_chat_response("ok")
+
+    provider = _provider_with_transport(handler)
+    client = provider._client
+    try:
+        await provider.generate([{"role": "user", "content": "x"}])
+    finally:
+        await provider.aclose()
+        await client.aclose()
+    assert seen["payload"].get("thinking") == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
 async def test_generate_structured_empty_content_raises_clearly() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _openai_chat_response("")
@@ -172,8 +191,8 @@ async def test_generate_structured_empty_content_raises_clearly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_content_falls_back_to_reasoning_json() -> None:
-    """If content is empty but reasoning_content holds JSON, use it."""
+async def test_extract_content_does_not_fall_back_to_reasoning() -> None:
+    """reasoning_content is never returned as content — it's internal CoT."""
     body = {
         "id": "chatcmpl-test",
         "object": "chat.completion",
@@ -183,7 +202,7 @@ async def test_extract_content_falls_back_to_reasoning_json() -> None:
                 "message": {
                     "role": "assistant",
                     "content": "",
-                    "reasoning_content": 'Here is the object: {"value": "from-cot", "count": 9}',
+                    "reasoning_content": "internal chain-of-thought must not leak",
                 },
                 "finish_reason": "stop",
             }
@@ -196,11 +215,11 @@ async def test_extract_content_falls_back_to_reasoning_json() -> None:
     provider = _provider_with_transport(handler)
     client = provider._client
     try:
-        result = await provider.generate_structured(
-            [{"role": "user", "content": "x"}],
-            _TinySchema,
-        )
-        assert result == _TinySchema(value="from-cot", count=9)
+        with pytest.raises(ValueError, match="empty|null|valid JSON"):
+            await provider.generate_structured(
+                [{"role": "user", "content": "x"}],
+                _TinySchema,
+            )
     finally:
         await provider.aclose()
         await client.aclose()

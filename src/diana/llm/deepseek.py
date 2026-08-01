@@ -139,6 +139,9 @@ class DeepSeekProvider:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            # DeepSeek v4 defaults thinking=enabled; CoT can exhaust max_tokens
+            # and leave content empty → reasoning_content leaked as draft text.
+            "thinking": {"type": "disabled"},
         }
         data = await self._chat_completions(payload)
         return self._extract_content(data)
@@ -250,13 +253,7 @@ class DeepSeekProvider:
                 elif isinstance(part, dict) and "text" in part:
                     parts.append(str(part["text"]))
             content = "".join(parts)
-        text = str(content)
-        # Thinking models may leave content empty and put JSON in reasoning_content.
-        if not text.strip():
-            reasoning = message.get("reasoning_content")
-            if isinstance(reasoning, str) and reasoning.strip():
-                return reasoning
-        return text
+        return str(content)
 
 
 def _finish_reason(data: dict[str, Any]) -> str | None:
