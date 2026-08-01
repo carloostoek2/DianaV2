@@ -102,6 +102,7 @@ def build_dispatcher(
     draft_variants: object | None = None,
     dedup_ttl_s: float = 300.0,
     bc_store: BusinessConnectionStore | None = None,
+    history: object | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -131,7 +132,7 @@ def build_dispatcher(
         LoggingMiddleware(),
         BusinessConnectionMiddleware(),
         OwnerDetectionMiddleware(
-            owner_telegram_id=owner_telegram_id, coordinator=coordinator
+            owner_telegram_id=owner_telegram_id, coordinator=coordinator, history=history
         ),
         FreezeCheckMiddleware(vips=vips),
         AuthMiddleware(

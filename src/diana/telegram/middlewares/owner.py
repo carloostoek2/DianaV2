@@ -9,6 +9,7 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 
+from diana.application.ports import MessageHistoryWriter
 from diana.application.turn_coordinator import TurnCoordinator
 
 logger = logging.getLogger("diana.telegram")
@@ -27,9 +28,11 @@ class OwnerDetectionMiddleware(BaseMiddleware):
         *,
         owner_telegram_id: int,
         coordinator: TurnCoordinator,
+        history: MessageHistoryWriter | None = None,
     ) -> None:
         self._owner_id = owner_telegram_id
         self._coordinator = coordinator
+        self._history = history
 
     async def __call__(
         self,
@@ -63,6 +66,20 @@ class OwnerDetectionMiddleware(BaseMiddleware):
                     trigger_message_id=getattr(event, "message_id", None),
                 )
                 action = result.action
+                # Persist owner direct reply as history boundary so
+                # trailing_vip_texts stops at the right place.
+                if self._history is not None:
+                    text = (
+                        getattr(event, "text", None)
+                        or getattr(event, "caption", None)
+                        or ""
+                    )
+                    await self._history.append(
+                        chat_id,
+                        role="owner",
+                        text=str(text),
+                        telegram_message_id=getattr(event, "message_id", None),
+                    )
             logger.info(
                 "owner_business_observed",
                 extra={"chat_id": chat_id, "action": action},

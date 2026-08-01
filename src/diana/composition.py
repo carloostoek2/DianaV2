@@ -697,6 +697,7 @@ def build_app(
         bc_store=bc_store,
         history_seed=history_seed,
         draft_variants=draft_variants,
+        history=history,
     )
 
     return AppContainer(
