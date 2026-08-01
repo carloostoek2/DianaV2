@@ -10,8 +10,52 @@ import pytest
 from aiogram.types import Chat, Message, User
 
 from diana.application.memory import InMemoryVipStore
-from diana.application.ports import VipRecord
+from diana.application.ports import (
+    DoctrineNotification,
+    GrayZoneServicePort,
+    VipRecord,
+)
 from diana.telegram.freeze_middleware import FreezeCheckMiddleware
+
+# ---- Fake implementations for reminder tests ----
+
+
+class _FakeGrayZoneView:
+    """Minimal structural match for GrayZoneQueryView used in tests."""
+
+    def __init__(self, *, turn_id, question="hola", draft="borrador"):
+        self.id = uuid4()
+        self.turn_id = turn_id
+        self.question = question
+        self.draft = draft
+
+
+class _FakeGrayZone:
+    """Structural match for GrayZoneServicePort."""
+
+    def __init__(self, query: _FakeGrayZoneView | None = None, *, error: bool = False):
+        self._query = query
+        self._error = error
+
+    async def get_open_query_by_vip_id(self, vip_id):
+        if self._error:
+            raise RuntimeError("db down")
+        return self._query
+
+    async def get_open_query_by_turn_id(self, turn_id):
+        return None
+
+    async def resolve_with_doctrine(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def confirm_and_apply(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def discard_and_close(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def expire_old_queries(self, *args, **kwargs):
+        return []
 
 
 def _biz_msg(user_id: int, text: str = "hello") -> Message:
@@ -172,3 +216,169 @@ async def test_freeze_naive_frozen_until_still_drops() -> None:
     result = await mw(handler, _biz_msg(666), {})
     assert result is None
     handler.assert_not_awaited()
+
+
+# ---- Reminder notification tests ----
+
+
+@pytest.mark.asyncio
+async def test_frozen_vip_with_open_query_sends_reminder() -> None:
+    """Frozen VIP + open gray zone query → notify owner, still drop message."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(777, display_name="Vip")
+    frozen_until = datetime.now(UTC) + timedelta(hours=1)
+    await vips.freeze_vip(rec.id, frozen_until)
+
+    turn_id = uuid4()
+    query = _FakeGrayZoneView(turn_id=turn_id)
+    gray_zone = _FakeGrayZone(query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier)
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _biz_msg(777), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_awaited_once()
+    payload: DoctrineNotification = notifier.notify_doctrine.call_args[0][0]
+    assert payload.turn_id == turn_id
+    assert payload.chat_id == 42
+    assert payload.reason == "recordatorio_zona_gris"
+
+
+@pytest.mark.asyncio
+async def test_frozen_vip_reminder_debounce() -> None:
+    """Second message within TTL must NOT send a second reminder."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(888, display_name="Vip")
+    frozen_until = datetime.now(UTC) + timedelta(hours=1)
+    await vips.freeze_vip(rec.id, frozen_until)
+
+    query = _FakeGrayZoneView(turn_id=uuid4())
+    gray_zone = _FakeGrayZone(query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier, reminder_ttl_s=3600.0)
+    handler = AsyncMock(return_value="next")
+
+    await mw(handler, _biz_msg(888), {})
+    assert notifier.notify_doctrine.await_count == 1
+
+    await mw(handler, _biz_msg(888, text="otro"), {})
+    assert notifier.notify_doctrine.await_count == 1  # still 1
+
+
+@pytest.mark.asyncio
+async def test_frozen_vip_no_open_query_drops_without_notify() -> None:
+    """No open query → drop without notification."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(999, display_name="Vip")
+    frozen_until = datetime.now(UTC) + timedelta(hours=1)
+    await vips.freeze_vip(rec.id, frozen_until)
+
+    gray_zone = _FakeGrayZone(query=None)  # no open query
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier)
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _biz_msg(999), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_frozen_vip_reminder_gray_zone_none_skips() -> None:
+    """gray_zone=None → drop without notification (backward compat)."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(1010, display_name="Vip")
+    frozen_until = datetime.now(UTC) + timedelta(hours=1)
+    await vips.freeze_vip(rec.id, frozen_until)
+
+    notifier = AsyncMock()
+    mw = FreezeCheckMiddleware(vips=vips, gray_zone=None, notifier=notifier)
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _biz_msg(1010), {})
+
+    assert result is None
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_frozen_vip_reminder_lookup_error_drops() -> None:
+    """Gray zone lookup exception → drop without notify (fail-soft)."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(1111, display_name="Vip")
+    frozen_until = datetime.now(UTC) + timedelta(hours=1)
+    await vips.freeze_vip(rec.id, frozen_until)
+
+    gray_zone = _FakeGrayZone(error=True)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier)
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _biz_msg(1111), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_frozen_vip_reminder_notifier_exception_drops() -> None:
+    """Notifier exception → still drop the message (fail-soft)."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(1212, display_name="Vip")
+    frozen_until = datetime.now(UTC) + timedelta(hours=1)
+    await vips.freeze_vip(rec.id, frozen_until)
+
+    query = _FakeGrayZoneView(turn_id=uuid4())
+    gray_zone = _FakeGrayZone(query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(side_effect=RuntimeError("tg down"))
+
+    mw = FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier)
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _biz_msg(1212), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_frozen_vip_edited_message_skips_reminder() -> None:
+    """Edited message from frozen VIP → drop but no reminder."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(1313, display_name="Vip")
+    frozen_until = datetime.now(UTC) + timedelta(hours=1)
+    await vips.freeze_vip(rec.id, frozen_until)
+
+    query = _FakeGrayZoneView(turn_id=uuid4())
+    gray_zone = _FakeGrayZone(query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier)
+    handler = AsyncMock(return_value="next")
+
+    msg = Message(
+        message_id=1,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=1313, is_bot=False, first_name="U"),
+        text="hello",
+        business_connection_id="bc-1",
+        edit_date=12345,
+    )
+    result = await mw(handler, msg, {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_not_awaited()

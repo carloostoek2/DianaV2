@@ -97,6 +97,20 @@ class GrayZoneQueryRepo:
             )
             return result.scalar_one_or_none()
 
+    async def get_open_by_vip_id(self, vip_id: UUID) -> GrayZoneQuery | None:
+        """Return the most recent open query for a VIP, or None."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(GrayZoneQuery)
+                .where(
+                    GrayZoneQuery.vip_id == vip_id,
+                    GrayZoneQuery.status == "open",
+                )
+                .order_by(GrayZoneQuery.created_at.desc())
+                .limit(1)
+            )
+            return result.scalars().first()
+
     async def list_open(self) -> list[GrayZoneQuery]:
         async with self._sf() as session:
             result = await session.execute(

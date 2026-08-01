@@ -15,6 +15,7 @@ from diana.application.ports import (
     BehaviorCanceller,
     BusinessConnectionStore,
     EscalationStore,
+    GrayZoneServicePort,
     OwnerNotifierPort,
     TrainingModeStore,
     VipStore,
@@ -87,6 +88,7 @@ def build_dispatcher(
     forbidden_keywords: list[str],
     correct_sessions: CorrectSessionStore | None = None,
     doctrine_router: Router | None = None,
+    gray_zone: GrayZoneServicePort | None = None,
     staging: StagingService | None = None,
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
@@ -134,7 +136,7 @@ def build_dispatcher(
         OwnerDetectionMiddleware(
             owner_telegram_id=owner_telegram_id, coordinator=coordinator, history=history
         ),
-        FreezeCheckMiddleware(vips=vips),
+        FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier),
         AuthMiddleware(
             vips=vips,
             promo=promo,

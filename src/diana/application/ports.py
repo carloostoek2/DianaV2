@@ -133,6 +133,8 @@ class GrayZoneQueryView(Protocol):
     """
 
     id: UUID
+    turn_id: UUID
+    question: str
     draft: str
 
 
@@ -145,6 +147,8 @@ class GrayZoneServicePort(Protocol):
     """
 
     async def get_open_query_by_turn_id(self, turn_id: UUID) -> GrayZoneQueryView | None: ...
+
+    async def get_open_query_by_vip_id(self, vip_id: UUID) -> GrayZoneQueryView | None: ...
 
     async def resolve_with_doctrine(
         self,

@@ -235,6 +235,10 @@ class GrayZoneService:
         """
         return await self._queries.get_open_by_turn_id(turn_id)
 
+    async def get_open_query_by_vip_id(self, vip_id: UUID) -> object | None:
+        """Look up an open query by VIP id. Returns the ORM row or None."""
+        return await self._queries.get_open_by_vip_id(vip_id)
+
     async def freeze_vip(self, vip_id: UUID, duration_hours: int | None = None) -> None:
         """Freeze a VIP for a given duration (or default timeout)."""
         if vip_id is None:
