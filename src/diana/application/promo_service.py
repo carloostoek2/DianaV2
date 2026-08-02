@@ -132,8 +132,12 @@ class PromoService:
         trigger: PromoTriggerRecord,
         *,
         business_connection_id: str,
+        telegram_message_id: int | None = None,
     ) -> str:
         """Deliver promo sequence and record execution.
+
+        ``telegram_message_id`` marks the triggering user message as read via
+        the engine's read gate (skipped when None).
 
         Returns: disabled | empty_sequence | sent | failed
         """
@@ -176,6 +180,7 @@ class PromoService:
             mode=self._delivery_mode,
             is_frozen=False,
             parse_mode="HTML",
+            telegram_message_id=telegram_message_id,
         )
 
         try:

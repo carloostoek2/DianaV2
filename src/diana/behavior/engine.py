@@ -48,6 +48,9 @@ _TERMINAL_SEND_ABORT: frozenset[str] = frozenset(
 )
 # C4: pause quirk = fixed extra sleep (no text rewrite).
 _QUIRK_EXTRA_PAUSE_SECONDS = 0.03
+# Telegram auto-hides the typing bubble after ~5s; re-send before that to
+# keep it visible for the full typing duration of long messages.
+_TYPING_REFRESH_SECONDS = 4.0
 
 
 class BehaviorEngine:
@@ -252,12 +255,7 @@ class BehaviorEngine:
                             if gap > 0:
                                 await self._clock.sleep(gap)
                         typing_secs = self._delay.typing_duration_seconds(text)
-                        await self._actuator.send_chat_action(
-                            ctx.chat_id,
-                            "typing",
-                            business_connection_id=bc,
-                        )
-                        await self._clock.sleep(typing_secs)
+                        await self._show_typing(ctx, bc, typing_secs)
 
                     frozen_mid = await self._frozen_abort_pending(
                         delivery_id=delivery_id,
@@ -578,6 +576,36 @@ class BehaviorEngine:
             typing_duration_seconds=typing_secs,
             error=error,
         )
+
+    async def _show_typing(
+        self,
+        ctx: DeliveryContext,
+        bc: str,
+        duration: float,
+    ) -> None:
+        """Send typing action, refreshing before Telegram hides the bubble.
+
+        Telegram auto-hides the typing indicator after ~5s. A single action
+        would vanish mid-typing for long texts (e.g. promo catalog), making
+        the bot look idle; re-send every ``_TYPING_REFRESH_SECONDS``.
+        """
+        remaining = max(duration, 0.0)
+        if remaining <= 0:
+            await self._actuator.send_chat_action(
+                ctx.chat_id,
+                "typing",
+                business_connection_id=bc,
+            )
+            return
+        while remaining > 0:
+            await self._actuator.send_chat_action(
+                ctx.chat_id,
+                "typing",
+                business_connection_id=bc,
+            )
+            chunk = min(remaining, _TYPING_REFRESH_SECONDS)
+            await self._clock.sleep(chunk)
+            remaining -= chunk
 
     async def _send_with_retries(
         self,

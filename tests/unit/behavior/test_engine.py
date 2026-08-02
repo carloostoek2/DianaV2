@@ -874,6 +874,35 @@ async def test_deliver_with_sequence_three_texts_inter_gap() -> None:
 
 
 @pytest.mark.asyncio
+async def test_typing_refresh_keeps_bubble_visible_for_long_texts() -> None:
+    # duration 10s -> refresh every 4s: typing x3, sleeps chunked 4+4+2.
+    engine, actuator, _, clock = _engine(initial=0.05, typing=10.0)
+    result = await engine.deliver_with_sequence(
+        ["hola"],
+        _ctx(telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    typing_actions = [c for c in actuator.calls if c["op"] == "send_chat_action"]
+    assert len(typing_actions) == 3
+    assert clock.sleeps == [0.05, 4.0, 4.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_typing_short_duration_sends_once() -> None:
+    engine, actuator, _, clock = _engine(initial=0.05, typing=0.02)
+    result = await engine.deliver_with_sequence(
+        ["hola"],
+        _ctx(telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    typing_actions = [c for c in actuator.calls if c["op"] == "send_chat_action"]
+    assert len(typing_actions) == 1
+    assert clock.sleeps == [0.05, 0.02]
+
+
+@pytest.mark.asyncio
 async def test_deliver_with_sequence_frozen_zero_sends() -> None:
     engine, actuator, store, _ = _engine()
     result = await engine.deliver_with_sequence(

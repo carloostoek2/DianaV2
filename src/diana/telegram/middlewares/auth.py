@@ -29,6 +29,7 @@ class PromoMatcher(Protocol):
         trigger: PromoTriggerRecord,
         *,
         business_connection_id: str,
+        telegram_message_id: int | None = None,
     ) -> str: ...
 
 
@@ -137,6 +138,7 @@ class AuthMiddleware(BaseMiddleware):
                             chat_id,
                             trigger,
                             business_connection_id=str(bc),
+                            telegram_message_id=event.message_id,
                         )
                         logger.info(
                             "promo_executed",

@@ -146,6 +146,7 @@ async def test_non_vip_flag_on_match_executes_promo_handler_not_called() -> None
     assert args[0] == 555
     assert args[1] is trig
     assert kwargs["business_connection_id"] == "bc-1"
+    assert kwargs["telegram_message_id"] == 1
 
 
 @pytest.mark.asyncio

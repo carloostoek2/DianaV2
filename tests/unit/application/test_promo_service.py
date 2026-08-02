@@ -401,6 +401,31 @@ async def test_execute_first_send_delivers_original_and_records_sent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_forwards_telegram_message_id_to_context() -> None:
+    trig = _trigger(sequence=["a", "b"], repeat=None)
+    svc, _, _, beh, _, _ = _svc(triggers=FakeTriggerStore([trig]))
+    status = await svc.execute_promo(
+        42,
+        trig,
+        business_connection_id="bc-1",
+        telegram_message_id=777,
+    )
+    assert status == "sent"
+    ctx: DeliveryContext = beh.calls[0]["ctx"]
+    assert ctx.telegram_message_id == 777
+
+
+@pytest.mark.asyncio
+async def test_execute_telegram_message_id_defaults_to_none() -> None:
+    trig = _trigger(sequence=["a", "b"], repeat=None)
+    svc, _, _, beh, _, _ = _svc(triggers=FakeTriggerStore([trig]))
+    status = await svc.execute_promo(42, trig, business_connection_id="bc-1")
+    assert status == "sent"
+    ctx: DeliveryContext = beh.calls[0]["ctx"]
+    assert ctx.telegram_message_id is None
+
+
+@pytest.mark.asyncio
 async def test_execute_recent_uses_reintro_first_message() -> None:
     trig = _trigger(sequence=["a", "b", "c"], repeat="reintro holis")
     now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
