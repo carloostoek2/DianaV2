@@ -1626,6 +1626,64 @@ async def test_newer_vip_aborts_older_before_director_during_pre_delay() -> None
     assert len(waiting) == 1
     live = waiting[0]
     assert live.turn_id == only.turn_id == id2
+    assert g["learning"].calls == [id2]
+
+
+@pytest.mark.asyncio
+async def test_stale_epoch_skips_mint_does_not_supersede_winner() -> None:
+    """Inverted mint order: stale epoch skips mint; winner stays live (Issue 1)."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="winner only",
+    )
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.0),
+    )
+    # Slow the first inbound after bump so the second can mint first.
+    resolve_calls = {"n": 0}
+    orig_resolve = g["orch"]._resolve_effective_mode
+
+    async def slow_first(vip_id):  # type: ignore[no-untyped-def]
+        resolve_calls["n"] += 1
+        if resolve_calls["n"] == 1:
+            await asyncio.sleep(0.05)
+        return await orig_resolve(vip_id)
+
+    g["orch"]._resolve_effective_mode = slow_first  # type: ignore[method-assign]
+
+    t_a = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(text="primero", telegram_message_id=601)
+        )
+    )
+    await asyncio.sleep(0.01)  # A bumps epoch first, then stalls in resolve
+    t_b = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(text="segundo", telegram_message_id=602)
+        )
+    )
+    id_a, id_b = await asyncio.gather(t_a, t_b)
+
+    # Winner is B's minted turn; A skipped mint (may return B's id).
+    rec_b = await g["turns"].get(id_b)
+    assert rec_b is not None
+    assert rec_b.status == "pending_approval"
+    # No second non-terminal created by A; at most one Director on winner.
+    assert len(g["director"].calls) == 1
+    assert g["director"].calls[0].turn_id == id_b
+    non_term = await g["turns"].list_non_terminal(100)
+    assert len(non_term) == 1
+    assert non_term[0].id == id_b
+    # A must not have left a separate superseded self-mint that killed B.
+    if id_a != id_b:
+        rec_a = await g["turns"].get(id_a)
+        # If A ever minted, B would be live and A superseded — but skip means
+        # no row or same as winner.
+        if rec_a is not None and rec_a.id != id_b:
+            assert rec_a.status != "pending_approval" or rec_a.id == id_b
 
 
 @pytest.mark.asyncio
@@ -1659,6 +1717,7 @@ async def test_owner_cancel_during_pre_delay_supersedes_real_turn() -> None:
     assert len(g["director"].calls) == 0
     assert await g["approvals"].list_waiting() == []
     assert g["actuator"].send_count() == 0
+    assert g["learning"].calls == []
 
 
 @pytest.mark.asyncio
@@ -1694,6 +1753,31 @@ async def test_autonomous_owner_during_pre_delay_no_send() -> None:
     assert len(g["director"].calls) == 0
     assert g["actuator"].send_count() == 0
     assert await g["approvals"].list_waiting() == []
+    assert g["learning"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_autonomous_prepare_sets_skip_initial_delay() -> None:
+    """Post-delay autonomous deliver must skip BehaviorEngine initial delay."""
+    spy = _CapturingDeliverer()
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        behavior_override=spy,
+        delay_policy=FixedDelayPolicy(initial=0.0),
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert len(spy.ctxs) == 1
+    assert spy.ctxs[0].skip_initial_delay is True
 
 
 @pytest.mark.asyncio

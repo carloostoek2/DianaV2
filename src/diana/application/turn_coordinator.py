@@ -331,6 +331,28 @@ class TurnCoordinator:
             )
             return len(prior)
 
+    async def list_non_terminal(self, chat_id: int) -> list[TurnRecord]:
+        """Return non-terminal turns for chat (caller may hold chat_scope)."""
+        return await self._turns.list_non_terminal(chat_id)
+
+    async def supersede_chat(
+        self,
+        chat_id: int,
+        *,
+        reason: str,
+        superseded_by: UUID | None = None,
+    ) -> list[TurnRecord]:
+        """Cascade-supersede all non-terminal turns for chat.
+
+        Marks turns ``superseded``, cancels pending deliveries and waiting
+        approvals. Caller MUST already hold ``chat_scope(chat_id)``.
+        """
+        return await self._supersede_nonterminal(
+            chat_id,
+            superseded_by=superseded_by,
+            cancel_reason=reason,
+        )
+
     async def _supersede_nonterminal(
         self,
         chat_id: int,

@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
@@ -221,7 +221,24 @@ class TurnOrchestrator:
         )
         before_sleep = time.monotonic()
 
+        # Under lock: skip mint if a newer VIP already advanced the epoch
+        # (avoids inverted mint superseding the winner).
         async with self._coordinator.chat_scope(chat_id):
+            if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
+                live_turns = await self._coordinator.list_non_terminal(chat_id)
+                winner_id = live_turns[0].id if live_turns else uuid4()
+                logger.info(
+                    "turn_mint_skipped_stale_epoch",
+                    extra={
+                        "chat_id": chat_id,
+                        "vip_epoch": vip_epoch,
+                        "current_epoch": self._coordinator.current_vip_epoch(
+                            chat_id
+                        ),
+                        "winner_turn_id": str(winner_id) if live_turns else None,
+                    },
+                )
+                return winner_id
             turn_id = await self._mint_turn_for_inbound(incoming, vip_epoch)
 
         logger.info(
@@ -238,8 +255,13 @@ class TurnOrchestrator:
 
         # Re-check after delay (no long lock): terminal / stale epoch / owner flag.
         live = await self._coordinator.get_turn(turn_id)
+        owner_flag = self._coordinator.is_owner_intervened(
+            chat_id, since=before_sleep
+        )
         if live is None or is_turn_status_terminal(live.status):
-            reason = self._abort_reason_after_delay(live)
+            reason = self._abort_reason_after_delay(
+                live, owner_intervened=owner_flag
+            )
             logger.info(
                 "turn_aborted_after_delay",
                 extra={
@@ -255,36 +277,42 @@ class TurnOrchestrator:
             async with self._coordinator.chat_scope(chat_id):
                 still = await self._coordinator.get_turn(turn_id)
                 if still is not None and not is_turn_status_terminal(still.status):
-                    await self._coordinator.transition(
-                        turn_id, TurnStatus.SUPERSEDED
+                    await self._coordinator.supersede_chat(
+                        chat_id,
+                        reason="new_message",
+                        superseded_by=None,
                     )
+                still = await self._coordinator.get_turn(turn_id)
             logger.info(
                 "turn_aborted_after_delay",
                 extra={
                     "turn_id": str(turn_id),
                     "chat_id": chat_id,
                     "reason": "new_message",
-                    "status": live.status,
+                    "status": None if still is None else still.status,
                 },
             )
             return turn_id
 
-        if self._coordinator.is_owner_intervened(chat_id, since=before_sleep):
+        if owner_flag:
             # Defense-in-depth: flag set but coordinate(owner) not yet applied.
             async with self._coordinator.chat_scope(chat_id):
                 still = await self._coordinator.get_turn(turn_id)
                 if still is not None and not is_turn_status_terminal(still.status):
-                    await self._coordinator.transition(
-                        turn_id, TurnStatus.SUPERSEDED
+                    await self._coordinator.supersede_chat(
+                        chat_id,
+                        reason="owner_message",
+                        superseded_by=None,
                     )
-            self._coordinator.clear_owner_intervention(chat_id)
+                self._coordinator.clear_owner_intervention(chat_id)
+                still = await self._coordinator.get_turn(turn_id)
             logger.info(
                 "turn_aborted_after_delay",
                 extra={
                     "turn_id": str(turn_id),
                     "chat_id": chat_id,
                     "reason": "owner_message",
-                    "status": "superseded",
+                    "status": None if still is None else still.status,
                 },
             )
             return turn_id
@@ -298,7 +326,12 @@ class TurnOrchestrator:
         async with self._coordinator.chat_scope(chat_id):
             still = await self._coordinator.get_turn(turn_id)
             if still is None or is_turn_status_terminal(still.status):
-                reason = self._abort_reason_after_delay(still)
+                reason = self._abort_reason_after_delay(
+                    still,
+                    owner_intervened=self._coordinator.is_owner_intervened(
+                        chat_id, since=before_sleep
+                    ),
+                )
                 logger.info(
                     "turn_aborted_after_delay",
                     extra={
@@ -311,16 +344,38 @@ class TurnOrchestrator:
                 return turn_id
             if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
                 if not is_turn_status_terminal(still.status):
-                    await self._coordinator.transition(
-                        turn_id, TurnStatus.SUPERSEDED
+                    await self._coordinator.supersede_chat(
+                        chat_id,
+                        reason="new_message",
+                        superseded_by=None,
                     )
+                still = await self._coordinator.get_turn(turn_id)
                 logger.info(
                     "turn_aborted_after_delay",
                     extra={
                         "turn_id": str(turn_id),
                         "chat_id": chat_id,
                         "reason": "new_message",
-                        "status": still.status,
+                        "status": None if still is None else still.status,
+                    },
+                )
+                return turn_id
+            # Defense-in-depth: owner flag under lock before Director.
+            if self._coordinator.is_owner_intervened(chat_id, since=before_sleep):
+                await self._coordinator.supersede_chat(
+                    chat_id,
+                    reason="owner_message",
+                    superseded_by=None,
+                )
+                self._coordinator.clear_owner_intervention(chat_id)
+                still = await self._coordinator.get_turn(turn_id)
+                logger.info(
+                    "turn_aborted_after_delay",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": chat_id,
+                        "reason": "owner_message",
+                        "status": None if still is None else still.status,
                     },
                 )
                 return turn_id
@@ -519,20 +574,28 @@ class TurnOrchestrator:
         return turn_id
 
     @staticmethod
-    def _abort_reason_after_delay(live: object | None) -> str:
-        """Map post-delay abort to owner_message | new_message for logs.
+    def _abort_reason_after_delay(
+        live: object | None,
+        *,
+        owner_intervened: bool = False,
+    ) -> str:
+        """Map post-delay abort for logs.
 
-        Owner cascade supersedes with superseded_by=None; VIP replace sets
-        superseded_by to the winner turn id.
+        - ``owner_message`` when owner flag/path fired
+        - ``new_message`` when VIP replace (superseded_by set) or epoch stale
+        - ``superseded`` neutral when terminal supersede without owner/VIP marker
+          (e.g. sandbox reset)
         """
+        if owner_intervened:
+            return "owner_message"
         if live is None:
             return "new_message"
         status = getattr(live, "status", None)
         superseded_by = getattr(live, "superseded_by", None)
         if status in (TurnStatus.SUPERSEDED.value, "superseded"):
-            if superseded_by is None:
-                return "owner_message"
-            return "new_message"
+            if superseded_by is not None:
+                return "new_message"
+            return "superseded"
         return "new_message"
 
     async def _run_cognitive_after_delay(

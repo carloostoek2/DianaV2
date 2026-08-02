@@ -41,7 +41,7 @@ def coordinator() -> tuple[
 
 
 @pytest.mark.asyncio
-async def test_first_begin_turn_received_single_non_terminal(
+async def test_first_begin_turn_waiting_delay_single_non_terminal(
     coordinator: tuple,
 ) -> None:
     coord, turns, _, _ = coordinator
@@ -51,6 +51,38 @@ async def test_first_begin_turn_received_single_non_terminal(
     non_term = await turns.list_non_terminal(100)
     assert len(non_term) == 1
     assert non_term[0].id == rec.id
+
+
+@pytest.mark.asyncio
+async def test_supersede_chat_cascades_cancel(
+    coordinator: tuple,
+) -> None:
+    """Public supersede_chat marks turns superseded and cancels approvals."""
+    coord, turns, approvals, canceller = coordinator
+    first = await coord.begin_turn(chat_id=50)
+    await approvals.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=first.id,
+            chat_id=50,
+            business_connection_id="bc",
+            draft_text="draft",
+            status="waiting",
+        )
+    )
+    async with coord.chat_scope(50):
+        prior = await coord.supersede_chat(
+            50, reason="owner_message", superseded_by=None
+        )
+    assert len(prior) == 1
+    assert prior[0].id == first.id
+    old = await turns.get(first.id)
+    assert old is not None
+    assert old.status == TurnStatus.SUPERSEDED.value
+    appr = await approvals.get_by_turn(first.id)
+    assert appr is not None
+    assert appr.status == "cancelled"
+    assert canceller.calls == [(50, "owner_message")]
 
 
 @pytest.mark.asyncio
