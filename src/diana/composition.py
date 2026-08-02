@@ -474,12 +474,16 @@ def build_app(
         sandbox=sandbox,
     )
 
+    from diana.application.approval_ui import ApprovalDraftVoider
+
     coordinator = TurnCoordinator(
         turns,
         approvals,
         behavior,
         recontact=recontact,
         feature_recontact_enabled=feature_recontact_enabled,
+        approval_ui=ApprovalDraftVoider(notifier),
+        runtime_timers=runtime_timers_store,
     )
     owner_marks = SqlOwnerMarkStore(sf)
     admin = AdminService(
@@ -605,6 +609,8 @@ def build_app(
         feature_advanced_behavior=feature_advanced_behavior,
         sandbox=sandbox,
         delay_policy=policy,
+        runtime_timers=runtime_timers_store,
+        clock=clock,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
@@ -804,7 +810,9 @@ async def run_app_startup_recovery(app: AppContainer) -> Any:
     """Expire mid-flight deliveries; recover fresh ones; re-notify approvals.
 
     Also recovers zombie turns, re-materializes drafts from traces, and
-    recovers active runtime timers when the respective stores are available.
+    recovers active **delivery** runtime timers when the respective stores
+    are available. VIP ``pre_delay`` timers are resumed later via
+    ``run_app_pre_delay_recovery`` (after missed updates).
     """
     return await run_startup_recovery(
         deliveries=app.deliveries,
@@ -818,7 +826,30 @@ async def run_app_startup_recovery(app: AppContainer) -> Any:
         turns=app.turns,
         traces=app.trace_store,
         timers=app.runtime_timers,
+        promo=app.promo,
     )
+
+
+async def run_app_pre_delay_recovery(app: AppContainer) -> int:
+    """Resume VIP waiting_delay after missed-update recovery (D1)."""
+    from diana.application.recovery_startup import resume_pre_delay_timers
+
+    if app.runtime_timers is None or app.turns is None:
+        return 0
+    count = await resume_pre_delay_timers(
+        timers=app.runtime_timers,
+        turns=app.turns,
+        orchestrator=app.orchestrator,
+        clock=app.clock,
+    )
+    if count:
+        try:
+            await app.notifier.notify_info(
+                f"Recuperacion: {count} espera(s) VIP reanudada(s) tras reinicio"
+            )
+        except Exception:
+            logger.exception("pre_delay_recovery_notify_failed")
+    return count
 
 
 __all__ = [
@@ -830,5 +861,6 @@ __all__ = [
     "build_app",
     "load_forbidden_keywords",
     "load_runtime_thresholds",
+    "run_app_pre_delay_recovery",
     "run_app_startup_recovery",
 ]

@@ -53,6 +53,8 @@ class TurnStatus(StrEnum):
     DECIDING = "deciding"
     PENDING_APPROVAL = "pending_approval"
     GRAY_ZONE = "gray_zone"
+    # Non-VIP promo sequence in flight (delay + multi-send). Survives restart.
+    PROMO_PENDING = "promo_pending"
     ESCALATED = "escalated"
     SUPERSEDED = "superseded"
     DELIVERED = "delivered"

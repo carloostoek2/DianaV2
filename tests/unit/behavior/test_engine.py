@@ -331,6 +331,29 @@ async def test_presend_superseded_aborts_without_send() -> None:
 
 
 @pytest.mark.asyncio
+async def test_multiseg_presend_abort_after_first_segment() -> None:
+    """D3: second segment aborts when turn becomes terminal; first may land."""
+    engine, actuator, store, _ = _engine(
+        turn_status=SequenceTurnStatusReader(
+            ["pending_approval", "superseded"]
+        ),
+        initial=0.0,
+        typing=0.0,
+    )
+    result = await engine.deliver(
+        ["parte uno", "parte dos"],
+        _ctx(allow_split=True, skip_initial_delay=True),
+        uuid4(),
+    )
+    assert result.cancelled is True
+    assert result.success is False
+    assert actuator.send_count() == 1
+    assert result.message_ids == [1]
+    rows = await store.list_all()
+    assert rows and rows[0].status == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_presend_terminal_failed_aborts() -> None:
     engine, actuator, store, _ = _engine(
         turn_status=SequenceTurnStatusReader(["failed"]),

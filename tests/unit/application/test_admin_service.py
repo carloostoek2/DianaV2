@@ -144,7 +144,14 @@ def _admin_graph(
         turn_status=AlwaysLiveTurnStatusReader(),
         feature_advanced_behavior=feature_advanced_behavior,
     )
-    coordinator = TurnCoordinator(turns, approvals, behavior)  # type: ignore[arg-type]
+    from diana.application.approval_ui import ApprovalDraftVoider
+
+    coordinator = TurnCoordinator(
+        turns,
+        approvals,
+        behavior,  # type: ignore[arg-type]
+        approval_ui=ApprovalDraftVoider(notifier),
+    )
     admin = AdminService(
         notifier=notifier,
         approvals=approvals,
@@ -597,6 +604,31 @@ async def test_handle_approve_after_supersede_no_deliver(admin_graph: dict) -> N
     await g["coordinator"].begin_turn(chat_id=42)  # supersede A
     result = await g["admin"].handle_approve(a.id, actor_id=OWNER_ID)
     assert result is None
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_supersede_voids_owner_draft_dm(admin_graph: dict) -> None:
+    """C3/A3: superseding a waiting draft strips keyboard via void_draft."""
+    g = admin_graph
+    a = await g["coordinator"].begin_turn(chat_id=42)
+    await g["admin"].send_draft_for_approval(
+        _incoming(a.id), _decision(draft="old"), a.id
+    )
+    await g["coordinator"].transition(a.id, "pending_approval")
+    approval = await g["approvals"].get_by_turn(a.id)
+    assert approval is not None
+    assert approval.owner_message_id is not None
+
+    await g["coordinator"].begin_turn(chat_id=42)  # supersede A → void UI
+
+    approval_after = await g["approvals"].get_by_turn(a.id)
+    assert approval_after is not None
+    assert approval_after.status == "cancelled"
+    assert len(g["notifier"].voids) == 1
+    mid, text = g["notifier"].voids[0]
+    assert mid == approval.owner_message_id
+    assert "ya no aplica" in text.lower()
     assert g["actuator"].send_count() == 0
 
 

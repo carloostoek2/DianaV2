@@ -121,6 +121,14 @@ class InMemoryRuntimeTimerStore:
             if r.status == "active"
         ]
 
+    async def complete_for_turn(self, turn_id: UUID) -> int:
+        n = 0
+        for tid, rec in list(self._timers.items()):
+            if rec.turn_id == turn_id and rec.status == "active":
+                self._timers[tid] = rec.model_copy(update={"status": "completed"})
+                n += 1
+        return n
+
     async def delete_for_turn(self, turn_id: UUID) -> None:
         self._timers = {
             k: v for k, v in self._timers.items() if v.turn_id != turn_id
@@ -406,6 +414,7 @@ class FakeOwnerNotifier:
         self.escalations: list[Any] = []
         self.infos: list[tuple[str, int | None]] = []
         self.doctrines: list[Any] = []
+        self.voids: list[tuple[int, str]] = []
         self._next_message_id = 5000
 
     async def notify_draft(self, payload: Any) -> int | None:
@@ -429,6 +438,10 @@ class FakeOwnerNotifier:
         chat_id: int,
     ) -> None:
         self.infos.append((f"edit_draft:{owner_message_id}:{text[:40]}", chat_id))
+
+    async def void_draft(self, *, owner_message_id: int, text: str) -> None:
+        """Record voided draft DMs (keyboard stripped / no longer applicable)."""
+        self.voids.append((owner_message_id, text))
 
     async def notify_doctrine(self, payload: Any) -> int | None:
         self.doctrines.append(payload)

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, Float, Index, Text, func, select, text
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy import BigInteger, DateTime, Float, Index, Text, func, select, text, update
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,7 +28,12 @@ class RuntimeTimer(Base):
     )
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     turn_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
-    delivery_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    delivery_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'delivery'")
+    )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     initial_delay_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(
@@ -38,6 +44,7 @@ class RuntimeTimer(Base):
         nullable=False,
         server_default=func.now(),
     )
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
 
 def _orm_to_record(row: RuntimeTimer) -> RuntimeTimerRecord:
@@ -46,10 +53,12 @@ def _orm_to_record(row: RuntimeTimer) -> RuntimeTimerRecord:
         chat_id=row.chat_id,
         turn_id=row.turn_id,
         delivery_id=row.delivery_id,
+        kind=getattr(row, "kind", None) or "delivery",
         scheduled_at=row.scheduled_at,
         initial_delay_seconds=row.initial_delay_seconds,
         status=row.status,
         created_at=row.created_at,
+        payload=getattr(row, "payload", None),
     )
 
 
@@ -66,10 +75,12 @@ class SqlRuntimeTimerStore:
                 chat_id=record.chat_id,
                 turn_id=record.turn_id,
                 delivery_id=record.delivery_id,
+                kind=record.kind or "delivery",
                 scheduled_at=record.scheduled_at,
                 initial_delay_seconds=record.initial_delay_seconds,
                 status=record.status or "active",
                 created_at=record.created_at,
+                payload=record.payload,
             )
             session.add(row)
             await session.commit()
@@ -91,6 +102,20 @@ class SqlRuntimeTimerStore:
                 select(RuntimeTimer).where(RuntimeTimer.status == "active")
             )
             return [_orm_to_record(r) for r in result.scalars().all()]
+
+    async def complete_for_turn(self, turn_id: UUID) -> int:
+        async with self._sf() as session:
+            result = await session.execute(
+                update(RuntimeTimer)
+                .where(
+                    RuntimeTimer.turn_id == turn_id,
+                    RuntimeTimer.status == "active",
+                )
+                .values(status="completed")
+            )
+            await session.commit()
+            return int(result.rowcount or 0)
+
 
 __all__ = [
     "RuntimeTimer",

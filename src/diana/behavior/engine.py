@@ -206,6 +206,7 @@ class BehaviorEngine:
                     chat_id=ctx.chat_id,
                     turn_id=turn_id,
                     delivery_id=delivery_id,
+                    kind="delivery",
                     scheduled_at=self._clock.now(),
                     initial_delay_seconds=initial,
                     status="active",

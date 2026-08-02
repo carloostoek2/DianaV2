@@ -57,8 +57,15 @@ async def classify_pending_deliveries(
         if scheduled.tzinfo is None and now.tzinfo is not None:
             scheduled = scheduled.replace(tzinfo=now.tzinfo)
 
-        # Mid-flight delivering is never auto-resumed in F1.
+        # Mid-flight delivering: VIP never auto-resumed; non-VIP promo can resume
+        # (decision.kind == "promo") so a restart mid-wait does not drop the sequence.
         if row.status == "delivering":
+            kind = ""
+            if isinstance(row.decision, dict):
+                kind = str(row.decision.get("kind") or "")
+            if kind == "promo":
+                recoverable.append(row)
+                continue
             applied = await store.update_status(row.id, "expired")
             if applied:
                 to_expire.append(row.model_copy(update={"status": "expired"}))
@@ -90,10 +97,11 @@ async def list_waiting_approvals(
 
 # Mid-pipeline only. Owner-waiting states must survive restart so Approve works.
 # pending_approval / gray_zone wait on the owner — never treat as crash zombies.
+# promo_pending is resumed via runtime_timers / delivery recovery (not failed).
+# waiting_delay is resumed via pre_delay timers (D1); orphans failed after that.
 ZOMBIE_PIPELINE_STATUSES: frozenset[str] = frozenset(
     {
         "received",
-        "waiting_delay",
         "analyzing",
         "planning",
         "retrieving",

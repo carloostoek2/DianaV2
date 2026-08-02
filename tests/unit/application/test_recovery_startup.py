@@ -256,6 +256,316 @@ async def test_startup_timer_recovery_marks_expired_timers_completed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_startup_recovers_promo_mid_wait_via_timer() -> None:
+    """Restart mid non-VIP promo delay: resume send + execution bookkeeping."""
+    from diana.application.memory import InMemoryTurnStore
+    from diana.application.ports import DeliveryResult
+    from diana.application.promo_service import PROMO_DECISION_KIND, PromoService
+    from diana.application.recovery import list_zombie_turns
+    from tests.unit.application.test_promo_service import (
+        FakeExecutionStore,
+        FakePromoConfig,
+        FakeSequenceDeliverer,
+        FakeTriggerStore,
+        _trigger,
+    )
+
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    timers = InMemoryRuntimeTimerStore()
+    turns = InMemoryTurnStore()
+    clock = ImmediateClock()
+    now = clock.now()
+
+    trig = _trigger(text="info", sequence=["hola", "catalogo"])
+    trigger_id = trig.id
+    turn_id = uuid4()
+    await turns.create(
+        TurnRecord(
+            id=turn_id,
+            chat_id=9001,
+            status="promo_pending",
+            vip_id=None,
+        )
+    )
+    delivery = DeliveryRecord(
+        id=uuid4(),
+        chat_id=9001,
+        business_connection_id="bc-promo",
+        texts=["hola", "catalogo"],
+        decision={
+            "kind": PROMO_DECISION_KIND,
+            "trigger_id": str(trigger_id),
+            "recent": False,
+        },
+        scheduled_at=now - timedelta(seconds=30),
+        status="pending",
+        turn_id=turn_id,
+        vip_id=None,
+    )
+    await deliveries.insert_pending(delivery)
+    await deliveries.update_status(delivery.id, "delivering")
+
+    timer = RuntimeTimerRecord(
+        id=uuid4(),
+        chat_id=9001,
+        turn_id=turn_id,
+        delivery_id=delivery.id,
+        scheduled_at=now - timedelta(seconds=30),
+        initial_delay_seconds=120.0,
+        status="active",
+        created_at=now - timedelta(seconds=30),
+    )
+    await timers.create_active(timer)
+
+    class _PromoBeh:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def deliver(self, **kwargs: object) -> DeliveryResult:
+            self.calls.append(dict(kwargs))
+            return DeliveryResult(success=True, message_ids=[11, 12])
+
+        async def recover_pending_delivery(self, record, ctx) -> DeliveryResult:
+            return DeliveryResult(success=True, message_ids=[1])
+
+    beh = _PromoBeh()
+    executions = FakeExecutionStore()
+    promo = PromoService(
+        feature_promo_enabled=True,
+        triggers=FakeTriggerStore([trig]),
+        executions=executions,
+        config=FakePromoConfig(),
+        behavior=FakeSequenceDeliverer(),
+        turns=turns,
+        clock=clock,
+    )
+
+    # Zombies must not kill promo_pending
+    zombies = await list_zombie_turns(turns)
+    assert all(z.id != turn_id for z in zombies)
+
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=clock,
+        stale_after=timedelta(minutes=30),
+        behavior=beh,
+        vips=object(),  # unused for vip_id=None
+        global_mode="supervised",
+        turns=turns,
+        timers=timers,
+        promo=promo,
+    )
+
+    assert report.timers_recovered == 1
+    assert report.promos_recovered == 1
+    assert len(beh.calls) == 1
+    assert beh.calls[0]["turn_id"] == turn_id
+    assert executions.rows and executions.rows[-1].status == "sent"
+    turn = await turns.get(turn_id)
+    assert turn is not None and turn.status == "delivered"
+    old = await deliveries.get(delivery.id)
+    assert old is not None and old.status == "expired"
+    assert len(await timers.list_active()) == 0
+    assert any("promo" in t.lower() for t, _ in notifier.infos)
+
+
+@pytest.mark.asyncio
+async def test_resume_pre_delay_continues_vip_pipeline() -> None:
+    """D1: active pre_delay timer resumes waiting_delay into cognitive path."""
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
+
+    from diana.application.memory import (
+        InMemoryRuntimeTimerStore,
+        InMemoryTurnStore,
+    )
+    from diana.application.ports import RuntimeTimerRecord, TurnRecord, VipInboundMessage
+    from diana.application.recovery_startup import resume_pre_delay_timers
+    from diana.behavior.fake import ImmediateClock
+    from diana.cognitive.models import Decision, EvaluationProfile
+
+    turns = InMemoryTurnStore()
+    timers = InMemoryRuntimeTimerStore()
+    clock = ImmediateClock(now=datetime(2026, 8, 2, 12, 0, tzinfo=UTC))
+    turn_id = uuid4()
+    vip_id = uuid4()
+    await turns.create(
+        TurnRecord(
+            id=turn_id,
+            chat_id=100,
+            status="waiting_delay",
+            vip_id=vip_id,
+            trigger_message_id=9,
+        )
+    )
+    now = clock.now()
+    await timers.create_active(
+        RuntimeTimerRecord(
+            id=uuid4(),
+            chat_id=100,
+            turn_id=turn_id,
+            delivery_id=None,
+            kind="pre_delay",
+            scheduled_at=now - timedelta(seconds=40),
+            initial_delay_seconds=120.0,
+            status="active",
+            created_at=now - timedelta(seconds=40),
+            payload={
+                "vip_epoch": 2,
+                "mode": "supervised",
+                "incoming": {
+                    "chat_id": 100,
+                    "text": "hola vip",
+                    "telegram_message_id": 9,
+                    "business_connection_id": "bc-1",
+                    "vip_id": str(vip_id),
+                    "is_edit": False,
+                },
+            },
+        )
+    )
+
+    class _Orch:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def resume_waiting_delay(self, **kwargs: object) -> object:
+            self.calls.append(dict(kwargs))
+            # Simulate pipeline completing after resume.
+            await turns.transition(turn_id, "pending_approval")
+            return turn_id
+
+    orch = _Orch()
+    n = await resume_pre_delay_timers(
+        timers=timers,
+        turns=turns,
+        orchestrator=orch,
+        clock=clock,
+    )
+    assert n == 1
+    assert len(orch.calls) == 1
+    assert orch.calls[0]["turn_id"] == turn_id
+    assert orch.calls[0]["vip_epoch"] == 2
+    # ~80s remaining
+    assert 79.0 <= float(orch.calls[0]["remaining_seconds"]) <= 81.0
+    assert len(await timers.list_active()) == 0
+    rec = await turns.get(turn_id)
+    assert rec is not None and rec.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_resume_pre_delay_fails_orphan_waiting_delay() -> None:
+    """waiting_delay without timer becomes failed crash_recovery after resume pass."""
+    from diana.application.memory import InMemoryRuntimeTimerStore, InMemoryTurnStore
+    from diana.application.ports import TurnRecord
+    from diana.application.recovery_startup import resume_pre_delay_timers
+    from diana.behavior.fake import ImmediateClock
+
+    turns = InMemoryTurnStore()
+    timers = InMemoryRuntimeTimerStore()
+    turn_id = uuid4()
+    await turns.create(
+        TurnRecord(id=turn_id, chat_id=5, status="waiting_delay", vip_id=None)
+    )
+    n = await resume_pre_delay_timers(
+        timers=timers,
+        turns=turns,
+        orchestrator=object(),
+        clock=ImmediateClock(),
+    )
+    assert n == 0
+    rec = await turns.get(turn_id)
+    assert rec is not None
+    assert rec.status == "failed"
+    assert rec.error == "crash_recovery"
+
+
+@pytest.mark.asyncio
+async def test_startup_promo_grace_still_delivers() -> None:
+    """Promo timers past grace still deliver (unlike VIP delivery timers)."""
+    from diana.application.memory import InMemoryTurnStore
+    from diana.application.ports import DeliveryResult
+    from diana.application.promo_service import PROMO_DECISION_KIND, PromoService
+    from tests.unit.application.test_promo_service import (
+        FakeExecutionStore,
+        FakePromoConfig,
+        FakeSequenceDeliverer,
+        FakeTriggerStore,
+        _trigger,
+    )
+
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    timers = InMemoryRuntimeTimerStore()
+    turns = InMemoryTurnStore()
+    clock = ImmediateClock()
+    now = clock.now()
+    trig = _trigger()
+    turn_id = uuid4()
+    await turns.create(
+        TurnRecord(id=turn_id, chat_id=7, status="promo_pending", vip_id=None)
+    )
+    delivery = DeliveryRecord(
+        id=uuid4(),
+        chat_id=7,
+        business_connection_id="bc",
+        texts=["a"],
+        decision={"kind": PROMO_DECISION_KIND, "trigger_id": str(trig.id)},
+        scheduled_at=now - timedelta(hours=2),
+        status="pending",
+        turn_id=turn_id,
+    )
+    await deliveries.insert_pending(delivery)
+    await deliveries.update_status(delivery.id, "delivering")
+    await timers.create_active(
+        RuntimeTimerRecord(
+            id=uuid4(),
+            chat_id=7,
+            turn_id=turn_id,
+            delivery_id=delivery.id,
+            scheduled_at=now - timedelta(hours=2),
+            initial_delay_seconds=60.0,
+            status="active",
+            created_at=now - timedelta(hours=2),
+        )
+    )
+
+    class _Beh:
+        async def deliver(self, **kwargs: object) -> DeliveryResult:
+            return DeliveryResult(success=True, message_ids=[1])
+
+    executions = FakeExecutionStore()
+    promo = PromoService(
+        feature_promo_enabled=True,
+        triggers=FakeTriggerStore([trig]),
+        executions=executions,
+        config=FakePromoConfig(),
+        behavior=FakeSequenceDeliverer(),
+        turns=turns,
+        clock=clock,
+    )
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=clock,
+        timers=timers,
+        behavior=_Beh(),
+        vips=object(),
+        turns=turns,
+        promo=promo,
+    )
+    assert report.timers_recovered == 1
+    assert report.promos_recovered == 1
+    assert executions.rows[-1].status == "sent"
+
+
+@pytest.mark.asyncio
 async def test_startup_without_turns_traces_timers_backwards_compat() -> None:
     """When optional params are not passed, new counters default to 0."""
     deliveries = InMemoryPendingDeliveryStore()

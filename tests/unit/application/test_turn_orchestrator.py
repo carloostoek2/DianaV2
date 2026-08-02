@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from diana.application.admin_service import AdminService
+from diana.application.approval_ui import ApprovalDraftVoider
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.memory import (
     FakeOwnerNotifier,
@@ -171,7 +172,12 @@ def _build(
         delay_policy=delay_policy or FixedDelayPolicy(),
         feature_advanced_behavior=feature_advanced_behavior,
     )
-    coordinator = TurnCoordinator(turns, approvals, behavior)  # type: ignore[arg-type]
+    coordinator = TurnCoordinator(
+        turns,
+        approvals,
+        behavior,  # type: ignore[arg-type]
+        approval_ui=ApprovalDraftVoider(notifier),
+    )
     admin = AdminService(
         notifier=notifier,
         approvals=approvals,
@@ -1729,6 +1735,36 @@ async def test_owner_cancel_during_pre_delay_supersedes_real_turn() -> None:
     assert await g["approvals"].list_waiting() == []
     assert g["actuator"].send_count() == 0
     assert g["learning"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_owner_flag_mid_director_no_draft_clean_abort() -> None:
+    """A2: owner intervenes while Director runs → no draft, no raise, superseded."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="must not notify",
+    )
+    slow = SlowDirector(decision, delay=0.12)
+    g = _build(slow, delay_policy=FixedDelayPolicy(initial=0.0))
+    chat_id = 100
+    vip_task = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(chat_id=chat_id, text="vip gen", telegram_message_id=501)
+        )
+    )
+    await slow.started.wait()
+    # Flag only (coordinate would wait on chat_scope held by VIP path).
+    g["coordinator"].mark_owner_intervened(chat_id)
+    turn_id = await vip_task
+
+    rec = await g["turns"].get(turn_id)
+    assert rec is not None
+    assert rec.status == "superseded"
+    assert len(g["notifier"].drafts) == 0
+    assert await g["approvals"].list_waiting() == []
+    assert g["actuator"].send_count() == 0
 
 
 @pytest.mark.asyncio

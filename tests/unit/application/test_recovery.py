@@ -105,6 +105,31 @@ async def test_delivering_rows_expired_on_recovery() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delivering_promo_rows_are_recoverable() -> None:
+    store = InMemoryPendingDeliveryStore()
+    now = datetime.now(UTC)
+    rec = DeliveryRecord(
+        id=uuid4(),
+        chat_id=1,
+        business_connection_id="bc",
+        texts=["promo"],
+        decision={"kind": "promo", "trigger_id": str(uuid4())},
+        scheduled_at=now - timedelta(seconds=5),
+        status="pending",
+        turn_id=uuid4(),
+    )
+    await store.insert_pending(rec)
+    assert await store.update_status(rec.id, "delivering") is True
+    plan = await classify_pending_deliveries(
+        store, now=now, stale_after=timedelta(hours=1)
+    )
+    assert any(d.id == rec.id for d in plan.recoverable)
+    assert plan.to_expire == []
+    still = await store.get(rec.id)
+    assert still is not None and still.status == "delivering"
+
+
+@pytest.mark.asyncio
 async def test_list_waiting_approvals_only() -> None:
     store = InMemoryPendingApprovalStore()
     waiting_id = uuid4()

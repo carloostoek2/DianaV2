@@ -26,13 +26,16 @@ import time as _time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
 from diana.application.observability import log_swallowed
 from diana.application.ports import (
+    ApprovalRecord,
     BehaviorCanceller,
     PendingApprovalStore,
+    RuntimeTimerStore,
     TurnRecord,
     TurnStore,
 )
@@ -59,6 +62,17 @@ class RecontactLifecycle(Protocol):
 
 # Backward-compatible alias (cancel-only callers still type-check loosely).
 RecontactCanceller = RecontactLifecycle
+
+
+class ApprovalUiInvalidator(Protocol):
+    """Best-effort owner DM cleanup when waiting approvals are cancelled."""
+
+    async def on_approvals_cancelled(
+        self,
+        records: Sequence[ApprovalRecord],
+        *,
+        reason: str,
+    ) -> None: ...
 
 
 class ChatLockTimeoutError(TimeoutError):
@@ -105,6 +119,8 @@ class TurnCoordinator:
         lock_acquire_retries: int = LOCK_ACQUIRE_RETRIES,
         recontact: RecontactLifecycle | None = None,
         feature_recontact_enabled: bool = False,
+        approval_ui: ApprovalUiInvalidator | None = None,
+        runtime_timers: RuntimeTimerStore | None = None,
     ) -> None:
         self._turns = turns
         self._approvals = approvals
@@ -114,6 +130,8 @@ class TurnCoordinator:
         self._lock_acquire_retries = lock_acquire_retries
         self._recontact = recontact
         self._feature_recontact_enabled = feature_recontact_enabled
+        self._approval_ui = approval_ui
+        self._runtime_timers = runtime_timers
         self._owner_interventions: dict[int, float] = {}
         self._turn_chat_ids: dict[UUID, int] = {}
         # Per-chat VIP inbound epoch: newer message aborts older in-flight work.
@@ -193,6 +211,15 @@ class TurnCoordinator:
         """Associate a live turn with the VIP epoch that minted it."""
         self._turn_chat_ids[turn_id] = chat_id
         self._turn_vip_epochs[turn_id] = epoch
+
+    def restore_vip_epoch(self, chat_id: int, epoch: int) -> None:
+        """Raise in-memory epoch floor after restart (pre_delay resume).
+
+        Never lowers a chat that already advanced via missed updates.
+        """
+        cur = self._vip_epochs.get(chat_id, 0)
+        if epoch > cur:
+            self._vip_epochs[chat_id] = epoch
 
     def is_vip_epoch_current(self, chat_id: int, epoch: int) -> bool:
         return self._vip_epochs.get(chat_id, 0) == epoch
@@ -388,7 +415,45 @@ class TurnCoordinator:
             )
         if prior:
             await self._behavior.cancel_pending(chat_id, cancel_reason)
+            # Complete durable pre_delay / delivery timers for superseded turns.
+            if self._runtime_timers is not None:
+                for old in prior:
+                    try:
+                        await self._runtime_timers.complete_for_turn(old.id)
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "runtime_timer_complete_for_turn_failed",
+                            chat_id=chat_id,
+                            turn_id=str(old.id),
+                        )
+            # Snapshot open approvals (incl. owner_message_id) before cancel.
+            open_for_chat: list[ApprovalRecord] = []
+            try:
+                open_for_chat = [
+                    r
+                    for r in await self._approvals.list_open()
+                    if r.chat_id == chat_id
+                ]
+            except Exception:
+                log_swallowed(
+                    logger,
+                    "list_open_approvals_before_cancel_failed",
+                    chat_id=chat_id,
+                )
             cancelled = await self._approvals.cancel_waiting_for_chat(chat_id)
+            if self._approval_ui is not None and open_for_chat:
+                try:
+                    await self._approval_ui.on_approvals_cancelled(
+                        open_for_chat, reason=cancel_reason
+                    )
+                except Exception:
+                    log_swallowed(
+                        logger,
+                        "approval_ui_void_failed",
+                        chat_id=chat_id,
+                        reason=cancel_reason,
+                    )
             logger.info(
                 "supersede_cascade",
                 extra={

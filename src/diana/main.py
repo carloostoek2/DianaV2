@@ -13,6 +13,7 @@ from diana.composition import (
     build_app,
     load_forbidden_keywords,
     load_runtime_thresholds,
+    run_app_pre_delay_recovery,
     run_app_startup_recovery,
 )
 from diana.config import Settings
@@ -68,6 +69,8 @@ async def async_main() -> None:
 
     # F4: recover any business messages that arrived while the bot was offline.
     # Best-effort: polling loop provides the fallback if Telegram API is unavailable.
+    # Must run BEFORE VIP pre_delay resume so offline owner/VIP traffic can
+    # supersede waiting_delay turns first.
     try:
         missed = await recover_missed_updates(bot=app.bot, dispatcher=app.dispatcher)
         if missed.total_updates:
@@ -81,6 +84,14 @@ async def async_main() -> None:
             )
     except BaseException:
         logger.exception("missed_message_recovery_failed")
+
+    # D1: resume VIP human wait that survived the restart (after missed updates).
+    try:
+        pre_n = await run_app_pre_delay_recovery(app)
+        if pre_n:
+            logger.info("pre_delay_recovered", extra={"count": pre_n})
+    except BaseException:
+        logger.exception("pre_delay_recovery_failed")
 
     # F2 Item 4: start gray zone expiration background job.
     expiration_job = _setup_expiration_job(app)

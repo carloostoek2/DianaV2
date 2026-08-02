@@ -10,18 +10,25 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class RuntimeTimerRecord(BaseModel):
-    """runtime_timers row shape for crash-recovery persistence."""
+    """runtime_timers row shape for crash-recovery persistence.
+
+    ``kind``:
+    - ``delivery`` — BehaviorEngine human delay (requires delivery_id)
+    - ``pre_delay`` — VIP orchestrator wait before cognitive pipeline
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
     chat_id: int
     turn_id: UUID
-    delivery_id: UUID
+    delivery_id: UUID | None = None
+    kind: str = "delivery"  # delivery | pre_delay
     scheduled_at: datetime
     initial_delay_seconds: float
     status: str  # "active" | "completed" | "recovered"
     created_at: datetime
+    payload: dict[str, Any] | None = None
 
 
 class TurnRecord(BaseModel):
@@ -381,6 +388,10 @@ class RuntimeTimerStore(Protocol):
     async def mark_completed(self, timer_id: UUID) -> bool: ...
 
     async def list_active(self) -> list[RuntimeTimerRecord]: ...
+
+    async def complete_for_turn(self, turn_id: UUID) -> int:
+        """Mark all active timers for *turn_id* completed. Returns count."""
+        ...
 
 
 class BusinessConnectionRecord(BaseModel):

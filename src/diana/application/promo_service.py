@@ -28,6 +28,8 @@ from diana.application.ports import (
 logger = logging.getLogger("diana.application")
 
 _DEFAULT_REPEAT_DAYS = 30
+# Stored on pending_deliveries.decision so restart recovery can resume promos.
+PROMO_DECISION_KIND = "promo"
 
 
 class PromoConfigReader(Protocol):
@@ -169,7 +171,7 @@ class PromoService:
             TurnRecord(
                 id=uuid4(),
                 chat_id=chat_id,
-                status="received",
+                status="promo_pending",
                 vip_id=None,
             )
         )
@@ -182,10 +184,15 @@ class PromoService:
             parse_mode="HTML",
             telegram_message_id=telegram_message_id,
         )
+        decision = {
+            "kind": PROMO_DECISION_KIND,
+            "trigger_id": str(trigger.id),
+            "recent": recent,
+        }
 
         try:
             result = await self._behavior.deliver_with_sequence(
-                texts, ctx, turn.id
+                texts, ctx, turn.id, decision=decision
             )
         except Exception as exc:
             logger.exception(
@@ -196,41 +203,102 @@ class PromoService:
                     "turn_id": str(turn.id),
                 },
             )
-            await self._executions.insert(
-                chat_id, trigger.id, texts, status="failed"
+            await self._record_outcome(
+                chat_id=chat_id,
+                trigger_id=trigger.id,
+                texts=texts,
+                turn_id=turn.id,
+                success=False,
+                error=str(exc),
             )
-            await self._turns.transition(turn.id, "failed", error=str(exc))
             return "failed"
 
-        status = "sent" if result.success else "failed"
-        await self._executions.insert(chat_id, trigger.id, texts, status=status)
-        await self._turns.transition(
-            turn.id,
-            "delivered" if result.success else "failed",
+        await self._record_outcome(
+            chat_id=chat_id,
+            trigger_id=trigger.id,
+            texts=texts,
+            turn_id=turn.id,
+            success=result.success,
             error=result.error,
+            recent=recent,
         )
-        if result.success:
-            logger.info(
-                "promo_executed",
-                extra={
-                    "chat_id": chat_id,
-                    "trigger_id": str(trigger.id),
-                    "turn_id": str(turn.id),
-                    "recent": recent,
-                    "n_texts": len(texts),
-                },
+        return "sent" if result.success else "failed"
+
+    async def finalize_recovered_delivery(
+        self,
+        *,
+        chat_id: int,
+        turn_id: UUID,
+        texts: list[str],
+        decision: dict[str, Any] | None,
+        result: DeliveryResult,
+    ) -> None:
+        """Bookkeeping after restart resume of a promo delivery (timer or classify)."""
+        if not isinstance(decision, dict) or decision.get("kind") != PROMO_DECISION_KIND:
+            return
+        raw_tid = decision.get("trigger_id")
+        try:
+            trigger_id = UUID(str(raw_tid))
+        except (TypeError, ValueError):
+            logger.warning(
+                "promo_recovery_missing_trigger_id",
+                extra={"chat_id": chat_id, "turn_id": str(turn_id)},
             )
-        else:
-            logger.info(
-                "promo_failed",
-                extra={
-                    "chat_id": chat_id,
-                    "trigger_id": str(trigger.id),
-                    "turn_id": str(turn.id),
-                    "error": result.error,
-                },
+            await self._turns.transition(
+                turn_id,
+                "failed" if not result.success else "delivered",
+                error=result.error or "promo_recovery_missing_trigger_id",
             )
-        return status
+            return
+        await self._record_outcome(
+            chat_id=chat_id,
+            trigger_id=trigger_id,
+            texts=list(texts),
+            turn_id=turn_id,
+            success=result.success,
+            error=result.error,
+            recent=bool(decision.get("recent")),
+            recovered=True,
+        )
+
+    async def _record_outcome(
+        self,
+        *,
+        chat_id: int,
+        trigger_id: UUID,
+        texts: list[str],
+        turn_id: UUID,
+        success: bool,
+        error: str | None = None,
+        recent: bool = False,
+        recovered: bool = False,
+    ) -> None:
+        status = "sent" if success else "failed"
+        await self._executions.insert(chat_id, trigger_id, texts, status=status)
+        await self._turns.transition(
+            turn_id,
+            "delivered" if success else "failed",
+            error=error,
+        )
+        event = "promo_executed" if success else "promo_failed"
+        if recovered:
+            event = "promo_recovered_sent" if success else "promo_recovered_failed"
+        extra: dict[str, Any] = {
+            "chat_id": chat_id,
+            "trigger_id": str(trigger_id),
+            "turn_id": str(turn_id),
+            "n_texts": len(texts),
+            "recent": recent,
+        }
+        if not success:
+            extra["error"] = error
+        logger.info(event, extra=extra)
 
 
-__all__ = ["Clock", "PromoConfigReader", "PromoService", "SequenceDeliverer"]
+__all__ = [
+    "Clock",
+    "PROMO_DECISION_KIND",
+    "PromoConfigReader",
+    "PromoService",
+    "SequenceDeliverer",
+]

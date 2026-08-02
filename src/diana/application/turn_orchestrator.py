@@ -22,6 +22,8 @@ from diana.application.ports import (
     DeliveryResult,
     DeliveryResultWriter,
     MessageHistoryWriter,
+    RuntimeTimerRecord,
+    RuntimeTimerStore,
     VipInboundMessage,
     VipStore,
 )
@@ -124,6 +126,8 @@ class TurnOrchestrator:
         feature_advanced_behavior: bool = False,
         sandbox: object | None = None,
         delay_policy: DelayPolicy | None = None,
+        runtime_timers: RuntimeTimerStore | None = None,
+        clock: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -140,6 +144,8 @@ class TurnOrchestrator:
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
         self._sandbox = sandbox
         self._delay_policy = delay_policy
+        self._runtime_timers = runtime_timers
+        self._clock = clock
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
@@ -264,9 +270,173 @@ class TurnOrchestrator:
                 "mode": mode,
             },
         )
+        timer_id: UUID | None = None
         if pre_delay > 0:
-            await asyncio.sleep(pre_delay)
+            timer_id = await self._persist_pre_delay_timer(
+                turn_id=turn_id,
+                incoming=incoming,
+                vip_epoch=vip_epoch,
+                pre_delay=pre_delay,
+                mode=mode,
+            )
+            try:
+                await self._sleep_seconds(pre_delay)
+            finally:
+                if timer_id is not None and self._runtime_timers is not None:
+                    try:
+                        await self._runtime_timers.mark_completed(timer_id)
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "pre_delay_timer_complete_failed",
+                            turn_id=str(turn_id),
+                            timer_id=str(timer_id),
+                        )
 
+        return await self._run_after_pre_delay(
+            incoming,
+            turn_id=turn_id,
+            vip_epoch=vip_epoch,
+            before_inbound=before_inbound,
+        )
+
+    async def resume_waiting_delay(
+        self,
+        *,
+        turn_id: UUID,
+        incoming: VipInboundMessage,
+        vip_epoch: int,
+        remaining_seconds: float,
+    ) -> UUID:
+        """Startup recovery: finish pre-pipeline wait then run cognitive path.
+
+        Call **after** missed-update recovery so offline owner/VIP traffic can
+        supersede the turn first.
+        """
+        chat_id = incoming.chat_id
+        self._coordinator.restore_vip_epoch(chat_id, vip_epoch)
+        self._coordinator.bind_turn_vip_epoch(turn_id, chat_id, vip_epoch)
+
+        live = await self._coordinator.get_turn(turn_id)
+        if live is None or live.status != TurnStatus.WAITING_DELAY.value:
+            logger.info(
+                "pre_delay_resume_skip",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "status": None if live is None else live.status,
+                },
+            )
+            return turn_id
+
+        if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
+            async with self._coordinator.chat_scope(chat_id):
+                still = await self._coordinator.get_turn(turn_id)
+                if still is not None and not is_turn_status_terminal(still.status):
+                    await self._coordinator.supersede_chat(
+                        chat_id,
+                        reason="new_message",
+                        superseded_by=None,
+                    )
+            logger.info(
+                "pre_delay_resume_stale_epoch",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "vip_epoch": vip_epoch,
+                },
+            )
+            return turn_id
+
+        logger.info(
+            "pre_delay_resume_started",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": chat_id,
+                "remaining_s": remaining_seconds,
+            },
+        )
+        if remaining_seconds > 0:
+            await self._sleep_seconds(remaining_seconds)
+
+        return await self._run_after_pre_delay(
+            incoming,
+            turn_id=turn_id,
+            vip_epoch=vip_epoch,
+            before_inbound=None,
+        )
+
+    async def _sleep_seconds(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        sleep = getattr(self._clock, "sleep", None) if self._clock is not None else None
+        if callable(sleep):
+            await sleep(seconds)
+            return
+        await asyncio.sleep(seconds)
+
+    async def _persist_pre_delay_timer(
+        self,
+        *,
+        turn_id: UUID,
+        incoming: VipInboundMessage,
+        vip_epoch: int,
+        pre_delay: float,
+        mode: str,
+    ) -> UUID | None:
+        if self._runtime_timers is None or pre_delay <= 0:
+            return None
+        now = (
+            self._clock.now()  # type: ignore[union-attr]
+            if self._clock is not None and hasattr(self._clock, "now")
+            else datetime.now(UTC)
+        )
+        timer_id = uuid4()
+        payload = {
+            "vip_epoch": vip_epoch,
+            "mode": mode,
+            "incoming": {
+                "chat_id": incoming.chat_id,
+                "text": incoming.text,
+                "telegram_message_id": incoming.telegram_message_id,
+                "business_connection_id": incoming.business_connection_id,
+                "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
+                "is_edit": bool(incoming.is_edit),
+            },
+        }
+        try:
+            await self._runtime_timers.create_active(
+                RuntimeTimerRecord(
+                    id=timer_id,
+                    chat_id=incoming.chat_id,
+                    turn_id=turn_id,
+                    delivery_id=None,
+                    kind="pre_delay",
+                    scheduled_at=now,
+                    initial_delay_seconds=float(pre_delay),
+                    status="active",
+                    created_at=now,
+                    payload=payload,
+                )
+            )
+            return timer_id
+        except Exception:
+            logger.exception(
+                "pre_delay_timer_persist_failed",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+            return None
+
+    async def _run_after_pre_delay(
+        self,
+        incoming: VipInboundMessage,
+        *,
+        turn_id: UUID,
+        vip_epoch: int,
+        before_inbound: float | None,
+    ) -> UUID:
+        """Post-wait gates + cognitive pipeline (shared by live path and recovery)."""
+        chat_id = incoming.chat_id
         # Re-check after delay (no long lock): terminal / stale epoch / owner flag.
         live = await self._coordinator.get_turn(turn_id)
         owner_flag = self._coordinator.is_owner_intervened(
@@ -800,6 +970,33 @@ class TurnOrchestrator:
             )
             raise
 
+        # Route decision + transitions: owner/VIP cancel may raise on status_sink
+        # when the Director stub never polled mid-pipeline (A2 clean abort).
+        try:
+            return await self._apply_decision_after_director(
+                decision,
+                turn_id=turn_id,
+                turn_ctx=turn_ctx,
+                incoming=incoming,
+                vip_epoch=vip_epoch,
+            )
+        except TurnSupersededError:
+            logger.info(
+                "turn_cancelled_post_director",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+            return turn_id, None
+
+    async def _apply_decision_after_director(
+        self,
+        decision: Decision,
+        *,
+        turn_id: UUID,
+        turn_ctx: IncomingTurn,
+        incoming: VipInboundMessage,
+        vip_epoch: int | None,
+    ) -> tuple[UUID, _AutonomousDeliverJob | None]:
+        """Apply Director decision; may raise TurnSupersededError via status_sink."""
         # Total cancel: newer VIP message while this turn was running (even if
         # the Director port is a stub that never hits status_sink transitions).
         if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
