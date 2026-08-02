@@ -93,6 +93,7 @@ async def list_waiting_approvals(
 ZOMBIE_PIPELINE_STATUSES: frozenset[str] = frozenset(
     {
         "received",
+        "waiting_delay",
         "analyzing",
         "planning",
         "retrieving",

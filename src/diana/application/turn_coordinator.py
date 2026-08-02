@@ -296,7 +296,7 @@ class TurnCoordinator:
         record = TurnRecord(
             id=new_id,
             chat_id=chat_id,
-            status=TurnStatus.RECEIVED.value,
+            status=TurnStatus.WAITING_DELAY.value,
             vip_id=vip_id,
             trigger_message_id=trigger_message_id,
         )

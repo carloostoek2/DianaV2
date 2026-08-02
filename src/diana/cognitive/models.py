@@ -43,6 +43,7 @@ class TurnStatus(StrEnum):
     """Turn state machine values for Fase 1."""
 
     RECEIVED = "received"
+    WAITING_DELAY = "waiting_delay"
     ANALYZING = "analyzing"
     PLANNING = "planning"
     RETRIEVING = "retrieving"
