@@ -51,7 +51,7 @@ class FakeConfig:
         self._cfg = {
             "inactivity_days": inactivity_days,
             "templates": templates
-            or ["Hola {nombre}, ¿cómo andás?"],
+            or ["Hola {nombre}, ¿cómo estás?"],
         }
 
     async def get_recontact_config(self) -> dict:
@@ -558,7 +558,7 @@ async def test_execute_ams_on_delivers_and_reschedules() -> None:
         clock=clock,
         config=FakeConfig(
             inactivity_days=7,
-            templates=["Hola {nombre}, ¿cómo andás?"],
+            templates=["Hola {nombre}, ¿cómo estás?"],
         ),
         delivery_mode="autonomous",
     )
@@ -567,7 +567,7 @@ async def test_execute_ams_on_delivers_and_reschedules() -> None:
     assert status == "delivered"
     assert len(behavior.deliver_calls) == 1
     texts, ctx, turn_id = behavior.deliver_calls[0]
-    assert texts == ["Hola Ana, ¿cómo andás?"]
+    assert texts == ["Hola Ana, ¿cómo estás?"]
     assert ctx.chat_id == 42_001
     assert ctx.business_connection_id == "bc-vip"
     assert ctx.vip_id == vip.id
@@ -861,7 +861,7 @@ async def _setup_deliverable_vip(
         clock=clock,
         config=FakeConfig(
             inactivity_days=7,
-            templates=templates or ["Hola {nombre}, ¿cómo andás?"],
+            templates=templates or ["Hola {nombre}, ¿cómo estás?"],
         ),
         delivery_mode="autonomous",
         history=history,

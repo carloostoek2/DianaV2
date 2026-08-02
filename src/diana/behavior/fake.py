@@ -53,6 +53,7 @@ class FakeTelegramActuator:
         text: str,
         *,
         business_connection_id: str,
+        parse_mode: str | None = None,
     ) -> int:
         mid = self._next_id
         self._next_id += 1
@@ -62,6 +63,7 @@ class FakeTelegramActuator:
                 "chat_id": chat_id,
                 "text": text,
                 "business_connection_id": business_connection_id,
+                "parse_mode": parse_mode,
                 "message_id": mid,
             }
         )
@@ -93,6 +95,7 @@ class FlakySendActuator(FakeTelegramActuator):
         text: str,
         *,
         business_connection_id: str,
+        parse_mode: str | None = None,
     ) -> int:
         self.send_attempts += 1
         if self._always_fail or self._failures_so_far < self._fail_times:
@@ -103,6 +106,7 @@ class FlakySendActuator(FakeTelegramActuator):
                     "chat_id": chat_id,
                     "text": text,
                     "business_connection_id": business_connection_id,
+                    "parse_mode": parse_mode,
                     "error": "transient",
                 }
             )

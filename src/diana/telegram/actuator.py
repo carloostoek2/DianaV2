@@ -61,13 +61,13 @@ class AiogramTelegramActuator(TelegramActuatorPort):
         text: str,
         *,
         business_connection_id: str,
+        parse_mode: str | None = None,
     ) -> int:
         bc = self._require_bc(business_connection_id)
-        msg = await self._bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            business_connection_id=bc,
-        )
+        kwargs = {"chat_id": chat_id, "text": text, "business_connection_id": bc}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        msg = await self._bot.send_message(**kwargs)
         return int(msg.message_id)
 
 

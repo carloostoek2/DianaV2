@@ -19,6 +19,8 @@ from diana.cognitive.ports import LLMProvider
 _HARD_BAN_RULE = (
     "HARD BAN (always): no Mexican slang (e.g. güey/wey, no mames, chido, "
     "qué pedo, órale as filler) and no swear words, profanity, or vulgarities. "
+    "Write in neutral Mexican Spanish: never Rioplatense/Argentine voseo "
+    "(no andás, querés, tenés, sos, vos, escribime, contame). "
 )
 
 _SYSTEM = (

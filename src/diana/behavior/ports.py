@@ -48,6 +48,7 @@ class TelegramActuatorPort(Protocol):
         text: str,
         *,
         business_connection_id: str,
+        parse_mode: str | None = None,
     ) -> int: ...
 
 

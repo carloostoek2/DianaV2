@@ -175,6 +175,7 @@ class PromoService:
             vip_id=None,
             mode=self._delivery_mode,
             is_frozen=False,
+            parse_mode="HTML",
         )
 
         try:

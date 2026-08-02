@@ -599,6 +599,7 @@ class BehaviorEngine:
                     ctx.chat_id,
                     text,
                     business_connection_id=bc,
+                    parse_mode=ctx.parse_mode,
                 )
                 message_ids.append(mid)
                 return None

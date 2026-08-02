@@ -916,6 +916,7 @@ async def test_send_deliver_fail_marks_failed_and_notifies() -> None:
             text: str,
             *,
             business_connection_id: str,
+            parse_mode: str | None = None,
         ) -> int:
             raise RuntimeError("telegram_down")
 

@@ -189,6 +189,8 @@ class DeliveryContext(BaseModel):
     allow_split: bool = False
     allow_human_quirks: bool = False
     split_chars: int = Field(default=4096, ge=1)
+    # Telegram parse mode for the outgoing text (e.g. "HTML"). None = plain text.
+    parse_mode: str | None = None
 
 
 class DeliveryResult(BaseModel):

@@ -397,6 +397,7 @@ async def test_permanent_error_no_retry() -> None:
             text: str,
             *,
             business_connection_id: str,
+            parse_mode: str | None = None,
         ) -> int:
             self.send_attempts += 1
             raise RuntimeError("permanent boom")
