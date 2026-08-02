@@ -1768,6 +1768,74 @@ async def test_owner_during_pre_mint_await_aborts_before_director() -> None:
 
 
 @pytest.mark.asyncio
+async def test_owner_supersede_vip1_still_aborts_vip2_pre_mint() -> None:
+    """VIP1 live + owner coordinate must not clear flag for VIP2 pre-mint."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="should not draft for vip2",
+    )
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.15),
+    )
+    chat_id = 100
+
+    # VIP1 mints and enters human delay.
+    t1 = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(chat_id=chat_id, text="vip1 live", telegram_message_id=801)
+        )
+    )
+    await asyncio.sleep(0.03)
+    non_term = await g["turns"].list_non_terminal(chat_id)
+    assert len(non_term) == 1
+    vip1_id = non_term[0].id
+
+    # VIP2 stalls in history (pre-mint) while VIP1 is still live.
+    history_entered = asyncio.Event()
+    history_release = asyncio.Event()
+    orig_append = g["orch"]._append_vip_history_if_persist
+
+    async def slow_vip2_history(incoming):  # type: ignore[no-untyped-def]
+        if incoming.telegram_message_id == 802:
+            history_entered.set()
+            await history_release.wait()
+        return await orig_append(incoming)
+
+    g["orch"]._append_vip_history_if_persist = slow_vip2_history  # type: ignore[method-assign]
+
+    t2 = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(chat_id=chat_id, text="vip2 pre-mint", telegram_message_id=802)
+        )
+    )
+    await asyncio.wait_for(history_entered.wait(), timeout=2.0)
+
+    # Owner supersedes VIP1 (prior non-empty) — flag must remain for VIP2 mint.
+    g["coordinator"].mark_owner_intervened(chat_id)
+    await g["coordinator"].coordinate(chat_id, "owner")
+    assert g["coordinator"].is_owner_intervened(chat_id) is True
+    rec1 = await g["turns"].get(vip1_id)
+    assert rec1 is not None
+    assert rec1.status == "superseded"
+
+    history_release.set()
+    id1, id2 = await asyncio.wait_for(asyncio.gather(t1, t2), timeout=3.0)
+
+    rec2 = await g["turns"].get(id2)
+    assert rec2 is not None
+    assert rec2.status == "superseded"
+    # VIP2 must not produce a waiting approval or Director call on its turn.
+    waiting = await g["approvals"].list_waiting()
+    assert waiting == []
+    assert all(c.turn_id != id2 for c in g["director"].calls)
+    assert id2 not in g["learning"].calls
+    _ = id1
+
+
+@pytest.mark.asyncio
 async def test_autonomous_owner_during_pre_delay_no_send() -> None:
     """Autonomous VIP: owner during wait → 0 actuator sends, turn superseded."""
     decision = Decision(

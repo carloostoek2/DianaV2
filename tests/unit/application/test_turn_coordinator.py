@@ -625,23 +625,23 @@ async def test_is_owner_intervened_since_sees_recent_timestamps(
 
 
 @pytest.mark.asyncio
-async def test_coordinate_owner_clears_flag_when_superseded_live_turn(
+async def test_coordinate_owner_never_clears_intervention_flag(
     coordinator: tuple,
 ) -> None:
-    """Owner coordinate clears flag only when it supersedes at least one turn."""
+    """Owner coordinate must not clear flag (VIP mint/defense clears later)."""
     coord, _, _, _ = coordinator
     await coord.begin_turn(chat_id=50)
     coord.mark_owner_intervened(50)
     result = await coord.coordinate(chat_id=50, autor="owner")
     assert result.action == "discard_owner_message"
-    assert coord.is_owner_intervened(50) is False
+    assert coord.is_owner_intervened(50) is True
 
 
 @pytest.mark.asyncio
 async def test_coordinate_owner_keeps_flag_when_no_live_turn(
     coordinator: tuple,
 ) -> None:
-    """Pre-mint race: owner coordinate with empty prior keeps flag for mint."""
+    """Owner coordinate with empty prior keeps flag for concurrent VIP mint."""
     coord, _, _, _ = coordinator
     coord.mark_owner_intervened(51)
     result = await coord.coordinate(chat_id=51, autor="owner")
@@ -650,28 +650,27 @@ async def test_coordinate_owner_keeps_flag_when_no_live_turn(
 
 
 @pytest.mark.asyncio
-async def test_coordinate_unlocked_owner_clears_flag_when_prior(
+async def test_coordinate_unlocked_owner_never_clears_flag(
     coordinator: tuple,
 ) -> None:
-    """coordinate_unlocked owner clears flag when prior non-empty."""
+    """coordinate_unlocked owner never clears intervention flag."""
     coord, _, _, _ = coordinator
     await coord.begin_turn(chat_id=60)
     coord.mark_owner_intervened(60)
     async with coord.chat_scope(60):
         result = await coord.coordinate_unlocked(chat_id=60, autor="owner")
     assert result.action == "discard_owner_message"
-    assert coord.is_owner_intervened(60) is False
+    assert coord.is_owner_intervened(60) is True
 
 
 @pytest.mark.asyncio
 async def test_subsequent_vip_message_not_aborted_after_owner_coordinate(
     coordinator: tuple,
 ) -> None:
-    """Owner idle keeps flag; VIP begin_turn clears so next VIP create works."""
+    """Owner keeps flag; VIP begin_turn clears so next VIP create works."""
     coord, _, _, _ = coordinator
     coord.mark_owner_intervened(70)
     await coord.coordinate(chat_id=70, autor="owner")
-    # Idle owner: flag kept for pre-mint race; public begin_turn clears it.
     assert coord.is_owner_intervened(70) is True
     rec = await coord.begin_turn(chat_id=70)
     assert rec is not None
@@ -683,7 +682,7 @@ async def test_subsequent_vip_message_not_aborted_after_owner_coordinate(
 
 @pytest.mark.asyncio
 async def test_owner_idle_flag_kept_for_pre_mint_race(coordinator: tuple) -> None:
-    """mark → coordinate(owner) with no live turns keeps flag (pre-mint race)."""
+    """mark → coordinate(owner) always keeps flag until VIP path clears it."""
     coord, _, _, _ = coordinator
     coord.mark_owner_intervened(80)
     await coord.coordinate(chat_id=80, autor="owner")

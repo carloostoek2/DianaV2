@@ -235,11 +235,9 @@ class TurnCoordinator:
                 superseded_by=None,
                 cancel_reason="owner_message",
             )
-            # Only clear when we actually superseded live work. If prior is
-            # empty (pre-mint race), keep the flag so the upcoming VIP mint
-            # under lock can still observe owner intervention.
-            if prior:
-                self.clear_owner_intervention(chat_id)
+            # Never clear owner intervention here. VIP mint / post-delay defense
+            # observe the flag with since=before_inbound then clear. Clearing on
+            # supersede would hide owner from a concurrent VIP2 still in pre-mint.
             result = CoordinateResult(action="discard_owner_message", turn_id=None)
             logger.info(
                 "coordinate_result",
@@ -249,7 +247,6 @@ class TurnCoordinator:
                     "action": result.action,
                     "prior_count": len(prior),
                     "trigger_message_id": trigger_message_id,
-                    "owner_flag_cleared": bool(prior),
                 },
             )
             return result
