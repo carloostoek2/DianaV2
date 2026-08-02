@@ -119,6 +119,8 @@ class TurnCoordinator:
         # Per-chat VIP inbound epoch: newer message aborts older in-flight work.
         self._vip_epochs: dict[int, int] = {}
         self._turn_vip_epochs: dict[UUID, int] = {}
+        # Latest minted turn id per chat (terminal or not) for real abort ids.
+        self._last_turn_by_chat: dict[int, UUID] = {}
 
     @asynccontextmanager
     async def chat_scope(self, chat_id: int) -> AsyncIterator[None]:
@@ -233,7 +235,11 @@ class TurnCoordinator:
                 superseded_by=None,
                 cancel_reason="owner_message",
             )
-            self.clear_owner_intervention(chat_id)
+            # Only clear when we actually superseded live work. If prior is
+            # empty (pre-mint race), keep the flag so the upcoming VIP mint
+            # under lock can still observe owner intervention.
+            if prior:
+                self.clear_owner_intervention(chat_id)
             result = CoordinateResult(action="discard_owner_message", turn_id=None)
             logger.info(
                 "coordinate_result",
@@ -243,6 +249,7 @@ class TurnCoordinator:
                     "action": result.action,
                     "prior_count": len(prior),
                     "trigger_message_id": trigger_message_id,
+                    "owner_flag_cleared": bool(prior),
                 },
             )
             return result
@@ -301,6 +308,7 @@ class TurnCoordinator:
             trigger_message_id=trigger_message_id,
         )
         created = await self._turns.create(record)
+        self._last_turn_by_chat[chat_id] = created.id
         logger.info(
             "coordinate_result",
             extra={
@@ -334,6 +342,10 @@ class TurnCoordinator:
     async def list_non_terminal(self, chat_id: int) -> list[TurnRecord]:
         """Return non-terminal turns for chat (caller may hold chat_scope)."""
         return await self._turns.list_non_terminal(chat_id)
+
+    def last_turn_id(self, chat_id: int) -> UUID | None:
+        """Most recently minted turn for chat, if any (may be terminal)."""
+        return self._last_turn_by_chat.get(chat_id)
 
     async def supersede_chat(
         self,
@@ -411,6 +423,8 @@ class TurnCoordinator:
         record = await self._turns.get(result.turn_id)
         assert record is not None
         self._turn_chat_ids[record.id] = chat_id
+        # Public begin_turn clears so non-orchestrator callers (e.g. escalate)
+        # do not leave a stuck owner flag. Orchestrator uses unlocked mint path.
         self.clear_owner_intervention(chat_id)
         return record
 
@@ -426,7 +440,11 @@ class TurnCoordinator:
         vip_id: UUID | None = None,
         turn_id: UUID | None = None,
     ) -> TurnRecord:
-        """VIP wrapper body; caller must already hold ``chat_scope(chat_id)``."""
+        """VIP wrapper body; caller must already hold ``chat_scope(chat_id)``.
+
+        Does **not** clear owner intervention — orchestrator mint path checks
+        the flag after mint (pre-mint owner race) then clears.
+        """
         result = await self.coordinate_unlocked(
             chat_id,
             "vip",
@@ -438,7 +456,7 @@ class TurnCoordinator:
         record = await self._turns.get(result.turn_id)
         assert record is not None
         self._turn_chat_ids[record.id] = chat_id
-        self.clear_owner_intervention(chat_id)
+        # Intentionally no clear_owner_intervention here.
         return record
 
     async def transition(

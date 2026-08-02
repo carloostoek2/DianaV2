@@ -1721,6 +1721,53 @@ async def test_owner_cancel_during_pre_delay_supersedes_real_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_owner_during_pre_mint_await_aborts_before_director() -> None:
+    """Owner mark+coordinate while VIP is still in pre-mint await → 0 Director."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="should not run",
+    )
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.0),
+    )
+    chat_id = 100
+    history_entered = asyncio.Event()
+    history_release = asyncio.Event()
+    orig_append = g["orch"]._append_vip_history_if_persist
+
+    async def slow_history(incoming):  # type: ignore[no-untyped-def]
+        history_entered.set()
+        await history_release.wait()
+        return await orig_append(incoming)
+
+    g["orch"]._append_vip_history_if_persist = slow_history  # type: ignore[method-assign]
+
+    vip_task = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(chat_id=chat_id, text="vip pre-mint", telegram_message_id=701)
+        )
+    )
+    await history_entered.wait()
+    # No turn yet — owner coordinate must keep the flag for mint.
+    g["coordinator"].mark_owner_intervened(chat_id)
+    await g["coordinator"].coordinate(chat_id, "owner")
+    assert g["coordinator"].is_owner_intervened(chat_id) is True
+    history_release.set()
+    turn_id = await vip_task
+
+    rec = await g["turns"].get(turn_id)
+    assert rec is not None
+    assert rec.status == "superseded"
+    assert len(g["director"].calls) == 0
+    assert await g["approvals"].list_waiting() == []
+    assert g["learning"].calls == []
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_autonomous_owner_during_pre_delay_no_send() -> None:
     """Autonomous VIP: owner during wait → 0 actuator sends, turn superseded."""
     decision = Decision(

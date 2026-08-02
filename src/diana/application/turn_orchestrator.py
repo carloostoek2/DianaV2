@@ -198,6 +198,8 @@ class TurnOrchestrator:
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
         chat_id = incoming.chat_id
+        # Capture before any await so owner marks during pre-mint are visible.
+        before_inbound = time.monotonic()
         bc = incoming.business_connection_id
         if bc is None or not str(bc).strip():
             # Fail under lock without advancing VIP epoch / durable history.
@@ -211,22 +213,11 @@ class TurnOrchestrator:
         vip_epoch = self._coordinator.bump_vip_epoch(chat_id)
         await self._append_vip_history_if_persist(incoming)
 
-        # Human-like delay counts from inbound; mint first so owner/VIP cancel
-        # has a durable turn to supersede (sleep stays OUTSIDE chat_scope).
-        mode = await self._resolve_effective_mode(incoming.vip_id)
-        pre_delay = (
-            self._delay_policy.initial_delay_seconds(mode)
-            if self._delay_policy is not None
-            else 0.0
-        )
-        before_sleep = time.monotonic()
-
-        # Under lock: skip mint if a newer VIP already advanced the epoch
-        # (avoids inverted mint superseding the winner).
+        # Mint ASAP under lock (before mode resolve / delay) so owner cancel
+        # has a durable target; sleep stays OUTSIDE chat_scope.
         async with self._coordinator.chat_scope(chat_id):
             if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
-                live_turns = await self._coordinator.list_non_terminal(chat_id)
-                winner_id = live_turns[0].id if live_turns else uuid4()
+                winner_id = await self._resolve_skip_mint_turn_id(chat_id)
                 logger.info(
                     "turn_mint_skipped_stale_epoch",
                     extra={
@@ -235,11 +226,24 @@ class TurnOrchestrator:
                         "current_epoch": self._coordinator.current_vip_epoch(
                             chat_id
                         ),
-                        "winner_turn_id": str(winner_id) if live_turns else None,
+                        "winner_turn_id": str(winner_id),
                     },
                 )
                 return winner_id
-            turn_id = await self._mint_turn_for_inbound(incoming, vip_epoch)
+            turn_id, aborted_owner = await self._mint_turn_for_inbound(
+                incoming,
+                vip_epoch,
+                before_inbound=before_inbound,
+            )
+            if aborted_owner:
+                return turn_id
+
+        mode = await self._resolve_effective_mode(incoming.vip_id)
+        pre_delay = (
+            self._delay_policy.initial_delay_seconds(mode)
+            if self._delay_policy is not None
+            else 0.0
+        )
 
         logger.info(
             "turn_delay_started",
@@ -256,7 +260,7 @@ class TurnOrchestrator:
         # Re-check after delay (no long lock): terminal / stale epoch / owner flag.
         live = await self._coordinator.get_turn(turn_id)
         owner_flag = self._coordinator.is_owner_intervened(
-            chat_id, since=before_sleep
+            chat_id, since=before_inbound
         )
         if live is None or is_turn_status_terminal(live.status):
             reason = self._abort_reason_after_delay(
@@ -329,7 +333,7 @@ class TurnOrchestrator:
                 reason = self._abort_reason_after_delay(
                     still,
                     owner_intervened=self._coordinator.is_owner_intervened(
-                        chat_id, since=before_sleep
+                        chat_id, since=before_inbound
                     ),
                 )
                 logger.info(
@@ -361,7 +365,7 @@ class TurnOrchestrator:
                 )
                 return turn_id
             # Defense-in-depth: owner flag under lock before Director.
-            if self._coordinator.is_owner_intervened(chat_id, since=before_sleep):
+            if self._coordinator.is_owner_intervened(chat_id, since=before_inbound):
                 await self._coordinator.supersede_chat(
                     chat_id,
                     reason="owner_message",
@@ -548,30 +552,68 @@ class TurnOrchestrator:
             )
         return text
 
+    async def _resolve_skip_mint_turn_id(self, chat_id: int) -> UUID:
+        """Prefer live winner, else last minted turn for chat; uuid4 last resort."""
+        live_turns = await self._coordinator.list_non_terminal(chat_id)
+        if live_turns:
+            return live_turns[0].id
+        last = self._coordinator.last_turn_id(chat_id)
+        if last is not None:
+            return last
+        # Chat never minted a turn in this process — unavoidable synthetic.
+        logger.info(
+            "turn_mint_skipped_stale_epoch_no_prior_turn",
+            extra={"chat_id": chat_id},
+        )
+        return uuid4()
+
     async def _mint_turn_for_inbound(
         self,
         incoming: VipInboundMessage,
         vip_epoch: int,
-    ) -> UUID:
-        """Create waiting_delay turn + bind epoch. Caller holds chat_scope."""
+        *,
+        before_inbound: float,
+    ) -> tuple[UUID, bool]:
+        """Create waiting_delay turn + bind epoch. Caller holds chat_scope.
+
+        Returns ``(turn_id, aborted_for_owner)``. When owner intervened since
+        *before_inbound*, cascade-supersedes the new turn and clears the flag.
+        """
+        chat_id = incoming.chat_id
         record = await self._coordinator.begin_turn_unlocked(
-            chat_id=incoming.chat_id,
+            chat_id=chat_id,
             trigger_message_id=incoming.telegram_message_id,
             vip_id=incoming.vip_id,
         )
         turn_id = record.id
-        self._coordinator.bind_turn_vip_epoch(
-            turn_id, incoming.chat_id, vip_epoch
-        )
+        self._coordinator.bind_turn_vip_epoch(turn_id, chat_id, vip_epoch)
         logger.info(
             "turn_minted_waiting_delay",
             extra={
                 "turn_id": str(turn_id),
-                "chat_id": incoming.chat_id,
+                "chat_id": chat_id,
                 "vip_epoch": vip_epoch,
             },
         )
-        return turn_id
+        if self._coordinator.is_owner_intervened(chat_id, since=before_inbound):
+            await self._coordinator.supersede_chat(
+                chat_id,
+                reason="owner_message",
+                superseded_by=None,
+            )
+            self._coordinator.clear_owner_intervention(chat_id)
+            logger.info(
+                "turn_aborted_owner_at_mint",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "reason": "owner_message",
+                },
+            )
+            return turn_id, True
+        # Drop any older stuck flag so mid-pipeline checks stay clean.
+        self._coordinator.clear_owner_intervention(chat_id)
+        return turn_id, False
 
     @staticmethod
     def _abort_reason_after_delay(
@@ -753,9 +795,10 @@ class TurnOrchestrator:
         if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
             incoming.chat_id, vip_epoch
         ):
-            await self._coordinator.transition(
-                turn_id,
-                TurnStatus.SUPERSEDED,
+            await self._coordinator.supersede_chat(
+                incoming.chat_id,
+                reason="new_message",
+                superseded_by=None,
             )
             logger.info(
                 "turn_cancelled_stale_epoch_post_director",

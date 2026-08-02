@@ -625,11 +625,12 @@ async def test_is_owner_intervened_since_sees_recent_timestamps(
 
 
 @pytest.mark.asyncio
-async def test_coordinate_owner_clears_intervention_flag(
+async def test_coordinate_owner_clears_flag_when_superseded_live_turn(
     coordinator: tuple,
 ) -> None:
-    """Owner coordinate path must clear the flag so future VIP messages proceed."""
+    """Owner coordinate clears flag only when it supersedes at least one turn."""
     coord, _, _, _ = coordinator
+    await coord.begin_turn(chat_id=50)
     coord.mark_owner_intervened(50)
     result = await coord.coordinate(chat_id=50, autor="owner")
     assert result.action == "discard_owner_message"
@@ -637,11 +638,24 @@ async def test_coordinate_owner_clears_intervention_flag(
 
 
 @pytest.mark.asyncio
-async def test_coordinate_unlocked_owner_clears_intervention_flag(
+async def test_coordinate_owner_keeps_flag_when_no_live_turn(
     coordinator: tuple,
 ) -> None:
-    """coordinate_unlocked with autor='owner' must clear the flag (regression)."""
+    """Pre-mint race: owner coordinate with empty prior keeps flag for mint."""
     coord, _, _, _ = coordinator
+    coord.mark_owner_intervened(51)
+    result = await coord.coordinate(chat_id=51, autor="owner")
+    assert result.action == "discard_owner_message"
+    assert coord.is_owner_intervened(51) is True
+
+
+@pytest.mark.asyncio
+async def test_coordinate_unlocked_owner_clears_flag_when_prior(
+    coordinator: tuple,
+) -> None:
+    """coordinate_unlocked owner clears flag when prior non-empty."""
+    coord, _, _, _ = coordinator
+    await coord.begin_turn(chat_id=60)
     coord.mark_owner_intervened(60)
     async with coord.chat_scope(60):
         result = await coord.coordinate_unlocked(chat_id=60, autor="owner")
@@ -653,35 +667,24 @@ async def test_coordinate_unlocked_owner_clears_intervention_flag(
 async def test_subsequent_vip_message_not_aborted_after_owner_coordinate(
     coordinator: tuple,
 ) -> None:
-    """Full lifecycle: owner writes → coordinate clears → next VIP proceeds."""
+    """Owner idle keeps flag; VIP begin_turn clears so next VIP create works."""
     coord, _, _, _ = coordinator
-    # Owner writes — middleware marks and coordinates.
     coord.mark_owner_intervened(70)
     await coord.coordinate(chat_id=70, autor="owner")
-    # Flag must be clear now.
+    # Idle owner: flag kept for pre-mint race; public begin_turn clears it.
+    assert coord.is_owner_intervened(70) is True
+    rec = await coord.begin_turn(chat_id=70)
+    assert rec is not None
     assert coord.is_owner_intervened(70) is False
-    # A VIP message arriving later should see no intervention.
     result = await coord.coordinate(chat_id=70, autor="vip")
-    assert result.action == "create"
+    assert result.action == "replace"
     assert result.turn_id is not None
 
 
 @pytest.mark.asyncio
-async def test_is_owner_intervened_stale_flag_reproduction(coordinator: tuple) -> None:
-    """Reproduce the bug: without the fix, flag survives owner coordinate.
-
-    This test verifies the exact scenario that caused the false activation:
-    mark → coordinate(owner) → flag MUST be gone so the next message works.
-    """
+async def test_owner_idle_flag_kept_for_pre_mint_race(coordinator: tuple) -> None:
+    """mark → coordinate(owner) with no live turns keeps flag (pre-mint race)."""
     coord, _, _, _ = coordinator
-
-    # Simulate what OwnerDetectionMiddleware does: mark then coordinate.
     coord.mark_owner_intervened(80)
     await coord.coordinate(chat_id=80, autor="owner")
-
-    # After coordinate returns, the flag must be clear.
-    # Before the fix this assertion FAILED — the flag leaked forever.
-    assert not coord.is_owner_intervened(80), (
-        "BUG: owner intervention flag leaked past coordinate(). "
-        "Every subsequent VIP message in this chat would be falsely aborted."
-    )
+    assert coord.is_owner_intervened(80) is True
