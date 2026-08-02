@@ -46,7 +46,7 @@ async def test_first_begin_turn_received_single_non_terminal(
 ) -> None:
     coord, turns, _, _ = coordinator
     rec = await coord.begin_turn(chat_id=100, trigger_message_id=1)
-    assert rec.status == TurnStatus.RECEIVED.value
+    assert rec.status == TurnStatus.WAITING_DELAY.value
     assert rec.chat_id == 100
     non_term = await turns.list_non_terminal(100)
     assert len(non_term) == 1
@@ -65,7 +65,7 @@ async def test_second_begin_turn_supersedes_previous(
     assert old is not None
     assert old.status == TurnStatus.SUPERSEDED.value
     assert old.superseded_by == second.id
-    assert second.status == TurnStatus.RECEIVED.value
+    assert second.status == TurnStatus.WAITING_DELAY.value
     non_term = await turns.list_non_terminal(100)
     assert len(non_term) == 1
     assert non_term[0].id == second.id
@@ -174,7 +174,7 @@ async def test_coordinate_vip_idle_creates(coordinator: tuple) -> None:
     non_term = await turns.list_non_terminal(200)
     assert len(non_term) == 1
     assert non_term[0].id == result.turn_id
-    assert non_term[0].status == TurnStatus.RECEIVED.value
+    assert non_term[0].status == TurnStatus.WAITING_DELAY.value
 
 
 @pytest.mark.asyncio
@@ -449,7 +449,7 @@ async def test_vip_coordinate_fail_soft_when_cancel_raises() -> None:
     assert recontact.schedule_calls == [vip_id]
     rec = await turns.get(result.turn_id)
     assert rec is not None
-    assert rec.status == TurnStatus.RECEIVED.value
+    assert rec.status == TurnStatus.WAITING_DELAY.value
     assert get_swallowed_counts().get(
         "recontact_cancel_on_vip_message_failed", 0
     ) == 1
@@ -515,7 +515,7 @@ async def test_vip_coordinate_fail_soft_when_schedule_raises() -> None:
     assert result.turn_id is not None
     rec = await turns.get(result.turn_id)
     assert rec is not None
-    assert rec.status == TurnStatus.RECEIVED.value
+    assert rec.status == TurnStatus.WAITING_DELAY.value
     assert get_swallowed_counts().get(
         "recontact_schedule_on_vip_message_failed", 0
     ) == 1

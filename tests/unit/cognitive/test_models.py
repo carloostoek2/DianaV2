@@ -409,9 +409,12 @@ def test_turn_status_terminal_and_non_terminal_set() -> None:
     assert TERMINAL_TURN_STATUSES == terminal
     assert TurnStatus.PENDING_APPROVAL not in TERMINAL_TURN_STATUSES
     assert TurnStatus.PENDING_APPROVAL.value == "pending_approval"
+    assert TurnStatus.WAITING_DELAY not in TERMINAL_TURN_STATUSES
+    assert TurnStatus.WAITING_DELAY.value == "waiting_delay"
 
     expected_values = {
         "received",
+        "waiting_delay",
         "analyzing",
         "planning",
         "retrieving",

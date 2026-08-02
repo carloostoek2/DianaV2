@@ -1585,7 +1585,7 @@ async def test_concurrent_vip_messages_one_non_terminal_no_zombie() -> None:
 
 @pytest.mark.asyncio
 async def test_newer_vip_aborts_older_before_director_during_pre_delay() -> None:
-    """During human delay, a second VIP msg cancels the first before any LLM turn."""
+    """During human delay, a second VIP msg supersedes the first real turn."""
     decision = Decision(
         action="approve",
         reason="ok",
@@ -1609,19 +1609,91 @@ async def test_newer_vip_aborts_older_before_director_during_pre_delay() -> None
     )
     id1, id2 = await asyncio.gather(t1, t2)
 
-    # First inbound never minted a cognitive turn (synthetic id) OR if it did,
-    # it must not hold a waiting approval.
+    # Both returns are durable turn rows (mint-before-delay).
+    rec1 = await g["turns"].get(id1)
+    rec2 = await g["turns"].get(id2)
+    assert rec1 is not None
+    assert rec2 is not None
+    assert rec1.status == "superseded"
+    assert rec1.superseded_by == id2
+
     assert len(g["director"].calls) == 1
     only = g["director"].calls[0]
+    assert only.turn_id == id2
     assert "primero" in only.text
     assert "segundo" in only.text
     waiting = await g["approvals"].list_waiting()
     assert len(waiting) == 1
-    # Live approval belongs to the second pipeline turn when one was created.
     live = waiting[0]
-    assert live.turn_id == only.turn_id
-    # Synthetic abort returns random uuid — not both ids need be real turns.
-    _ = id1, id2
+    assert live.turn_id == only.turn_id == id2
+
+
+@pytest.mark.asyncio
+async def test_owner_cancel_during_pre_delay_supersedes_real_turn() -> None:
+    """Owner business traffic during human wait supersedes the minted turn."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="should not reach approval",
+    )
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.08),
+    )
+    chat_id = 100
+    vip_task = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(chat_id=chat_id, text="vip waiting", telegram_message_id=401)
+        )
+    )
+    await asyncio.sleep(0.02)
+    # Same path OwnerDetectionMiddleware uses: mark flag + coordinate(owner).
+    g["coordinator"].mark_owner_intervened(chat_id)
+    await g["coordinator"].coordinate(chat_id, "owner")
+    turn_id = await vip_task
+
+    rec = await g["turns"].get(turn_id)
+    assert rec is not None
+    assert rec.status == "superseded"
+    assert len(g["director"].calls) == 0
+    assert await g["approvals"].list_waiting() == []
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_autonomous_owner_during_pre_delay_no_send() -> None:
+    """Autonomous VIP: owner during wait → 0 actuator sends, turn superseded."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="would have auto-sent",
+    )
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.08),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+    )
+    chat_id = 100
+    vip_task = asyncio.create_task(
+        g["orch"].handle_vip_message(
+            _vip(chat_id=chat_id, text="auto vip", telegram_message_id=501)
+        )
+    )
+    await asyncio.sleep(0.02)
+    g["coordinator"].mark_owner_intervened(chat_id)
+    await g["coordinator"].coordinate(chat_id, "owner")
+    turn_id = await vip_task
+
+    rec = await g["turns"].get(turn_id)
+    assert rec is not None
+    assert rec.status == "superseded"
+    assert len(g["director"].calls) == 0
+    assert g["actuator"].send_count() == 0
+    assert await g["approvals"].list_waiting() == []
 
 
 @pytest.mark.asyncio

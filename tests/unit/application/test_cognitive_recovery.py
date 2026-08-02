@@ -28,16 +28,18 @@ async def test_recover_zombie_turns_marks_pipeline_only_as_failed() -> None:
     t3 = TurnRecord(id=uuid4(), chat_id=1, status="deciding")
     t4 = TurnRecord(id=uuid4(), chat_id=2, status="failed")  # already terminal
     t5 = TurnRecord(id=uuid4(), chat_id=3, status="pending_approval")  # owner waiting
+    t6 = TurnRecord(id=uuid4(), chat_id=4, status="waiting_delay")  # pre-delay zombie
     await turns.create(t1)
     await turns.create(t2)
     await turns.create(t3)
     await turns.create(t4)
     await turns.create(t5)
+    await turns.create(t6)
 
     count = await recover_zombie_turns(turns)
-    assert count == 3  # t1, t2, t3 only
+    assert count == 4  # t1, t2, t3, t6
 
-    for turn_id in (t1.id, t2.id, t3.id):
+    for turn_id in (t1.id, t2.id, t3.id, t6.id):
         rec = await turns.get(turn_id)
         assert rec is not None
         assert rec.status == "failed"
@@ -103,14 +105,17 @@ async def test_list_zombie_turns_excludes_owner_waiting() -> None:
     t2 = TurnRecord(id=uuid4(), chat_id=1, status="delivered")  # terminal
     t3 = TurnRecord(id=uuid4(), chat_id=2, status="pending_approval")  # owner waiting
     t4 = TurnRecord(id=uuid4(), chat_id=2, status="gray_zone")  # owner waiting
+    t5 = TurnRecord(id=uuid4(), chat_id=3, status="waiting_delay")  # pre-delay zombie
     await turns.create(t1)
     await turns.create(t2)
     await turns.create(t3)
     await turns.create(t4)
+    await turns.create(t5)
 
     zombies = await list_zombie_turns(turns)
     ids = {z.id for z in zombies}
     assert t1.id in ids
+    assert t5.id in ids
     assert t2.id not in ids
     assert t3.id not in ids
     assert t4.id not in ids
