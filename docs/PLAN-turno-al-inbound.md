@@ -2,9 +2,22 @@
 
 **Rama base:** `main`  
 **Fecha:** 2026-08-02  
+**Estado:** **DONE** (implementado en main; pool hardener-agile effort 4 cerrado)  
 **Problema:** La espera “humana” corre **antes** de crear el turno. Si la dueña responde en esa ventana, no hay turno que cancelar y el flag de intervención se borra demasiado pronto → el bot puede seguir.  
 **Referencia limpia:** v1 (`diana/`) crea la unidad de trabajo al llegar el VIP (`reply_gen` + `timer_schedule` + task) y cancela con `task.cancel()` / gen obsoleto.  
 **Meta de producto:** Mismo comportamiento que v1: *si hay trabajo en el chat y llega dueña o VIP nuevo, ese trabajo muere*; la espera sigue contando desde el mensaje del VIP.
+
+### Entrega (commits clave)
+
+| Hash | Qué |
+|------|-----|
+| `ba40e49`…`39a6f40` | Status `waiting_delay`, mint antes del delay, logs, recovery D0 |
+| `5554a5a`…`fa93cba` | Carreras dueña/VIP concurrentes, cascade supersede, flag dueña |
+| `c3ebbb1` | Tests de skip-mint bajo lock y readiness sin sleep frágil |
+
+**Consola (eventos):** `turn_minted_waiting_delay`, `turn_delay_started`, `turn_delay_completed`, `turn_aborted_after_delay`, `turn_mint_skipped_stale_epoch`.
+
+**Residual D1:** timers durables de pre-delay / reanudar espera tras reinicio — fuera de este ítem.
 
 ---
 
