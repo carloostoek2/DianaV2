@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
@@ -211,9 +211,8 @@ class TurnOrchestrator:
         vip_epoch = self._coordinator.bump_vip_epoch(chat_id)
         await self._append_vip_history_if_persist(incoming)
 
-        # Serve the human-like delay BEFORE the cognitive pipeline so the
-        # timer counts from message arrival, not from owner approval. Once
-        # the pipeline completes the message sends without extra wait.
+        # Human-like delay counts from inbound; mint first so owner/VIP cancel
+        # has a durable turn to supersede (sleep stays OUTSIDE chat_scope).
         mode = await self._resolve_effective_mode(incoming.vip_id)
         pre_delay = (
             self._delay_policy.initial_delay_seconds(mode)
@@ -221,47 +220,112 @@ class TurnOrchestrator:
             else 0.0
         )
         before_sleep = time.monotonic()
+
+        async with self._coordinator.chat_scope(chat_id):
+            turn_id = await self._mint_turn_for_inbound(incoming, vip_epoch)
+
+        logger.info(
+            "turn_delay_started",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": chat_id,
+                "pre_delay_s": pre_delay,
+                "mode": mode,
+            },
+        )
         if pre_delay > 0:
             await asyncio.sleep(pre_delay)
 
-        # Abort if owner replied directly in chat during the pre-pipeline delay.
-        if self._coordinator.is_owner_intervened(chat_id, since=before_sleep):
+        # Re-check after delay (no long lock): terminal / stale epoch / owner flag.
+        live = await self._coordinator.get_turn(turn_id)
+        if live is None or is_turn_status_terminal(live.status):
+            reason = self._abort_reason_after_delay(live)
             logger.info(
-                "turn_aborted_owner_intervened_pre_pipeline",
-                extra={"chat_id": chat_id, "vip_id": str(incoming.vip_id)},
-            )
-            self._coordinator.clear_owner_intervention(chat_id)
-            return uuid4()  # no turn created; return a synthetic id for logging
-
-        # Total cancel: a newer VIP message arrived — do not mint a turn or run LLM.
-        if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
-            logger.info(
-                "turn_aborted_newer_vip_pre_pipeline",
+                "turn_aborted_after_delay",
                 extra={
+                    "turn_id": str(turn_id),
                     "chat_id": chat_id,
-                    "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
-                    "vip_epoch": vip_epoch,
-                    "current_epoch": self._coordinator.current_vip_epoch(chat_id),
+                    "reason": reason,
+                    "status": None if live is None else live.status,
                 },
             )
-            return uuid4()
+            return turn_id
+
+        if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
+            async with self._coordinator.chat_scope(chat_id):
+                still = await self._coordinator.get_turn(turn_id)
+                if still is not None and not is_turn_status_terminal(still.status):
+                    await self._coordinator.transition(
+                        turn_id, TurnStatus.SUPERSEDED
+                    )
+            logger.info(
+                "turn_aborted_after_delay",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "reason": "new_message",
+                    "status": live.status,
+                },
+            )
+            return turn_id
+
+        if self._coordinator.is_owner_intervened(chat_id, since=before_sleep):
+            # Defense-in-depth: flag set but coordinate(owner) not yet applied.
+            async with self._coordinator.chat_scope(chat_id):
+                still = await self._coordinator.get_turn(turn_id)
+                if still is not None and not is_turn_status_terminal(still.status):
+                    await self._coordinator.transition(
+                        turn_id, TurnStatus.SUPERSEDED
+                    )
+            self._coordinator.clear_owner_intervention(chat_id)
+            logger.info(
+                "turn_aborted_after_delay",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "reason": "owner_message",
+                    "status": "superseded",
+                },
+            )
+            return turn_id
+
+        logger.info(
+            "turn_delay_completed",
+            extra={"turn_id": str(turn_id), "chat_id": chat_id},
+        )
 
         pending_deliver: _AutonomousDeliverJob | None
         async with self._coordinator.chat_scope(chat_id):
-            if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
+            still = await self._coordinator.get_turn(turn_id)
+            if still is None or is_turn_status_terminal(still.status):
+                reason = self._abort_reason_after_delay(still)
                 logger.info(
-                    "turn_aborted_newer_vip_at_lock",
+                    "turn_aborted_after_delay",
                     extra={
+                        "turn_id": str(turn_id),
                         "chat_id": chat_id,
-                        "vip_epoch": vip_epoch,
-                        "current_epoch": self._coordinator.current_vip_epoch(
-                            chat_id
-                        ),
+                        "reason": reason,
+                        "status": None if still is None else still.status,
                     },
                 )
-                return uuid4()
-            turn_id, pending_deliver = await self._handle_vip_message_locked(
-                incoming, vip_epoch=vip_epoch
+                return turn_id
+            if not self._coordinator.is_vip_epoch_current(chat_id, vip_epoch):
+                if not is_turn_status_terminal(still.status):
+                    await self._coordinator.transition(
+                        turn_id, TurnStatus.SUPERSEDED
+                    )
+                logger.info(
+                    "turn_aborted_after_delay",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": chat_id,
+                        "reason": "new_message",
+                        "status": still.status,
+                    },
+                )
+                return turn_id
+            turn_id, pending_deliver = await self._run_cognitive_after_delay(
+                incoming, turn_id=turn_id, vip_epoch=vip_epoch
             )
             if pending_deliver is None:
                 await self._maybe_post_turn(turn_id, chat_id)
@@ -429,34 +493,95 @@ class TurnOrchestrator:
             )
         return text
 
-    async def _handle_vip_message_locked(
+    async def _mint_turn_for_inbound(
         self,
         incoming: VipInboundMessage,
-        *,
-        vip_epoch: int | None,
-    ) -> tuple[UUID, _AutonomousDeliverJob | None]:
-        bc = incoming.business_connection_id
-        if bc is None or not str(bc).strip():
-            record = await self._coordinator.begin_turn_unlocked(
-                chat_id=incoming.chat_id,
-                trigger_message_id=incoming.telegram_message_id,
-                vip_id=incoming.vip_id,
-            )
-            await self._coordinator.mark_failed(
-                record.id, error="business_connection_id is required"
-            )
-            raise ValueError("business_connection_id is required")
-
+        vip_epoch: int,
+    ) -> UUID:
+        """Create waiting_delay turn + bind epoch. Caller holds chat_scope."""
         record = await self._coordinator.begin_turn_unlocked(
             chat_id=incoming.chat_id,
             trigger_message_id=incoming.telegram_message_id,
             vip_id=incoming.vip_id,
         )
         turn_id = record.id
-        if vip_epoch is not None:
-            self._coordinator.bind_turn_vip_epoch(
-                turn_id, incoming.chat_id, vip_epoch
+        self._coordinator.bind_turn_vip_epoch(
+            turn_id, incoming.chat_id, vip_epoch
+        )
+        logger.info(
+            "turn_minted_waiting_delay",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": incoming.chat_id,
+                "vip_epoch": vip_epoch,
+            },
+        )
+        return turn_id
+
+    @staticmethod
+    def _abort_reason_after_delay(live: object | None) -> str:
+        """Map post-delay abort to owner_message | new_message for logs.
+
+        Owner cascade supersedes with superseded_by=None; VIP replace sets
+        superseded_by to the winner turn id.
+        """
+        if live is None:
+            return "new_message"
+        status = getattr(live, "status", None)
+        superseded_by = getattr(live, "superseded_by", None)
+        if status in (TurnStatus.SUPERSEDED.value, "superseded"):
+            if superseded_by is None:
+                return "owner_message"
+            return "new_message"
+        return "new_message"
+
+    async def _run_cognitive_after_delay(
+        self,
+        incoming: VipInboundMessage,
+        *,
+        turn_id: UUID,
+        vip_epoch: int | None,
+    ) -> tuple[UUID, _AutonomousDeliverJob | None]:
+        """Director + routing for an already-minted turn. Caller holds chat_scope."""
+        return await self._handle_vip_message_locked(
+            incoming,
+            vip_epoch=vip_epoch,
+            turn_id=turn_id,
+        )
+
+    async def _handle_vip_message_locked(
+        self,
+        incoming: VipInboundMessage,
+        *,
+        vip_epoch: int | None,
+        turn_id: UUID | None = None,
+    ) -> tuple[UUID, _AutonomousDeliverJob | None]:
+        bc = incoming.business_connection_id
+        if bc is None or not str(bc).strip():
+            if turn_id is None:
+                record = await self._coordinator.begin_turn_unlocked(
+                    chat_id=incoming.chat_id,
+                    trigger_message_id=incoming.telegram_message_id,
+                    vip_id=incoming.vip_id,
+                )
+                turn_id = record.id
+            await self._coordinator.mark_failed(
+                turn_id, error="business_connection_id is required"
             )
+            raise ValueError("business_connection_id is required")
+
+        if turn_id is None:
+            # Fail-closed / legacy entry: mint then cognitive in one lock section.
+            record = await self._coordinator.begin_turn_unlocked(
+                chat_id=incoming.chat_id,
+                trigger_message_id=incoming.telegram_message_id,
+                vip_id=incoming.vip_id,
+            )
+            turn_id = record.id
+            if vip_epoch is not None:
+                self._coordinator.bind_turn_vip_epoch(
+                    turn_id, incoming.chat_id, vip_epoch
+                )
 
         # History already appended at inbound (early) so cancelled rounds still
         # join the open burst. Sandbox skips are handled there too.
