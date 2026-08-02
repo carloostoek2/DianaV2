@@ -1631,7 +1631,7 @@ async def test_newer_vip_aborts_older_before_director_during_pre_delay() -> None
 
 @pytest.mark.asyncio
 async def test_stale_epoch_skips_mint_does_not_supersede_winner() -> None:
-    """Inverted mint order: stale epoch skips mint; winner stays live (Issue 1)."""
+    """Stale epoch under mint lock skips begin_turn (no supersede of winner)."""
     decision = Decision(
         action="approve",
         reason="ok",
@@ -1642,48 +1642,58 @@ async def test_stale_epoch_skips_mint_does_not_supersede_winner() -> None:
         FakeDirector(decision),
         delay_policy=FixedDelayPolicy(initial=0.0),
     )
-    # Slow the first inbound after bump so the second can mint first.
-    resolve_calls = {"n": 0}
-    orig_resolve = g["orch"]._resolve_effective_mode
+    # Stall A after bump, before mint lock, so B can mint with a newer epoch.
+    a_pre_mint = asyncio.Event()
+    a_may_mint = asyncio.Event()
+    b_minted = asyncio.Event()
+    orig_append = g["orch"]._append_vip_history_if_persist
+    orig_mint = g["orch"]._mint_turn_for_inbound
 
-    async def slow_first(vip_id):  # type: ignore[no-untyped-def]
-        resolve_calls["n"] += 1
-        if resolve_calls["n"] == 1:
-            await asyncio.sleep(0.05)
-        return await orig_resolve(vip_id)
+    async def stall_a_pre_mint(incoming):  # type: ignore[no-untyped-def]
+        if incoming.telegram_message_id == 601:
+            a_pre_mint.set()
+            await a_may_mint.wait()
+        return await orig_append(incoming)
 
-    g["orch"]._resolve_effective_mode = slow_first  # type: ignore[method-assign]
+    async def mint_and_signal(incoming, vip_epoch, *, before_inbound):  # type: ignore[no-untyped-def]
+        result = await orig_mint(
+            incoming, vip_epoch, before_inbound=before_inbound
+        )
+        if incoming.telegram_message_id == 602:
+            b_minted.set()
+        return result
+
+    g["orch"]._append_vip_history_if_persist = stall_a_pre_mint  # type: ignore[method-assign]
+    g["orch"]._mint_turn_for_inbound = mint_and_signal  # type: ignore[method-assign]
 
     t_a = asyncio.create_task(
         g["orch"].handle_vip_message(
             _vip(text="primero", telegram_message_id=601)
         )
     )
-    await asyncio.sleep(0.01)  # A bumps epoch first, then stalls in resolve
+    await asyncio.wait_for(a_pre_mint.wait(), timeout=2.0)
+    # A has epoch 1 and is blocked pre-mint; B bumps to 2 and mints first.
     t_b = asyncio.create_task(
         g["orch"].handle_vip_message(
             _vip(text="segundo", telegram_message_id=602)
         )
     )
-    id_a, id_b = await asyncio.gather(t_a, t_b)
+    await asyncio.wait_for(b_minted.wait(), timeout=2.0)
+    # B already holds the live turn; release A so it hits stale-epoch skip.
+    a_may_mint.set()
+    id_a, id_b = await asyncio.wait_for(asyncio.gather(t_a, t_b), timeout=3.0)
 
-    # Winner is B's minted turn; A skipped mint (may return B's id).
+    # A skipped mint → returns winner id (B), no separate superseded A row.
+    assert id_a == id_b
     rec_b = await g["turns"].get(id_b)
     assert rec_b is not None
     assert rec_b.status == "pending_approval"
-    # No second non-terminal created by A; at most one Director on winner.
+    assert rec_b.superseded_by is None
     assert len(g["director"].calls) == 1
     assert g["director"].calls[0].turn_id == id_b
     non_term = await g["turns"].list_non_terminal(100)
     assert len(non_term) == 1
     assert non_term[0].id == id_b
-    # A must not have left a separate superseded self-mint that killed B.
-    if id_a != id_b:
-        rec_a = await g["turns"].get(id_a)
-        # If A ever minted, B would be live and A superseded — but skip means
-        # no row or same as winner.
-        if rec_a is not None and rec_a.id != id_b:
-            assert rec_a.status != "pending_approval" or rec_a.id == id_b
 
 
 @pytest.mark.asyncio
@@ -1767,6 +1777,23 @@ async def test_owner_during_pre_mint_await_aborts_before_director() -> None:
     assert g["actuator"].send_count() == 0
 
 
+async def _wait_for_waiting_delay_turn(
+    turns: object, chat_id: int, *, timeout: float = 2.0
+) -> UUID:
+    """Poll until a non-terminal waiting_delay turn exists for chat_id."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        non_term = await turns.list_non_terminal(chat_id)  # type: ignore[attr-defined]
+        for rec in non_term:
+            if rec.status == "waiting_delay":
+                return rec.id
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(
+                f"no waiting_delay turn for chat_id={chat_id} within {timeout}s"
+            )
+        await asyncio.sleep(0.005)
+
+
 @pytest.mark.asyncio
 async def test_owner_supersede_vip1_still_aborts_vip2_pre_mint() -> None:
     """VIP1 live + owner coordinate must not clear flag for VIP2 pre-mint."""
@@ -1788,10 +1815,7 @@ async def test_owner_supersede_vip1_still_aborts_vip2_pre_mint() -> None:
             _vip(chat_id=chat_id, text="vip1 live", telegram_message_id=801)
         )
     )
-    await asyncio.sleep(0.03)
-    non_term = await g["turns"].list_non_terminal(chat_id)
-    assert len(non_term) == 1
-    vip1_id = non_term[0].id
+    vip1_id = await _wait_for_waiting_delay_turn(g["turns"], chat_id)
 
     # VIP2 stalls in history (pre-mint) while VIP1 is still live.
     history_entered = asyncio.Event()
