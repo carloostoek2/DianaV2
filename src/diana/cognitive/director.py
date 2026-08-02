@@ -13,6 +13,7 @@ into ``IncomingTurn`` at the application layer.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -56,6 +57,31 @@ _ROLE_TO_AUTOR: dict[str, str] = {
     "vip": "vip",
     "owner": "dueña",
 }
+
+logger = logging.getLogger("diana.cognitive")
+
+_DECISION_EMOJI: dict[str, str] = {
+    "approve": "✅",
+    "escalate": "🚨",
+    "send": "📤",
+    "consult_doctrine": "📚",
+}
+
+_DECISION_VERB: dict[str, str] = {
+    "approve": "aprobar",
+    "escalate": "escalar",
+    "send": "enviar",
+    "consult_doctrine": "consultar doctrina",
+}
+
+
+def _clip(text: str, limit: int = 60) -> str:
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _pct(score: float) -> str:
+    return f"{score * 100:.0f}%"
+
 
 def _early_exit_evaluation() -> EvaluationProfile:
     """Fresh zero profile for Decision-only early exits (reason is source of truth)."""
@@ -140,6 +166,11 @@ class CognitiveDirector:
         """
         turn = turn_context
         turn_id = turn.turn_id
+        logger.info(
+            '📥 Turno recibido — chat %s | "%s"',
+            turn.chat_id,
+            _clip(turn.text),
+        )
         try:
             gate = self._template_gate
             if gate is not None:
@@ -149,8 +180,14 @@ class CognitiveDirector:
             return await self._run_pipeline(turn)
         except TurnSupersededError:
             raise
-        except Exception:
+        except Exception as exc:
             await self._status.transition(turn_id, TurnStatus.FAILED)
+            logger.exception(
+                "❌ Turno %s falló — chat %s: %s",
+                str(turn_id)[:8],
+                turn.chat_id,
+                type(exc).__name__,
+            )
             raise
 
     async def _handle_template(
@@ -160,6 +197,7 @@ class CognitiveDirector:
         gate: TemplateGate,
     ) -> Decision:
         """H6 pre-pipeline: synthetic approve Decision from fixed template (0 LLM)."""
+        logger.info("⚡ Plantilla H6 — regla %s (%s)", rule.id, rule.reason)
         text = gate.render(rule)
         decision = Decision(
             action="approve",
@@ -186,6 +224,13 @@ class CognitiveDirector:
             comprehension = await self._analyst.analyze(analyst_input)
         timings["analyst_ms"] = tc.elapsed_ms
         await self._store(turn_id, "comprehension", comprehension)
+        logger.info(
+            "🧠 Comprensión — intent: %s | emoción: %s | urgencia: %s | riesgo: %s",
+            comprehension.intent,
+            comprehension.emotion,
+            comprehension.urgency,
+            comprehension.risk,
+        )
 
         # H4: 3+ consecutive same intent → Decision-only escalate (no Planner+).
         if self._recent_intents is not None and self._repetition_guard is not None:
@@ -195,6 +240,10 @@ class CognitiveDirector:
                 exclude_turn_id=turn.turn_id,
             )
             if self._repetition_guard.is_repeated(comprehension.intent, recent):
+                logger.info(
+                    "🔁 Repetición — intent: %s → escalar (pregunta_repetida)",
+                    comprehension.intent,
+                )
                 decision = Decision(
                     action="escalate",
                     reason="pregunta_repetida",
@@ -210,6 +259,7 @@ class CognitiveDirector:
             plan = self._planner.plan(comprehension)
         timings["planner_ms"] = tc.elapsed_ms
         await self._store(turn_id, "plan", plan)
+        logger.info("🗺️ Plan — capacidades: %s", ", ".join(plan.capabilities))
 
         await self._status.transition(turn_id, TurnStatus.RETRIEVING)
         retrieved: dict[str, Any | None] = {}
@@ -256,6 +306,14 @@ class CognitiveDirector:
             )
             await self._store(turn_id, "retrieved", retrieved)
 
+        hit_caps = [cap for cap, value in retrieved.items() if value]
+        logger.info(
+            "🔎 Retrieval — hits %d/%d (%s)",
+            len(hit_caps),
+            len(retrieved),
+            ", ".join(hit_caps) if hit_caps else "ninguna",
+        )
+
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
         # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).
         # On ContextExceedsLimitError: do not store partial prompt_text; re-raise.
@@ -276,6 +334,7 @@ class CognitiveDirector:
             draft = await self._generator.generate(built.prompt_final)
         timings["generator_ms"] = tc.elapsed_ms
         await self._store(turn_id, "generated_text", draft)
+        logger.info("✍️ Borrador — %d caracteres", len(draft))
 
         await self._status.transition(turn_id, TurnStatus.EVALUATING)
         # On EvaluatorSchemaInvalidError: do not store synthetic evaluation/decision.
@@ -290,10 +349,19 @@ class CognitiveDirector:
             )
         timings["evaluator_ms"] = tc.elapsed_ms
         await self._store(turn_id, "evaluation", evaluation)
+        logger.info(
+            "📊 Evaluación — naturalness %s | safety %s | doctrine %s | coverage %s | empathy %s",
+            _pct(evaluation.naturalness),
+            _pct(evaluation.safety),
+            _pct(evaluation.doctrine),
+            _pct(evaluation.coverage),
+            _pct(evaluation.empathy),
+        )
 
         # Naturalness 1× redraft (Director pre-Decider): same prompt_final only.
         # Exactly once — boolean gate, never a while/retry loop or Decider action.
         if evaluation.naturalness < self._naturalness_min:
+            old_naturalness = evaluation.naturalness
             await self._status.transition(turn_id, TurnStatus.GENERATING)
             with TimingContext("generator_redraft") as tc:
                 draft = await self._generator.generate(built.prompt_final)
@@ -314,6 +382,11 @@ class CognitiveDirector:
             await self._store(turn_id, "generated_text", draft)
             await self._store(turn_id, "evaluation", evaluation)
             timings["naturalness_redraft"] = 1.0
+            logger.info(
+                "🎨 Redraft — naturalness %s → %s",
+                _pct(old_naturalness),
+                _pct(evaluation.naturalness),
+            )
 
         await self._status.transition(turn_id, TurnStatus.DECIDING)
         # Generator guarantees non-empty draft on success; Decider owns action choice.
@@ -339,6 +412,16 @@ class CognitiveDirector:
             v for k, v in timings.items() if k.endswith("_ms")
         )
         await self._store(turn_id, "timings", timings)
+        emoji = _DECISION_EMOJI.get(decision.action, "➡️")
+        verb = _DECISION_VERB.get(decision.action, decision.action)
+        logger.info(
+            "%s Decisión para chat %s: %s (%s) | %sms",
+            emoji,
+            turn.chat_id,
+            verb,
+            decision.reason,
+            round(timings.get("total_ms", 0)),
+        )
         return decision
 
     async def _build_analyst_input(self, turn: IncomingTurn) -> AnalystInput:

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 
+from diana.application.logformat import ColorExtraFormatter
 from diana.application.missed_message_recovery import recover_missed_updates
 from diana.composition import (
     AppContainer,
@@ -26,11 +27,14 @@ logger = logging.getLogger("diana.composition")
 
 
 def configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        stream=sys.stdout,
-    )
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(ColorExtraFormatter())
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    root.handlers = [handler]
+    # PTB v21+ polling uses httpx — without this every getUpdates floods the console.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 async def _cancel_job(task: asyncio.Task | None, name: str) -> None:
