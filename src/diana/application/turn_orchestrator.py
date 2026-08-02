@@ -62,13 +62,23 @@ def trailing_vip_texts(history_rows: list[dict]) -> list[str]:
 
 
 def format_vip_burst_text(texts: list[str], *, fallback: str) -> str:
-    """Build IncomingTurn.text for a single msg or multi-msg open burst."""
+    """Build IncomingTurn.text for a single msg or multi-msg open burst.
+
+    ROADMAP 3.3: when a VIP sends multiple messages before the pipeline runs,
+    number each line so the Analyst can reason about distinct intents within
+    the burst instead of collapsing N intents into a single ``intent``
+    field. The Generator still produces one reply — the numbering is for the
+    cognitive stage only — but the owner can see all N intents in ``/traza``
+    and notice if one was ignored.
+    """
     cleaned = [t.strip() for t in texts if isinstance(t, str) and t.strip()]
     if not cleaned:
         return fallback
     if len(cleaned) == 1:
         return cleaned[0]
-    return "\n".join([_MULTI_VIP_BURST_HEADER, *cleaned])
+    header = f"(el VIP envió {len(cleaned)} mensajes seguidos)"
+    numbered = "\n".join(f"[{i + 1}/{len(cleaned)}] {t}" for i, t in enumerate(cleaned))
+    return f"{header}\n{numbered}"
 
 
 class DirectorPort(Protocol):

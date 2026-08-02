@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-J4Category = Literal["identidad_ia", "pago_precio", "compromiso_real"]
+J4Category = Literal["pago_precio", "compromiso_real"]
 
 IA_TEMPLATE = "jsjsj si y sólo vivo en tu mente 😏"
 

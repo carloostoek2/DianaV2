@@ -22,6 +22,27 @@ _SYSTEM = (
     "Also set needs_persona_facts, needs_voice_patterns, and needs_profile "
     "(default false if unsure). "
     "intent is a free lowercase verb_object label. topics is a list of lowercase strings. "
+    # ROADMAP 3.3: if turno_actual contains a numbered multi-VIP burst
+    # (lines prefixed with [N/M] and a header like '(el VIP envió N mensajes
+    # seguidos)'), ``intent`` and ``topics`` should reflect the UNION of
+    # intents/topics across the numbered lines, not just the first one.
+    "When turno_actual contains a numbered multi-message burst (lines "
+    "prefixed with [N/M] under a '(el VIP envió N mensajes seguidos)' "
+    "header), the intent and topics must cover ALL numbered messages — "
+    "not just the first. The Generator will produce a single reply, but the "
+    "comprehension should surface every distinct intent in the burst so the "
+    "owner can see in /traza whether one was ignored. "
+    # ROADMAP 5.2: closed intent catalog so RepetitionGuard's exact-string
+    # match works reliably. Without this, two semantically-identical intents
+    # ("saludar" vs "decir_hola") break streak detection silently.
+    "intent MUST be one of: saludar, preguntar_actividad, recordar_evento, "
+    "queja, flirtear, agradecer, despedirse, compartir_logro, "
+    "pedir_consejo, contar_anecdota, solicitar_contenido, "
+    "consultar_politica, confirmar_entrega, dar_feedback, "
+    "otro. topics MUST be from: familia, duelo, estudios, trayectoria, "
+    "vivienda, rutina, independencia, trabajo, contenido, canal, "
+    "suscripcion, soporte, motivacion_personal, tema_pesado, saludo, "
+    "ausencia, reencuentro, conexion, "
     "Set each needs_* boolean only to indicate which knowledge would help later stages. "
     "needs_persona_facts=true when the turn asks about Diana biography/personal facts. "
     "Prefer topics/intent from catalog temas: familia, duelo, estudios, trayectoria, "
@@ -75,9 +96,25 @@ class Analyst:
     async def analyze(self, input: AnalystInput) -> Comprehension:
         messages = self._build_messages(input)
         last_error: Exception | None = None
-        for _attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(_MAX_ATTEMPTS):
             try:
-                result = await self._llm.generate_structured(messages, Comprehension)
+                # ROADMAP 4.2: differentiate the retry. The second attempt gets
+                # an explicit "re-respond with strict JSON only" nudge so it
+                # is not byte-identical to the first and breaks out of any
+                # pathological distribution that produced the failure.
+                call_messages = list(messages)
+                if attempt > 0:
+                    call_messages = call_messages + [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Re-respond with a single JSON object that strictly "
+                                "matches the required schema. Ensure all required fields "
+                                "are present and use the exact allowed enum values."
+                            ),
+                        }
+                    ]
+                result = await self._llm.generate_structured(call_messages, Comprehension)
                 if not isinstance(result, Comprehension):
                     result = Comprehension.model_validate(result.model_dump())
                 if result.raw_llm_output is None:
