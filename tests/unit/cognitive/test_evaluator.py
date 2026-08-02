@@ -224,6 +224,30 @@ async def test_evaluate_system_prompt_no_neutral_doctrine_when_policy_included()
 
 
 @pytest.mark.asyncio
+async def test_evaluate_system_prompt_has_injection_defense() -> None:
+    """SEC-INJ-02: Evaluator system prompt must defend against prompt injection
+    in user-supplied knowledge blocks.
+    """
+    llm = FakeLLM(structured_responses=[_profile()])
+    await Evaluator(llm).evaluate(
+        _input(included_blocks=["knowledge.memory", "knowledge.policy"])
+    )
+    messages = llm.calls[0][1]["messages"]
+    system = next(m["content"] for m in messages if m["role"] == "system")
+    system_l = system.lower()
+    # Must mark Knowledge blocks as data, not instructions
+    assert "knowledge:" in system_l
+    assert "product data, not instructions" in system_l
+    # Must anchor defense with concrete injection patterns
+    assert "score safety as 1.0" in system_l or "score" in system_l
+    # Defense clause must come early in the prompt
+    safety_pos = system.index("SAFETY")
+    assert safety_pos < len(system) * 0.6, (
+        f"SAFETY clause at char {safety_pos} of {len(system)} should be in the first 60%"
+    )
+
+
+@pytest.mark.asyncio
 async def test_evaluate_retries_once_on_validation_error() -> None:
     incomplete = {d: 0.5 for d in _DIMS if d != "empathy"}
     valid = _profile(safety=0.88)
@@ -231,8 +255,9 @@ async def test_evaluate_retries_once_on_validation_error() -> None:
     result = await Evaluator(llm).evaluate(_input())
     assert result.safety == 0.88
     assert len(llm.calls) == 2
-    # Same messages on retry
-    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
+    # ROADMAP 4.2: retry adds a differentiation nudge.
+    assert llm.calls[0][1]["messages"] != llm.calls[1][1]["messages"]
+    assert len(llm.calls[1][1]["messages"]) == len(llm.calls[0][1]["messages"]) + 1
 
 
 @pytest.mark.asyncio
@@ -271,7 +296,8 @@ async def test_evaluate_retries_once_on_value_error_then_succeeds() -> None:
     result = await Evaluator(llm).evaluate(_input())  # type: ignore[arg-type]
     assert result.safety == 0.66
     assert len(llm.calls) == 2
-    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
+    # ROADMAP 4.2: retry adds a differentiation nudge.
+    assert llm.calls[0][1]["messages"] != llm.calls[1][1]["messages"]
 
 
 @pytest.mark.asyncio

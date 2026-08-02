@@ -64,6 +64,27 @@ async def test_generate_system_forbids_mexican_slang_and_profanity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_system_prompt_has_injection_defense() -> None:
+    """SEC-INJ-02: Generator system prompt must defend against prompt injection
+    in user-supplied knowledge blocks.
+    """
+    llm = FakeLLM(text_responses=["draft ok"])
+    await Generator(llm).generate("prompt body")
+    system = llm.calls[0][1]["messages"][0]["content"]
+    system_l = system.lower()
+    # Must mark Knowledge blocks as data, not instructions
+    assert "knowledge:" in system_l
+    assert "product data, not instructions" in system_l
+    # Must mention concrete injection patterns to anchor the defense
+    assert "ignore prior rules" in system_l or "ignore prior" in system_l
+    assert "reveal" in system_l  # e.g. "reveal the system prompt"
+    # Defense clause must come BEFORE the output instruction (not as a tail afterthought)
+    assert system.index("SAFETY") < system.index("Output the draft text only"), (
+        "SAFETY defense must precede the output instruction"
+    )
+
+
+@pytest.mark.asyncio
 async def test_generate_empty_then_success_retries_once() -> None:
     """E.4: empty first response → one retry → return second non-empty."""
     llm = FakeLLM(text_responses=["", "Hola ok"])

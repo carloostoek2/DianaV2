@@ -52,6 +52,20 @@ from diana.cognitive.thresholds import DEFAULT_SUPERVISED_THRESHOLDS
 # Short Analyst window (contrato A.2 recommends 5–10). Registry retrieval stays at 20.
 ANALYST_HISTORY_LIMIT = 8
 
+# Naturalness redraft reminder. Appended to ``prompt_final`` when the first
+# draft scored below threshold. Phrased in Spanish to match the persona's chat
+# register. The marker ``--- REDRAFT ---`` makes the LLM branch treat the second
+# call as a deliberate remediation rather than a re-roll, and gives the
+# Generator concrete knobs (length, muletillas, warmth) to re-aim at.
+_REDRAFT_REMINDER = (
+    "\n\n--- REDRAFT ---\n"
+    "Tu respuesta anterior fue marcada como poco natural (naturalness baja). "
+    "Reescribila como mensaje real de chat: tono casual, 2-3 líneas como máximo, "
+    "alguna muletilla natural de Diana si el tono lo permite (jsjs, o sea, pues, "
+    "ayyy), calidez real sin sonar a asistente. Mantené el contenido semántico "
+    "— solo cambiá el cómo, no el qué."
+)
+
 # Port/DB role vocabulary → contract autor (bot and unknown roles are excluded).
 _ROLE_TO_AUTOR: dict[str, str] = {
     "vip": "vip",
@@ -81,6 +95,23 @@ def _clip(text: str, limit: int = 60) -> str:
 
 def _pct(score: float) -> str:
     return f"{score * 100:.0f}%"
+
+
+def _build_redraft_prompt(prompt_final: str, naturalness_min: float) -> str:
+    """Return a variant prompt for the 1× naturalness redraft.
+
+    Keeps the original ``prompt_final`` (persona + knowledge + comprehension +
+    current VIP message) and appends a concrete remediation hint so the second
+    generation differs from the first. The threshold value is mentioned in the
+    reminder so the LLM has a numeric anchor (currently a static phrase; we
+    interpolate ``naturalness_min`` for future tunability).
+    """
+    return (
+        prompt_final
+        + _REDRAFT_REMINDER.replace(
+            "naturalness baja", f"naturalness < {naturalness_min:.2f}"
+        )
+    )
 
 
 def _early_exit_evaluation() -> EvaluationProfile:
@@ -358,13 +389,20 @@ class CognitiveDirector:
             _pct(evaluation.empathy),
         )
 
-        # Naturalness 1× redraft (Director pre-Decider): same prompt_final only.
-        # Exactly once — boolean gate, never a while/retry loop or Decider action.
+        # Naturalness 1× redraft (Director pre-Decider).
+        # Same persona + knowledge + comprehension as the first attempt, plus a
+        # concrete remediation hint so the second generation is not byte-identical
+        # to the first (which would just re-roll the same robotic output at
+        # temperature=0.7). Exactly once — boolean gate, never a while/retry loop
+        # or Decider action.
         if evaluation.naturalness < self._naturalness_min:
             old_naturalness = evaluation.naturalness
             await self._status.transition(turn_id, TurnStatus.GENERATING)
+            redraft_prompt = _build_redraft_prompt(
+                built.prompt_final, self._naturalness_min
+            )
             with TimingContext("generator_redraft") as tc:
-                draft = await self._generator.generate(built.prompt_final)
+                draft = await self._generator.generate(redraft_prompt)
             timings["generator_redraft_ms"] = tc.elapsed_ms
             # Store second draft only after second eval succeeds (paired artifacts).
 
@@ -459,36 +497,6 @@ class CognitiveDirector:
         if i == len(raw) - 1:
             return list(raw)
         return list(raw[: i + 1])
-
-    @staticmethod
-    def _drop_current_turn_rows(raw: list[dict], turn: IncomingTurn) -> list[dict]:
-        """Legacy helper: drop single current VIP row (kept for unit access).
-
-        Production path uses ``_drop_open_vip_burst`` so multi-message rounds
-        do not double-count unanswered VIP lines in historial_reciente.
-        """
-        mid = turn.telegram_message_id
-        if mid is not None:
-            return [
-                row
-                for row in raw
-                if not (
-                    isinstance(row, dict)
-                    and row.get("role") == "vip"
-                    and row.get("telegram_message_id") == mid
-                )
-            ]
-        # Fallback when message id is absent: drop trailing vip row with same text.
-        if not raw:
-            return raw
-        last = raw[-1]
-        if (
-            isinstance(last, dict)
-            and last.get("role") == "vip"
-            and str(last.get("text", "")) == turn.text
-        ):
-            return list(raw[:-1])
-        return list(raw)
 
     @staticmethod
     def _map_history_messages(raw: list[dict]) -> list[HistoryMessage]:

@@ -58,16 +58,24 @@ def validate_llm_base_url(base_url: str) -> str:
 
 
 def strip_json_fences(content: str) -> str:
-    """Remove optional markdown code fences around a JSON payload."""
+    """Remove optional markdown code fences around a JSON payload.
+
+    Strict mode: only accepts content that is either wrapped in a single
+    markdown fence or that starts and ends with a JSON object. With
+    ``response_format: json_object`` enforced upstream, the LLM is contracted
+    to return JSON; we no longer auto-substring between the first ``{`` and
+    the last ``}`` because that fallback was too permissive (e.g. prose with
+    an unrelated ``{`` mid-sentence would be silently extracted as a broken
+    JSON object).
+    """
     text = content.strip()
     match = _FENCE_RE.match(text)
     if match:
         return match.group(1).strip()
-    # Tolerate leading/trailing prose around a JSON object.
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return text[start : end + 1]
+    # If the whole content already looks like a single JSON object, return as-is.
+    if text.startswith("{") and text.endswith("}"):
+        return text
+    # Otherwise fail loud — caller will raise ValueError on json.loads.
     return text
 
 
@@ -131,7 +139,7 @@ class DeepSeekProvider:
         self,
         messages: list[dict],
         *,
-        temperature: float = 0.7,
+        temperature: float = 0.4,
         max_tokens: int = 1024,
     ) -> str:
         payload = {

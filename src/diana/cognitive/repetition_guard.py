@@ -22,9 +22,16 @@ class RepetitionGuard:
     def is_repeated(self, current_intent: str, recent_intents: list[str]) -> bool:
         if not current_intent or not current_intent.strip():
             return False
+        # Normalize intent for case/whitespace resilience (ROADMAP 5.1):
+        # the Analyst emits free lowercase verb_object labels today; if a
+        # future Analyst change introduces case variation, the streak must
+        # still match ("Saludar" and "saludar " should count as the same).
+        canonical = current_intent.strip().lower()
         streak = 1
         for intent in recent_intents:
-            if intent == current_intent:
+            if not intent:
+                continue
+            if intent.strip().lower() == canonical:
                 streak += 1
             else:
                 break

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -38,6 +40,53 @@ from diana.cognitive.models import (
 )
 
 logger = logging.getLogger("diana.application")
+
+# ROADMAP 5.7: durable audit trail of escalations as a plain-text rotating log.
+# DB stores structured escalation rows (escalations table) and the owner
+# receives a Telegram DM, but operators also want a grep-friendly file for
+# post-incident review. The handler is attached lazily on first escalation
+# so importing this module is side-effect-free in tests.
+_ESCALATION_LOG_PATH = os.environ.get(
+    "DIANA_ESCALATION_LOG_PATH", "/var/log/diana/escalations.log"
+)
+_ESCALATION_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB per file
+_ESCALATION_LOG_BACKUP_COUNT = 5
+_escalation_file_handler_attached = False
+
+
+def _ensure_escalation_file_handler() -> None:
+    """Attach a RotatingFileHandler to the escalation logger (once per process)."""
+    global _escalation_file_handler_attached
+    if _escalation_file_handler_attached:
+        return
+    escalation_logger = logging.getLogger("diana.escalations")
+    # Skip if the root config or a prior attach already provided one.
+    if any(isinstance(h, RotatingFileHandler) for h in escalation_logger.handlers):
+        _escalation_file_handler_attached = True
+        return
+    try:
+        # Ensure the parent directory exists; if it can't (e.g. sandbox),
+        # the handler is silently skipped — DB and Telegram paths still work.
+        os.makedirs(os.path.dirname(_ESCALATION_LOG_PATH), exist_ok=True)
+        handler = RotatingFileHandler(
+            _ESCALATION_LOG_PATH,
+            maxBytes=_ESCALATION_LOG_MAX_BYTES,
+            backupCount=_ESCALATION_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
+        )
+        escalation_logger.addHandler(handler)
+        escalation_logger.setLevel(logging.INFO)
+        _escalation_file_handler_attached = True
+    except OSError:
+        # Filesystem not writable (e.g. tests, container without /var/log).
+        # Fail-soft: the in-process logger and DB/DM paths remain functional.
+        pass
 
 
 class OwnerAuthError(PermissionError):
@@ -209,6 +258,16 @@ class AdminService:
             )
         )
         await self._escalations.mark_notified(turn_id)
+        # ROADMAP 5.7: append a one-line plain-text record to the audit log.
+        _ensure_escalation_file_handler()
+        logging.getLogger("diana.escalations").info(
+            "turn=%s chat=%s vip_text=%r tipo=%s reason=%s",
+            str(turn_id),
+            turn.chat_id,
+            (turn.text or "")[:200],
+            tipo,
+            reason,
+        )
         logger.info(
             "escalation_notified",
             extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},

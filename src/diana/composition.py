@@ -502,9 +502,20 @@ def build_app(
 
     catalog = get_persona_catalog()
     voz = catalog["voz_configurada"]
+    # F2 Item 3: gate memory retrieval on the feature flag so the
+    # ``feature_memory_enabled`` switch actually controls something.
+    # Without this gate, the flag is a dead stub (see ROADMAP item 4.6).
+    effective_memory_repo = (
+        memories_repo if settings.feature_memory_enabled else None
+    )
+    if not settings.feature_memory_enabled:
+        logger.info(
+            "memory_feature_disabled",
+            extra={"feature_memory_enabled": False},
+        )
     registry = build_default_registry(
         history,
-        memory_repo=memories_repo,
+        memory_repo=effective_memory_repo,
         policy_repo=policies_repo,
         examples_repo=examples_repo,
         profile_repo=profiles_repo,

@@ -101,8 +101,16 @@ async def test_analyze_retries_once_on_validation_error() -> None:
     assert result.intent == "recovered"
     assert len(llm.calls) == 2
     assert all(c[0] == "generate_structured" for c in llm.calls)
-    # A.6: single retry uses the same input messages.
-    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
+    # ROADMAP 4.2: the retry must append a differentiation nudge so the
+    # second call is not byte-identical to the first.
+    first_msgs = llm.calls[0][1]["messages"]
+    retry_msgs = llm.calls[1][1]["messages"]
+    assert retry_msgs != first_msgs
+    # Retry starts with the original messages and adds a user-role nudge
+    assert retry_msgs[: len(first_msgs)] == first_msgs
+    assert len(retry_msgs) == len(first_msgs) + 1
+    assert retry_msgs[-1]["role"] == "user"
+    assert "Re-respond" in retry_msgs[-1]["content"] or "JSON" in retry_msgs[-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -115,7 +123,9 @@ async def test_analyze_double_fail_raises_analista_schema_invalido() -> None:
     assert str(exc_info.value) == "analista_schema_invalido"
     assert exc_info.value.reason == "analista_schema_invalido"
     assert len(llm.calls) == 2
-    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
+    # ROADMAP 4.2: the retry must add a differentiation nudge.
+    assert llm.calls[0][1]["messages"] != llm.calls[1][1]["messages"]
+    assert len(llm.calls[1][1]["messages"]) == len(llm.calls[0][1]["messages"]) + 1
 
 
 class _ScriptedStructuredLLM:
@@ -147,7 +157,9 @@ async def test_analyze_retries_once_on_value_error() -> None:
     result = await Analyst(llm).analyze(_input())  # type: ignore[arg-type]
     assert result.intent == "from-valueerror-retry"
     assert len(llm.calls) == 2
-    assert llm.calls[0][1]["messages"] == llm.calls[1][1]["messages"]
+    # ROADMAP 4.2: the retry must add a differentiation nudge.
+    assert llm.calls[0][1]["messages"] != llm.calls[1][1]["messages"]
+    assert len(llm.calls[1][1]["messages"]) == len(llm.calls[0][1]["messages"]) + 1
 
 
 @pytest.mark.asyncio

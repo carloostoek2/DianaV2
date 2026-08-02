@@ -9,7 +9,7 @@ import pytest
 from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
-from diana.cognitive.director import CognitiveDirector
+from diana.cognitive.director import CognitiveDirector, _build_redraft_prompt
 from diana.cognitive.evaluator import Evaluator
 from diana.cognitive.generator import Generator
 from diana.cognitive.models import (
@@ -1256,8 +1256,19 @@ async def test_naturalness_below_min_redrafts_once() -> None:
 
     generate_calls = [c for c in llm.calls if c[0] == "generate"]
     assert len(generate_calls) == 2
-    # Same prompt_final on both generates (byte-identical user content).
-    assert generate_calls[0][1]["messages"] == generate_calls[1][1]["messages"]
+    # Redraft must NOT use a byte-identical prompt (the old behavior re-rolled
+    # the same robotic output at temperature=0.7). The second call must append
+    # a `--- REDRAFT ---` remediation block.
+    first_user = generate_calls[0][1]["messages"][1]["content"]
+    second_user = generate_calls[1][1]["messages"][1]["content"]
+    assert second_user != first_user
+    assert second_user.startswith(first_user), (
+        "redraft prompt must preserve the original prompt_final as a prefix"
+    )
+    assert "--- REDRAFT ---" in second_user
+    assert "naturalness" in second_user.lower()
+    # Spanish persona voice
+    assert "Reescribila" in second_user or "Reescribí" in second_user
 
     timings = trace.get(turn.turn_id, "timings")
     assert isinstance(timings, dict)
@@ -1348,6 +1359,106 @@ async def test_naturalness_redraft_then_decide_once() -> None:
     assert isinstance(payload, dict)
     assert payload["action"] == "approve"
     assert payload["draft_text"] == "natural"
+
+
+# --- Redraft uses a variant prompt (not the same prompt_final) ---
+
+
+@pytest.mark.asyncio
+async def test_redraft_prompt_preserves_persona_and_current_message() -> None:
+    """Redraft prompt keeps the original persona and VIP message as a prefix."""
+    from diana.cognitive.context_builder import ContextBuilder
+    from diana.cognitive.models import Comprehension
+
+    builder = ContextBuilder()
+    persona_text = "Eres Diana. Tono cálido."
+    built = builder.build(
+        _turn(text="hola VIP"),
+        _comprehension(),
+        knowledge={},
+        persona=persona_text,
+    )
+    redraft = _build_redraft_prompt(built.prompt_final, 0.5)
+    # Persona and current VIP message must be carried over
+    assert persona_text in redraft
+    assert "hola VIP" in redraft
+    # And the redraft marker must be appended
+    assert "--- REDRAFT ---" in redraft
+
+
+@pytest.mark.asyncio
+async def test_redraft_uses_distinct_user_message() -> None:
+    """The two generate() calls in a redraft must send DIFFERENT user content."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.2),
+            _profile(naturalness=0.9),
+        ],
+        text_responses=["first", "second"],
+    )
+    director, _, _ = make_director(llm)
+    await director.handle_turn(_turn())
+
+    generate_calls = [c for c in llm.calls if c[0] == "generate"]
+    assert len(generate_calls) == 2
+    first = generate_calls[0][1]["messages"][1]["content"]
+    second = generate_calls[1][1]["messages"][1]["content"]
+    # They must not be byte-identical (the whole point of this fix)
+    assert first != second
+    # But second must extend first (preserves all original context)
+    assert second.startswith(first)
+    # And include a remediation hint
+    assert "REDRAFT" in second or "REDRAFT" in second.upper()
+
+
+@pytest.mark.asyncio
+async def test_redraft_marker_includes_concrete_persona_guidance() -> None:
+    """The redraft reminder should mention persona voice cues (muletillas, etc.)."""
+    from diana.cognitive.director import _build_redraft_prompt
+
+    redraft = _build_redraft_prompt("base", 0.5)
+    # Concrete persona knobs the LLM can aim at
+    assert "muletilla" in redraft.lower() or "muletillas" in redraft.lower()
+    # Spanish-language reminder (matches the persona)
+    assert "Reescribila" in redraft or "Reescribí" in redraft or "reescribila" in redraft.lower()
+
+
+def test_redraft_marker_includes_threshold_value() -> None:
+    """The reminder interpolates the actual naturalness_min threshold so the LLM
+    has a numeric anchor for the remediation.
+    """
+    r050 = _build_redraft_prompt("base", 0.5)
+    r070 = _build_redraft_prompt("base", 0.7)
+    # Different thresholds → different prompts
+    assert r050 != r070
+    # Numeric threshold is interpolated (e.g. "0.50", "0.70")
+    assert "0.50" in r050
+    assert "0.70" in r070
+    # Generic phrase is replaced, not duplicated
+    assert "naturalness baja" not in r050
+    assert "naturalness baja" not in r070
+
+
+@pytest.mark.asyncio
+async def test_no_redraft_means_no_reminder_marker() -> None:
+    """When naturalness is above threshold, the prompt sent to the LLM is
+    NOT contaminated with the redraft marker.
+    """
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.9),
+        ],
+        text_responses=["only-one"],
+    )
+    director, _, _ = make_director(llm)
+    await director.handle_turn(_turn())
+
+    generate_calls = [c for c in llm.calls if c[0] == "generate"]
+    assert len(generate_calls) == 1
+    user_content = generate_calls[0][1]["messages"][1]["content"]
+    assert "--- REDRAFT ---" not in user_content
 
 
 @pytest.mark.asyncio

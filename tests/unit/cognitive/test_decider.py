@@ -708,14 +708,22 @@ def test_doctrine_wins_over_molesta() -> None:
     assert decision.reason == "doctrine_not_found"
 
 
-def test_molesta_wins_over_risk_alto() -> None:
-    """Molesta + risk alto + high safety → frustracion_directa (not risk_high)."""
+def test_risk_alto_wins_over_molesta() -> None:
+    """Molesta + risk alto + high safety → risk_high (semantic severity wins).
+
+    The Decider matrix now checks ``risk == "alto"`` BEFORE
+    ``emotion == "molesta"`` so a message that triggers both signals surfaces
+    the more severe / actionable reason (``risk_high``) in the owner's
+    /traza view, instead of masking it under the lower-severity
+    ``frustracion_directa`` reason.
+    """
     decision = Decider().decide(
         _profile(safety=0.9),
         _comprehension(risk="alto", emotion="molesta"),
     )
     assert decision.action == "escalate"
-    assert decision.reason == "frustracion_directa"
+    assert decision.reason == "risk_high"
+    assert decision.reason != "frustracion_directa"
 
 
 def test_molesta_beats_autonomous_send() -> None:
