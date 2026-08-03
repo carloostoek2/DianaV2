@@ -411,6 +411,8 @@ def test_turn_status_terminal_and_non_terminal_set() -> None:
     assert TurnStatus.PENDING_APPROVAL.value == "pending_approval"
     assert TurnStatus.WAITING_DELAY not in TERMINAL_TURN_STATUSES
     assert TurnStatus.WAITING_DELAY.value == "waiting_delay"
+    assert TurnStatus.PROMO_PENDING not in TERMINAL_TURN_STATUSES
+    assert TurnStatus.PROMO_PENDING.value == "promo_pending"
 
     expected_values = {
         "received",
@@ -424,6 +426,7 @@ def test_turn_status_terminal_and_non_terminal_set() -> None:
         "deciding",
         "pending_approval",
         "gray_zone",
+        "promo_pending",
         "escalated",
         "superseded",
         "delivered",
