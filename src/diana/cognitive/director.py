@@ -60,10 +60,10 @@ ANALYST_HISTORY_LIMIT = 8
 _REDRAFT_REMINDER = (
     "\n\n--- REDRAFT ---\n"
     "Tu respuesta anterior fue marcada como poco natural (naturalness baja). "
-    "Reescribila como mensaje real de chat: tono casual, 2-3 líneas como máximo, "
+    "Reescríbela como mensaje real de chat: tono casual, 2-3 líneas como máximo, "
     "alguna muletilla natural de Diana si el tono lo permite (jsjs, o sea, pues, "
-    "ayyy), calidez real sin sonar a asistente. Mantené el contenido semántico "
-    "— solo cambiá el cómo, no el qué."
+    "ayyy), calidez real sin sonar a asistente. Mantén el contenido semántico "
+    "— solo cambia el cómo, no el qué."
 )
 
 # Port/DB role vocabulary → contract autor (bot and unknown roles are excluded).

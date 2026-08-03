@@ -566,7 +566,7 @@ def build_admin_router(
         except Exception:
             logger.exception("Error querying traces")
             await message.answer(
-                "Error del sistema al consultar las trazas. Reintentá más tarde."
+                "Error del sistema al consultar las trazas. Inténtalo más tarde."
             )
             return
         if view.empty:
@@ -601,7 +601,7 @@ def build_admin_router(
         except Exception:
             logger.exception("Error querying trace")
             await message.answer(
-                "Error del sistema al consultar la traza. Reintentá más tarde."
+                "Error del sistema al consultar la traza. Inténtalo más tarde."
             )
             return
         if view is None:
@@ -628,7 +628,7 @@ def build_admin_router(
             await message.answer("Almacén de falsas alarmas no disponible.")
         elif status == "fp_error":
             await message.answer(
-                "Error del sistema al marcar falsa alarma. Reintentá más tarde."
+                "Error del sistema al marcar falsa alarma. Inténtalo más tarde."
             )
         elif status == "forbidden":
             return  # fail-closed silent
@@ -751,7 +751,7 @@ def build_admin_router(
         except Exception:
             logger.exception("Error loading metrics summary")
             await message.answer(
-                "Error del sistema al cargar métricas. Reintentá más tarde."
+                "Error del sistema al cargar métricas. Inténtalo más tarde."
             )
             return
         kb = metrics_keyboard() if status == "ok" else None
@@ -806,7 +806,7 @@ def build_admin_router(
                 "El turno ya fue resuelto o reemplazado — no se envió nada"
             )
         elif status == "deliver_failed":
-            await message.answer("Error al enviar — intentá de nuevo desde los botones del borrador")
+            await message.answer("Error al enviar — inténtalo de nuevo desde los botones del borrador")
         elif status == "session_expired":
             await message.answer(SESSION_EXPIRED_UX)
 

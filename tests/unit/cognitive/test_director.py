@@ -1268,7 +1268,7 @@ async def test_naturalness_below_min_redrafts_once() -> None:
     assert "--- REDRAFT ---" in second_user
     assert "naturalness" in second_user.lower()
     # Spanish persona voice
-    assert "Reescribila" in second_user or "Reescribí" in second_user
+    assert "Reescríbela" in second_user or "Reescribí" in second_user
 
     timings = trace.get(turn.turn_id, "timings")
     assert isinstance(timings, dict)
@@ -1421,7 +1421,7 @@ async def test_redraft_marker_includes_concrete_persona_guidance() -> None:
     # Concrete persona knobs the LLM can aim at
     assert "muletilla" in redraft.lower() or "muletillas" in redraft.lower()
     # Spanish-language reminder (matches the persona)
-    assert "Reescribila" in redraft or "Reescribí" in redraft or "reescribila" in redraft.lower()
+    assert "Reescríbela" in redraft or "reescribela" in redraft.lower()
 
 
 def test_redraft_marker_includes_threshold_value() -> None:
