@@ -8,6 +8,7 @@ from typing import Any, Callable, Literal
 from uuid import UUID
 
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery
 
 from diana.application.admin_metrics_service import AdminMetricsService
@@ -47,7 +48,7 @@ ADMIN_MENU_TEXT = (
     "/staging — ejemplos pendientes (promover/descartar)"
 )
 
-SESSION_EXPIRED_UX = "Sesión expirada — presioná Corregir de nuevo en el borrador"
+SESSION_EXPIRED_UX = "Sesión expirada — presiona Corregir de nuevo en el borrador"
 
 logger = logging.getLogger("diana.telegram")
 
@@ -313,7 +314,7 @@ def build_callback_router(
             sessions_note[actor_id] = chat_id_val
             await query.answer()
             if query.message:
-                await query.message.answer("📝 Enviá el texto de la nota:")
+                await query.message.answer("📝 Envía el texto de la nota:")
             return
 
         # ---- Trace callbacks (handled before standard dispatch) ----
@@ -387,7 +388,7 @@ def build_callback_router(
                     return
             except Exception:
                 logger.exception("Error processing trace callback")
-                await query.answer("Error del sistema al consultar la traza. Reintentá más tarde.", show_alert=True)
+                await query.answer("Error del sistema al consultar la traza. Inténtalo más tarde.", show_alert=True)
                 return
 
         # ---- Standard owner callbacks ----
@@ -409,7 +410,7 @@ def build_callback_router(
             )
             try:
                 await query.answer(
-                    "Error al procesar la acción. Reintentá.",
+                    "Error al procesar la acción. Inténtalo de nuevo.",
                     show_alert=True,
                 )
             except Exception:
@@ -426,7 +427,7 @@ def build_callback_router(
                 if query.message:
                     try:
                         await query.message.answer(
-                            f"Enviá el texto corregido para el turno {data.split(':', 1)[-1]}"
+                            f"Envía el texto corregido para el turno {data.split(':', 1)[-1]}"
                         )
                     except Exception:
                         logger.exception(
@@ -445,7 +446,19 @@ def build_callback_router(
                         )
                     except Exception:
                         logger.exception("Error al editar mensaje aprobado")
-                await query.answer()
+                try:
+                    await query.answer()
+                except TelegramBadRequest as exc:
+                    # Delivery outlasted Telegram's callback answer window
+                    # ("query is too old"); the edit above already gave feedback.
+                    logger.debug(
+                        "owner_callback_answer_stale",
+                        extra={
+                            "callback_data": data,
+                            "actor_id": actor_id,
+                            "reason": getattr(exc, "message", str(exc)),
+                        },
+                    )
                 return
             if status == "escalated":
                 await query.answer("Escalado al superior")
@@ -457,7 +470,7 @@ def build_callback_router(
                 )
                 return
             if status == "deliver_failed":
-                await query.answer("Error al enviar — intentá de nuevo", show_alert=True)
+                await query.answer("Error al enviar — inténtalo de nuevo", show_alert=True)
                 return
             # Draft versioning (regen / prev / next)
             if status == "regen_ok":
@@ -479,7 +492,7 @@ def build_callback_router(
                 await query.answer("Última versión")
                 return
             if status == "error":
-                await query.answer("No se pudo regenerar — reintentá", show_alert=True)
+                await query.answer("No se pudo regenerar — inténtalo", show_alert=True)
                 return
             await query.answer()
         except Exception:
