@@ -1,7 +1,7 @@
 # DianaV2 — VIP chat automation (F1 core + flag-gated F2/F3)
 
 Installable `src/diana` package: env-driven Settings, PostgreSQL schema via
-Alembic (migrations **001–011**, F1 foundation through F3 tables/indexes), pure
+Alembic (migrations **001–017**, F1 foundation through F3 tables/indexes), pure
 cognitive decision pipeline, application shell (orchestrator + admin approval
 gate), Behavior Engine, Learning post-turn, and **Telegram I/O** (aiogram 3
 long-polling) with SQL repository adapters.
@@ -22,7 +22,7 @@ merge; those seeds are **not** live overrides today.
 
 | Surface | Flag (Settings field / env var) | Wired? | Notes |
 |---------|----------------------------------|--------|--------|
-| **F2** Memory | `feature_memory_enabled` / `FEATURE_MEMORY_ENABLED` | **no** | Settings stub only — not read in `src/`. `MemoryRetriever` always registered; runs when planner `needs_memory`. |
+| **F2** Memory | `feature_memory_enabled` / `FEATURE_MEMORY_ENABLED` | **yes** | Gates the VIP memory repo wiring at composition root (`memory_repo=None` when off → retrievers run without VIP memory). Flag off → pipeline behaves as Fase 1/2. |
 | **F2** Gray zone | `feature_gray_zone_enabled` / `FEATURE_GRAY_ZONE_ENABLED` | **yes** | Doctrine consult (`consult_doctrine`) + VIP freeze path |
 | **F2** Staging | `feature_staging_enabled` / `FEATURE_STAGING_ENABLED` | **yes** | `StagingService` wired when flag on: owner correct → staging candidates; gray-zone policy rows when gray zone on. Owner DM **`/staging`**: list pending **example** candidates + inline Promote/Discard (REQ-ADM-08). Flag off → staging deps `None`, surface unavailable. No auto-promote. |
 | **F2** Sandbox | `feature_sandbox_enabled` / `FEATURE_SANDBOX_ENABLED` | **yes** | Catalog (6 fixtures) + session + owner `/sandbox` commands + turn isolation (auth bypass, fixture profile inject, learning/`should_persist` skip, recontact skip). Delivery uses configured `global_mode` / `delivery_mode` (real Telegram when supervised\|autonomous). Flag off → surface unavailable. Global `global_mode=fake_delivery` remains a separate ops mode |
@@ -31,6 +31,7 @@ merge; those seeds are **not** live overrides today.
 | **F3** Promo | `feature_promo_enabled` / `FEATURE_PROMO_ENABLED` | **yes** | Non-VIP exact-match promo |
 | **F3** Calibration | `feature_calibration_enabled` / `FEATURE_CALIBRATION_ENABLED` | **yes** | Threshold calibration job + threshold writes / drift alerts |
 | **F3** Advanced behavior | `feature_advanced_behavior` / `FEATURE_ADVANCED_BEHAVIOR` | **yes** | Message split + human quirks when delivery context enables them |
+| **Persona admin** | `feature_persona_admin_enabled` / `FEATURE_PERSONA_ADMIN_ENABLED` | **yes** | Owner `/persona` menu + "Personalidad y reglas" panel with versioned catalog (migration **017**). Flag off → panel hidden, static `persona_diana.json` remains the source. |
 
 **Freeze** is implemented on the gray-zone / freeze path (middleware + Behavior
 delivery hard-check). **Traceability (Anexo T)** is available for the owner DM:
@@ -113,9 +114,10 @@ export DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/diana
 alembic upgrade head
 ```
 
-Schema evolves through migrations **001–011** (F1 foundation, F2 knowledge /
+Schema evolves through migrations **001–017** (F1 foundation, F2 knowledge /
 freeze / trace timings, F3 flags·thresholds·auto_send·recontact/promo·calibration·
-owner marks, and pipeline_traces indexes). See `alembic/versions/` and ORM models
+owner marks, runtime timers, business connections, and persona versions — pipeline_traces
+indexes). See `alembic/versions/` and ORM models
 for the authoritative table set (do not hard-code a table count).
 Seeds include non-secret `system_config` keys (`global_mode`, `forbidden_keywords`,
 `eval_thresholds`, feature flags default false, etc.). The `pgcrypto` extension is
@@ -139,6 +141,6 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 |----------|------|
 | `EvaluationProfile` | Exactly 7 floats; no single score / confidence |
 | `Decision.action` | `approve` \| `escalate` \| `consult_doctrine` \| `send` — Decider emits `send` when autonomous **flag + mins** met; auto-**delivery** only if autonomous mode service L1/L2 enable (else demote to approve) |
-| Schema | F1 foundation + F2 knowledge + F3 tables via migrations **001–011** (see `alembic/versions`) |
+| Schema | F1 foundation + F2 knowledge + F3 tables via migrations **001–017** (see `alembic/versions`) |
 | Secrets | Env only; not in seed or repo |
-| Feature flags | Default **`false`** in Settings/env (runtime SoT). Not every Settings field is a live gate — see table (memory stub; staging/sandbox wired when flags on) |
+| Feature flags | Default **`false`** in Settings/env (runtime SoT). Every Settings flag is a live gate — surfaces appear only when their flag is on |
