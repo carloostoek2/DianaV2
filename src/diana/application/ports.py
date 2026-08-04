@@ -394,6 +394,49 @@ class RuntimeTimerStore(Protocol):
         ...
 
 
+class PersonaVersionRecord(BaseModel):
+    """persona_versions row shape for versioned persona catalog snapshots.
+
+    ``payload`` is the complete validated catalog dict
+    (voz_configurada, persona_facts, voice_patterns, policies, schedule).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    version: int
+    source: str  # "seed" | "db"
+    payload: dict[str, Any]
+    is_active: bool = False
+    created_by: int | None = None
+    created_at: datetime
+    applied_at: datetime | None = None
+
+
+@runtime_checkable
+class PersonaAdminStore(Protocol):
+    """Versioned persona catalog persistence (owner admin)."""
+
+    async def insert_version(
+        self,
+        *,
+        version: int,
+        source: str,
+        payload: dict[str, Any],
+        created_by: int | None = None,
+    ) -> PersonaVersionRecord: ...
+
+    async def list_versions(self) -> list[PersonaVersionRecord]: ...
+
+    async def get_by_id(self, persona_version_id: UUID) -> PersonaVersionRecord | None: ...
+
+    async def get_active(self) -> PersonaVersionRecord | None: ...
+
+    async def activate_version(
+        self, persona_version_id: UUID, *, now: datetime
+    ) -> PersonaVersionRecord | None: ...
+
+
 class BusinessConnectionRecord(BaseModel):
     """business_connections row shape for BC lifecycle persistence."""
 
@@ -647,6 +690,8 @@ __all__ = [
     "OwnerNotifierPort",
     "PendingApprovalStore",
     "PendingDeliveryStore",
+    "PersonaAdminStore",
+    "PersonaVersionRecord",
     "PromoExecutionRecord",
     "PromoExecutionStore",
     "PromoTriggerRecord",

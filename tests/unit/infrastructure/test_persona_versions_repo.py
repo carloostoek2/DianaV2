@@ -1,0 +1,181 @@
+"""Offline port/repo surface tests for persona_versions (no Postgres)."""
+
+from __future__ import annotations
+
+import inspect
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+
+from diana.application.ports import (
+    PersonaAdminStore,
+    PersonaVersionRecord,
+)
+from diana.infrastructure.db.repositories.persona_versions import (
+    PersonaVersionRepo,
+    persona_version_orm_to_record,
+)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _record(version: int = 1, *, is_active: bool = False) -> PersonaVersionRecord:
+    return PersonaVersionRecord(
+        id=uuid4(),
+        version=version,
+        source="db",
+        payload={"voz_configurada": {"persona": "x", "reglas_estilo": ["r"]}},
+        is_active=is_active,
+        created_by=123,
+        created_at=_now(),
+        applied_at=None,
+    )
+
+
+def test_persona_ports_importable_and_extra_forbid() -> None:
+    assert PersonaAdminStore is not None
+    rec = _record()
+    assert rec.version == 1
+    assert rec.source == "db"
+    with pytest.raises(ValueError):
+        PersonaVersionRecord(
+            id=uuid4(),
+            version=1,
+            source="db",
+            payload={},
+            created_at=_now(),
+            unexpected="x",
+        )
+
+
+def test_orm_to_record_mapper_pure() -> None:
+    row = SimpleNamespace(
+        id=uuid4(),
+        version=3,
+        source="db",
+        payload={"a": 1},
+        is_active=True,
+        created_by=42,
+        created_at=_now(),
+        applied_at=None,
+    )
+    record = persona_version_orm_to_record(row)  # type: ignore[arg-type]
+    assert record.version == 3
+    assert record.is_active is True
+    assert record.created_by == 42
+    assert record.applied_at is None
+
+
+def test_persona_version_repo_surface() -> None:
+    sig = inspect.signature(PersonaVersionRepo.__init__)
+    assert "session_factory" in sig.parameters
+    repo = PersonaVersionRepo(session_factory=object())  # type: ignore[arg-type]
+    for name in (
+        "insert_version",
+        "list_versions",
+        "get_by_id",
+        "get_active",
+        "activate_version",
+    ):
+        method = getattr(repo, name)
+        assert inspect.iscoroutinefunction(method), name
+
+
+def test_protocol_method_names_match_repo() -> None:
+    protocol_names = set(
+        getattr(PersonaAdminStore, "__protocol_attrs__", set())
+    )
+    repo_names = {
+        name
+        for name in ("insert_version", "list_versions", "get_by_id", "get_active", "activate_version")
+    }
+    assert protocol_names == repo_names
+    assert isinstance(PersonaVersionRepo, type)
+    # duck-typing: repo instance satisfies the protocol at runtime
+    assert isinstance(
+        PersonaVersionRepo(session_factory=object()),  # type: ignore[arg-type]
+        PersonaAdminStore,
+    )
+
+
+class _MemoryPersonaAdminStore:
+    """In-memory PersonaAdminStore (unit, no Postgres)."""
+
+    def __init__(self) -> None:
+        self.records: list[PersonaVersionRecord] = []
+        self.inserted: list[PersonaVersionRecord] = []
+
+    async def insert_version(
+        self,
+        *,
+        version: int,
+        source: str,
+        payload: dict,
+        created_by: int | None = None,
+    ) -> PersonaVersionRecord:
+        record = PersonaVersionRecord(
+            id=uuid4(),
+            version=version,
+            source=source,
+            payload=payload,
+            created_by=created_by,
+            created_at=_now(),
+        )
+        self.records.append(record)
+        self.inserted.append(record)
+        return record
+
+    async def list_versions(self) -> list[PersonaVersionRecord]:
+        return sorted(
+            self.records, key=lambda r: r.created_at, reverse=True
+        )
+
+    async def get_by_id(self, persona_version_id) -> PersonaVersionRecord | None:
+        for record in self.records:
+            if record.id == persona_version_id:
+                return record
+        return None
+
+    async def get_active(self) -> PersonaVersionRecord | None:
+        for record in self.records:
+            if record.is_active:
+                return record
+        return None
+
+    async def activate_version(
+        self, persona_version_id, *, now: datetime
+    ) -> PersonaVersionRecord | None:
+        target = await self.get_by_id(persona_version_id)
+        if target is None:
+            return None
+        for record in self.records:
+            record.is_active = record.id == persona_version_id
+            record.applied_at = now if record.id == persona_version_id else record.applied_at
+        return target
+
+
+@pytest.mark.asyncio
+async def test_memory_store_activation_semantics() -> None:
+    store = _MemoryPersonaAdminStore()
+    v1 = await store.insert_version(version=1, source="db", payload={"a": 1}, created_by=1)
+    v2 = await store.insert_version(version=2, source="db", payload={"a": 2}, created_by=1)
+
+    assert await store.get_active() is None
+    assert v1.is_active is False and v2.is_active is False
+
+    now = _now()
+    active = await store.activate_version(v2.id, now=now)
+    assert active is not None and active.id == v2.id
+    assert await store.get_active() is not None
+    assert (await store.get_active()).id == v2.id
+    # exactly one active after re-activation of v1
+    await store.activate_version(v1.id, now=now)
+    assert (await store.get_active()).id == v1.id
+    actives = [r for r in store.records if r.is_active]
+    assert len(actives) == 1
+
+    assert await store.activate_version(uuid4(), now=now) is None

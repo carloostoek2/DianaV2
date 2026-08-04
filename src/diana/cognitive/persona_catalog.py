@@ -63,7 +63,17 @@ def _parse_and_validate(raw: str) -> dict[str, Any]:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"persona catalog is not valid JSON: {exc}") from exc
+    return validate_persona_catalog(data)
 
+
+def validate_persona_catalog(data: dict[str, Any]) -> dict[str, Any]:
+    """Pure, reusable catalog validation — same ValueError contract as
+    ``_parse_and_validate`` (which delegates here after JSON decoding).
+
+    Validates the complete persona catalog dict (voz_configurada, persona_facts,
+    voice_patterns, policies, schedule) so DB-backed payloads (owner admin)
+    share the exact same structural rules as the static JSON file.
+    """
     if not isinstance(data, dict):
         raise ValueError("persona catalog root must be an object")
 
@@ -197,4 +207,4 @@ def _validate_schedule(schedule: Any) -> None:
             )
 
 
-__all__ = ["load_persona_catalog", "get_persona_catalog"]
+__all__ = ["load_persona_catalog", "get_persona_catalog", "validate_persona_catalog"]

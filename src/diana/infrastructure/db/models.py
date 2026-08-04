@@ -13,6 +13,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     Text,
     func,
     text,
@@ -511,4 +512,43 @@ class OwnerMark(Base):
     kind: Mapped[str] = mapped_column(Text, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class PersonaVersion(Base):
+    """Versioned persona catalog snapshot (owner admin, Item 1).
+
+    Each row stores a complete validated persona catalog dict
+    (voz_configurada, persona_facts, voice_patterns, policies, schedule).
+    At most one row is active (enforced by the partial unique index
+    ``uq_persona_versions_active``). ``version=0, source='seed'`` represents
+    the static ``persona_diana.json`` catalog.
+    """
+
+    __tablename__ = "persona_versions"
+    __table_args__ = (
+        Index("ix_persona_versions_created_at", text("created_at DESC")),
+        Index(
+            "uq_persona_versions_active",
+            "is_active",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
     )

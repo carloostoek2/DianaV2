@@ -226,3 +226,38 @@ def test_load_rejects_empty_tema_and_empty_patron() -> None:
     )
     with pytest.raises(ValueError, match="patron"):
         _parse_and_validate(json.dumps(base))
+
+
+def test_validate_persona_catalog_accepts_minimal_and_roundtrip() -> None:
+    """Pure dict validator: accepts a minimal valid catalog and is idempotent."""
+    from diana.cognitive.persona_catalog import (
+        load_persona_catalog,
+        validate_persona_catalog,
+    )
+
+    data = validate_persona_catalog(_minimal_catalog())
+    assert set(data) == {
+        "voz_configurada",
+        "persona_facts",
+        "voice_patterns",
+        "policies",
+        "schedule",
+    }
+    # Round-trip over the real static catalog must be a no-op.
+    real = load_persona_catalog()
+    assert validate_persona_catalog(real) == real
+
+
+def test_validate_persona_catalog_rejects_missing_schedule() -> None:
+    from diana.cognitive.persona_catalog import validate_persona_catalog
+
+    payload = _minimal_catalog()
+    del payload["schedule"]
+    with pytest.raises(ValueError, match="schedule"):
+        validate_persona_catalog(payload)
+
+
+def test_validate_persona_catalog_exported_in_all() -> None:
+    import diana.cognitive.persona_catalog as pc
+
+    assert "validate_persona_catalog" in pc.__all__

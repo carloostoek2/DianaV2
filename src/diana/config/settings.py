@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     feature_promo_enabled: bool = False
     feature_calibration_enabled: bool = False
     feature_advanced_behavior: bool = False
+    feature_persona_admin_enabled: bool = False
 
     # Ops surface (Telegram process edge) — single-instance defaults.
     # health_host is loopback-only (SEC-HEALTH-01); no public bind via env.

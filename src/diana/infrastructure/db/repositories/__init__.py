@@ -14,6 +14,10 @@ from diana.infrastructure.db.repositories.learning_metrics import (
 )
 from diana.infrastructure.db.repositories.metrics_data import SqlMetricsDataSource
 from diana.infrastructure.db.repositories.owner_marks import SqlOwnerMarkStore
+from diana.infrastructure.db.repositories.persona_versions import (
+    PersonaVersionRepo,
+    persona_version_orm_to_record,
+)
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
@@ -32,5 +36,7 @@ __all__ = [
     "SqlTraceStore",
     "SqlTurnStore",
     "SqlVipStore",
+    "PersonaVersionRepo",
     "vip_orm_to_record",
+    "persona_version_orm_to_record",
 ]
