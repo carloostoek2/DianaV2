@@ -346,6 +346,11 @@ async def test_dispatch_history_and_restore_flow() -> None:
     )
     assert "restaurar" in str(msg2.edit_text.call_args.args[0]).lower()
 
+    modified = _base_catalog()
+    modified["voz_configurada"]["reglas_estilo"].append("regla v2")
+    v2 = await service.save_persona(_OWNER_ID, modified)
+    assert service.current["voz_configurada"]["reglas_estilo"][-1] == "regla v2"
+
     msg3 = _msg()
     await dispatch_personalidad(
         msg3, parsed=_parsed("restore_ok", str(v1.id)), actor_id=_OWNER_ID,
@@ -354,7 +359,8 @@ async def test_dispatch_history_and_restore_flow() -> None:
     text3 = str(msg3.edit_text.call_args.args[0])
     assert "restaurada" in text3
     assert f"v{v1.version}" in text3
-    assert service.current == _base_catalog()  # restored payload became active
+    # restore actually re-activated v1's payload over v2
+    assert service.current["voz_configurada"]["reglas_estilo"] == _base_catalog()["voz_configurada"]["reglas_estilo"]
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +548,9 @@ async def test_dispatch_history_empty_and_restore_unknown() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_delete_last_item_shows_error_and_does_not_save() -> None:
-    solo = _base_catalog()
+    import copy
+
+    solo = copy.deepcopy(_base_catalog())
     solo["voz_configurada"]["reglas_estilo"] = ["única regla"]
     service = _FakePersonaAdmin(solo)
     msg = _msg()
@@ -613,3 +621,53 @@ def test_parse_fact_id_length_capped() -> None:
     base = _base_catalog()
     with pytest.raises(ValueError, match="demasiado largo"):
         apply_persona_edit(base, "fact", None, "x" * 40 + " | tema | hecho")
+
+
+@pytest.mark.asyncio
+async def test_wizard_pattern_via_handler_saves() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = AsyncMock()
+    msg.text = "nuevo_patron | risa, casual | jsjs | Reemplaza jaja"
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    msg.message_id = 1
+    msg.chat = AsyncMock()
+    msg.chat.id = 42
+    bot = _bot()
+
+    await handle_persona_edit_text(msg, bot, _session("pattern"), service, _sessions())
+    assert len(service.saved) == 1
+    last = service.saved[0]["voice_patterns"][-1]
+    assert last == {"id": "nuevo_patron", "tags": ["risa", "casual"], "patron": "jsjs", "uso": "Reemplaza jaja"}
+
+
+def test_parse_id_caps_pattern_and_policy() -> None:
+    base = _base_catalog()
+    with pytest.raises(ValueError, match="demasiado largo"):
+        apply_persona_edit(base, "pattern", None, "x" * 40 + " | tag | patron | uso")
+    with pytest.raises(ValueError, match="demasiado largo"):
+        apply_persona_edit(base, "policy", None, "x" * 40 + " | tema | regla")
+
+
+def test_apply_edit_empty_text_guards() -> None:
+    base = _base_catalog()
+    with pytest.raises(ValueError, match="descripción no puede estar vacía"):
+        apply_persona_edit(base, "persona", None, "   ")
+    with pytest.raises(ValueError, match="la regla no puede estar vacía"):
+        apply_persona_edit(base, "rule", None, "  ")
+    with pytest.raises(ValueError, match="elemento inválido"):
+        apply_persona_edit(base, "rule_del", None, None)
+
+
+@pytest.mark.asyncio
+async def test_wizard_no_service_shows_unavailable() -> None:
+    msg = AsyncMock()
+    msg.text = "cualquier cosa"
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    bot = _bot()
+    await handle_persona_edit_text(msg, bot, _session("rule"), None, _sessions())
+    assert bot.edit_message_text.await_count == 1
+    assert "no disponible" in str(bot.edit_message_text.call_args.kwargs.get("text", ""))

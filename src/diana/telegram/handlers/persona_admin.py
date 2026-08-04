@@ -249,7 +249,9 @@ def apply_persona_edit(
                 raise ValueError("la regla no puede estar vacía")
             voz["reglas_estilo"] = _replace_item(rules, extra, new_text, by_id=False)
         else:
-            voz["reglas_estilo"] = _delete_item(rules, extra or "0", by_id=False)
+            if extra is None:
+                raise ValueError("elemento inválido")
+            voz["reglas_estilo"] = _delete_item(rules, extra, by_id=False)
         nuevo["voz_configurada"] = voz
         return nuevo
 
@@ -273,8 +275,10 @@ def apply_persona_edit(
                 defaults, extra, new_text, by_id=False
             )
         else:
+            if extra is None:
+                raise ValueError("elemento inválido")
             schedule["default_responses"] = _delete_item(
-                defaults, extra or "0", by_id=False
+                defaults, extra, by_id=False
             )
         nuevo["schedule"] = schedule
         return nuevo
@@ -302,7 +306,9 @@ def apply_persona_edit(
         bloques = list(schedule.get("bloques") or [])
         if len(bloques) <= 1:
             raise ValueError("no se puede borrar el último bloque de agenda")
-        schedule["bloques"] = _delete_item(bloques, extra or "0", by_id=False)
+        if extra is None:
+            raise ValueError("elemento inválido")
+        schedule["bloques"] = _delete_item(bloques, extra, by_id=False)
         nuevo["schedule"] = schedule
         return nuevo
 
@@ -354,8 +360,8 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     fact_id, temas, hecho = parts[:3]
     if not fact_id or not temas or not hecho:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
-    if len(fact_id) > 32:
-        raise ValueError("el id es demasiado largo (máximo 32 caracteres)")
+    if len(fact_id.encode("utf-8")) > 24:
+        raise ValueError("el id es demasiado largo (máximo 24 bytes)")
     item: dict[str, Any] = {"id": fact_id, "tema": _split_topics(temas), "hecho": hecho}
     if len(parts) > 3 and parts[3].strip():
         item["nota_privada"] = parts[3].strip()
@@ -369,8 +375,8 @@ def _parse_pattern(text: str | None) -> dict[str, Any]:
     pattern_id, tags, patron, uso = parts[:4]
     if not pattern_id or not tags or not patron or not uso:
         raise ValueError("ningún campo puede estar vacío")
-    if len(pattern_id) > 32:
-        raise ValueError("el id es demasiado largo (máximo 32 caracteres)")
+    if len(pattern_id.encode("utf-8")) > 24:
+        raise ValueError("el id es demasiado largo (máximo 24 bytes)")
     return {"id": pattern_id, "tags": _split_topics(tags), "patron": patron, "uso": uso}
 
 
@@ -381,8 +387,8 @@ def _parse_policy(text: str | None) -> dict[str, Any]:
     policy_id, temas, regla = parts[:3]
     if not policy_id or not temas or not regla:
         raise ValueError("id, temas y regla no pueden estar vacíos")
-    if len(policy_id) > 32:
-        raise ValueError("el id es demasiado largo (máximo 32 caracteres)")
+    if len(policy_id.encode("utf-8")) > 24:
+        raise ValueError("el id es demasiado largo (máximo 24 bytes)")
     return {"id": policy_id, "tema": _split_topics(temas), "regla": regla}
 
 
@@ -608,10 +614,20 @@ async def dispatch_personalidad(
             "bloques": "🗓️ Bloques de agenda",
             "defaults": "💬 Respuestas libres",
         }
+        try:
+            keyboard = menu_persona_list_keyboard(items, add_action)
+        except ValueError:
+            await _show(
+                message,
+                "No se pudo mostrar la lista (algún elemento excede el límite de "
+                "tamaño). Editalo o eliminálo con otra herramienta.",
+                back,
+            )
+            return
         await _show(
             message,
             titles[action] + "\n\nToca un elemento para verlo.",
-            menu_persona_list_keyboard(items, add_action),
+            keyboard,
         )
         return
 
@@ -632,7 +648,7 @@ async def dispatch_personalidad(
                     InlineKeyboardButton(text="✏️ Editar", callback_data=encode_menu_persona(f"{op}_edit", item_key)),
                     InlineKeyboardButton(text="🗑️ Eliminar", callback_data=encode_menu_persona(f"{op}_del", item_key)),
                 ],
-                [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu_persona(_section_list_action(section)))],
+                [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu_persona(_section_list_action(op)))],
             ]
         )
         await _show(message, detail, kb)

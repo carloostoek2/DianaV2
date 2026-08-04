@@ -72,3 +72,14 @@ def test_dispatcher_accepts_persona_admin_kwargs() -> None:
     params = inspect.signature(build_dispatcher).parameters
     assert "persona_admin" in params
     assert "feature_persona_admin_enabled" in params
+
+
+def test_menu_router_flag_gate_shadows_persona_admin() -> None:
+    """With the feature off, the panel is inert (persona_admin forced to None)."""
+    from pathlib import Path
+
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    src = (root / "telegram" / "handlers" / "menu.py").read_text(encoding="utf-8")
+    assert "persona_admin = persona_admin if feature_persona_admin_enabled else None" in src
