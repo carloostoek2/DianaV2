@@ -35,6 +35,7 @@ from diana.application.recovery import (
     list_rematerializable_turns,
     list_waiting_approvals,
 )
+from diana.cognitive.models import is_turn_status_terminal
 
 logger = logging.getLogger("diana.application")
 
@@ -65,6 +66,7 @@ class RecoveryStartupReport(BaseModel):
     expired_delivering_or_stale: int = 0
     expired_recoverable: int = 0
     re_notified_approvals: int = 0
+    orphan_approvals_cancelled: int = 0
     recovered_deliveries: int = 0
     zombie_turns_expired: int = 0
     drafts_rematerialized: int = 0
@@ -178,7 +180,32 @@ async def run_startup_recovery(
 
     waiting = await list_waiting_approvals(approvals)
     re_notified = 0
+    orphan_cancelled = 0
     for approval in waiting:
+        # Defense in depth: never re-notify an approval whose turn is terminal
+        # (failed/superseded) or gone — its buttons would be dead. Cancel the
+        # orphan so it stops being re-notified on every startup (BUG: stale
+        # drafts from crash recovery used to loop forever).
+        if turns is not None:
+            live = await turns.get(approval.turn_id)
+            if live is None or is_turn_status_terminal(live.status):
+                try:
+                    await approvals.mark_status(approval.turn_id, "cancelled")
+                except Exception:
+                    logger.exception(
+                        "recovery_orphan_cancel_failed",
+                        extra={"turn_id": str(approval.turn_id)},
+                    )
+                else:
+                    orphan_cancelled += 1
+                    logger.info(
+                        "approval_orphan_cancelled",
+                        extra={
+                            "turn_id": str(approval.turn_id),
+                            "turn_status": None if live is None else live.status,
+                        },
+                    )
+                continue
         mid = await _renotify_approval(notifier, approval)
         if mid is not None:
             try:
@@ -194,6 +221,7 @@ async def run_startup_recovery(
         expired_delivering_or_stale=len(plan.to_expire),
         expired_recoverable=0 if behavior is not None else len(plan.recoverable),
         re_notified_approvals=re_notified,
+        orphan_approvals_cancelled=orphan_cancelled,
         recovered_deliveries=recovered,
         zombie_turns_expired=zombie_count,
         drafts_rematerialized=remat_count,
@@ -218,6 +246,7 @@ async def run_startup_recovery(
     if (
         recovered
         or re_notified
+        or orphan_cancelled
         or plan.to_expire
         or zombie_count
         or remat_count
@@ -474,6 +503,11 @@ async def _notify_recovery_summary(
         lines.append(
             f"  • {report.re_notified_approvals} borrador(es) re-notificado(s)"
         )
+    if report.orphan_approvals_cancelled:
+        lines.append(
+            f"  • {report.orphan_approvals_cancelled} borrador(es) sin turno"
+            " activo descartado(s)"
+        )
     if report.expired_delivering_or_stale:
         lines.append(
             f"  • {report.expired_delivering_or_stale} entrega(s) expirada(s)"
@@ -495,6 +529,7 @@ async def _notify_recovery_summary(
         [
             report.recovered_deliveries,
             report.re_notified_approvals,
+            report.orphan_approvals_cancelled,
             report.expired_delivering_or_stale,
             report.zombie_turns_expired,
             report.drafts_rematerialized,

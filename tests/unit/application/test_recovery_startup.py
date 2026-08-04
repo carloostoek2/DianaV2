@@ -145,6 +145,85 @@ async def test_startup_keeps_pending_approval_turns_approvable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_startup_cancels_orphan_approvals_with_terminal_turn() -> None:
+    """Dead drafts (turn failed/superseded/gone) are cancelled, not re-notified.
+
+    Regression: a crash-recovery orphan approval used to be re-notified on
+    every startup with dead buttons ("resuelto o reemplazado" on press).
+    """
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    turns = InMemoryTurnStore()
+
+    live_turn = uuid4()
+    failed_turn = uuid4()
+    superseded_turn = uuid4()
+    gone_turn = uuid4()
+    await turns.create(
+        TurnRecord(id=live_turn, chat_id=42, status="pending_approval")
+    )
+    await turns.create(
+        TurnRecord(
+            id=failed_turn,
+            chat_id=42,
+            status="failed",
+            error="crash_recovery",
+        )
+    )
+    await turns.create(
+        TurnRecord(id=superseded_turn, chat_id=42, status="superseded")
+    )
+    # gone_turn has no turn row at all.
+
+    await approvals.create_waiting(_approval(turn_id=live_turn))
+    await approvals.create_waiting(_approval(turn_id=failed_turn))
+    await approvals.create_waiting(_approval(turn_id=superseded_turn))
+    await approvals.create_waiting(_approval(turn_id=gone_turn))
+
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+        turns=turns,
+    )
+    assert report.re_notified_approvals == 1
+    assert report.orphan_approvals_cancelled == 3
+    assert len(notifier.drafts) == 1
+    assert notifier.drafts[0].turn_id == live_turn
+
+    live = await approvals.get_by_turn(live_turn)
+    assert live is not None and live.status == "waiting"
+    for tid in (failed_turn, superseded_turn, gone_turn):
+        stored = await approvals.get_by_turn(tid)
+        assert stored is not None and stored.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_startup_renotifies_all_when_turns_not_passed() -> None:
+    """Backwards compat: without a TurnStore the guard is skipped (re-notify all)."""
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    a1 = _approval()
+    a2 = _approval()
+    await approvals.create_waiting(a1)
+    await approvals.create_waiting(a2)
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+    )
+    assert report.re_notified_approvals == 2
+    assert report.orphan_approvals_cancelled == 0
+    assert len(notifier.drafts) == 2
+
+
+@pytest.mark.asyncio
 async def test_startup_never_calls_deliver_or_approve() -> None:
     """Guard: recovery helper has no direct approve/Director surface.
 
