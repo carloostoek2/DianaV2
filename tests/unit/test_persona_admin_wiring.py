@@ -44,3 +44,31 @@ def test_app_container_has_persona_admin_field() -> None:
     assert "persona_admin" in AppContainer.__dataclass_fields__
     field = AppContainer.__dataclass_fields__["persona_admin"]
     assert field.default is None
+
+
+def test_composition_passes_persona_admin_to_dispatcher(_comp_src: str) -> None:
+    """Item 3: build_dispatcher receives the persona admin service + flag."""
+    assert "persona_admin=persona_admin_service" in _comp_src
+    assert "feature_persona_admin_enabled=settings.feature_persona_admin_enabled" in _comp_src
+
+
+def test_menu_router_receives_persona_admin_and_flag() -> None:
+    """build_menu_router signature accepts persona_admin + feature flag."""
+    import inspect
+
+    from diana.telegram.handlers.menu import build_menu_router
+
+    params = inspect.signature(build_menu_router).parameters
+    assert "persona_admin" in params
+    assert "feature_persona_admin_enabled" in params
+    assert params["feature_persona_admin_enabled"].default is False
+
+
+def test_dispatcher_accepts_persona_admin_kwargs() -> None:
+    import inspect
+
+    from diana.telegram.setup import build_dispatcher
+
+    params = inspect.signature(build_dispatcher).parameters
+    assert "persona_admin" in params
+    assert "feature_persona_admin_enabled" in params

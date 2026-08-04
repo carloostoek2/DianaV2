@@ -727,6 +727,8 @@ def build_app(
         admin_trace=admin_trace,
         admin_metrics=admin_metrics,
         profile_admin=profile_admin,
+        persona_admin=persona_admin_service,
+        feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
         sandbox=sandbox,

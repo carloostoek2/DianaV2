@@ -533,6 +533,13 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
     "metrics": "📊 Métricas y aprendizaje\nCómo está funcionando Diana esta semana.",
     "history": "🔍 Historial y diagnóstico\nPara entender qué hizo Diana en un caso puntual.",
     "config": "⚙️ Configuración\n\nControla el comportamiento del bot. Por ahora solo está disponible el Modo Entrenamiento.",
+    "personalidad": (
+        "🎭 Personalidad y reglas\n\n"
+        "Revisa y edita cómo habla Diana: su descripción, las reglas de tono y "
+        "estilo, sus datos personales, patrones de voz, políticas y agenda. "
+        "Cada cambio se guarda como una versión nueva (el historial permite "
+        "volver atrás) y aplica de inmediato, sin reiniciar el bot."
+    ),
 }
 
 
@@ -578,6 +585,16 @@ def encode_menu_sandbox_profile(profile: str) -> str:
     return data
 
 
+def encode_menu_persona(action: str, extra: str | None = None) -> str:
+    """Build callback_data for the personalidad menu: m:personalidad:<action>[:<extra>]."""
+    data = f"{_ACTION_MENU}:personalidad:{action}"
+    if extra is not None:
+        data = f"{data}:{extra}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
 def parse_menu_callback(data: str) -> MenuCallback | None:
     """Parse menu callback_data into MenuCallback, or None if not a menu callback."""
     if not data or not data.startswith(f"{_ACTION_MENU}:"):
@@ -613,18 +630,28 @@ def _menu_back_row() -> list[InlineKeyboardButton]:
     return [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu("root"))]
 
 
-def menu_root_keyboard() -> InlineKeyboardMarkup:
-    """Main menu: the 6 logical categories (VIPs, Review, Sandbox, Metrics, History, Config)."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Mis VIPs", callback_data=encode_menu("vips"))],
-            [InlineKeyboardButton(text="💬 Revisar mensajes", callback_data=encode_menu("review"))],
-            [InlineKeyboardButton(text="🧪 Modo de prueba", callback_data=encode_menu("sandbox"))],
-            [InlineKeyboardButton(text="📊 Métricas y aprendizaje", callback_data=encode_menu("metrics"))],
-            [InlineKeyboardButton(text="🔍 Historial y diagnóstico", callback_data=encode_menu("history"))],
-            [InlineKeyboardButton(text="⚙️ Configuración", callback_data=encode_menu("config"))],
-        ]
-    )
+def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
+    """Main menu: the 6 logical categories (VIPs, Review, Sandbox, Metrics, History, Config).
+
+    ``show_persona`` adds the "Personalidad y reglas" category (Item 3), gated by
+    ``FEATURE_PERSONA_ADMIN_ENABLED`` so the default 6-button layout is unchanged.
+    """
+    rows = [
+        [InlineKeyboardButton(text="👥 Mis VIPs", callback_data=encode_menu("vips"))],
+        [InlineKeyboardButton(text="💬 Revisar mensajes", callback_data=encode_menu("review"))],
+        [InlineKeyboardButton(text="🧪 Modo de prueba", callback_data=encode_menu("sandbox"))],
+        [InlineKeyboardButton(text="📊 Métricas y aprendizaje", callback_data=encode_menu("metrics"))],
+        [InlineKeyboardButton(text="🔍 Historial y diagnóstico", callback_data=encode_menu("history"))],
+    ]
+    if show_persona:
+        rows.append([
+            InlineKeyboardButton(
+                text="🎭 Personalidad y reglas",
+                callback_data=encode_menu("personalidad"),
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="⚙️ Configuración", callback_data=encode_menu("config"))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def menu_vip_list_keyboard(
@@ -739,6 +766,96 @@ def menu_back_keyboard(dest: str) -> InlineKeyboardMarkup:
     """Simple back-only keyboard with a single Volver button for terminal actions."""
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🔙 Volver", callback_data=dest)]]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Personalidad y reglas (Item 3) — owner admin for the persona catalog
+# ---------------------------------------------------------------------------
+
+_PERSONA_BACK = "personalidad"
+
+
+def menu_personalidad_keyboard() -> InlineKeyboardMarkup:
+    """Sections of the Personalidad y reglas admin (back to root)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📝 Cómo habla Diana",
+                callback_data=encode_menu_persona("persona"),
+            )],
+            [InlineKeyboardButton(
+                text="✍️ Reglas de tono y estilo",
+                callback_data=encode_menu_persona("rules"),
+            )],
+            [InlineKeyboardButton(
+                text="👤 Datos personales",
+                callback_data=encode_menu_persona("facts"),
+            )],
+            [InlineKeyboardButton(
+                text="🗣️ Patrones de voz",
+                callback_data=encode_menu_persona("patterns"),
+            )],
+            [InlineKeyboardButton(
+                text="📜 Políticas de conducta",
+                callback_data=encode_menu_persona("policies"),
+            )],
+            [InlineKeyboardButton(
+                text="🗓️ Agenda",
+                callback_data=encode_menu_persona("schedule"),
+            )],
+            [InlineKeyboardButton(
+                text="🕘 Historial y restauración",
+                callback_data=encode_menu_persona("history"),
+            )],
+            _menu_back_row(),
+        ]
+    )
+
+
+def menu_persona_list_keyboard(
+    items: list[tuple[str, str]],
+    add_action: str | None,
+    *,
+    back_to: str = _PERSONA_BACK,
+    item_action: str = "item",
+) -> InlineKeyboardMarkup:
+    """Dynamic item list: one row per (callback_extra, label), plus optional add + back."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    for extra, label in items:
+        buttons.append([
+            InlineKeyboardButton(
+                text=label,
+                callback_data=encode_menu_persona(item_action, extra),
+            )
+        ])
+    if add_action is not None:
+        buttons.append([
+            InlineKeyboardButton(
+                text="➕ Agregar",
+                callback_data=encode_menu_persona(add_action),
+            )
+        ])
+    buttons.append(
+        _menu_back_row()
+        if back_to == "root"
+        else [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu(back_to))]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def menu_persona_confirm_restore_keyboard(version_id: str) -> InlineKeyboardMarkup:
+    """Confirm a version restore (destructive-ish, undoable but confirm anyway)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Sí, restaurar esta versión",
+                    callback_data=encode_menu_persona("restore_ok", version_id),
+                ),
+            ],
+            [InlineKeyboardButton(text="🔙 Cancelar", callback_data=encode_menu(_PERSONA_BACK))],
+        ]
     )
 
 
@@ -876,6 +993,7 @@ __all__ = [
     "encode_doctrine_resolve_callback",
     "encode_doctrine_escalate_callback",
     "encode_menu",
+    "encode_menu_persona",
     "encode_menu_sandbox_profile",
     "encode_menu_vip",
     "encode_menu_vip_action",
@@ -900,6 +1018,9 @@ __all__ = [
     "menu_sandbox_keyboard",
     "menu_sandbox_profile_picker_keyboard",
     "menu_pause_duration_keyboard",
+    "menu_personalidad_keyboard",
+    "menu_persona_confirm_restore_keyboard",
+    "menu_persona_list_keyboard",
     "menu_vip_detail_keyboard",
     "menu_vip_list_keyboard",
     "menu_vip_profile_keyboard",

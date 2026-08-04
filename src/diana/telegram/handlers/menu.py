@@ -22,11 +22,16 @@ from aiogram.types import CallbackQuery, Message
 
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.ports import TrainingModeStore, VipStore
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.sandbox import SandboxService
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
+from diana.telegram.handlers.persona_admin import (
+    dispatch_personalidad,
+    handle_persona_edit_text,
+)
 from diana.telegram.handlers.admin import (
     format_sandbox_perfiles,
     format_vips_list,
@@ -45,9 +50,10 @@ from diana.telegram.keyboards import (
     menu_back_keyboard,
     menu_config_keyboard,
     menu_confirm_delete_keyboard,
-    menu_pause_duration_keyboard,
     menu_history_keyboard,
     menu_metrics_keyboard,
+    menu_pause_duration_keyboard,
+    menu_personalidad_keyboard,
     menu_register_confirm_keyboard,
     menu_review_keyboard,
     menu_root_keyboard,
@@ -71,7 +77,8 @@ logger = logging.getLogger("diana.telegram")
 DEFAULT_MENU_TTL = timedelta(minutes=15)
 
 MenuSessionKind = Literal[
-    "sandbox_forward", "sandbox_profile", "note", "fact", "rename", "register_vip"
+    "sandbox_forward", "sandbox_profile", "note", "fact", "rename", "register_vip",
+    "persona_edit",
 ]
 
 
@@ -82,6 +89,8 @@ class MenuSession:
     kind: MenuSessionKind
     vip_user_id: int | None = None
     sandbox_chat_id: int | None = None
+    persona_section: str | None = None
+    persona_target: str | None = None
     last_bot_message_id: int | None = None
     last_chat_id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -162,6 +171,7 @@ _CATEGORY_KEYBOARDS: dict[str, Any] = {
     "sandbox": menu_sandbox_keyboard,
     "metrics": menu_metrics_keyboard,
     "history": menu_history_keyboard,
+    "personalidad": menu_personalidad_keyboard,
 }
 
 
@@ -312,6 +322,8 @@ def build_menu_router(
     staging: StagingService | None = None,
     coordinator: TurnCoordinator | None = None,
     profile_admin: ProfileAdminService | None = None,
+    persona_admin: PersonaAdminService | None = None,
+    feature_persona_admin_enabled: bool = False,
     menu_sessions: MenuSessionStore | None = None,
     config_store: TrainingModeStore | None = None,
     history_seed: object | None = None,
@@ -329,7 +341,10 @@ def build_menu_router(
     async def on_menu(message: Message, **_: Any) -> None:
         if not _is_owner(message):
             return
-        await message.answer(MENU_ROOT_TEXT, reply_markup=menu_root_keyboard())
+        await message.answer(
+            MENU_ROOT_TEXT,
+            reply_markup=menu_root_keyboard(show_persona=feature_persona_admin_enabled),
+        )
 
     # ---- m:* callbacks ----
 
@@ -350,7 +365,11 @@ def build_menu_router(
         # --- root ---
         if parsed.category == "root":
             if isinstance(callback.message, Message):
-                await _show(callback.message, MENU_ROOT_TEXT, menu_root_keyboard())
+                await _show(
+                    callback.message,
+                    MENU_ROOT_TEXT,
+                    menu_root_keyboard(show_persona=feature_persona_admin_enabled),
+                )
             return
 
         msg = callback.message
@@ -387,6 +406,20 @@ def build_menu_router(
                 await _show(msg, text, menu_config_keyboard(enabled))
                 return
 
+            if parsed.category == "personalidad":
+                if persona_admin is None:
+                    await _show(
+                        msg,
+                        "Personalidad y reglas no disponible.",
+                        menu_back_keyboard(encode_menu("root")),
+                    )
+                    return
+                text = MENU_CATEGORY_TEXT.get(parsed.category)
+                if text is None:
+                    return
+                await _show(msg, text, menu_personalidad_keyboard())
+                return
+
             build_kb = _CATEGORY_KEYBOARDS.get(parsed.category)
             text = MENU_CATEGORY_TEXT.get(parsed.category)
             if build_kb is None or text is None:
@@ -406,6 +439,7 @@ def build_menu_router(
             staging=staging,
             coordinator=coordinator,
             profile_admin=profile_admin,
+            persona_admin=persona_admin,
             sessions=sessions,
             config_store=config_store,
             history_seed=history_seed,
@@ -449,6 +483,8 @@ def build_menu_router(
                 bot, "Usa los botones para seleccionar un perfil.",
                 session=session, fallback=message,
             )
+        elif session.kind == "persona_edit":
+            await handle_persona_edit_text(message, bot, session, persona_admin, sessions)
         elif session.kind == "register_vip":
             await _handle_register_forward(message, bot, session, vips, sessions)
         elif session.kind == "note":
@@ -478,6 +514,7 @@ async def _dispatch_action(
     staging: StagingService | None,
     coordinator: TurnCoordinator | None,
     profile_admin: ProfileAdminService | None,
+    persona_admin: PersonaAdminService | None = None,
     sessions: MenuSessionStore,
     config_store: TrainingModeStore | None = None,
     history_seed: object | None = None,
@@ -997,6 +1034,16 @@ async def _dispatch_action(
     # ==================================================================
     # Config — training mode toggle
     # ==================================================================
+    if category == "personalidad":
+        await dispatch_personalidad(
+            message,
+            parsed=parsed,
+            actor_id=actor_id,
+            persona_admin=persona_admin,
+            sessions=sessions,
+        )
+        return
+
     if category == "config" and action == "toggle":
         if config_store is None:
             await _show(

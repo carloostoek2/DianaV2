@@ -20,6 +20,7 @@ from diana.application.ports import (
     TrainingModeStore,
     VipStore,
 )
+from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.promo_service import PromoService
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
@@ -93,6 +94,8 @@ def build_dispatcher(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     profile_admin: ProfileAdminService | None = None,
+    persona_admin: PersonaAdminService | None = None,
+    feature_persona_admin_enabled: bool = False,
     promo: PromoService | None = None,
     feature_promo_enabled: bool = False,
     sandbox: object | None = None,
@@ -185,6 +188,8 @@ def build_dispatcher(
             staging=staging,
             coordinator=coordinator,
             profile_admin=profile_admin,
+            persona_admin=persona_admin,
+            feature_persona_admin_enabled=feature_persona_admin_enabled,
             menu_sessions=menu_sessions,
             config_store=config_store,
             history_seed=history_seed,
