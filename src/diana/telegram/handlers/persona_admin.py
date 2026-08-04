@@ -482,7 +482,11 @@ async def dispatch_personalidad(
         try:
             versions = await persona_admin.list_versions(actor_id)
         except Exception as exc:
-            logger.warning("persona_history_failed", extra={"error": type(exc).__name__}, exc_info=True)
+            logger.warning(
+                "persona_history_failed",
+                extra={"actor_id": actor_id, "error": type(exc).__name__},
+                exc_info=True,
+            )
             await _show(message, "No se pudo leer el historial.", back)
             return
         if not versions:
@@ -524,7 +528,11 @@ async def dispatch_personalidad(
         try:
             restored = await persona_admin.restore(actor_id, extra)
         except Exception as exc:
-            logger.warning("persona_restore_failed", extra={"error": type(exc).__name__}, exc_info=True)
+            logger.warning(
+                "persona_restore_failed",
+                extra={"actor_id": actor_id, "error": type(exc).__name__},
+                exc_info=True,
+            )
             await _show(message, "No se pudo restaurar la versión.", back)
             return
         if restored is None:
@@ -703,7 +711,11 @@ async def handle_persona_edit_text(
     try:
         record = await persona_admin.save_persona(actor_id=message.from_user.id, payload=nuevo)
     except Exception as exc:
-        logger.warning("persona_save_failed", extra={"error": type(exc).__name__}, exc_info=True)
+        logger.warning(
+            "persona_save_failed",
+            extra={"actor_id": message.from_user.id, "error": type(exc).__name__},
+            exc_info=True,
+        )
         await _edit_or_answer(
             bot, "❌ No se pudo guardar. Intenta de nuevo o usa /cancelar.",
             session=session, fallback=message, keyboard=None,

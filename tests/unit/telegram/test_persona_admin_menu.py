@@ -412,3 +412,68 @@ async def test_load_current_falls_back_to_static() -> None:
     service = _FakePersonaAdmin(None)  # flag off / no active version
     catalog = await load_current(service)  # type: ignore[arg-type]
     assert catalog is get_persona_catalog()
+
+
+def test_apply_edit_pattern_policy_positive() -> None:
+    """Positive paths protect _parse_pattern/_parse_policy field mapping."""
+    base = _base_catalog()
+
+    n1 = apply_persona_edit(base, "pattern", None, "nuevo_patron | risa, casual | jsjs | Reemplaza jaja")
+    last = n1["voice_patterns"][-1]
+    assert last == {"id": "nuevo_patron", "tags": ["risa", "casual"], "patron": "jsjs", "uso": "Reemplaza jaja"}
+
+    n2 = apply_persona_edit(base, "policy", None, "nueva_pol | contenido, limites | No prometo nada")
+    last = n2["policies"][-1]
+    assert last == {"id": "nueva_pol", "tema": ["contenido", "limites"], "regla": "No prometo nada"}
+
+    # replace + delete by id
+    target_id = base["voice_patterns"][0]["id"]
+    n3 = apply_persona_edit(n2, "pattern", target_id, f"{target_id} | risa | jsjs | editado")
+    edited = next(p_ for p_ in n3["voice_patterns"] if p_["id"] == target_id)
+    assert edited["uso"] == "editado"
+    n4 = apply_persona_edit(n3, "policy_del", "nueva_pol", None)
+    assert all(p_["id"] != "nueva_pol" for p_ in n4["policies"])
+
+
+def test_apply_edit_never_mutates_base_other_ops() -> None:
+    """Deep-copied slices: base stays intact across all edit ops."""
+    base = _base_catalog()
+    snapshot = {k: list(v) if isinstance(v, list) else dict(v) for k, v in base.items()}
+
+    ops = [
+        ("rule", None, "r nueva"),
+        ("fact", None, "fid | tema | hecho"),
+        ("pattern", None, "pid | tag | patron | uso"),
+        ("policy", None, "polid | tema | regla"),
+        ("bloque", None, "lunes | 09:00 | 12:00 | actividad"),
+        ("default", None, "respuesta"),
+        ("timezone", None, "America/Mexico_City"),
+    ]
+    for op, extra, text in ops:
+        apply_persona_edit(base, op, extra, text)
+
+    assert base["voz_configurada"]["persona"] == snapshot["voz_configurada"]["persona"]
+    assert base["voz_configurada"]["reglas_estilo"] == snapshot["voz_configurada"]["reglas_estilo"]
+    assert base["persona_facts"] == snapshot["persona_facts"]
+    assert base["voice_patterns"] == snapshot["voice_patterns"]
+    assert base["policies"] == snapshot["policies"]
+    assert base["schedule"] == snapshot["schedule"]
+
+
+def test_apply_edit_last_item_guards_typed_sections() -> None:
+    """Cannot delete the last fact/pattern/policy/default_response."""
+    solo = {
+        "voz_configurada": {"persona": "x", "reglas_estilo": ["r"]},
+        "persona_facts": [{"id": "f", "tema": ["t"], "hecho": "h"}],
+        "voice_patterns": [{"id": "p", "tags": ["a"], "patron": "x", "uso": "y"}],
+        "policies": [{"id": "pol", "tema": ["t"], "regla": "r"}],
+        "schedule": {"timezone": "America/Mexico_City", "default_responses": ["d"], "bloques": []},
+    }
+    with pytest.raises(ValueError, match="último"):
+        apply_persona_edit(solo, "fact_del", "f", None)
+    with pytest.raises(ValueError, match="último"):
+        apply_persona_edit(solo, "pattern_del", "p", None)
+    with pytest.raises(ValueError, match="último"):
+        apply_persona_edit(solo, "policy_del", "pol", None)
+    with pytest.raises(ValueError, match="último"):
+        apply_persona_edit(solo, "default_del", "0", None)
