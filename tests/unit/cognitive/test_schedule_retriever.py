@@ -234,3 +234,22 @@ async def test_schedule_hot_swap_via_provider() -> None:
     provider.catalog = {"schedule": dict(v2_schedule)}
     result = await retriever.fetch(_turn(), _comprehension())
     assert result["actividad"] == "actividad v2"
+
+
+@pytest.mark.asyncio
+async def test_schedule_provider_none_falls_back() -> None:
+    """Provider returning None keeps the constructor schedule state."""
+    monday_morning = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)  # lunes 09:00 CDMX
+    provider = _FakeProvider(None)
+    retriever = ScheduleRetriever(
+        bloques=[
+            {"dias": ["lunes"], "inicio": "09:00", "fin": "12:00", "actividad": "constructor state"}
+        ],
+        default_responses=["seed"],
+        tz="America/Mexico_City",
+        clock=_FixedClock(monday_morning),
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result["tipo"] == "actividad"
+    assert result["actividad"] == "constructor state"

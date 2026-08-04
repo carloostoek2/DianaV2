@@ -409,3 +409,14 @@ async def test_registry_propagates_persona_catalog_provider() -> None:
         _turn(), _comprehension(emotion="positiva", intent="saludo", topics=["apertura"])
     )
     assert patterns is not None and patterns["patron"] == "holis"
+
+    policies = await registry.resolve("knowledge.policy").fetch(
+        _turn(), _comprehension(topics=["contenido"])
+    )
+    assert policies == ["Trigger: pol | Rule: live policy"]
+
+    schedule = await registry.resolve("knowledge.schedule").fetch(
+        _turn(), _comprehension()
+    )
+    assert schedule is not None and schedule["tipo"] == "respuesta_libre"
+    assert schedule["respuesta_sugerida"] == "live response"

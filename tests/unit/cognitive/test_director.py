@@ -1715,3 +1715,30 @@ async def test_persona_provider_none_falls_back_to_constructor() -> None:
     prompt = trace.get(turn.turn_id, "prompt_text")
     assert "You are Diana." in prompt
     assert "static rule" in prompt
+
+
+async def test_persona_provider_hot_swap_between_turns() -> None:
+    """The SAME director picks up a new persona on the next turn (hot-reload)."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile(), _comprehension(), _profile()],
+        text_responses=["draft", "draft"],
+    )
+    provider = _FakePersonaProvider(
+        {"voz_configurada": {"persona": "Persona turno 1", "reglas_estilo": ["r1"]}}
+    )
+    director, trace, _ = make_director(
+        llm, persona="Static fallback", persona_catalog_provider=provider
+    )
+
+    first = _turn()
+    await director.handle_turn(first)
+    assert "Persona turno 1" in trace.get(first.turn_id, "prompt_text")
+
+    provider.catalog = {
+        "voz_configurada": {"persona": "Persona turno 2", "reglas_estilo": ["r2"]}
+    }
+    second = _turn()
+    await director.handle_turn(second)
+    prompt2 = trace.get(second.turn_id, "prompt_text")
+    assert "Persona turno 2" in prompt2
+    assert "Persona turno 1" not in prompt2

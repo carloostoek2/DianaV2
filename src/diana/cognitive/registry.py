@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from diana.cognitive.ports import ClockPort, MessageHistoryPort, Retriever
+from diana.cognitive.ports import ClockPort, MessageHistoryPort, PersonaCatalogProvider, Retriever
 from diana.cognitive.retrievers.context import ContextRetriever
 from diana.cognitive.retrievers.examples import ExamplesRetriever
 from diana.cognitive.retrievers.history import HistoryRetriever
@@ -79,7 +79,7 @@ def build_default_registry(
     static_policies: list | None = None,
     schedule: dict | None = None,
     clock: ClockPort | None = None,
-    persona_catalog_provider: Any = None,
+    persona_catalog_provider: PersonaCatalogProvider | None = None,
 ) -> CapabilityRegistry:
     """Register capabilities and fail-fast for the planner universe.
 

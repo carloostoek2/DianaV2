@@ -329,3 +329,22 @@ async def test_set_on_change_registers_later() -> None:
     service.set_on_change(lambda: calls.append("change"))
     await service.save_persona(OWNER_ID, _valid_catalog())
     assert calls == ["change"]
+
+
+@pytest.mark.asyncio
+async def test_on_change_not_called_on_restore_failure() -> None:
+    store = _RaiseOnActivateStore()
+    calls: list[str] = []
+    service = PersonaAdminService(
+        payload_store=store,  # type: ignore[arg-type]
+        feature_persona_admin_enabled=True,
+        owner_telegram_id=OWNER_ID,
+        clock=_now,
+        on_change=lambda: calls.append("change"),
+    )
+    await service.save_persona(OWNER_ID, _valid_catalog())
+    assert calls == ["change"]  # fires on the successful save
+    store.raise_on_activate = True
+    with pytest.raises(ValueError):
+        await service.restore(OWNER_ID, uuid4())
+    assert calls == ["change"]  # NOT fired on the failed restore

@@ -88,3 +88,14 @@ async def test_custom_static_catalog_fallback() -> None:
         static_catalog=static,
     )
     assert await provider.get_catalog() is static
+
+
+def test_protocol_exported_in_cognitive_ports() -> None:
+    import diana.cognitive.ports as ports
+
+    assert hasattr(ports, "PersonaCatalogProvider")
+    assert "PersonaCatalogProvider" in ports.__all__
+    from typing import get_type_hints
+
+    # runtime_checkable protocol with the async get_catalog contract
+    assert "get_catalog" in getattr(ports.PersonaCatalogProvider, "__protocol_attrs__", set())
