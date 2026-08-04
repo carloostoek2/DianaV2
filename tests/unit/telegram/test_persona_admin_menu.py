@@ -70,9 +70,11 @@ class _FakePersonaAdmin:
         return list(reversed(self.records))
 
     async def restore(self, actor_id, persona_version_id) -> PersonaVersionRecord | None:
+        import copy
+
         for record in self.records:
             if str(record.id) == str(persona_version_id):
-                self.current = record.payload
+                self.current = copy.deepcopy(record.payload)
                 return record
         return None
 
@@ -719,3 +721,62 @@ def test_apply_edit_invalid_timezone_rejected() -> None:
         apply_persona_edit(base, "timezone", None, "America/Mexico_Citt")
     ok = apply_persona_edit(base, "timezone", None, "America/Argentina/Buenos_Aires")
     assert ok["schedule"]["timezone"] == "America/Argentina/Buenos_Aires"
+
+
+def test_apply_edit_rename_collision_rejected() -> None:
+    base = _base_catalog()
+    first, second = base["persona_facts"][0], base["persona_facts"][1]
+    # rename second to first's id -> collision
+    with pytest.raises(ValueError, match="ya existe"):
+        apply_persona_edit(
+            base, "fact", second["id"],
+            f"{first['id']} | otro_tema | otro hecho",
+        )
+    # rename to its own id (no-op) is allowed
+    ok = apply_persona_edit(
+        base, "fact", second["id"],
+        f"{second['id']} | otro_tema | hecho editado",
+    )
+    edited = next(f for f in ok["persona_facts"] if f["id"] == second["id"])
+    assert edited["hecho"] == "hecho editado"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_section_list_capped_at_40() -> None:
+    import copy
+
+    base = copy.deepcopy(_base_catalog())
+    base["voz_configurada"]["reglas_estilo"] = [f"regla {i}" for i in range(45)]
+    service = _FakePersonaAdmin(base)
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("rules"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    kb = msg.edit_text.call_args.kwargs.get("reply_markup")
+    datas = [b.callback_data for row in kb.inline_keyboard for b in row]
+    item_buttons = [d for d in datas if d.startswith(encode_menu_persona("item", "rules|"))]
+    assert len(item_buttons) == 40  # capped
+
+
+@pytest.mark.asyncio
+async def test_dispatch_owner_auth_error_shown_to_user() -> None:
+    from diana.application.admin_service import OwnerAuthError
+
+    class _ExplodingOwner(_FakePersonaAdmin):
+        async def save_persona(self, actor_id, payload):
+            raise OwnerAuthError("not owner")
+
+    service = _ExplodingOwner(_base_catalog())
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("rule_del", "0"), actor_id=1,
+                                persona_admin=service, sessions=_sessions())
+    assert "Error inesperado" in str(msg.edit_text.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_dispatch_restore_ok_non_uuid_extra() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("restore_ok", "not-a-uuid"),
+                                actor_id=_OWNER_ID, persona_admin=service,
+                                sessions=_sessions())
+    assert "Versión inválida" in str(msg.edit_text.call_args.args[0])

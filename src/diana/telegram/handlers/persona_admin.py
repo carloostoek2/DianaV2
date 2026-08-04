@@ -357,10 +357,12 @@ def _apply_typed_item(
     if op.endswith("_del"):
         return _delete_item(items, extra or "", by_id=by_id)
     new_item = parser(text)
-    if extra is None and any(
-        str(item.get("id")) == str(new_item.get("id")) for item in items
-    ):
-        raise ValueError("ya existe un elemento con ese id")
+    new_id = str(new_item.get("id"))
+    if any(str(item.get("id")) == new_id for item in items):
+        # Add with an existing id, or a rename (extra != None) colliding with
+        # another item — both would create duplicate ids.
+        if extra is None or str(extra) != new_id:
+            raise ValueError("ya existe un elemento con ese id")
     return _replace_item(items, extra, new_item, by_id=by_id)
 
 
