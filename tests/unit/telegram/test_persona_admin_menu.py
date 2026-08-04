@@ -296,6 +296,10 @@ async def test_dispatch_rules_list_and_item_detail() -> None:
         persona_admin=service, sessions=_sessions(),
     )
     msg2.edit_text.assert_awaited_once()
+    # FULL rule text in the detail view (product fix: no truncation)
+    detail_text = str(msg2.edit_text.call_args.args[0])
+    assert "Regla #1" in detail_text
+    assert service.current["voz_configurada"]["reglas_estilo"][0] in detail_text
     markup_obj = msg2.edit_text.call_args.kwargs.get("reply_markup")
     datas = [b.callback_data for row in markup_obj.inline_keyboard for b in row]
     assert encode_menu_persona("rule_edit", "0") in datas
@@ -780,3 +784,71 @@ async def test_dispatch_restore_ok_non_uuid_extra() -> None:
                                 actor_id=_OWNER_ID, persona_admin=service,
                                 sessions=_sessions())
     assert "Versión inválida" in str(msg.edit_text.call_args.args[0])
+
+
+def test_item_full_text_all_sections_no_truncation() -> None:
+    """Detail renderers show FULL content (rules/facts/patterns/policies/bloques/defaults)."""
+    from diana.telegram.handlers.persona_admin import _item_full_text
+
+    import copy
+
+    base = copy.deepcopy(_base_catalog())
+    # long texts that would previously be truncated by _section_items
+    base["voz_configurada"]["reglas_estilo"] = [
+        "Regla de ejemplo MUY larga: nunca usar más de dos oraciones cuando el "
+        "cliente está molesto, y siempre ofrecer una alternativa concreta."
+    ]
+    base["persona_facts"][0]["nota_privada"] = "dato privado que no se repite"
+    base["voice_patterns"][0]["uso"] = "Uso MUY largo para verificar que el texto del patrón sale completo en el detalle."
+    base["policies"][0]["regla"] = "Política MUY larga: nunca prometer contenido exclusivo sin aprobación previa del negocio."
+    base["schedule"]["default_responses"] = [
+        "Respuesta libre MUY larga para confirmar que no se recorta en el detalle del elemento."
+    ]
+
+    rules = _item_full_text(base, "rules", "0")
+    assert base["voz_configurada"]["reglas_estilo"][0] in rules
+
+    facts = _item_full_text(base, "facts", base["persona_facts"][0]["id"])
+    assert "dato privado que no se repite" in facts
+    assert base["persona_facts"][0]["hecho"] in facts
+
+    patterns = _item_full_text(base, "patterns", base["voice_patterns"][0]["id"])
+    assert base["voice_patterns"][0]["uso"] in patterns
+
+    policies = _item_full_text(base, "policies", base["policies"][0]["id"])
+    assert base["policies"][0]["regla"] in policies
+
+    bloques = _item_full_text(base, "bloques", "0")
+    assert bloques is None or "Actividad" in bloques  # static catalog has bloques
+
+    defaults = _item_full_text(base, "defaults", "0")
+    assert base["schedule"]["default_responses"][0] in defaults
+
+    assert _item_full_text(base, "rules", "99") is None
+    assert _item_full_text(base, "facts", "no-existe") is None
+    assert _item_full_text(base, "rules", "abc") is None
+
+
+@pytest.mark.asyncio
+async def test_edit_wizard_prompt_shows_current_full_value() -> None:
+    import copy
+
+    service = _FakePersonaAdmin(copy.deepcopy(_base_catalog()))
+    sessions = _sessions()
+    msg = _msg()
+    long_rule = (
+        "Regla MUY larga que debe salir completa en el prompt de edición para "
+        "que la dueña pueda verla antes de cambiarla."
+    )
+    service.current["voz_configurada"]["reglas_estilo"][0] = long_rule
+
+    await dispatch_personalidad(
+        msg, parsed=_parsed("rule_edit", "0"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    prompt = str(msg.edit_text.call_args.args[0])
+    assert "📄 Actual:" in prompt
+    assert long_rule in prompt  # full text, not truncated
+
+    session = sessions.get(_OWNER_ID)
+    assert session is not None and session.persona_section == "rule" and session.persona_target == "0"

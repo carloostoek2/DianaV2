@@ -451,12 +451,105 @@ def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str
     return []
 
 
+def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | None:
+    """Render the FULL content of one item (no truncation) for detail/edit views.
+
+    Returns None when the item does not exist.
+    """
+    voz = catalog.get("voz_configurada") or {}
+
+    if section == "rules":
+        rules = voz.get("reglas_estilo") or []
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            return None
+        if not (0 <= idx < len(rules)):
+            return None
+        return f"✍️ Regla #{idx + 1}\n\n{rules[idx]}"
+
+    if section == "facts":
+        for f in catalog.get("persona_facts") or []:
+            if str(f.get("id")) == key:
+                temas = ", ".join(f.get("tema") or [])
+                lines = [
+                    f"👤 {f.get('id')}",
+                    f"Temas: {temas}",
+                    f"Hecho: {f.get('hecho')}",
+                ]
+                if f.get("nota_privada"):
+                    lines.append(f"Nota privada: {f.get('nota_privada')}")
+                return "\n".join(lines)
+        return None
+
+    if section == "patterns":
+        for p in catalog.get("voice_patterns") or []:
+            if str(p.get("id")) == key:
+                tags = ", ".join(p.get("tags") or [])
+                return (
+                    f"🗣️ {p.get('patron')}\n"
+                    f"id: {p.get('id')}\n"
+                    f"tags: {tags}\n"
+                    f"uso: {p.get('uso')}"
+                )
+        return None
+
+    if section == "policies":
+        for p in catalog.get("policies") or []:
+            if str(p.get("id")) == key:
+                temas = ", ".join(p.get("tema") or [])
+                return f"📜 {p.get('id')}\nTemas: {temas}\nRegla: {p.get('regla')}"
+        return None
+
+    if section == "bloques":
+        bloques = (catalog.get("schedule") or {}).get("bloques") or []
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            return None
+        if not (0 <= idx < len(bloques)):
+            return None
+        b = bloques[idx]
+        dias = ", ".join(b.get("dias") or [])
+        return (
+            f"🗓️ Bloque #{idx + 1}\n"
+            f"Días: {dias}\n"
+            f"Horario: {b.get('inicio')}–{b.get('fin')}\n"
+            f"Actividad: {b.get('actividad')}"
+        )
+
+    if section == "defaults":
+        defaults = (catalog.get("schedule") or {}).get("default_responses") or []
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            return None
+        if not (0 <= idx < len(defaults)):
+            return None
+        return f"💬 Respuesta libre #{idx + 1}\n\n{defaults[idx]}"
+
+    return None
+
+
+def _edit_current_value(
+    catalog: dict[str, Any], section: str, extra: str | None
+) -> str | None:
+    """Current value to show inside an edit prompt (full text; None = new item)."""
+    voz = catalog.get("voz_configurada") or {}
+    if section == "persona":
+        return _truncate(str(voz.get("persona") or ""), 3500)  # message-size safety only
+    if section == "timezone":
+        return str((catalog.get("schedule") or {}).get("timezone") or "")
+    if section in ("rule", "fact", "pattern", "policy", "bloque", "default"):
+        # _item_full_text keys on the PLURAL list-section name (rules/facts/…)
+        return _item_full_text(catalog, _section_list_action(section), extra or "")
+    return None
+
+
 def _item_detail(catalog: dict[str, Any], section: str, extra: str) -> str:
-    items = _section_items(catalog, section)
-    for item_extra, label in items:
-        if item_extra == extra:
-            return label
-    return "(no se encontró el elemento)"
+    """Full-content detail view for a tapped item (review round fix: no truncation)."""
+    full = _item_full_text(catalog, section, extra)
+    return full if full is not None else "(no se encontró el elemento)"
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +575,10 @@ async def dispatch_personalidad(
 
     if action == "persona":
         catalog = await load_current(persona_admin)
-        persona = _truncate((catalog.get("voz_configurada") or {}).get("persona", ""))
+        persona = _truncate(
+            (catalog.get("voz_configurada") or {}).get("persona", ""),
+            3900,  # Telegram message-size safety only; not a display truncation
+        )
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -716,6 +812,13 @@ async def dispatch_personalidad(
         prompt = _ADD_PROMPTS.get(action) or _ADD_PROMPTS.get(
             section, "Enviame el valor nuevo."
         )
+        # For EDIT actions, show the CURRENT full value so the owner can
+        # review it before fine-tuning (product requirement: no truncation).
+        if action.endswith("_edit") or action == "persona_edit" or action == "timezone_edit":
+            catalog = await load_current(persona_admin)
+            current = _edit_current_value(catalog, section, extra)
+            if current is not None:
+                prompt = f"{prompt}\n\n📄 Actual:\n{current}"
         await _show(message, prompt, None)
         return
 
