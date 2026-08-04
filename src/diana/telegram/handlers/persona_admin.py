@@ -256,10 +256,16 @@ def apply_persona_edit(
         return nuevo
 
     if op == "timezone":
+        from zoneinfo import ZoneInfo
+
         schedule = deepcopy(nuevo.get("schedule") or {})
         tz = (text or "").strip()
         if not tz:
             raise ValueError("la zona horaria no puede estar vacía")
+        try:
+            ZoneInfo(tz)
+        except Exception as exc:
+            raise ValueError(f"zona horaria inválida: {tz!r}") from exc
         schedule["timezone"] = tz
         nuevo["schedule"] = schedule
         return nuevo
@@ -350,7 +356,12 @@ def _apply_typed_item(
 ) -> list[Any]:
     if op.endswith("_del"):
         return _delete_item(items, extra or "", by_id=by_id)
-    return _replace_item(items, extra, parser(text), by_id=by_id)
+    new_item = parser(text)
+    if extra is None and any(
+        str(item.get("id")) == str(new_item.get("id")) for item in items
+    ):
+        raise ValueError("ya existe un elemento con ese id")
+    return _replace_item(items, extra, new_item, by_id=by_id)
 
 
 def _parse_fact(text: str | None) -> dict[str, Any]:
@@ -594,6 +605,9 @@ async def dispatch_personalidad(
         catalog = await load_current(persona_admin)
         raw_items = _section_items(catalog, section)
         # Item callbacks carry section|key so the detail view knows the context.
+        # Cap at 40 rows: Telegram inline keyboards allow at most 100 buttons
+        # and the add/back rows consume 2 — a huge section must stay renderable.
+        raw_items = raw_items[:40]
         items = [(f"{section}|{key}", label) for key, label in raw_items]
         add_action = {
             "rules": "rule_add", "facts": "fact_add", "patterns": "pattern_add",
@@ -706,11 +720,16 @@ async def dispatch_personalidad(
     await _show(message, "Esa opción de personalidad no está disponible.", back)
 
 
-def _section_list_action(section: str) -> str:
+def _section_list_action(op: str) -> str:
+    """Map a SINGULAR op name to its plural section-list action (rule→rules…)."""
     return {
-        "rules": "rules", "fact": "facts", "pattern": "patterns",
-        "policy": "policies", "bloque": "bloques", "default": "defaults",
-    }.get(section, "personalidad")
+        "rule": "rules",
+        "fact": "facts",
+        "pattern": "patterns",
+        "policy": "policies",
+        "bloque": "bloques",
+        "default": "defaults",
+    }.get(op, "personalidad")
 
 
 def _wizard_section(action: str, extra: str | None) -> str:

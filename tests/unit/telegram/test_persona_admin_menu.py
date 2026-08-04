@@ -49,18 +49,21 @@ class _FakePersonaAdmin:
         return self.current
 
     async def save_persona(self, actor_id, payload: dict) -> PersonaVersionRecord:
+        import copy
+
+        snapshot = copy.deepcopy(payload)
         self.version_counter += 1
-        self.saved.append(payload)
+        self.saved.append(snapshot)
         record = PersonaVersionRecord(
             id=uuid4(),
             version=self.version_counter,
             source="db",
-            payload=payload,
+            payload=snapshot,
             created_by=actor_id,
             created_at=datetime.now(UTC),
         )
         self.records.append(record)
-        self.current = payload
+        self.current = snapshot
         return record
 
     async def list_versions(self, actor_id) -> list[PersonaVersionRecord]:
@@ -291,11 +294,36 @@ async def test_dispatch_rules_list_and_item_detail() -> None:
         persona_admin=service, sessions=_sessions(),
     )
     msg2.edit_text.assert_awaited_once()
-    markup = str(msg2.edit_text.call_args.kwargs.get("reply_markup"))
-    assert "✏️ Editar" in markup
-    assert encode_menu_persona("rule_edit", "0") in markup
-    assert encode_menu_persona("rule_del", "0") in markup
-    assert "rules_edit" not in markup  # plural actions are dead — regression guard
+    markup_obj = msg2.edit_text.call_args.kwargs.get("reply_markup")
+    datas = [b.callback_data for row in markup_obj.inline_keyboard for b in row]
+    assert encode_menu_persona("rule_edit", "0") in datas
+    assert encode_menu_persona("rule_del", "0") in datas
+    assert "rules_edit" not in datas  # plural actions are dead — regression guard
+    # Volver must go back to the section LIST (r2 bug: plural section → dead callback)
+    assert encode_menu_persona("rules") in datas
+
+    # round-trip for an id-based section (facts) + edit wizard start
+    fact_id = service.current["persona_facts"][0]["id"]
+    msg3 = _msg()
+    await dispatch_personalidad(
+        msg3, parsed=_parsed("item", f"facts|{fact_id}"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=_sessions(),
+    )
+    markup3 = msg3.edit_text.call_args.kwargs.get("reply_markup")
+    datas3 = [b.callback_data for row in markup3.inline_keyboard for b in row]
+    assert encode_menu_persona("fact_edit", fact_id) in datas3
+    assert encode_menu_persona("facts") in datas3
+
+    sessions = _sessions()
+    msg4 = _msg()
+    await dispatch_personalidad(
+        msg4, parsed=_parsed("fact_edit", fact_id), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    session = sessions.get(_OWNER_ID)
+    assert session is not None
+    assert session.persona_section == "fact"
+    assert session.persona_target == fact_id
 
 
 @pytest.mark.asyncio
@@ -346,7 +374,9 @@ async def test_dispatch_history_and_restore_flow() -> None:
     )
     assert "restaurar" in str(msg2.edit_text.call_args.args[0]).lower()
 
-    modified = _base_catalog()
+    import copy
+
+    modified = copy.deepcopy(_base_catalog())
     modified["voz_configurada"]["reglas_estilo"].append("regla v2")
     v2 = await service.save_persona(_OWNER_ID, modified)
     assert service.current["voz_configurada"]["reglas_estilo"][-1] == "regla v2"
@@ -359,8 +389,11 @@ async def test_dispatch_history_and_restore_flow() -> None:
     text3 = str(msg3.edit_text.call_args.args[0])
     assert "restaurada" in text3
     assert f"v{v1.version}" in text3
-    # restore actually re-activated v1's payload over v2
-    assert service.current["voz_configurada"]["reglas_estilo"] == _base_catalog()["voz_configurada"]["reglas_estilo"]
+    # restore actually re-activated v1's payload over v2 (deepcopy: no tautology)
+    assert "regla v2" not in service.current["voz_configurada"]["reglas_estilo"]
+    assert service.current["voz_configurada"]["reglas_estilo"] == copy.deepcopy(
+        _base_catalog()
+    )["voz_configurada"]["reglas_estilo"]
 
 
 # ---------------------------------------------------------------------------
@@ -671,3 +704,18 @@ async def test_wizard_no_service_shows_unavailable() -> None:
     await handle_persona_edit_text(msg, bot, _session("rule"), None, _sessions())
     assert bot.edit_message_text.await_count == 1
     assert "no disponible" in str(bot.edit_message_text.call_args.kwargs.get("text", ""))
+
+
+def test_apply_edit_duplicate_id_rejected_on_add() -> None:
+    base = _base_catalog()
+    existing = base["persona_facts"][0]["id"]
+    with pytest.raises(ValueError, match="ya existe"):
+        apply_persona_edit(base, "fact", None, f"{existing} | otro_tema | otro hecho")
+
+
+def test_apply_edit_invalid_timezone_rejected() -> None:
+    base = _base_catalog()
+    with pytest.raises(ValueError, match="zona horaria inválida"):
+        apply_persona_edit(base, "timezone", None, "America/Mexico_Citt")
+    ok = apply_persona_edit(base, "timezone", None, "America/Argentina/Buenos_Aires")
+    assert ok["schedule"]["timezone"] == "America/Argentina/Buenos_Aires"
