@@ -198,7 +198,7 @@ class DraftVariantService:
         versions = read_versions(approval.evaluation)
         if versions["regenerating"]:
             return VariantNavResult(
-                ok=False, token="blocked_regenerating", toast="Esperá a que termine la regeneración"
+                ok=False, token="blocked_regenerating", toast="Espera a que termine la regeneración"
             )
         items = versions["items"]
         if not items:

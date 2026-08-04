@@ -714,7 +714,7 @@ async def dispatch_personalidad(
         if not items:
             await _show(
                 message,
-                f"La sección está vacía. Tocá «Agregar» para crear el primer elemento.",
+                f"La sección está vacía. Toca «Agregar» para crear el primer elemento.",
                 menu_persona_list_keyboard([], add_action),
             )
             return

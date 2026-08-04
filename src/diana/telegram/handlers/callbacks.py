@@ -480,7 +480,7 @@ def build_callback_router(
                 await query.answer()
                 return
             if status == "blocked_regenerating":
-                await query.answer("Esperá a que termine la regeneración", show_alert=True)
+                await query.answer("Espera a que termine la regeneración", show_alert=True)
                 return
             if status == "blocked_max":
                 await query.answer("Máximo de versiones alcanzado", show_alert=True)

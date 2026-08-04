@@ -284,7 +284,7 @@ class CalibrationService:
             try:
                 await self._notifier.notify_info(
                     f"Alerta de deriva de estilo: score={score:.3f} "
-                    f"(umbral={alert_threshold}). Revisá el tono reciente."
+                    f"(umbral={alert_threshold}). Revisa el tono reciente."
                 )
                 logger.info("drift_alert", extra={"style_drift_score": score})
             except Exception:

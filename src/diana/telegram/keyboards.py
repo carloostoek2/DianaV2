@@ -519,7 +519,7 @@ def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
 
 # ---- Hierarchical owner menu (buttons instead of raw slash commands) ----
 
-MENU_ROOT_TEXT = "🌸 Panel de Diana\n\nElegí una categoría:"
+MENU_ROOT_TEXT = "🌸 Panel de Diana\n\nElige una categoría:"
 
 MENU_CATEGORY_TEXT: dict[str, str] = {
     "vips": "👥 Mis VIPs\nGestiona quién tiene acceso especial y qué sabe Diana de cada uno.",

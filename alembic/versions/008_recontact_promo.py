@@ -134,7 +134,7 @@ def upgrade() -> None:
         """
     )
 
-    # -- promo_triggers seed rows (neutral Mexican Spanish, no voseo) --
+    # -- promo_triggers seed rows (natural Spanish) --
     _promo_msj1 = "Holaaa 💕\nTe mando mis promos 🔥"
     _promo_repeat = "Holis 😁\nClaro te mando de nuevo mis promos 🔥"
     _promo_msj2 = (
