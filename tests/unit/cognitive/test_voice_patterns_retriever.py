@@ -231,3 +231,41 @@ async def test_production_catalog_carinosa_vulnerable_disclosure_prefers_calm_to
     assert "sin dramatizar" in result["uso"] or "con calma" in result["uso"], (
         f"expected tono_dificil_sin_drama, got uso={result['uso']!r}"
     )
+
+
+class _FakeProvider:
+    def __init__(self, catalog) -> None:
+        self.catalog = catalog
+
+    async def get_catalog(self):
+        return self.catalog
+
+
+@pytest.mark.asyncio
+async def test_hot_swap_voice_patterns_via_provider() -> None:
+    from diana.cognitive.retrievers.voice_patterns import VoicePatternsRetriever
+
+    v1 = {"voice_patterns": [{"id": "a", "tags": ["positiva"], "patron": "jsjs", "uso": "v1"}]}
+    v2 = {"voice_patterns": [{"id": "b", "tags": ["positiva"], "patron": "jaja", "uso": "v2"}]}
+    provider = _FakeProvider(dict(v1))
+    retriever = VoicePatternsRetriever(persona_catalog_provider=provider)  # type: ignore[arg-type]
+
+    result = await retriever.fetch(_turn(), _comp(emotion="positiva"))
+    assert result is not None and result["patron"] == "jsjs"
+
+    provider.catalog = dict(v2)
+    result = await retriever.fetch(_turn(), _comp(emotion="positiva"))
+    assert result is not None and result["patron"] == "jaja"
+
+
+@pytest.mark.asyncio
+async def test_voice_provider_none_falls_back() -> None:
+    from diana.cognitive.retrievers.voice_patterns import VoicePatternsRetriever
+
+    provider = _FakeProvider(None)
+    retriever = VoicePatternsRetriever(
+        _MINI_PATTERNS,
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    result = await retriever.fetch(_turn(), _comp(emotion="positiva", intent="saludo", topics=["apertura"]))
+    assert result is not None and result["patron"] == "Holis 😁"

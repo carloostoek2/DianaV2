@@ -55,6 +55,19 @@ def to_jsonable(value: Any) -> Any:
 
 
 @runtime_checkable
+class PersonaCatalogProvider(Protocol):
+    """Live persona catalog source for retrievers + Director (hot-reload).
+
+    Concrete implementation lives in ``diana.application.persona_catalog_provider``
+    (injected at the composition root). Returns the FULL validated catalog dict
+    (voz_configurada, persona_facts, voice_patterns, policies, schedule) or
+    ``None`` to signal "no live catalog — keep the static fallback".
+    """
+
+    async def get_catalog(self) -> dict[str, Any] | None: ...
+
+
+@runtime_checkable
 class LLMProvider(Protocol):
     """Swapable LLM I/O surface used by Analyst, Generator, Evaluator."""
 
@@ -280,6 +293,7 @@ __all__ = [
     "LLMProvider",
     "MessageHistoryPort",
     "NoOpTurnStatusSink",
+    "PersonaCatalogProvider",
     "RecentIntentsPort",
     "Retriever",
     "TraceStore",

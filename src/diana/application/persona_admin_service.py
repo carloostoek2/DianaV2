@@ -57,11 +57,28 @@ class PersonaAdminService:
         feature_persona_admin_enabled: bool,
         owner_telegram_id: int,
         clock: Callable[[], datetime] | None = None,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
         self._store = payload_store
         self._enabled = bool(feature_persona_admin_enabled)
         self._owner_telegram_id = owner_telegram_id
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._on_change = on_change
+
+    def set_on_change(self, callback: Callable[[], None] | None) -> None:
+        """Register a cache-invalidation callback (hot-reload wiring)."""
+        self._on_change = callback
+
+    def _notify_change(self) -> None:
+        """Fire-and-forget invalidation callback; never fail the write on it."""
+        if self._on_change is None:
+            return
+        try:
+            self._on_change()
+        except Exception:
+            logger.warning(
+                "persona_on_change_callback_failed", exc_info=True
+            )
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -116,6 +133,7 @@ class PersonaAdminService:
         # means the store misbehaved, so fail loudly instead of returning a
         # non-active record as if it were the save result.
         assert active is not None
+        self._notify_change()
         return active
 
     async def restore(
@@ -145,6 +163,7 @@ class PersonaAdminService:
                     "version": restored.version,
                 },
             )
+            self._notify_change()
         return restored
 
     async def list_versions(self, actor_id: int | None) -> list[PersonaVersionRecord]:

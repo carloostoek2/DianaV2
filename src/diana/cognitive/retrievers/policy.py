@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 from diana.cognitive.models import Comprehension, IncomingTurn
+from diana.cognitive.ports import PersonaCatalogProvider
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +53,26 @@ class PolicyRetriever:
         embedding_service: Any = None,
         repo: Any = None,
         static_policies: list[dict] | None = None,
+        persona_catalog_provider: PersonaCatalogProvider | None = None,
     ) -> None:
         self._embed = embedding_service
         self._repo = repo
+        self._provider = persona_catalog_provider
+        self._last_policies: object = None
         # Empty list is treated as "no static catalog" (same as None) for stub semantics.
         self._static = list(static_policies) if static_policies else None
+
+    async def _maybe_refresh(self) -> None:
+        """Pull a fresh policies slice from the live catalog when it changed."""
+        if self._provider is None:
+            return
+        catalog = await self._provider.get_catalog()
+        if catalog is None:
+            return
+        policies = catalog.get("policies")
+        if policies is not self._last_policies:
+            self._last_policies = policies
+            self._static = list(policies) if policies else None
 
     async def fetch(
         self,
@@ -64,6 +80,7 @@ class PolicyRetriever:
         comprehension: Comprehension,
     ) -> Any | None:
         """Return formatted policies, empty list, or None if unavailable."""
+        await self._maybe_refresh()
         has_static = self._static is not None
         has_db = self._repo is not None and self._embed is not None
 

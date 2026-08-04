@@ -22,6 +22,8 @@ from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.calibration_service import CalibrationService
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.metrics_service import MetricsAggregationService
+from diana.application.persona_admin_service import PersonaAdminService
+from diana.application.persona_catalog_provider import PersonaCatalogProvider
 from diana.application.promo_service import PromoService
 from diana.application.recontact_service import (
     ApprovalsDeliveriesRouteResolver,
@@ -82,6 +84,7 @@ from diana.infrastructure.db.repositories.recontact_schedules import (
     RecontactScheduleRepo,
 )
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
+from diana.infrastructure.db.repositories.persona_versions import PersonaVersionRepo
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore
@@ -279,6 +282,7 @@ class AppContainer:
     turns: SqlTurnStore | None = None
     runtime_timers: SqlRuntimeTimerStore | None = None
     business_connections: SqlBusinessConnectionStore | None = None
+    persona_admin: PersonaAdminService | None = None
 
 
 def build_app(
@@ -506,6 +510,23 @@ def build_app(
 
     catalog = get_persona_catalog()
     voz = catalog["voz_configurada"]
+
+    # Item 2 — live persona catalog (hot-reload): the owner-admin service is
+    # always wired; its runtime read (get_current_persona) is flag-gated, so
+    # with the flag off the provider falls back to the static catalog and the
+    # pipeline behaves exactly as before.
+    persona_version_repo = PersonaVersionRepo(sf)
+    persona_admin_service = PersonaAdminService(
+        payload_store=persona_version_repo,
+        feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
+        owner_telegram_id=settings.owner_telegram_id,
+        clock=clock.now,
+    )
+    persona_catalog_provider = PersonaCatalogProvider(
+        persona_admin_service=persona_admin_service,
+    )
+    persona_admin_service.set_on_change(persona_catalog_provider.invalidate)
+
     # F2 Item 3: gate memory retrieval on the feature flag so the
     # ``feature_memory_enabled`` switch actually controls something.
     # Without this gate, the flag is a dead stub (see ROADMAP item 4.6).
@@ -529,6 +550,7 @@ def build_app(
         static_policies=catalog["policies"],
         schedule=catalog["schedule"],
         clock=clock,
+        persona_catalog_provider=persona_catalog_provider,
     )
     # H6: pure TemplateGate pre-pipeline (deteccion_ia before saludo_constante).
     deteccion_ia = TemplateRule(
@@ -590,6 +612,7 @@ def build_app(
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
         knowledge_augmenter=knowledge_augmenter,
+        persona_catalog_provider=persona_catalog_provider,
     )
 
     learning = LearningService(traces)
@@ -747,6 +770,7 @@ def build_app(
         admin_metrics=admin_metrics,
         profile_admin=profile_admin,
         runtime_thresholds=runtime_thresholds,
+        persona_admin=persona_admin_service,
         turns=turns,
         runtime_timers=runtime_timers_store,
         business_connections=bc_store,

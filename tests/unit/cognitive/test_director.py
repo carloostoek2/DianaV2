@@ -129,6 +129,7 @@ def make_director(
     repetition_guard: RepetitionGuard | None = None,
     template_gate: TemplateGate | None = None,
     naturalness_min: float | None = None,
+    persona_catalog_provider: Any | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -140,6 +141,8 @@ def make_director(
     director_kwargs: dict = {}
     if naturalness_min is not None:
         director_kwargs["naturalness_min"] = naturalness_min
+    if persona_catalog_provider is not None:
+        director_kwargs["persona_catalog_provider"] = persona_catalog_provider
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),
@@ -1655,3 +1658,60 @@ async def test_h6_default_gate_none_does_not_false_fire_hola_diana() -> None:
     assert any(name == "generate" for name, _ in llm.calls)
 
 
+
+
+class _FakePersonaProvider:
+    """Minimal PersonaCatalogProvider double with a mutable catalog."""
+
+    def __init__(self, catalog) -> None:
+        self.catalog = catalog
+
+    async def get_catalog(self):
+        return self.catalog
+
+
+async def test_persona_provider_overrides_persona_in_prompt() -> None:
+    """Live catalog persona + style rules reach the generated prompt (hot-reload)."""
+    from diana.cognitive.director import CognitiveDirector  # noqa: F401
+
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _FakePersonaProvider(
+        {
+            "voz_configurada": {
+                "persona": "DB persona viva",
+                "reglas_estilo": ["db rule uno", "db rule dos"],
+            }
+        }
+    )
+    director, trace, _ = make_director(
+        llm, persona_catalog_provider=provider
+    )
+    turn = _turn()
+    await director.handle_turn(turn)
+
+    prompt = trace.get(turn.turn_id, "prompt_text")
+    assert "DB persona viva" in prompt
+    assert "db rule uno" in prompt
+    assert "db rule dos" in prompt
+    assert "You are Diana." not in prompt
+
+
+async def test_persona_provider_none_falls_back_to_constructor() -> None:
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _FakePersonaProvider(None)
+    director, trace, _ = make_director(
+        llm, persona="You are Diana.", style_rules=["static rule"],
+        persona_catalog_provider=provider,
+    )
+    turn = _turn()
+    await director.handle_turn(turn)
+
+    prompt = trace.get(turn.turn_id, "prompt_text")
+    assert "You are Diana." in prompt
+    assert "static rule" in prompt

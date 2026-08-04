@@ -19,6 +19,7 @@ from collections import Counter
 from typing import Any
 
 from diana.cognitive.models import Comprehension, IncomingTurn
+from diana.cognitive.ports import PersonaCatalogProvider
 
 
 def _norm(token: Any) -> str:
@@ -37,14 +38,39 @@ def _as_tema_list(tema: Any) -> list[str]:
 class PersonaFactsRetriever:
     """Fetch one persona fact whose tema intersects comprehension signals."""
 
-    def __init__(self, facts: list[dict] | None = None) -> None:
-        self._facts: list[dict] = list(facts or [])
-        # Tag frequency across the whole catalog, computed once — drives
-        # the specificity weighting (1 / freq) used at match time.
+    def __init__(
+        self,
+        facts: list[dict] | None = None,
+        *,
+        persona_catalog_provider: PersonaCatalogProvider | None = None,
+    ) -> None:
+        self._provider = persona_catalog_provider
+        self._last_facts: object = None
+        self._facts: list[dict] = []
         self._tag_freq: Counter[str] = Counter()
+        self._set_facts(facts or [])
+
+    def _set_facts(self, facts: list[dict]) -> None:
+        """(Re)build internal state from a facts slice (identity-refresh aware)."""
+        self._facts = list(facts)
+        # Tag frequency across the whole catalog — drives the specificity
+        # weighting (1 / freq) used at match time.
+        self._tag_freq = Counter()
         for fact in self._facts:
             for tema in set(_as_tema_list(fact.get("tema"))):
                 self._tag_freq[tema] += 1
+
+    async def _maybe_refresh(self) -> None:
+        """Pull a fresh slice from the live catalog when it changed (by identity)."""
+        if self._provider is None:
+            return
+        catalog = await self._provider.get_catalog()
+        if catalog is None:
+            return
+        slice_ = catalog.get("persona_facts")
+        if slice_ is not self._last_facts:
+            self._last_facts = slice_
+            self._set_facts(slice_ or [])
 
     async def fetch(
         self,
@@ -52,6 +78,7 @@ class PersonaFactsRetriever:
         comprehension: Comprehension,
     ) -> dict[str, str] | None:
         _ = turn  # match is comprehension-driven only
+        await self._maybe_refresh()
         topics = {_norm(t) for t in comprehension.topics if str(t).strip()} | {
             _norm(comprehension.intent)
         }

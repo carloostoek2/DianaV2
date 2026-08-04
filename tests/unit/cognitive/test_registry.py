@@ -33,20 +33,22 @@ def _turn(chat_id: int = 1) -> IncomingTurn:
     return IncomingTurn(turn_id=uuid4(), chat_id=chat_id, text="hola")
 
 
-def _comprehension() -> Comprehension:
-    return Comprehension(
-        intent="chat",
-        topics=[],
-        emotion="neutral",
-        urgency="baja",
-        risk="bajo",
-        needs_memory=False,
-        needs_policy=False,
-        needs_schedule=False,
-        needs_examples=False,
-        needs_history=True,
-        needs_context=True,
-    )
+def _comprehension(**overrides: object) -> Comprehension:
+    data: dict = {
+        "intent": "chat",
+        "topics": [],
+        "emotion": "neutral",
+        "urgency": "baja",
+        "risk": "bajo",
+        "needs_memory": False,
+        "needs_policy": False,
+        "needs_schedule": False,
+        "needs_examples": False,
+        "needs_history": True,
+        "needs_context": True,
+    }
+    data.update(overrides)
+    return Comprehension(**data)  # type: ignore[arg-type]
 
 
 def test_default_registry_resolves_all_registered_capabilities() -> None:
@@ -367,3 +369,43 @@ def test_planner_universe_matches_planner_and_emission_supersequence() -> None:
     positions = [emission.index(cap) for cap in order_caps]
     assert positions == sorted(positions)
     assert emission.index("knowledge.profile") == len(emission) - 1
+
+
+class _FakeProvider:
+    """Minimal PersonaCatalogProvider double."""
+
+    def __init__(self, catalog) -> None:
+        self.catalog = catalog
+
+    async def get_catalog(self):
+        return self.catalog
+
+
+async def test_registry_propagates_persona_catalog_provider() -> None:
+    """build_default_registry wires the provider into the 4 catalog retrievers."""
+    provider = _FakeProvider(
+        {
+            "persona_facts": [{"id": "a", "tema": ["familia"], "hecho": "live fact"}],
+            "voice_patterns": [{"id": "p", "tags": ["positiva"], "patron": "holis", "uso": "x"}],
+            "policies": [{"id": "pol", "tema": ["contenido"], "regla": "live policy"}],
+            "schedule": {
+                "timezone": "America/Mexico_City",
+                "default_responses": ["live response"],
+                "bloques": [],
+            },
+        }
+    )
+    registry = build_default_registry(
+        InMemoryMessageHistory(),
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+
+    facts = await registry.resolve("knowledge.persona_facts").fetch(
+        _turn(), _comprehension(topics=["familia"])
+    )
+    assert facts is not None and facts["hecho"] == "live fact"
+
+    patterns = await registry.resolve("knowledge.voice_patterns").fetch(
+        _turn(), _comprehension(emotion="positiva", intent="saludo", topics=["apertura"])
+    )
+    assert patterns is not None and patterns["patron"] == "holis"

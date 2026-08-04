@@ -1031,3 +1031,71 @@ async def test_profile_retriever_whitespace_only_facts_is_none() -> None:
         }
     )
     assert await retriever.fetch(turn, _comprehension()) is None
+
+
+class _FakeProvider:
+    """Minimal PersonaCatalogProvider double with a mutable catalog."""
+
+    def __init__(self, catalog) -> None:
+        self.catalog = catalog
+
+    async def get_catalog(self):
+        return self.catalog
+
+
+@pytest.mark.asyncio
+async def test_policy_hot_swap_via_provider() -> None:
+    """PolicyRetriever picks up a new policies slice when the catalog changes."""
+    from diana.cognitive.retrievers.policy import PolicyRetriever
+
+    v1 = {"policies": [{"id": "s1", "tema": ["contenido"], "regla": "rule v1"}]}
+    v2 = {"policies": [{"id": "s2", "tema": ["contenido"], "regla": "rule v2"}]}
+    provider = _FakeProvider(dict(v1))
+    retriever = PolicyRetriever(persona_catalog_provider=provider)  # type: ignore[arg-type]
+    c = Comprehension(
+        intent="chat",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+
+    result = await retriever.fetch(_turn(), c)
+    assert result == ["Trigger: s1 | Rule: rule v1"]
+
+    provider.catalog = dict(v2)
+    result = await retriever.fetch(_turn(), c)
+    assert result == ["Trigger: s2 | Rule: rule v2"]
+
+
+@pytest.mark.asyncio
+async def test_policy_provider_none_falls_back_to_static() -> None:
+    from diana.cognitive.retrievers.policy import PolicyRetriever
+
+    policies = [{"id": "s1", "tema": ["contenido"], "regla": "static rule"}]
+    provider = _FakeProvider(None)
+    retriever = PolicyRetriever(
+        static_policies=policies,
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    c = Comprehension(
+        intent="chat",
+        topics=["contenido"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=False,
+        needs_context=False,
+    )
+    result = await retriever.fetch(_turn(), c)
+    assert result == ["Trigger: s1 | Rule: static rule"]

@@ -79,6 +79,7 @@ def build_default_registry(
     static_policies: list | None = None,
     schedule: dict | None = None,
     clock: ClockPort | None = None,
+    persona_catalog_provider: Any = None,
 ) -> CapabilityRegistry:
     """Register capabilities and fail-fast for the planner universe.
 
@@ -111,11 +112,17 @@ def build_default_registry(
     )
     registry.register(
         "knowledge.persona_facts",
-        PersonaFactsRetriever(persona_facts or []),
+        PersonaFactsRetriever(
+            persona_facts or [],
+            persona_catalog_provider=persona_catalog_provider,
+        ),
     )
     registry.register(
         "knowledge.voice_patterns",
-        VoicePatternsRetriever(voice_patterns or []),
+        VoicePatternsRetriever(
+            voice_patterns or [],
+            persona_catalog_provider=persona_catalog_provider,
+        ),
     )
     registry.register(
         "knowledge.memory",
@@ -130,6 +137,7 @@ def build_default_registry(
             embedding_service=embedding_service,
             repo=policy_repo,
             static_policies=static_policies,
+            persona_catalog_provider=persona_catalog_provider,
         ),
     )
     registry.register(
@@ -141,7 +149,13 @@ def build_default_registry(
     )
     registry.register(
         "knowledge.schedule",
-        ScheduleRetriever(bloques, defaults, tz_name, resolved_clock),
+        ScheduleRetriever(
+            bloques,
+            defaults,
+            tz_name,
+            resolved_clock,
+            persona_catalog_provider=persona_catalog_provider,
+        ),
     )
     # Boot fail-fast: planner-requested names must resolve (H.1).
     for name in PLANNER_CAPABILITY_UNIVERSE:

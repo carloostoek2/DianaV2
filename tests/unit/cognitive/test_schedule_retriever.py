@@ -189,3 +189,48 @@ async def test_empty_bloques_always_respuesta_libre() -> None:
     result = await r.fetch(_turn(), _comprehension())
     assert result["tipo"] == "respuesta_libre"
     assert result["respuesta_sugerida"] == _DEFAULTS[1]
+
+
+class _FakeProvider:
+    def __init__(self, catalog) -> None:
+        self.catalog = catalog
+
+    async def get_catalog(self):
+        return self.catalog
+
+
+@pytest.mark.asyncio
+async def test_schedule_hot_swap_via_provider() -> None:
+    """ScheduleRetriever picks up a new schedule slice when the catalog changes."""
+    monday_morning = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)  # lunes 09:00 CDMX (UTC-6)
+
+    v1_schedule = {
+        "timezone": "America/Mexico_City",
+        "default_responses": ["v1"],
+        "bloques": [
+            {"dias": ["lunes"], "inicio": "09:00", "fin": "12:00", "actividad": "actividad v1"}
+        ],
+    }
+    v2_schedule = {
+        "timezone": "America/Mexico_City",
+        "default_responses": ["v2"],
+        "bloques": [
+            {"dias": ["lunes"], "inicio": "09:00", "fin": "12:00", "actividad": "actividad v2"}
+        ],
+    }
+    provider = _FakeProvider({"schedule": dict(v1_schedule)})
+    retriever = ScheduleRetriever(
+        bloques=[],
+        default_responses=["seed"],
+        tz="America/Mexico_City",
+        clock=_FixedClock(monday_morning),
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result["tipo"] == "actividad"
+    assert result["actividad"] == "actividad v1"
+
+    provider.catalog = {"schedule": dict(v2_schedule)}
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result["actividad"] == "actividad v2"

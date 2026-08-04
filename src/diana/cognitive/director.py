@@ -41,6 +41,7 @@ from diana.cognitive.ports import (
     KnowledgeAugmenter,
     MessageHistoryPort,
     NoOpTurnStatusSink,
+    PersonaCatalogProvider,
     RecentIntentsPort,
     TraceStore,
     TurnStatusSink,
@@ -152,6 +153,7 @@ class CognitiveDirector:
         # Supervised naturalness redraft min; not autonomous send gate.
         naturalness_min: float | None = None,
         knowledge_augmenter: KnowledgeAugmenter | None = None,
+        persona_catalog_provider: PersonaCatalogProvider | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -163,6 +165,7 @@ class CognitiveDirector:
         self._trace = trace
         self._persona = persona
         self._style_rules = style_rules
+        self._persona_catalog_provider = persona_catalog_provider
         self._history = history
         self._analyst_history_limit = analyst_history_limit
         self._status = status_sink or NoOpTurnStatusSink()
@@ -175,6 +178,23 @@ class CognitiveDirector:
             else float(naturalness_min)
         )
         self._knowledge_augmenter = knowledge_augmenter
+
+    async def _resolve_persona(self) -> tuple[str, list[str] | None]:
+        """Resolve persona + style rules for this turn (live catalog when available).
+
+        Falls back to the boot-time ``persona`` / ``style_rules`` when no
+        provider is wired or the provider reports no live catalog.
+        """
+        if self._persona_catalog_provider is None:
+            return self._persona, self._style_rules
+        catalog = await self._persona_catalog_provider.get_catalog()
+        if catalog is None:
+            return self._persona, self._style_rules
+        voz = catalog.get("voz_configurada") or {}
+        persona = str(voz.get("persona") or self._persona)
+        rules = voz.get("reglas_estilo")
+        style_rules = list(rules) if isinstance(rules, list) else self._style_rules
+        return persona, style_rules
 
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
         """Run the F1 cognitive pipeline for one inbound turn.
@@ -348,13 +368,14 @@ class CognitiveDirector:
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
         # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).
         # On ContextExceedsLimitError: do not store partial prompt_text; re-raise.
+        persona, style_rules = await self._resolve_persona()
         with TimingContext("context_builder") as tc:
             built = self._context_builder.build(
                 turn,
                 comprehension,
                 knowledge=retrieved,
-                persona=self._persona,
-                style_rules=self._style_rules,
+                persona=persona,
+                style_rules=style_rules,
             )
         timings["context_builder_ms"] = tc.elapsed_ms
         await self._store(turn_id, "prompt_text", built.prompt_final)

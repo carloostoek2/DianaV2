@@ -187,3 +187,44 @@ async def test_weighted_score_prefers_specific_tag_over_shared_tag() -> None:
     result = await retriever.fetch(_turn(), _comp(topics=["comun", "raro_b"]))
     assert result is not None
     assert result["hecho"] == "B"
+
+
+class _FakeProvider:
+    """Minimal PersonaCatalogProvider double with a mutable catalog."""
+
+    def __init__(self, catalog) -> None:
+        self.catalog = catalog
+
+    async def get_catalog(self):
+        return self.catalog
+
+
+@pytest.mark.asyncio
+async def test_hot_swap_persona_facts_via_provider() -> None:
+    from diana.cognitive.retrievers.persona_facts import PersonaFactsRetriever
+
+    v1 = {"persona_facts": [{"id": "a", "tema": ["familia"], "hecho": "hecho v1"}]}
+    v2 = {"persona_facts": [{"id": "b", "tema": ["familia"], "hecho": "hecho v2"}]}
+    provider = _FakeProvider(dict(v1))
+    retriever = PersonaFactsRetriever(persona_catalog_provider=provider)  # type: ignore[arg-type]
+
+    result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    assert result is not None and result["hecho"] == "hecho v1"
+
+    # New catalog object (simulates invalidate + new DB payload) → hot swap.
+    provider.catalog = dict(v2)
+    result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    assert result is not None and result["hecho"] == "hecho v2"
+
+
+@pytest.mark.asyncio
+async def test_provider_none_falls_back_to_constructor_state() -> None:
+    from diana.cognitive.retrievers.persona_facts import PersonaFactsRetriever
+
+    provider = _FakeProvider(None)
+    retriever = PersonaFactsRetriever(
+        _MINI_FACTS,
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    assert result is not None and "Laura" in result["hecho"]

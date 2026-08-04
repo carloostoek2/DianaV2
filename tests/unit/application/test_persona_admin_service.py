@@ -268,3 +268,64 @@ async def test_list_versions_owner_returns_newest_first() -> None:
     versions = await service.list_versions(OWNER_ID)
     assert [v.version for v in versions] == [2, 1]
     assert all(v.created_by == OWNER_ID for v in versions)
+
+
+@pytest.mark.asyncio
+async def test_on_change_called_after_save_and_restore() -> None:
+    store = _MemoryPersonaAdminStore()
+    calls: list[str] = []
+    service = PersonaAdminService(
+        payload_store=store,  # type: ignore[arg-type]
+        feature_persona_admin_enabled=True,
+        owner_telegram_id=OWNER_ID,
+        clock=_now,
+        on_change=lambda: calls.append("change"),
+    )
+    v1 = await service.save_persona(OWNER_ID, _valid_catalog())
+    await service.save_persona(OWNER_ID, _valid_catalog())
+    await service.restore(OWNER_ID, v1.id)
+    assert calls == ["change", "change", "change"]
+
+
+@pytest.mark.asyncio
+async def test_on_change_not_called_on_failures() -> None:
+    store = _RaiseOnActivateStore()
+    service = PersonaAdminService(
+        payload_store=store,  # type: ignore[arg-type]
+        feature_persona_admin_enabled=True,
+        owner_telegram_id=OWNER_ID,
+        clock=_now,
+        on_change=lambda: pytest.fail("on_change must not fire on failure"),
+    )
+    with pytest.raises(ValueError):
+        await service.save_persona(OWNER_ID, {"bad": "payload"})
+    store.raise_on_insert = True
+    with pytest.raises(ValueError):
+        await service.save_persona(OWNER_ID, _valid_catalog())
+
+
+@pytest.mark.asyncio
+async def test_exploding_on_change_does_not_break_save() -> None:
+    def boom() -> None:
+        raise RuntimeError("invalidation failed")
+
+    store = _MemoryPersonaAdminStore()
+    service = PersonaAdminService(
+        payload_store=store,  # type: ignore[arg-type]
+        feature_persona_admin_enabled=True,
+        owner_telegram_id=OWNER_ID,
+        clock=_now,
+        on_change=boom,
+    )
+    record = await service.save_persona(OWNER_ID, _valid_catalog())
+    assert record is not None and record.version == 1
+
+
+@pytest.mark.asyncio
+async def test_set_on_change_registers_later() -> None:
+    store = _MemoryPersonaAdminStore()
+    calls: list[str] = []
+    service = _make_service(store)
+    service.set_on_change(lambda: calls.append("change"))
+    await service.save_persona(OWNER_ID, _valid_catalog())
+    assert calls == ["change"]
