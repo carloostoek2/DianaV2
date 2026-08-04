@@ -331,6 +331,9 @@ def build_menu_router(
     """Build the router serving /start, /menu, m:* callbacks, and menu-session text."""
     router = Router(name="menu")
     sessions = menu_sessions or MenuSessionStore()
+    # Flag-gate the whole panel (not just the button): with the feature off the
+    # admin surface is inert, matching the sandbox/staging pattern.
+    persona_admin = persona_admin if feature_persona_admin_enabled else None
 
     def _is_owner(message: Message) -> bool:
         return is_private_owner_message(message, owner_telegram_id)

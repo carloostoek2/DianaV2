@@ -283,14 +283,19 @@ async def test_dispatch_rules_list_and_item_detail() -> None:
         msg, parsed=_parsed("rules"), actor_id=_OWNER_ID, persona_admin=service, sessions=_sessions()
     )
     msg.edit_text.assert_awaited_once()
-    # item detail
+    # item detail — buttons must use SINGULAR ops (rule_edit/rule_del), so the
+    # tap→dispatch round-trip actually works (review round 1 bug).
     msg2 = _msg()
     await dispatch_personalidad(
         msg2, parsed=_parsed("item", "rules|0"), actor_id=_OWNER_ID,
         persona_admin=service, sessions=_sessions(),
     )
     msg2.edit_text.assert_awaited_once()
-    assert "✏️ Editar" in str(msg2.edit_text.call_args.kwargs.get("reply_markup"))
+    markup = str(msg2.edit_text.call_args.kwargs.get("reply_markup"))
+    assert "✏️ Editar" in markup
+    assert encode_menu_persona("rule_edit", "0") in markup
+    assert encode_menu_persona("rule_del", "0") in markup
+    assert "rules_edit" not in markup  # plural actions are dead — regression guard
 
 
 @pytest.mark.asyncio
@@ -346,7 +351,10 @@ async def test_dispatch_history_and_restore_flow() -> None:
         msg3, parsed=_parsed("restore_ok", str(v1.id)), actor_id=_OWNER_ID,
         persona_admin=service, sessions=_sessions(),
     )
-    assert "restaurada" in str(msg3.edit_text.call_args.args[0])
+    text3 = str(msg3.edit_text.call_args.args[0])
+    assert "restaurada" in text3
+    assert f"v{v1.version}" in text3
+    assert service.current == _base_catalog()  # restored payload became active
 
 
 # ---------------------------------------------------------------------------
@@ -403,8 +411,9 @@ async def test_wizard_invalid_format_does_not_save() -> None:
 
     await handle_persona_edit_text(msg, bot, _session("fact"), service, _sessions())
     assert service.saved == []
-    # error feedback
-    assert bot.edit_message_text.await_count == 0 or "formato" in str(bot.edit_message_text.call_args)
+    # error feedback shown (strict)
+    assert bot.edit_message_text.await_count == 1
+    assert "formato" in str(bot.edit_message_text.call_args.kwargs.get("text", ""))
 
 
 @pytest.mark.asyncio
@@ -437,8 +446,10 @@ def test_apply_edit_pattern_policy_positive() -> None:
 
 def test_apply_edit_never_mutates_base_other_ops() -> None:
     """Deep-copied slices: base stays intact across all edit ops."""
+    import copy
+
     base = _base_catalog()
-    snapshot = {k: list(v) if isinstance(v, list) else dict(v) for k, v in base.items()}
+    snapshot = copy.deepcopy(base)
 
     ops = [
         ("rule", None, "r nueva"),
@@ -477,3 +488,128 @@ def test_apply_edit_last_item_guards_typed_sections() -> None:
         apply_persona_edit(solo, "policy_del", "pol", None)
     with pytest.raises(ValueError, match="último"):
         apply_persona_edit(solo, "default_del", "0", None)
+
+
+# ---------------------------------------------------------------------------
+# Review-round fixes: subviews, edge cases, wizard edit-replace
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_subviews_schedule_timezone() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("schedule"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    text = str(msg.edit_text.call_args.args[0])
+    assert "Agenda" in text
+
+    msg2 = _msg()
+    await dispatch_personalidad(msg2, parsed=_parsed("timezone"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    assert "America/Mexico_City" in str(msg2.edit_text.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_dispatch_section_lists_use_singular_item_actions() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    for action in ("facts", "patterns", "policies", "bloques", "defaults"):
+        msg = _msg()
+        await dispatch_personalidad(msg, parsed=_parsed(action), actor_id=_OWNER_ID,
+                                    persona_admin=service, sessions=_sessions())
+        msg.edit_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_history_empty_and_restore_unknown() -> None:
+    service = _FakePersonaAdmin(None)
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("history"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    assert "Todavía no hay versiones" in str(msg.edit_text.call_args.args[0])
+
+    msg2 = _msg()
+    await dispatch_personalidad(msg2, parsed=_parsed("restore_ok", str(uuid4())), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    assert "No se encontró" in str(msg2.edit_text.call_args.args[0])
+
+    msg3 = _msg()
+    await dispatch_personalidad(msg3, parsed=_parsed("restore_ok"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    assert "Versión inválida" in str(msg3.edit_text.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_dispatch_delete_last_item_shows_error_and_does_not_save() -> None:
+    solo = _base_catalog()
+    solo["voz_configurada"]["reglas_estilo"] = ["única regla"]
+    service = _FakePersonaAdmin(solo)
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("rule_del", "0"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    assert service.saved == []
+    assert "No se pudo eliminar" in str(msg.edit_text.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_wizard_edit_replace_by_index_and_by_id() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = AsyncMock()
+    msg.text = "Regla reemplazada por wizard"
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    msg.message_id = 7
+    msg.chat = AsyncMock()
+    msg.chat.id = 42
+    bot = _bot()
+
+    await handle_persona_edit_text(msg, bot, _session("rule", target="0"), service, _sessions())
+    assert len(service.saved) == 1
+    assert service.saved[0]["voz_configurada"]["reglas_estilo"][0] == "Regla reemplazada por wizard"
+    assert service.records[0].created_by == _OWNER_ID
+
+    # by id (fact)
+    target_id = _base_catalog()["persona_facts"][0]["id"]
+    msg2 = AsyncMock()
+    msg2.text = f"{target_id} | familia | Hecho editado por wizard"
+    msg2.from_user = AsyncMock()
+    msg2.from_user.id = _OWNER_ID
+    msg2.answer = AsyncMock()
+    await handle_persona_edit_text(msg2, bot, _session("fact", target=target_id), service, _sessions())
+    edited = next(f for f in service.saved[1]["persona_facts"] if f["id"] == target_id)
+    assert edited["hecho"] == "Hecho editado por wizard"
+
+
+@pytest.mark.asyncio
+async def test_wizard_invalid_index_rejects_and_keeps_session() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    sessions = _sessions()
+    sessions.start(_OWNER_ID, "persona_edit", persona_section="rule", persona_target="999",
+                   last_bot_message_id=1, last_chat_id=42)
+    session = sessions.pop(_OWNER_ID)
+    msg = AsyncMock()
+    msg.text = "texto"
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    bot = _bot()
+
+    await handle_persona_edit_text(msg, bot, session, service, sessions)
+    assert service.saved == []
+    # session re-started so the owner can retry
+    restarted = sessions.get(_OWNER_ID)
+    assert restarted is not None and restarted.persona_section == "rule"
+    assert restarted.persona_target == "999"
+
+
+def test_encode_menu_persona_rejects_overlong_extra() -> None:
+    with pytest.raises(ValueError):
+        encode_menu_persona("item", "facts|" + "x" * 60)
+
+
+def test_parse_fact_id_length_capped() -> None:
+    base = _base_catalog()
+    with pytest.raises(ValueError, match="demasiado largo"):
+        apply_persona_edit(base, "fact", None, "x" * 40 + " | tema | hecho")

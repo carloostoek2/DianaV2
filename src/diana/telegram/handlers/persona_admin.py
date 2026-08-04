@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from typing import Any
+from uuid import UUID
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -102,7 +103,18 @@ _ADD_PROMPTS: dict[str, str] = {
 }
 
 # Sections whose items have ids (fact/pattern/policy) vs indexed (rule/bloque/default).
-_ITEM_BY_ID = frozenset({"fact", "pattern", "policy"})
+
+
+def _section_op(section: str) -> str | None:
+    """Map a plural list section to its singular op name (rules→rule, facts→fact…)."""
+    return {
+        "rules": "rule",
+        "facts": "fact",
+        "patterns": "pattern",
+        "policies": "policy",
+        "bloques": "bloque",
+        "defaults": "default",
+    }.get(section)
 
 
 # ---------------------------------------------------------------------------
@@ -173,11 +185,15 @@ def _replace_item(
     if extra is None:
         return [*items, new_item]
     if by_id:
+        if not any(str(item.get("id")) == extra for item in items):
+            raise ValueError("no se encontró el elemento")
         return [
             item if str(item.get("id")) != extra else new_item
             for item in items
         ]
     idx = int(extra)
+    if not (0 <= idx < len(items)):
+        raise ValueError("elemento inválido")
     out = list(items)
     out[idx] = new_item
     return out
@@ -192,8 +208,12 @@ def _delete_item(
     if len(items) <= 1:
         raise ValueError("no se puede borrar el último elemento de una lista")
     if by_id:
+        if not any(str(item.get("id")) == extra for item in items):
+            raise ValueError("no se encontró el elemento")
         return [item for item in items if str(item.get("id")) != extra]
     idx = int(extra)
+    if not (0 <= idx < len(items)):
+        raise ValueError("elemento inválido")
     return [item for i, item in enumerate(items) if i != idx]
 
 
@@ -213,7 +233,10 @@ def apply_persona_edit(
 
     if op == "persona":
         voz = deepcopy(nuevo.get("voz_configurada") or {})
-        voz["persona"] = (text or "").strip()
+        persona = (text or "").strip()
+        if not persona:
+            raise ValueError("la descripción no puede estar vacía")
+        voz["persona"] = persona
         nuevo["voz_configurada"] = voz
         return nuevo
 
@@ -331,6 +354,8 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     fact_id, temas, hecho = parts[:3]
     if not fact_id or not temas or not hecho:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
+    if len(fact_id) > 32:
+        raise ValueError("el id es demasiado largo (máximo 32 caracteres)")
     item: dict[str, Any] = {"id": fact_id, "tema": _split_topics(temas), "hecho": hecho}
     if len(parts) > 3 and parts[3].strip():
         item["nota_privada"] = parts[3].strip()
@@ -344,6 +369,8 @@ def _parse_pattern(text: str | None) -> dict[str, Any]:
     pattern_id, tags, patron, uso = parts[:4]
     if not pattern_id or not tags or not patron or not uso:
         raise ValueError("ningún campo puede estar vacío")
+    if len(pattern_id) > 32:
+        raise ValueError("el id es demasiado largo (máximo 32 caracteres)")
     return {"id": pattern_id, "tags": _split_topics(tags), "patron": patron, "uso": uso}
 
 
@@ -354,6 +381,8 @@ def _parse_policy(text: str | None) -> dict[str, Any]:
     policy_id, temas, regla = parts[:3]
     if not policy_id or not temas or not regla:
         raise ValueError("id, temas y regla no pueden estar vacíos")
+    if len(policy_id) > 32:
+        raise ValueError("el id es demasiado largo (máximo 32 caracteres)")
     return {"id": policy_id, "tema": _split_topics(temas), "regla": regla}
 
 
@@ -526,7 +555,12 @@ async def dispatch_personalidad(
             await _show(message, "Versión inválida.", back)
             return
         try:
-            restored = await persona_admin.restore(actor_id, extra)
+            version_uuid = UUID(extra)
+        except ValueError:
+            await _show(message, "Versión inválida.", back)
+            return
+        try:
+            restored = await persona_admin.restore(actor_id, version_uuid)
         except Exception as exc:
             logger.warning(
                 "persona_restore_failed",
@@ -586,13 +620,17 @@ async def dispatch_personalidad(
             await _show(message, "Elemento inválido.", back)
             return
         section, item_key = extra.split("|", 1)
+        op = _section_op(section)  # plural list section → singular op (rules→rule…)
+        if op is None:
+            await _show(message, "Elemento inválido.", back)
+            return
         catalog = await load_current(persona_admin)
         detail = _item_detail(catalog, section, item_key)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="✏️ Editar", callback_data=encode_menu_persona(f"{section}_edit", item_key)),
-                    InlineKeyboardButton(text="🗑️ Eliminar", callback_data=encode_menu_persona(f"{section}_del", item_key)),
+                    InlineKeyboardButton(text="✏️ Editar", callback_data=encode_menu_persona(f"{op}_edit", item_key)),
+                    InlineKeyboardButton(text="🗑️ Eliminar", callback_data=encode_menu_persona(f"{op}_del", item_key)),
                 ],
                 [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu_persona(_section_list_action(section)))],
             ]
@@ -613,6 +651,14 @@ async def dispatch_personalidad(
             record = await persona_admin.save_persona(actor_id, nuevo)
         except ValueError as exc:
             await _show(message, f"❌ No se guardó: {exc}", back)
+            return
+        except Exception as exc:
+            logger.warning(
+                "persona_save_failed",
+                extra={"actor_id": actor_id, "error": type(exc).__name__},
+                exc_info=True,
+            )
+            await _show(message, "❌ Error inesperado al guardar.", back)
             return
         await _show(
             message,
@@ -635,7 +681,9 @@ async def dispatch_personalidad(
             last_bot_message_id=message.message_id,
             last_chat_id=message.chat.id,
         )
-        prompt = _ADD_PROMPTS.get(section, "Enviame el valor nuevo.")
+        prompt = _ADD_PROMPTS.get(action) or _ADD_PROMPTS.get(
+            section, "Enviame el valor nuevo."
+        )
         await _show(message, prompt, None)
         return
 
@@ -651,7 +699,6 @@ def _section_list_action(section: str) -> str:
 
 def _wizard_section(action: str, extra: str | None) -> str:
     """Map a wizard-start action to its session section id."""
-    _ = extra
     if action == "persona_edit":
         return "persona"
     if action == "timezone_edit":
@@ -703,8 +750,9 @@ async def handle_persona_edit_text(
     try:
         nuevo = apply_persona_edit(base, op, extra, text)
     except ValueError as exc:
+        await _restart_persona_wizard(sessions, message, section, extra)
         await _edit_or_answer(
-            bot, f"❌ {exc}\n\nVuelve a intentarlo o usa /cancelar.",
+            bot, f"❌ {exc}\n\nEnviame el texto corregido o usa /cancelar.",
             session=session, fallback=message, keyboard=None,
         )
         return
@@ -716,8 +764,9 @@ async def handle_persona_edit_text(
             extra={"actor_id": message.from_user.id, "error": type(exc).__name__},
             exc_info=True,
         )
+        await _restart_persona_wizard(sessions, message, section, extra)
         await _edit_or_answer(
-            bot, "❌ No se pudo guardar. Intenta de nuevo o usa /cancelar.",
+            bot, "❌ No se pudo guardar. Reenviame el texto o usa /cancelar.",
             session=session, fallback=message, keyboard=None,
         )
         return
@@ -725,6 +774,23 @@ async def handle_persona_edit_text(
         bot,
         f"✅ Guardado como versión v{record.version}. Los cambios ya están activos.",
         session=session, fallback=message, keyboard=back,
+    )
+
+
+async def _restart_persona_wizard(
+    sessions: Any,
+    message: Message,
+    section: str,
+    extra: str | None,
+) -> None:
+    """Keep the wizard alive after an error so the owner can retry the text."""
+    sessions.start(
+        message.from_user.id,
+        "persona_edit",
+        persona_section=section,
+        persona_target=extra,
+        last_bot_message_id=message.message_id,
+        last_chat_id=message.chat.id,
     )
 
 
