@@ -131,8 +131,12 @@ class PersonaAdminService:
         )
         # The Protocol guarantees a record for an existing id; a None here
         # means the store misbehaved, so fail loudly instead of returning a
-        # non-active record as if it were the save result.
-        assert active is not None
+        # non-active record as if it were the save result. (RuntimeError, not
+        # assert: asserts vanish under ``python -O``.)
+        if active is None:
+            raise RuntimeError(
+                f"persona store activate_version returned None for {record.id}"
+            )
         self._notify_change()
         return active
 
