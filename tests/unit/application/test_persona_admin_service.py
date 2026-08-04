@@ -253,3 +253,14 @@ async def test_non_integrity_errors_propagate_raw() -> None:
     service = _make_service(_ExplodingStore())
     with pytest.raises(RuntimeError, match="db down"):
         await service.save_persona(OWNER_ID, _valid_catalog())
+
+
+@pytest.mark.asyncio
+async def test_list_versions_owner_returns_newest_first() -> None:
+    store = _MemoryPersonaAdminStore()
+    service = _make_service(store)
+    await service.save_persona(OWNER_ID, _valid_catalog())
+    await service.save_persona(OWNER_ID, _valid_catalog())
+    versions = await service.list_versions(OWNER_ID)
+    assert [v.version for v in versions] == [2, 1]
+    assert all(v.created_by == OWNER_ID for v in versions)

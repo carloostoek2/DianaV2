@@ -112,10 +112,11 @@ class PersonaAdminService:
                 "persona_version_id": str(record.id),
             },
         )
-        # ``active`` is the freshly activated record (the Protocol guarantees a
-        # record for an existing id); the inserted record is returned as a
-        # fallback only if the store returned None (defensive, unreachable).
-        return active if active is not None else record
+        # The Protocol guarantees a record for an existing id; a None here
+        # means the store misbehaved, so fail loudly instead of returning a
+        # non-active record as if it were the save result.
+        assert active is not None
+        return active
 
     async def restore(
         self, actor_id: int | None, persona_version_id: UUID
