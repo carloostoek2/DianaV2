@@ -95,6 +95,38 @@ def selected_text(evaluation: dict[str, Any] | None, fallback: str) -> str:
     return fallback
 
 
+def build_owner_draft_text(record: ApprovalRecord) -> str:
+    """Reconstruct the owner draft DM body from an approval record.
+
+    Mirrors the on-message body so void/audit paths show the same text the
+    owner last saw (VIP name falls back to chat_id, matching draft refresh).
+    """
+    v = read_versions(record.evaluation)
+    vip_text = v.get("vip_text") or ""
+    items = v["items"] or [{"text": record.draft_text}]
+    selected = v["selected"] if items else 0
+    summary = ""
+    if record.evaluation:
+        e = record.evaluation
+        try:
+            summary = (
+                f"nat={float(e.get('naturalness', 0)):.2f} "
+                f"prec={float(e.get('precision', 0)):.2f} "
+                f"saf={float(e.get('safety', 0)):.2f}"
+            )
+        except (TypeError, ValueError):
+            summary = ""
+    return format_draft_owner_text(
+        vip_name=str(record.chat_id),
+        vip_text=vip_text,
+        draft_text=record.draft_text,
+        reason=record.cognitive_summary or "",
+        evaluation_summary=summary,
+        version_index=selected,
+        version_count=len(items),
+    )
+
+
 def format_draft_owner_text(
     *,
     vip_name: str,
@@ -370,32 +402,7 @@ class DraftVariantService:
         edit = getattr(self._notifier, "edit_draft", None)
         if not callable(edit) or approval.owner_message_id is None:
             return
-        v = read_versions(approval.evaluation)
-        vip_text = v.get("vip_text") or ""
-        items = v["items"] or [{"text": approval.draft_text}]
-        selected = v["selected"] if items else 0
-        vip_name = str(approval.chat_id)
-        # Prefer display name when notifier/edit helper can accept it — keep id fallback.
-        summary = ""
-        if approval.evaluation:
-            e = approval.evaluation
-            try:
-                summary = (
-                    f"nat={float(e.get('naturalness', 0)):.2f} "
-                    f"prec={float(e.get('precision', 0)):.2f} "
-                    f"saf={float(e.get('safety', 0)):.2f}"
-                )
-            except (TypeError, ValueError):
-                summary = ""
-        text = format_draft_owner_text(
-            vip_name=vip_name,
-            vip_text=vip_text,
-            draft_text=approval.draft_text,
-            reason=approval.cognitive_summary or "",
-            evaluation_summary=summary,
-            version_index=selected,
-            version_count=len(items),
-        )
+        text = build_owner_draft_text(approval)
         try:
             await edit(
                 owner_message_id=approval.owner_message_id,
@@ -415,6 +422,7 @@ __all__ = [
     "VERSIONS_KEY",
     "DraftVariantService",
     "VariantNavResult",
+    "build_owner_draft_text",
     "ensure_versions",
     "format_draft_owner_text",
     "read_versions",

@@ -73,12 +73,13 @@ class AiogramOwnerNotifier:
         )
 
     async def void_draft(self, *, owner_message_id: int, text: str) -> None:
-        """Mark a draft DM as no longer applicable and remove inline buttons."""
+        """Mark a draft DM as cancelled, keep the draft body, remove inline buttons."""
         await self._bot.edit_message_text(
             chat_id=self._owner_id,
             message_id=owner_message_id,
             text=text,
             reply_markup=None,
+            parse_mode="HTML",
         )
 
     async def notify_escalation(self, payload: EscalationNotification) -> None:

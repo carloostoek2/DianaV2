@@ -5,18 +5,19 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
+from diana.application.draft_variants import build_owner_draft_text
 from diana.application.ports import ApprovalRecord, OwnerNotifierPort
 
 logger = logging.getLogger("diana.application")
 
-_REASON_LABELS = {
-    "owner_message": "la dueña escribió en el chat",
-    "new_message": "el VIP envió otro mensaje",
+_REASON_LEGENDS = {
+    "owner_message": "Cancelado porque la dueña escribió en el chat",
+    "new_message": "Cancelado por reenvío de mensaje del usuario",
 }
 
 
 class ApprovalDraftVoider:
-    """Strip draft keyboards and mark messages as no longer applicable."""
+    """Strip draft keyboards and mark messages as cancelled, keeping the draft."""
 
     def __init__(self, notifier: OwnerNotifierPort) -> None:
         self._notifier = notifier
@@ -27,11 +28,6 @@ class ApprovalDraftVoider:
         *,
         reason: str,
     ) -> None:
-        label = _REASON_LABELS.get(reason, reason)
-        text = (
-            f"⚠️ Este borrador ya no aplica ({label}).\n"
-            "No se envió al VIP. Los botones quedaron desactivados."
-        )
         void = getattr(self._notifier, "void_draft", None)
         for rec in records:
             mid = rec.owner_message_id
@@ -46,6 +42,14 @@ class ApprovalDraftVoider:
                     },
                 )
                 continue
+            legend = _REASON_LEGENDS.get(reason, "Cancelado")
+            # Keep the draft body for audit; prepend the cancel legend like the
+            # approved path prepends "Enviado".
+            text = (
+                f"⚠️ <b>{legend}</b>\n"
+                "No se envió al VIP. Los botones quedaron desactivados.\n\n"
+                f"{build_owner_draft_text(rec)}"
+            )
             try:
                 await void(owner_message_id=int(mid), text=text)
             except Exception:

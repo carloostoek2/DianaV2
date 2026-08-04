@@ -609,7 +609,7 @@ async def test_handle_approve_after_supersede_no_deliver(admin_graph: dict) -> N
 
 @pytest.mark.asyncio
 async def test_supersede_voids_owner_draft_dm(admin_graph: dict) -> None:
-    """C3/A3: superseding a waiting draft strips keyboard via void_draft."""
+    """C3/A3: superseding a waiting draft prepends cancel legend, keeps the body."""
     g = admin_graph
     a = await g["coordinator"].begin_turn(chat_id=42)
     await g["admin"].send_draft_for_approval(
@@ -628,7 +628,9 @@ async def test_supersede_voids_owner_draft_dm(admin_graph: dict) -> None:
     assert len(g["notifier"].voids) == 1
     mid, text = g["notifier"].voids[0]
     assert mid == approval.owner_message_id
-    assert "ya no aplica" in text.lower()
+    assert "cancelado" in text.lower()
+    # Draft body is preserved for audit, not erased by the void notice.
+    assert "[propuesta]: old" in text
     assert g["actuator"].send_count() == 0
 
 
