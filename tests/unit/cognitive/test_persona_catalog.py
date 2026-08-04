@@ -261,3 +261,13 @@ def test_validate_persona_catalog_exported_in_all() -> None:
     import diana.cognitive.persona_catalog as pc
 
     assert "validate_persona_catalog" in pc.__all__
+
+
+def test_validate_persona_catalog_rejects_duplicate_ids() -> None:
+    """Defense-in-depth: duplicate ids in fact/pattern/policy sections are rejected."""
+    from diana.cognitive.persona_catalog import validate_persona_catalog
+
+    payload = _minimal_catalog()
+    payload["persona_facts"].append({"id": payload["persona_facts"][0]["id"], "tema": ["otro"], "hecho": "y"})
+    with pytest.raises(ValueError, match="duplicate id"):
+        validate_persona_catalog(payload)

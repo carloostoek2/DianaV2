@@ -149,8 +149,32 @@ def validate_persona_catalog(data: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(policy["regla"], str) or not policy["regla"].strip():
             raise ValueError("policy.regla must be a non-empty string")
 
+    _validate_unique_ids("persona_facts", data["persona_facts"])
+    _validate_unique_ids("voice_patterns", data["voice_patterns"])
+    _validate_unique_ids("policies", data["policies"])
     _validate_schedule(data["schedule"])
     return data
+
+
+def _validate_unique_ids(section_name: str, items: Any) -> None:
+    """Reject duplicate item ids in fact/pattern/policy sections (defense-in-depth).
+
+    The owner admin already prevents duplicates at the panel; this guards the
+    write path against legacy/corrupt payloads reaching the runtime.
+    """
+    if not isinstance(items, list):
+        return
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_id = item.get("id")
+        if item_id is None:
+            continue
+        key = str(item_id)
+        if key in seen:
+            raise ValueError(f"{section_name} has duplicate id: {item_id!r}")
+        seen.add(key)
 
 
 def _validate_schedule(schedule: Any) -> None:
