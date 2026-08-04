@@ -62,6 +62,13 @@ def test_017_created_at_desc_index() -> None:
     assert "created_at DESC" in text
 
 
+def test_017_unique_version_index() -> None:
+    text = _migration_text()
+    assert "uq_persona_versions_version" in text
+    assert "unique=True" in text
+    assert '"version"' in text
+
+
 def test_017_seeds_feature_flag_in_system_config() -> None:
     text = _migration_text()
     assert "FEATURE_PERSONA_ADMIN_ENABLED" in text
@@ -84,9 +91,16 @@ def test_orm_persona_version_registered_with_schema() -> None:
     names = {i.name for i in PersonaVersion.__table__.indexes}
     assert "uq_persona_versions_active" in names
     assert "ix_persona_versions_created_at" in names
+    assert "uq_persona_versions_version" in names
 
     active_idx = next(
         i for i in PersonaVersion.__table__.indexes
         if i.name == "uq_persona_versions_active"
     )
     assert active_idx.unique is True
+
+    version_idx = next(
+        i for i in PersonaVersion.__table__.indexes
+        if i.name == "uq_persona_versions_version"
+    )
+    assert version_idx.unique is True

@@ -179,3 +179,33 @@ async def test_memory_store_activation_semantics() -> None:
     assert len(actives) == 1
 
     assert await store.activate_version(uuid4(), now=now) is None
+
+
+@pytest.mark.asyncio
+async def test_memory_store_unknown_activation_keeps_active() -> None:
+    """Mirror of the fixed repo semantics: unknown id must not deactivate the active row."""
+    store = _MemoryPersonaAdminStore()
+    v1 = await store.insert_version(version=1, source="db", payload={"a": 1}, created_by=1)
+    await store.activate_version(v1.id, now=_now())
+    assert await store.activate_version(uuid4(), now=_now()) is None
+    active = await store.get_active()
+    assert active is not None and active.id == v1.id
+
+
+@pytest.mark.asyncio
+async def test_memory_store_list_versions_newest_first() -> None:
+    """Ordering contract (created_at DESC, version DESC) exercised on the fake."""
+    store = _MemoryPersonaAdminStore()
+    base = _now()
+    older = base.replace(hour=1)
+    newer = base.replace(hour=2)
+    newest = base.replace(hour=3)
+    v1 = await store.insert_version(version=1, source="db", payload={}, created_by=1)
+    v1.created_at = older
+    v2 = await store.insert_version(version=2, source="db", payload={}, created_by=1)
+    v2.created_at = newest
+    v3 = await store.insert_version(version=3, source="db", payload={}, created_by=1)
+    v3.created_at = newer
+
+    versions = await store.list_versions()
+    assert [v.version for v in versions] == [2, 3, 1]

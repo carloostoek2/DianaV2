@@ -59,6 +59,12 @@ def upgrade() -> None:
         "persona_versions",
         [sa.text("created_at DESC")],
     )
+    op.create_index(
+        "uq_persona_versions_version",
+        "persona_versions",
+        ["version"],
+        unique=True,
+    )
     op.execute(
         "INSERT INTO system_config (key, value) "
         "VALUES ('FEATURE_PERSONA_ADMIN_ENABLED', 'false'::jsonb) "
@@ -70,6 +76,7 @@ def downgrade() -> None:
     op.execute(
         "DELETE FROM system_config WHERE key = 'FEATURE_PERSONA_ADMIN_ENABLED'"
     )
+    op.drop_index("uq_persona_versions_version", table_name="persona_versions")
     op.drop_index("ix_persona_versions_created_at", table_name="persona_versions")
     op.drop_index("uq_persona_versions_active", table_name="persona_versions")
     op.drop_table("persona_versions")

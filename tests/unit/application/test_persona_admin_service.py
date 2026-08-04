@@ -102,7 +102,7 @@ async def test_non_owner_rejected_on_writes() -> None:
     with pytest.raises(OwnerAuthError):
         await service.list_versions(OTHER_ID)
     with pytest.raises(OwnerAuthError):
-        await service.save_persona(None, _valid_catalog())  # type: ignore[arg-type]
+        await service.save_persona(None, _valid_catalog())
     assert store.inserted == []
 
 
@@ -177,3 +177,55 @@ async def test_roundtrip_save_then_get_current_persona() -> None:
     await service.save_persona(OWNER_ID, _valid_catalog())
     current = await service.get_current_persona()
     assert current == _valid_catalog()
+
+
+class _RaiseOnActivateStore(_MemoryPersonaAdminStore):
+    """Store that raises an IntegrityError-like exception on activation/insert."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.raise_on_activate = False
+        self.raise_on_insert = False
+
+    async def insert_version(
+        self,
+        *,
+        version: int,
+        source: str,
+        payload: dict,
+        created_by: int | None = None,
+    ) -> PersonaVersionRecord:
+        if self.raise_on_insert:
+            raise type("IntegrityError", (Exception,), {})("version conflict")
+        return await super().insert_version(
+            version=version,
+            source=source,
+            payload=payload,
+            created_by=created_by,
+        )
+
+    async def activate_version(
+        self, persona_version_id, *, now: datetime
+    ) -> PersonaVersionRecord | None:
+        if self.raise_on_activate:
+            raise type("IntegrityError", (Exception,), {})("activation conflict")
+        return await super().activate_version(persona_version_id, now=now)
+
+
+@pytest.mark.asyncio
+async def test_restore_maps_integrity_error_to_value_error() -> None:
+    store = _RaiseOnActivateStore()
+    service = _make_service(store)
+    await service.save_persona(OWNER_ID, _valid_catalog())
+    store.raise_on_activate = True
+    with pytest.raises(ValueError, match="persona_activation_conflict"):
+        await service.restore(OWNER_ID, uuid4())
+
+
+@pytest.mark.asyncio
+async def test_save_maps_integrity_error_to_value_error() -> None:
+    store = _RaiseOnActivateStore()
+    service = _make_service(store)
+    store.raise_on_insert = True
+    with pytest.raises(ValueError, match="persona_activation_conflict"):
+        await service.save_persona(OWNER_ID, _valid_catalog())

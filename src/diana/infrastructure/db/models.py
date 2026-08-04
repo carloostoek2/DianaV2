@@ -534,6 +534,7 @@ class PersonaVersion(Base):
             unique=True,
             postgresql_where=text("is_active"),
         ),
+        Index("uq_persona_versions_version", "version", unique=True),
     )
 
     id: Mapped[UUID] = mapped_column(

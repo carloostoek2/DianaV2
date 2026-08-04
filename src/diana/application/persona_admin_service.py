@@ -9,6 +9,7 @@ catalog (version 0 / seed).
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Callable
 from uuid import UUID
@@ -16,6 +17,8 @@ from uuid import UUID
 from diana.application.admin_service import OwnerAuthError
 from diana.application.ports import PersonaAdminStore, PersonaVersionRecord
 from diana.cognitive.persona_catalog import validate_persona_catalog
+
+logger = logging.getLogger("diana.application")
 
 
 def _is_integrity_error(exc: BaseException) -> bool:
@@ -34,6 +37,11 @@ class PersonaAdminService:
     activates it (instant apply — the owner's edit becomes the active catalog).
     ``restore`` reactivates a previous version. ``get_current_persona`` is the
     runtime read used by the pipeline wiring (Item 2/3).
+
+    Concurrency: the store's partial unique index guarantees at most one
+    active row and the ``version`` unique index guarantees no duplicate
+    version numbers; an ``IntegrityError`` from either is surfaced as
+    ``ValueError("persona_activation_conflict")``.
     """
 
     def __init__(
@@ -56,36 +64,68 @@ class PersonaAdminService:
             )
 
     async def save_persona(
-        self, actor_id: int, payload: dict[str, Any]
+        self, actor_id: int | None, payload: dict[str, Any]
     ) -> PersonaVersionRecord:
         """Validate the full catalog, persist it as a new active version."""
         self._assert_owner(actor_id)
         validated = validate_persona_catalog(dict(payload))
         versions = await self._store.list_versions()
         next_version = max((v.version for v in versions), default=0) + 1
-        record = await self._store.insert_version(
-            version=next_version,
-            source="db",
-            payload=validated,
-            created_by=actor_id,
+        try:
+            record = await self._store.insert_version(
+                version=next_version,
+                source="db",
+                payload=validated,
+                created_by=actor_id,
+            )
+            active = await self._store.activate_version(record.id, now=self._clock())
+        except Exception as exc:
+            if _is_integrity_error(exc):
+                logger.warning(
+                    "persona_activation_conflict",
+                    extra={"actor_id": actor_id, "version": next_version},
+                )
+                raise ValueError("persona_activation_conflict") from exc
+            raise
+        logger.info(
+            "persona_saved",
+            extra={
+                "actor_id": actor_id,
+                "version": next_version,
+                "persona_version_id": str(record.id),
+            },
         )
-        return await self._store.activate_version(record.id, now=self._clock())
+        return active if active is not None else record
 
     async def restore(
-        self, actor_id: int, persona_version_id: UUID
+        self, actor_id: int | None, persona_version_id: UUID
     ) -> PersonaVersionRecord | None:
         """Activate a previous version. Returns None when the id is unknown."""
         self._assert_owner(actor_id)
         try:
-            return await self._store.activate_version(
+            restored = await self._store.activate_version(
                 persona_version_id, now=self._clock()
             )
         except Exception as exc:
             if _is_integrity_error(exc):
+                logger.warning(
+                    "persona_activation_conflict",
+                    extra={"actor_id": actor_id, "persona_version_id": str(persona_version_id)},
+                )
                 raise ValueError("persona_activation_conflict") from exc
             raise
+        if restored is not None:
+            logger.info(
+                "persona_restored",
+                extra={
+                    "actor_id": actor_id,
+                    "persona_version_id": str(persona_version_id),
+                    "version": restored.version,
+                },
+            )
+        return restored
 
-    async def list_versions(self, actor_id: int) -> list[PersonaVersionRecord]:
+    async def list_versions(self, actor_id: int | None) -> list[PersonaVersionRecord]:
         """All versions, newest first (owner-only)."""
         self._assert_owner(actor_id)
         return await self._store.list_versions()

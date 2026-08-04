@@ -15,6 +15,15 @@ from diana.infrastructure.db.models import (
     Turn,
     Vip,
 )
+# Import the repositories package and the inline-ORM repo modules so
+# BusinessConnection + RuntimeTimer register on Base.metadata
+# deterministically — the table-count test must not depend on incidental
+# imports from other test modules.
+import diana.infrastructure.db.repositories  # noqa: F401
+from diana.infrastructure.db.repositories import (  # noqa: F401
+    business_connections,
+    runtime_timers,
+)
 
 F1_TABLES = frozenset(
     {

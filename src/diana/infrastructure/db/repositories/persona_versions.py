@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import case, or_, select, update
@@ -43,7 +44,7 @@ class PersonaVersionRepo:
         *,
         version: int,
         source: str,
-        payload: dict,
+        payload: dict[str, Any],
         created_by: int | None = None,
     ) -> PersonaVersionRecord:
         """Insert a new inactive version row."""
@@ -88,7 +89,18 @@ class PersonaVersionRepo:
     async def activate_version(
         self, persona_version_id: UUID, *, now: datetime
     ) -> PersonaVersionRecord | None:
-        """Activate *persona_version_id* and deactivate any other active row (atomic)."""
+        """Activate *persona_version_id* and deactivate any other active row (atomic).
+
+        No-op (returns None) when the target id does not exist: the swap only
+        runs if the target row exists, so an unknown id never deactivates the
+        currently active version. The partial unique index is evaluated after
+        the statement, so the swap never observes two active rows.
+        """
+        exists = (
+            select(PersonaVersion.id)
+            .where(PersonaVersion.id == persona_version_id)
+            .exists()
+        )
         async with self._sf() as session:
             await session.execute(
                 update(PersonaVersion)
@@ -97,6 +109,7 @@ class PersonaVersionRepo:
                         PersonaVersion.is_active.is_(True),
                         PersonaVersion.id == persona_version_id,
                     )
+                    & exists
                 )
                 .values(
                     is_active=PersonaVersion.id == persona_version_id,
