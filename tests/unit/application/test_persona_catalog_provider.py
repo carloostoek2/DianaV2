@@ -139,13 +139,48 @@ async def test_invalidate_during_inflight_read_not_clobbered() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_exception_falls_back_to_static() -> None:
-    """A DB outage on read degrades to the static catalog instead of crashing."""
+async def test_service_exception_returns_none_and_not_cached() -> None:
+    """A DB outage returns None (consumers keep static state) and is NOT cached:
+    the next call retries the DB and picks up the recovered catalog."""
 
-    class _ExplodingService:
+    class _RecoveringService:
+        def __init__(self) -> None:
+            self.down = True
+
         async def get_current_persona(self):
-            raise RuntimeError("db down")
+            if self.down:
+                raise RuntimeError("db down")
+            return _catalog("recovered")
 
-    provider = PersonaCatalogProvider(persona_admin_service=_ExplodingService())  # type: ignore[arg-type]
+    service = _RecoveringService()
+    provider = PersonaCatalogProvider(persona_admin_service=service)  # type: ignore[arg-type]
+    assert await provider.get_catalog() is None
+    assert await provider.get_catalog() is None  # still not cached: retries
+
+    service.down = False
     catalog = await provider.get_catalog()
-    assert catalog is get_persona_catalog()
+    assert catalog is not None
+    assert catalog["voz_configurada"]["persona"] == "Diana recovered"
+
+
+@pytest.mark.asyncio
+async def test_corrupt_payload_returns_none_and_not_cached() -> None:
+    """A corrupt DB payload (invalid catalog) must not reach consumers or cache."""
+
+    class _CorruptService:
+        def __init__(self) -> None:
+            self.corrupt = True
+
+        async def get_current_persona(self):
+            if self.corrupt:
+                return {"voz_configurada": {}}  # structurally invalid
+            return _catalog("ok")
+
+    service = _CorruptService()
+    provider = PersonaCatalogProvider(persona_admin_service=service)  # type: ignore[arg-type]
+    assert await provider.get_catalog() is None
+
+    service.corrupt = False
+    catalog = await provider.get_catalog()
+    assert catalog is not None
+    assert catalog["voz_configurada"]["persona"] == "Diana ok"

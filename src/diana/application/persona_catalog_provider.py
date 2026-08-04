@@ -12,8 +12,13 @@ Process-local by design: ops are single-instance (``docs/OPS_SINGLE_INSTANCE.md`
 so invalidation within the process is sufficient.
 
 Concurrency: an epoch counter protects the cache from being clobbered by a
-read that started before an ``invalidate``. If the DB read fails (outage), the
-provider degrades to the static catalog instead of crashing the turn.
+read that started before an ``invalidate``.
+
+Failure semantics: if the DB read raises (outage) or the payload fails
+``validate_persona_catalog`` (corrupt row), ``get_catalog`` returns ``None``
+(consumers keep their boot-time static state) and the failure is NOT cached —
+the next call retries the DB and picks up the active version once it is
+available again.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ import logging
 from typing import Any
 
 from diana.application.persona_admin_service import PersonaAdminService
-from diana.cognitive.persona_catalog import get_persona_catalog
+from diana.cognitive.persona_catalog import get_persona_catalog, validate_persona_catalog
 
 logger = logging.getLogger("diana.application")
 
@@ -48,18 +53,32 @@ class PersonaCatalogProvider:
     async def get_catalog(self) -> dict[str, Any] | None:
         """Full active catalog (DB version when flag on and active, else static).
 
-        A read that started before an ``invalidate`` (same event loop, interleaved
-        at the await) does not clobber the cache: its result is returned to the
-        in-flight caller but only cached if no invalidation happened meanwhile.
+        Returns ``None`` on DB failure or corrupt payload (never cached, so the
+        next call retries). ``None`` from the service (flag off / no active
+        version) falls back to the static catalog and IS cached — that is the
+        steady-state 0-query path.
+
+        A read that started before an ``invalidate`` (same event loop,
+        interleaved at the await) does not clobber the cache: its result is
+        returned to the in-flight caller but only cached if no invalidation
+        happened meanwhile.
         """
         if self._cached is not None:
             return self._cached
         epoch = self._epoch
         try:
             catalog = await self._service.get_current_persona()
-        except Exception:
-            logger.warning("persona_catalog_read_failed", exc_info=True)
-            catalog = None
+            if catalog is not None:
+                # Defense-in-depth: the write path already validates; re-validating
+                # on read keeps a corrupt DB row from crashing pipeline consumers.
+                catalog = validate_persona_catalog(catalog)
+        except Exception as exc:
+            logger.warning(
+                "persona_catalog_read_failed",
+                extra={"error": type(exc).__name__},
+                exc_info=True,
+            )
+            return None
         if catalog is None:
             catalog = (
                 self._static_catalog
