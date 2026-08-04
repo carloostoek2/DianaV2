@@ -231,8 +231,6 @@ async def test_memory_store_list_versions_tiebreak_by_version() -> None:
 
 def test_activate_version_source_keeps_exists_guard() -> None:
     """Source pin: the swap must keep the EXISTS guard (unknown-id no-op)."""
-    import inspect
-
     source = inspect.getsource(PersonaVersionRepo.activate_version)
     assert ".exists()" in source
     assert "& exists" in source

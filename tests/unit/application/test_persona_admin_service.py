@@ -53,7 +53,11 @@ class _MemoryPersonaAdminStore:
         return record
 
     async def list_versions(self) -> list[PersonaVersionRecord]:
-        return sorted(self.records, key=lambda r: r.created_at, reverse=True)
+        return sorted(
+            self.records,
+            key=lambda r: (r.created_at, r.version),
+            reverse=True,
+        )
 
     async def get_by_id(self, persona_version_id) -> PersonaVersionRecord | None:
         for record in self.records:
