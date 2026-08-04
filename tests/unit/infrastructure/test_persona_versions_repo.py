@@ -131,7 +131,9 @@ class _MemoryPersonaAdminStore:
 
     async def list_versions(self) -> list[PersonaVersionRecord]:
         return sorted(
-            self.records, key=lambda r: r.created_at, reverse=True
+            self.records,
+            key=lambda r: (r.created_at, r.version),
+            reverse=True,
         )
 
     async def get_by_id(self, persona_version_id) -> PersonaVersionRecord | None:
@@ -209,3 +211,28 @@ async def test_memory_store_list_versions_newest_first() -> None:
 
     versions = await store.list_versions()
     assert [v.version for v in versions] == [2, 3, 1]
+
+
+@pytest.mark.asyncio
+async def test_memory_store_list_versions_tiebreak_by_version() -> None:
+    """Tie on created_at resolves by version DESC (mirror of the repo ORDER BY)."""
+    store = _MemoryPersonaAdminStore()
+    same = _now()
+    v1 = await store.insert_version(version=1, source="db", payload={}, created_by=1)
+    v1.created_at = same
+    v3 = await store.insert_version(version=3, source="db", payload={}, created_by=1)
+    v3.created_at = same
+    v2 = await store.insert_version(version=2, source="db", payload={}, created_by=1)
+    v2.created_at = same
+
+    versions = await store.list_versions()
+    assert [v.version for v in versions] == [3, 2, 1]
+
+
+def test_activate_version_source_keeps_exists_guard() -> None:
+    """Source pin: the swap must keep the EXISTS guard (unknown-id no-op)."""
+    import inspect
+
+    source = inspect.getsource(PersonaVersionRepo.activate_version)
+    assert ".exists()" in source
+    assert "& exists" in source

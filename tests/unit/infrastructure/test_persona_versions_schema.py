@@ -63,10 +63,14 @@ def test_017_created_at_desc_index() -> None:
 
 
 def test_017_unique_version_index() -> None:
+    import re
+
     text = _migration_text()
     assert "uq_persona_versions_version" in text
-    assert "unique=True" in text
-    assert '"version"' in text
+    assert re.search(
+        r'"uq_persona_versions_version".*?unique=True', text, re.DOTALL
+    ) is not None
+    assert '"version"],' in text
 
 
 def test_017_seeds_feature_flag_in_system_config() -> None:

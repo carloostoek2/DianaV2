@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -166,8 +167,11 @@ async def test_restore_reactivates_previous_version() -> None:
 async def test_restore_unknown_id_returns_none() -> None:
     store = _MemoryPersonaAdminStore()
     service = _make_service(store)
-    await service.save_persona(OWNER_ID, _valid_catalog())
+    v1 = await service.save_persona(OWNER_ID, _valid_catalog())
     assert await service.restore(OWNER_ID, uuid4()) is None
+    # the active version must remain untouched
+    active = await store.get_active()
+    assert active is not None and active.id == v1.id
 
 
 @pytest.mark.asyncio
@@ -192,7 +196,7 @@ class _RaiseOnActivateStore(_MemoryPersonaAdminStore):
         *,
         version: int,
         source: str,
-        payload: dict,
+        payload: dict[str, Any],
         created_by: int | None = None,
     ) -> PersonaVersionRecord:
         if self.raise_on_insert:
@@ -223,9 +227,29 @@ async def test_restore_maps_integrity_error_to_value_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_save_maps_integrity_error_to_value_error() -> None:
+async def test_save_maps_version_conflict_to_value_error() -> None:
     store = _RaiseOnActivateStore()
     service = _make_service(store)
     store.raise_on_insert = True
+    with pytest.raises(ValueError, match="persona_version_conflict"):
+        await service.save_persona(OWNER_ID, _valid_catalog())
+
+
+@pytest.mark.asyncio
+async def test_save_maps_activation_conflict_to_value_error() -> None:
+    store = _RaiseOnActivateStore()
+    service = _make_service(store)
+    store.raise_on_activate = True
     with pytest.raises(ValueError, match="persona_activation_conflict"):
+        await service.save_persona(OWNER_ID, _valid_catalog())
+
+
+@pytest.mark.asyncio
+async def test_non_integrity_errors_propagate_raw() -> None:
+    class _ExplodingStore(_MemoryPersonaAdminStore):
+        async def insert_version(self, **kwargs: Any) -> PersonaVersionRecord:
+            raise RuntimeError("db down")
+
+    service = _make_service(_ExplodingStore())
+    with pytest.raises(RuntimeError, match="db down"):
         await service.save_persona(OWNER_ID, _valid_catalog())

@@ -40,8 +40,14 @@ class PersonaAdminService:
 
     Concurrency: the store's partial unique index guarantees at most one
     active row and the ``version`` unique index guarantees no duplicate
-    version numbers; an ``IntegrityError`` from either is surfaced as
-    ``ValueError("persona_activation_conflict")``.
+    version numbers. An ``IntegrityError`` from the version insert is
+    surfaced as ``ValueError("persona_version_conflict")``; one from the
+    activation swap as ``ValueError("persona_activation_conflict")``.
+
+    Known accepted behavior: if activation fails after a successful insert
+    (non-integrity failure, e.g. DB outage), the inserted row stays persisted
+    inactive (a version gap is consumed). Owner-only usage makes this
+    negligible; a retry simply creates the next version.
     """
 
     def __init__(
@@ -78,12 +84,23 @@ class PersonaAdminService:
                 payload=validated,
                 created_by=actor_id,
             )
+        except Exception as exc:
+            if _is_integrity_error(exc):
+                logger.warning(
+                    "persona_version_conflict",
+                    extra={"actor_id": actor_id, "version": next_version},
+                    exc_info=True,
+                )
+                raise ValueError("persona_version_conflict") from exc
+            raise
+        try:
             active = await self._store.activate_version(record.id, now=self._clock())
         except Exception as exc:
             if _is_integrity_error(exc):
                 logger.warning(
                     "persona_activation_conflict",
                     extra={"actor_id": actor_id, "version": next_version},
+                    exc_info=True,
                 )
                 raise ValueError("persona_activation_conflict") from exc
             raise
@@ -95,6 +112,9 @@ class PersonaAdminService:
                 "persona_version_id": str(record.id),
             },
         )
+        # ``active`` is the freshly activated record (the Protocol guarantees a
+        # record for an existing id); the inserted record is returned as a
+        # fallback only if the store returned None (defensive, unreachable).
         return active if active is not None else record
 
     async def restore(
@@ -111,6 +131,7 @@ class PersonaAdminService:
                 logger.warning(
                     "persona_activation_conflict",
                     extra={"actor_id": actor_id, "persona_version_id": str(persona_version_id)},
+                    exc_info=True,
                 )
                 raise ValueError("persona_activation_conflict") from exc
             raise
