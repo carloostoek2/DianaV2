@@ -1,4 +1,4 @@
-"""Owner-gated persona catalog versioning (Item 1 domain; no wiring yet).
+"""Owner-gated persona catalog versioning (domain; wired since Item 2).
 
 Writes (save / restore / list) are owner-only; the runtime read
 ``get_current_persona`` additionally honors the

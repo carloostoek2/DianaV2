@@ -43,16 +43,24 @@ class VoicePatternsRetriever:
                 self._tag_freq[tag] += 1
 
     async def _maybe_refresh(self) -> None:
-        """Pull a fresh slice from the live catalog when it changed (by identity)."""
+        """Pull a fresh slice from the live catalog when it changed (by identity).
+
+        A ``None`` slice (key missing) or a non-list value keeps the last good
+        state — never wipe on corrupt rows.
+        """
         if self._provider is None:
             return
         catalog = await self._provider.get_catalog()
         if catalog is None:
             return
         slice_ = catalog.get("voice_patterns")
+        if slice_ is None:
+            return
+        if not isinstance(slice_, list):
+            return
         if slice_ is not self._last_patterns:
             self._last_patterns = slice_
-            self._set_patterns(slice_ or [])
+            self._set_patterns(slice_)
 
     async def fetch(
         self,

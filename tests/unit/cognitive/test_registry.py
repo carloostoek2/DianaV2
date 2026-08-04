@@ -420,3 +420,19 @@ async def test_registry_propagates_persona_catalog_provider() -> None:
     )
     assert schedule is not None and schedule["tipo"] == "respuesta_libre"
     assert schedule["respuesta_sugerida"] == "live response"
+
+
+
+async def test_registry_static_slices_plus_provider_combination() -> None:
+    """Static slices remain the fallback when the provider reports None."""
+    static_facts = [{"id": "s", "tema": ["familia"], "hecho": "static fact"}]
+    provider = _FakeProvider(None)
+    registry = build_default_registry(
+        InMemoryMessageHistory(),
+        persona_facts=static_facts,
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    result = await registry.resolve("knowledge.persona_facts").fetch(
+        _turn(), _comprehension(topics=["familia"])
+    )
+    assert result is not None and result["hecho"] == "static fact"

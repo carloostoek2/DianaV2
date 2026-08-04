@@ -95,7 +95,57 @@ def test_protocol_exported_in_cognitive_ports() -> None:
 
     assert hasattr(ports, "PersonaCatalogProvider")
     assert "PersonaCatalogProvider" in ports.__all__
-    from typing import get_type_hints
-
     # runtime_checkable protocol with the async get_catalog contract
     assert "get_catalog" in getattr(ports.PersonaCatalogProvider, "__protocol_attrs__", set())
+
+
+class _SlowService(_FakeService):
+    """Service whose read can be interleaved with invalidate() at the await."""
+
+    def __init__(self, catalog) -> None:
+        super().__init__(catalog)
+        self.release: asyncio.Event | None = None
+
+    async def get_current_persona(self):
+        self.calls += 1
+        snapshot = self.catalog
+        if self.release is not None:
+            await self.release.wait()
+        return snapshot
+
+
+@pytest.mark.asyncio
+async def test_invalidate_during_inflight_read_not_clobbered() -> None:
+    """An in-flight read that started before invalidate() must not cache stale data."""
+    import asyncio
+
+    service = _SlowService(_catalog("old"))
+    provider = PersonaCatalogProvider(persona_admin_service=service)  # type: ignore[arg-type]
+    service.release = asyncio.Event()
+
+    read_task = asyncio.create_task(provider.get_catalog())
+    await asyncio.sleep(0)  # let the read start and hit the await
+    service.catalog = _catalog("new")
+    provider.invalidate()
+    service.release.set()
+    result = await read_task
+
+    # The in-flight caller still gets its snapshot, but the cache was NOT
+    # clobbered: the next read returns the new catalog without further awaits.
+    assert result["voz_configurada"]["persona"] == "Diana old"
+    next_catalog = await provider.get_catalog()
+    assert next_catalog["voz_configurada"]["persona"] == "Diana new"
+    assert service.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_service_exception_falls_back_to_static() -> None:
+    """A DB outage on read degrades to the static catalog instead of crashing."""
+
+    class _ExplodingService:
+        async def get_current_persona(self):
+            raise RuntimeError("db down")
+
+    provider = PersonaCatalogProvider(persona_admin_service=_ExplodingService())  # type: ignore[arg-type]
+    catalog = await provider.get_catalog()
+    assert catalog is get_persona_catalog()

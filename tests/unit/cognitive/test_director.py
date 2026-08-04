@@ -1672,8 +1672,6 @@ class _FakePersonaProvider:
 
 async def test_persona_provider_overrides_persona_in_prompt() -> None:
     """Live catalog persona + style rules reach the generated prompt (hot-reload)."""
-    from diana.cognitive.director import CognitiveDirector  # noqa: F401
-
     llm = FakeLLM(
         structured_responses=[_comprehension(), _profile()],
         text_responses=["draft"],
@@ -1742,3 +1740,43 @@ async def test_persona_provider_hot_swap_between_turns() -> None:
     prompt2 = trace.get(second.turn_id, "prompt_text")
     assert "Persona turno 2" in prompt2
     assert "Persona turno 1" not in prompt2
+    assert "r2" in prompt2
+    assert "r1" not in prompt2
+
+
+async def test_persona_provider_empty_voz_falls_back() -> None:
+    """Empty/absent voz_configurada keeps the boot-time persona + style rules."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _FakePersonaProvider({"voz_configurada": {}})
+    director, trace, _ = make_director(
+        llm, persona="You are Diana.", style_rules=["static rule"],
+        persona_catalog_provider=provider,
+    )
+    turn = _turn()
+    await director.handle_turn(turn)
+    prompt = trace.get(turn.turn_id, "prompt_text")
+    assert "You are Diana." in prompt
+    assert "static rule" in prompt
+
+
+async def test_persona_provider_non_list_rules_falls_back() -> None:
+    """reglas_estilo that is not a list falls back to boot-time rules."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _FakePersonaProvider(
+        {"voz_configurada": {"persona": "Live persona", "reglas_estilo": "no-lista"}}
+    )
+    director, trace, _ = make_director(
+        llm, persona="Boot persona", style_rules=["static rule"],
+        persona_catalog_provider=provider,
+    )
+    turn = _turn()
+    await director.handle_turn(turn)
+    prompt = trace.get(turn.turn_id, "prompt_text")
+    assert "Live persona" in prompt
+    assert "static rule" in prompt

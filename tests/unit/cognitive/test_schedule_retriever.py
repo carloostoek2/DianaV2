@@ -253,3 +253,45 @@ async def test_schedule_provider_none_falls_back() -> None:
     result = await retriever.fetch(_turn(), _comprehension())
     assert result["tipo"] == "actividad"
     assert result["actividad"] == "constructor state"
+
+
+@pytest.mark.asyncio
+async def test_schedule_refresh_invalid_timezone_falls_back() -> None:
+    """A bogus timezone in a live slice must not crash; falls back to default."""
+    monday_morning = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)
+    provider = _FakeProvider(
+        {
+            "schedule": {
+                "timezone": "Bogus/Zone",
+                "default_responses": ["resp"],
+                "bloques": [
+                    {"dias": ["lunes"], "inicio": "09:00", "fin": "12:00", "actividad": "act"}
+                ],
+            }
+        }
+    )
+    retriever = ScheduleRetriever(
+        bloques=[], default_responses=["seed"], tz="America/Mexico_City",
+        clock=_FixedClock(monday_morning),
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result is not None
+    assert result["tipo"] == "actividad"
+    assert result["actividad"] == "act"
+
+
+@pytest.mark.asyncio
+async def test_schedule_refresh_missing_keys_uses_defaults() -> None:
+    """A live slice without timezone/default_responses falls back to defaults."""
+    monday_morning = datetime(2026, 8, 3, 15, 0, tzinfo=UTC)
+    provider = _FakeProvider({"schedule": {"bloques": []}})
+    retriever = ScheduleRetriever(
+        bloques=[], default_responses=["seed"], tz="America/Mexico_City",
+        clock=_FixedClock(monday_morning),
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result["tipo"] == "respuesta_libre"
+    # missing keys fall back to the retriever's mirrored default response
+    assert result["respuesta_sugerida"] == "Pues aquí entre cosas jsjsjs y tú?"

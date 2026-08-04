@@ -67,16 +67,23 @@ class ScheduleRetriever:
             self._tz = ZoneInfo(_DEFAULT_SCHEDULE_TZ)
 
     async def _maybe_refresh(self) -> None:
-        """Pull a fresh schedule slice from the live catalog when it changed."""
+        """Pull a fresh schedule slice from the live catalog when it changed.
+
+        A ``None`` slice (key missing) or a non-dict value keeps the last good
+        state — never wipe on corrupt rows.
+        """
         if self._provider is None:
             return
         catalog = await self._provider.get_catalog()
         if catalog is None:
             return
         schedule = catalog.get("schedule")
+        if schedule is None:
+            return
+        if not isinstance(schedule, dict):
+            return
         if schedule is not self._last_schedule:
             self._last_schedule = schedule
-            schedule = schedule or {}
             self._set_schedule(
                 schedule.get("bloques") or [],
                 schedule.get("default_responses") or _DEFAULT_SCHEDULE_RESPONSES,

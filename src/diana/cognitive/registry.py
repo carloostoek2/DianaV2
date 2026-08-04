@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from diana.cognitive.ports import ClockPort, MessageHistoryPort, PersonaCatalogProvider, Retriever
+from diana.cognitive.ports import (
+    ClockPort,
+    MessageHistoryPort,
+    PersonaCatalogProvider,
+    Retriever,
+)
 from diana.cognitive.retrievers.context import ContextRetriever
 from diana.cognitive.retrievers.examples import ExamplesRetriever
 from diana.cognitive.retrievers.history import HistoryRetriever

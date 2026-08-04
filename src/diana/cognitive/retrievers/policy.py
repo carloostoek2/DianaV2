@@ -63,13 +63,21 @@ class PolicyRetriever:
         self._static = list(static_policies) if static_policies else None
 
     async def _maybe_refresh(self) -> None:
-        """Pull a fresh policies slice from the live catalog when it changed."""
+        """Pull a fresh policies slice from the live catalog when it changed.
+
+        A ``None`` slice (key missing) or a non-list value keeps the last good
+        state — never wipe on corrupt rows.
+        """
         if self._provider is None:
             return
         catalog = await self._provider.get_catalog()
         if catalog is None:
             return
         policies = catalog.get("policies")
+        if policies is None:
+            return
+        if not isinstance(policies, list):
+            return
         if policies is not self._last_policies:
             self._last_policies = policies
             self._static = list(policies) if policies else None

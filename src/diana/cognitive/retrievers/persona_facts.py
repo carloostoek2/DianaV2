@@ -61,16 +61,25 @@ class PersonaFactsRetriever:
                 self._tag_freq[tema] += 1
 
     async def _maybe_refresh(self) -> None:
-        """Pull a fresh slice from the live catalog when it changed (by identity)."""
+        """Pull a fresh slice from the live catalog when it changed (by identity).
+
+        A ``None`` slice (key missing) or a non-list value keeps the last good
+        state — the provider's validation contract already guarantees lists,
+        but a corrupt row must never wipe the retriever.
+        """
         if self._provider is None:
             return
         catalog = await self._provider.get_catalog()
         if catalog is None:
             return
         slice_ = catalog.get("persona_facts")
+        if slice_ is None:
+            return
+        if not isinstance(slice_, list):
+            return
         if slice_ is not self._last_facts:
             self._last_facts = slice_
-            self._set_facts(slice_ or [])
+            self._set_facts(slice_)
 
     async def fetch(
         self,

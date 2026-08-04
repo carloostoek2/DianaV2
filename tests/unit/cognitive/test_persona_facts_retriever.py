@@ -228,3 +228,35 @@ async def test_provider_none_falls_back_to_constructor_state() -> None:
     )
     result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
     assert result is not None and "Laura" in result["hecho"]
+
+
+
+@pytest.mark.asyncio
+async def test_identity_stable_no_rebuild() -> None:
+    """Same catalog object across fetches must NOT rebuild retriever state."""
+    from diana.cognitive.retrievers.persona_facts import PersonaFactsRetriever
+
+    catalog = {"persona_facts": [{"id": "a", "tema": ["familia"], "hecho": "hecho"}]}
+    provider = _FakeProvider(catalog)
+    retriever = PersonaFactsRetriever(persona_catalog_provider=provider)  # type: ignore[arg-type]
+
+    await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    first_tag_freq = retriever._tag_freq
+    await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    # Same catalog object -> same internal state object (no rebuild).
+    assert retriever._tag_freq is first_tag_freq
+
+
+@pytest.mark.asyncio
+async def test_missing_slice_keeps_last_good_state() -> None:
+    """A live catalog omitting the key must not wipe the retriever state."""
+    from diana.cognitive.retrievers.persona_facts import PersonaFactsRetriever
+
+    v1 = {"persona_facts": [{"id": "a", "tema": ["familia"], "hecho": "hecho v1"}]}
+    provider = _FakeProvider(dict(v1))
+    retriever = PersonaFactsRetriever(persona_catalog_provider=provider)  # type: ignore[arg-type]
+    await retriever.fetch(_turn(), _comp(topics=["familia"]))
+
+    provider.catalog = {"other_key": []}  # key missing -> None slice
+    result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
+    assert result is not None and result["hecho"] == "hecho v1"

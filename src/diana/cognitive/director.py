@@ -184,6 +184,10 @@ class CognitiveDirector:
 
         Falls back to the boot-time ``persona`` / ``style_rules`` when no
         provider is wired or the provider reports no live catalog.
+
+        Note: under a concurrent owner save the catalog snapshot may vary
+        intra-turn (retrievers refresh before this resolves). That is
+        inherent to hot-reload; the next turn is always consistent.
         """
         if self._persona_catalog_provider is None:
             return self._persona, self._style_rules
@@ -193,7 +197,7 @@ class CognitiveDirector:
         voz = catalog.get("voz_configurada") or {}
         persona = str(voz.get("persona") or self._persona)
         rules = voz.get("reglas_estilo")
-        style_rules = list(rules) if isinstance(rules, list) else self._style_rules
+        style_rules = list(rules) if isinstance(rules, list) and rules else self._style_rules
         return persona, style_rules
 
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
