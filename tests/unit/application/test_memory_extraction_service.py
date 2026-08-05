@@ -212,6 +212,26 @@ class FakeEmbedder:
         return vec
 
 
+class FakeNotifier:
+    """OwnerNotifierPort double (pattern test_memory_backfill_service.py):
+    records every owner DM payload."""
+
+    def __init__(self) -> None:
+        self.infos: list[str] = []
+
+    async def notify_draft(self, payload: object) -> int | None:
+        return None
+
+    async def notify_escalation(self, payload: object) -> None:
+        return None
+
+    async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
+        self.infos.append(text)
+
+    async def notify_doctrine(self, payload: object) -> int | None:
+        return None
+
+
 def _service(
     *,
     enabled: bool = True,
@@ -221,6 +241,7 @@ def _service(
     memories: FakeMemories | None = None,
     vips: FakeVips | None = None,
     embedder: FakeEmbedder | None = None,
+    notifier: FakeNotifier | None = None,
     dedup_threshold: float = 0.85,
 ) -> MemoryExtractionService:
     return MemoryExtractionService(
@@ -231,6 +252,7 @@ def _service(
         turns=turns or FakeTurns(),
         memories=memories or FakeMemories(),
         vips=vips,
+        notifier=notifier,
         dedup_threshold=dedup_threshold,
     )
 
@@ -818,3 +840,87 @@ def test_cap_transcript_drops_oldest_lines() -> None:
     assert sum(len(line) for line in capped) <= 12_000
     assert capped[-1] == lines[-1]  # newest kept
     assert lines[0] not in capped  # oldest dropped
+
+
+# --- F5 Pool 4: owner DM on new pending facts (best-effort, by name) ---
+
+
+@pytest.mark.asyncio
+async def test_notifies_owner_when_pending_and_name_resolved() -> None:
+    """F5-05: post-turn DM shows the VIP display_name and the /memoria hint,
+    and NEVER leaks the fact text into the notification."""
+    vip_id = uuid4()
+    turn = _turn(vip_id=vip_id)
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="sensible",
+                        texto="Mencionó su salud en detalle",
+                        confianza=0.9,
+                        sensible=True,
+                    )
+                ]
+            )
+        ]
+    )
+    vips = FakeVips()
+    vips.add(VipRecord(id=vip_id, telegram_user_id=CHAT_ID, display_name="Ana"))
+    notifier = FakeNotifier()
+    svc = _service(
+        llm=llm,
+        history=_history_with_turn_msgs(),
+        memories=FakeMemories(),
+        turns=FakeTurns([turn]),
+        vips=vips,
+        notifier=notifier,
+    )
+
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+
+    assert report.status == "ok"
+    assert report.pending_owner == 1
+    assert len(notifier.infos) == 1
+    text = notifier.infos[0]
+    assert "Ana" in text
+    assert "/memoria" in text
+    assert "requieren tu aprobación" in text
+    assert "Mencionó su salud" not in text  # fact text stays out of the DM
+
+
+@pytest.mark.asyncio
+async def test_no_notify_when_notifier_none() -> None:
+    """F5-05: default wiring (notifier None) never sends a DM and does not
+    disturb the extraction flow."""
+    vip_id = uuid4()
+    turn = _turn(vip_id=vip_id)
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="sensible",
+                        texto="le preocupa su salud",
+                        confianza=0.9,
+                        sensible=True,
+                    )
+                ]
+            )
+        ]
+    )
+    vips = FakeVips()
+    vips.add(VipRecord(id=vip_id, telegram_user_id=CHAT_ID, display_name="Ana"))
+    svc = _service(
+        llm=llm,
+        history=_history_with_turn_msgs(),
+        memories=FakeMemories(),
+        turns=FakeTurns([turn]),
+        vips=vips,
+    )  # notifier default None
+
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+
+    assert report.status == "ok"
+    assert report.pending_owner == 1
+    assert svc._notifier is None

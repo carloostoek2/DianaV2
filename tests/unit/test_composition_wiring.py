@@ -564,3 +564,27 @@ def test_composition_recontact_history_and_sandbox_wired(_comp_src: str) -> None
     block = _comp_src[start : start + 900]
     assert "history=history" in block
     assert "sandbox=sandbox" in block
+
+
+# --- F5 Pool 4: memory approval / panel memory / extraction notifier wiring ---
+
+
+def test_composition_memory_approval_gated(_comp_src: str) -> None:
+    """F5-05 R4: the /memoria router is wired only when feature_memory_enabled
+    (flag OFF → memory_approval=None, byte-identical)."""
+    assert "memory_approval if settings.feature_memory_enabled else None" in _comp_src
+
+
+def test_composition_profile_admin_memories_gated(_comp_src: str) -> None:
+    """F5-06 R4: ProfileAdminService.memories is wired only when the memory
+    feature flag is on (flag OFF → None, no 🧠 Memoria section)."""
+    assert "memories=(memories_repo if settings.feature_memory_enabled else None)" in _comp_src
+
+
+def test_composition_extraction_notifier_wired(_comp_src: str) -> None:
+    """F5-05 A5: the post-turn MemoryExtractionService receives the owner
+    notifier; the flag gate lives inside the service (disabled short-circuit)."""
+    start = _comp_src.find("MemoryExtractionService(")
+    assert start != -1
+    block = _comp_src[start : start + 300]
+    assert "notifier=notifier" in block

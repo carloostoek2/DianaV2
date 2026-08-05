@@ -11,7 +11,8 @@ from aiogram.types import Chat, Message, User
 
 from diana.application.memory import InMemoryVipStore
 from diana.application.ports import VipRecord
-from diana.telegram.handlers.menu import _dispatch_action, MenuSessionStore
+from diana.application.profile_admin_service import ProfileAdminResult
+from diana.telegram.handlers.menu import _dispatch_action, _format_vip_profile, MenuSessionStore
 from diana.telegram.keyboards import (
     MenuCallback,
     encode_menu_vip_action,
@@ -733,3 +734,79 @@ def test_profile_keyboard_show_generate_button() -> None:
     default = menu_vip_profile_keyboard(123)
     default_texts = [b.text for row in default.inline_keyboard for b in row]
     assert not any("Generar perfil" in t for t in default_texts)
+
+
+# --- F5 Pool 4 (F5-06): 🧠 Memoria section of the ficha ---
+
+
+def test_format_vip_profile_renders_memory_section() -> None:
+    """The ficha shows the memory section with per-fact status icons and the
+    /memoria hint when pending facts exist."""
+    result = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {"city": "BA"}, "notes": []},
+        memory=[
+            {
+                "category": "preferencias",
+                "status": "auto",
+                "content": {"texto": "Le gusta viajar"},
+            },
+            {
+                "category": "sensible",
+                "status": "pending_owner",
+                "content": {"texto": "Mencionó su salud"},
+            },
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "🧠 Memoria" in text
+    assert "[preferencias] Le gusta viajar" in text
+    assert "⏳ pendiente" in text
+    assert "Hay 1 hechos por aprobar — usá /memoria." in text
+    # Manual ficha still present (section added, not replaced).
+    assert "📌 Datos:" in text
+    assert "city: BA" in text
+
+
+def test_format_vip_profile_empty_manual_with_memory() -> None:
+    """The diagnosed 'perfil generado pero no se ve nada' case: empty manual
+    ficha + memory present → the ficha renders the memory, NOT 'Sin datos'."""
+    result = ProfileAdminResult(
+        status="profile_empty",
+        telegram_user_id=555,
+        display_name="Alice",
+        content=None,
+        memory=[
+            {
+                "category": "preferencias",
+                "status": "approved",
+                "content": {"texto": "Le gusta viajar"},
+            }
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "🧠 Memoria" in text
+    assert "Le gusta viajar" in text
+    assert "Sin datos" not in text
+
+
+def test_format_vip_profile_empty_without_memory_stays_empty_card() -> None:
+    """No manual data AND no memory → the 'Sin datos todavia' card remains."""
+    result = ProfileAdminResult(
+        status="profile_empty",
+        telegram_user_id=555,
+        display_name="Alice",
+        content=None,
+        memory=None,
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "Sin datos" in text
+    assert "🧠 Memoria" not in text

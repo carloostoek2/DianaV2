@@ -392,3 +392,70 @@ async def test_purge_no_profile_row_profile_absent(
     r = await service.purge_profile_for_telegram_user(OWNER, 555)
     assert r.status == "profile_absent"
     assert profiles.rows == {}
+
+
+# --- F5 Pool 4 (F5-06): semantic memory section in the ficha ---
+
+
+class FakeMemoriesReader:
+    """MemoryFactsReader double: list_by_vip returns the wired rows."""
+
+    def __init__(self, rows: list[dict] | None = None) -> None:
+        self.rows = list(rows or [])
+        self.calls: list[UUID] = []
+
+    async def list_by_vip(self, vip_id: UUID) -> list[dict]:
+        self.calls.append(vip_id)
+        return [dict(r) for r in self.rows]
+
+
+@pytest.mark.asyncio
+async def test_show_profile_includes_memory_when_wired(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """F5-06: with a memories reader wired, show_profile includes the memory
+    rows in BOTH result paths (profile_ok)."""
+    service, vips, profiles = svc
+    rec = await vips.add(555, display_name="Alice")
+    profiles.rows[rec.id] = {"facts": {"city": "BA"}, "notes": []}
+    rows = [
+        {
+            "category": "preferencias",
+            "status": "auto",
+            "content": {"texto": "Le gusta viajar"},
+        },
+        {
+            "category": "sensible",
+            "status": "pending_owner",
+            "content": {"texto": "Mencionó su salud"},
+        },
+    ]
+    memories = FakeMemoriesReader(rows)
+    wired = ProfileAdminService(
+        profiles=profiles,
+        vips=vips,
+        owner_telegram_id=OWNER,
+        memories=memories,
+        clock=lambda: datetime(2026, 7, 27, 12, 0, tzinfo=UTC),
+    )
+
+    r = await wired.show_profile(OWNER, 555)
+
+    assert r.status == "profile_ok"
+    assert r.memory == rows
+    assert memories.calls == [rec.id]
+
+
+@pytest.mark.asyncio
+async def test_show_profile_memory_none_when_unwired(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """F5-06: without a memories reader (flag OFF) the result carries
+    memory=None and the empty-card early return stays intact."""
+    service, vips, _ = svc
+    await vips.add(555, display_name="Alice")
+
+    r = await service.show_profile(OWNER, 555)
+
+    assert r.status == "profile_empty"
+    assert r.memory is None
