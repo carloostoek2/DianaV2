@@ -80,3 +80,26 @@ async def test_create_preserves_vip_id(session_factory):
     await repo.create(turn)
     stored = await repo.get(turn_id)
     assert stored.vip_id == vip.id
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_create_roundtrips_atencion_channel_type(session_factory):
+    """F4: atencion turns persist channel_type='atencion'; VIP default 'vip'."""
+    repo = SqlTurnStore(session_factory)
+
+    atencion_id = uuid4()
+    atencion = TurnRecord(
+        id=atencion_id, chat_id=900, status="received", channel_type="atencion"
+    )
+    await repo.create(atencion)
+    stored = await repo.get(atencion_id)
+    assert stored is not None
+    assert stored.channel_type == "atencion"
+
+    vip_id = uuid4()
+    vip_turn = TurnRecord(id=vip_id, chat_id=901, status="received")
+    await repo.create(vip_turn)
+    stored_vip = await repo.get(vip_id)
+    assert stored_vip is not None
+    assert stored_vip.channel_type == "vip"  # default preserved (flag OFF)

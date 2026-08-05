@@ -40,6 +40,8 @@ class TurnRecord(BaseModel):
     chat_id: int
     status: str
     vip_id: UUID | None = None
+    # F4 channel tag ("vip" | "atencion"); default keeps pre-F4 callers unchanged.
+    channel_type: Literal["vip", "atencion"] = "vip"
     trigger_message_id: int | None = None
     superseded_by: UUID | None = None
     error: str | None = None

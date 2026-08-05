@@ -37,6 +37,7 @@ def turn_orm_to_record(row: Turn) -> TurnRecord:
         trigger_message_id=row.trigger_message_id,
         superseded_by=row.superseded_by,
         error=row.error,
+        channel_type=row.channel_type,
     )
 
 
@@ -56,6 +57,7 @@ class SqlTurnStore:
                 trigger_message_id=turn.trigger_message_id,
                 superseded_by=turn.superseded_by,
                 error=turn.error,
+                channel_type=turn.channel_type,
             )
             session.add(row)
             await session.commit()

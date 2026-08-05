@@ -232,6 +232,7 @@ class TurnCoordinator:
         trigger_message_id: int | None = None,
         vip_id: UUID | None = None,
         turn_id: UUID | None = None,
+        channel_type: str = "vip",
     ) -> CoordinateResult:
         """G.2 entry: decide create | replace | discard_owner_message under lock."""
         async with self.chat_scope(chat_id):
@@ -241,6 +242,7 @@ class TurnCoordinator:
                 trigger_message_id=trigger_message_id,
                 vip_id=vip_id,
                 turn_id=turn_id,
+                channel_type=channel_type,
             )
 
     async def coordinate_unlocked(
@@ -251,6 +253,7 @@ class TurnCoordinator:
         trigger_message_id: int | None = None,
         vip_id: UUID | None = None,
         turn_id: UUID | None = None,
+        channel_type: str = "vip",
     ) -> CoordinateResult:
         """G.3 matrix; caller MUST already hold ``chat_scope(chat_id)``."""
         if autor not in ("vip", "owner"):
@@ -330,6 +333,7 @@ class TurnCoordinator:
             status=TurnStatus.WAITING_DELAY.value,
             vip_id=vip_id,
             trigger_message_id=trigger_message_id,
+            channel_type=channel_type,
         )
         created = await self._turns.create(record)
         self._last_turn_by_chat[chat_id] = created.id
@@ -472,6 +476,7 @@ class TurnCoordinator:
         trigger_message_id: int | None = None,
         vip_id: UUID | None = None,
         turn_id: UUID | None = None,
+        channel_type: str = "vip",
     ) -> TurnRecord:
         """VIP wrapper: coordinate create/replace and return the new TurnRecord."""
         result = await self.coordinate(
@@ -480,6 +485,7 @@ class TurnCoordinator:
             trigger_message_id=trigger_message_id,
             vip_id=vip_id,
             turn_id=turn_id,
+            channel_type=channel_type,
         )
         assert result.turn_id is not None
         record = await self._turns.get(result.turn_id)
@@ -501,6 +507,7 @@ class TurnCoordinator:
         trigger_message_id: int | None = None,
         vip_id: UUID | None = None,
         turn_id: UUID | None = None,
+        channel_type: str = "vip",
     ) -> TurnRecord:
         """VIP wrapper body; caller must already hold ``chat_scope(chat_id)``.
 
@@ -513,6 +520,7 @@ class TurnCoordinator:
             trigger_message_id=trigger_message_id,
             vip_id=vip_id,
             turn_id=turn_id,
+            channel_type=channel_type,
         )
         assert result.turn_id is not None
         record = await self._turns.get(result.turn_id)

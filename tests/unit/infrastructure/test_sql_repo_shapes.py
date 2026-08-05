@@ -113,6 +113,7 @@ def test_turn_orm_to_record_maps_error() -> None:
         trigger_message_id=42,
         superseded_by=None,
         error="analista_schema_invalido",
+        channel_type="vip",
     )
     rec = turn_orm_to_record(orm)  # type: ignore[arg-type]
     assert rec.id == turn_id
@@ -121,6 +122,7 @@ def test_turn_orm_to_record_maps_error() -> None:
     assert rec.vip_id == vip_id
     assert rec.trigger_message_id == 42
     assert rec.error == "analista_schema_invalido"
+    assert rec.channel_type == "vip"
 
 
 def test_turn_orm_to_record_error_none_when_absent() -> None:
@@ -133,9 +135,11 @@ def test_turn_orm_to_record_error_none_when_absent() -> None:
             trigger_message_id=None,
             superseded_by=None,
             error=None,
+            channel_type="vip",
         )  # type: ignore[arg-type]
     )
     assert rec.error is None
+    assert rec.channel_type == "vip"
 
 
 def test_infrastructure_has_no_aiogram_imports() -> None:

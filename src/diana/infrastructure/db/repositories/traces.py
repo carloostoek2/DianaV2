@@ -35,11 +35,13 @@ class SqlTraceStore:
         turn = await session.get(Turn, turn_id)
         chat_id = turn.chat_id if turn else 0
         vip_id = turn.vip_id if turn else None
+        channel_type = turn.channel_type if turn else "vip"
         row = PipelineTrace(
             id=uuid4(),
             turn_id=turn_id,
             vip_id=vip_id,
             chat_id=chat_id,
+            channel_type=channel_type,
         )
         session.add(row)
         await session.flush()

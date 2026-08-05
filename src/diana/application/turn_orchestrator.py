@@ -280,6 +280,7 @@ class TurnOrchestrator:
                     chat_id=incoming.chat_id,
                     status=TurnStatus.PROMO_PENDING.value,
                     vip_id=None,
+                    channel_type=incoming.channel_type,
                 )
             )
         except Exception:
@@ -970,6 +971,7 @@ class TurnOrchestrator:
             chat_id=chat_id,
             trigger_message_id=incoming.telegram_message_id,
             vip_id=incoming.vip_id,
+            channel_type=incoming.channel_type,
         )
         turn_id = record.id
         self._coordinator.bind_turn_vip_epoch(turn_id, chat_id, vip_epoch)
@@ -1054,6 +1056,7 @@ class TurnOrchestrator:
                     chat_id=incoming.chat_id,
                     trigger_message_id=incoming.telegram_message_id,
                     vip_id=incoming.vip_id,
+                    channel_type=incoming.channel_type,
                 )
                 turn_id = record.id
             await self._coordinator.mark_failed(
@@ -1067,6 +1070,7 @@ class TurnOrchestrator:
                 chat_id=incoming.chat_id,
                 trigger_message_id=incoming.telegram_message_id,
                 vip_id=incoming.vip_id,
+                channel_type=incoming.channel_type,
             )
             turn_id = record.id
             if vip_epoch is not None:

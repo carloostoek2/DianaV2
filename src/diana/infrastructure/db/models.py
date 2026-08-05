@@ -83,6 +83,10 @@ class Turn(Base):
         ForeignKey("vips.id"),
         nullable=True,
     )
+    # F4 channel tag ("vip" | "atencion"); default 'vip' keeps pre-F4 rows/behavior.
+    channel_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'vip'")
+    )
     # Domain values live in diana.cognitive.models.TurnStatus (TEXT in DB per plan R7).
     status: Mapped[str] = mapped_column(Text, nullable=False)
     trigger_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -126,6 +130,10 @@ class PipelineTrace(Base):
         nullable=True,
     )
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # F4 channel tag ("vip" | "atencion"); default 'vip' keeps pre-F4 rows/behavior.
+    channel_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'vip'")
+    )
     comprehension: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     retrieved: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
@@ -383,6 +391,9 @@ class GrayZoneQuery(Base):
     """Open doctrinal question awaiting owner resolution."""
 
     __tablename__ = "gray_zone_queries"
+    __table_args__ = (
+        Index("ix_gray_zone_queries_chat_id", "chat_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
@@ -390,6 +401,8 @@ class GrayZoneQuery(Base):
     vip_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("vips.id"), nullable=True,
     )
+    # F4: atencion chat freeze resolves by chat_id (vip_id is NULL there).
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     turn_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("turns.id"), nullable=False,
     )
