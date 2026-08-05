@@ -74,6 +74,9 @@ class SqlMetricsDataSource:
                     and_(
                         PipelineTrace.created_at >= start,
                         PipelineTrace.created_at < end,
+                        # weekly learning metrics keep the original VIP-only
+                        # semantics; atencion turns are excluded (REQ-ATN-14).
+                        PipelineTrace.channel_type == "vip",
                     )
                 )
             )
@@ -164,7 +167,11 @@ class SqlMetricsDataSource:
             return int(result or 0)
 
     async def count_atencion_limit_reached_on(self, fecha_local: date) -> int:
-        """Count chats that reached the 20-message cap on ``fecha_local``."""
+        """Count chats past the 20-message cap (count > 20) on ``fecha_local``.
+
+        Aligned with the real close: the atencion turn closes at count == 21,
+        so exactly-20 chats are not yet capped.
+        """
         async with self._sf() as session:
             result = await session.scalar(
                 select(func.count())
@@ -172,7 +179,7 @@ class SqlMetricsDataSource:
                 .where(
                     and_(
                         DailyMessageLimit.fecha_local == fecha_local,
-                        DailyMessageLimit.count >= 20,
+                        DailyMessageLimit.count > 20,
                     )
                 )
             )

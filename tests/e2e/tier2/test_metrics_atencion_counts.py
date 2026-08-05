@@ -2,10 +2,13 @@
 
 Exercises the real-SQL counters that back the daily atencion metrics log:
 ``count_atencion_turns_since`` (pipeline_traces channel filter) and
-``count_atencion_limit_reached_on`` (daily_message_limits cap >= 20).
+``count_atencion_limit_reached_on`` (daily_message_limits cap > 20).
 
 Runs on the session-level migrated DB; rows written here are cleaned up so
-other tier2 tests are never polluted.
+other tier2 tests are never polluted. Turn timestamps are placed ~30 days in
+the FUTURE relative to ``datetime.now(UTC)`` so traces left by other shared-DB
+tests (e.g. test_calibration_data atencion rows) can never fall inside this
+test's counting window.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from diana.infrastructure.db.repositories.turns import SqlTurnStore
 
 _DAY = date(2026, 8, 5)
 _OTHER_DAY = date(2026, 8, 6)
-_NOW = datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC)
+_NOW = datetime.now(UTC) + timedelta(days=30)
 
 
 async def _insert_turn_and_trace(
@@ -100,14 +103,14 @@ async def test_count_atencion_turns_since_counts_only_atencion_channel(
 async def test_count_atencion_limit_reached_on_counts_capped_chats(
     session_factory,
 ) -> None:
-    """REQ-ATN-14: cap counter tallies chats at/above the 20-message limit."""
+    """REQ-ATN-14: cap counter tallies chats past the 20-message cap (> 20)."""
     try:
         async with session_factory() as sess:
             sess.add_all(
                 [
                     DailyMessageLimit(chat_id=301, fecha_local=_DAY, count=25),
                     DailyMessageLimit(chat_id=302, fecha_local=_DAY, count=5),
-                    DailyMessageLimit(chat_id=303, fecha_local=_DAY, count=20),
+                    DailyMessageLimit(chat_id=303, fecha_local=_DAY, count=21),
                 ]
             )
             await sess.commit()

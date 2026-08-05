@@ -296,7 +296,60 @@ async def test_log_atencion_daily_counts_source_error_fail_soft(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_log_atencion_daily_counts_without_source_is_noop() -> None:
+async def test_log_atencion_daily_counts_retries_after_error(caplog) -> None:
+    """F13: a failed source read does not mark the day done → next tick retries."""
+    svc = FakeMetricsService()
+    counts = FakeAtencionCounts(error=True)
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+        atencion_counts=counts,  # type: ignore[arg-type]
+    )
+    with caplog.at_level(logging.INFO, logger="diana.jobs"):
+        await job._log_atencion_daily_counts()  # noqa: SLF001  → fails
+        counts.error = False
+        await job._log_atencion_daily_counts()  # noqa: SLF001  → succeeds
+
+    records = [r for r in caplog.records if r.getMessage() == "atencion_daily_metrics"]
+    assert len(records) == 1
+    assert len(counts.turns_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_log_atencion_daily_counts_resets_on_new_local_day(caplog) -> None:
+    """F13: a new CDMX civil day logs a fresh row; same day stays deduped.
+
+    Also asserts the "today" window is anchored at the CDMX local midnight
+    (06:00 UTC for CDMX) rather than a rolling 24h span (F3).
+    """
+    svc = FakeMetricsService()
+    counts = FakeAtencionCounts(turns=3, caps=1)
+    times = [
+        datetime(2026, 7, 20, 15, 0, tzinfo=UTC),  # CDMX day 1
+        datetime(2026, 7, 21, 15, 0, tzinfo=UTC),  # CDMX day 2
+        datetime(2026, 7, 21, 20, 0, tzinfo=UTC),  # CDMX day 2 again → skip
+    ]
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        atencion_counts=counts,  # type: ignore[arg-type]
+        clock=lambda: times.pop(0),
+    )
+    with caplog.at_level(logging.INFO, logger="diana.jobs"):
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+
+    records = [r for r in caplog.records if r.getMessage() == "atencion_daily_metrics"]
+    assert len(records) == 2
+    assert len(counts.turns_calls) == 2
+    assert counts.turns_calls[0] == datetime(2026, 7, 20, 6, 0, tzinfo=UTC)
+    assert counts.turns_calls[1] == datetime(2026, 7, 21, 6, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_log_atencion_daily_counts_without_source_is_noop(caplog) -> None:
     """Backward compat: no atencion_counts wired → helper is a no-op."""
     svc = FakeMetricsService()
     job = MetricsJob(
@@ -304,7 +357,12 @@ async def test_log_atencion_daily_counts_without_source_is_noop() -> None:
         interval_seconds=3600,
         clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
     )
-    await job._log_atencion_daily_counts()  # noqa: SLF001
+    with caplog.at_level(logging.INFO, logger="diana.jobs"):
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+
+    assert not any(
+        r.getMessage() == "atencion_daily_metrics" for r in caplog.records
+    )
 
 
 @pytest.mark.asyncio

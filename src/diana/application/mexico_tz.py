@@ -20,4 +20,17 @@ def cdmx_local_date(value: datetime) -> date:
     return value.astimezone(CDMX_TZ).date()
 
 
-__all__ = ["CDMX_TZ", "cdmx_local_date"]
+def cdmx_local_midnight(value: datetime) -> datetime:
+    """UTC instant of the start (00:00) of the CDMX civil day for ``value``.
+
+    Naive values are treated as UTC. Useful to anchor "today" windows on the
+    CDMX calendar day instead of a rolling 24h span.
+    """
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    local = value.astimezone(CDMX_TZ)
+    midnight_local = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight_local.astimezone(UTC)
+
+
+__all__ = ["CDMX_TZ", "cdmx_local_date", "cdmx_local_midnight"]

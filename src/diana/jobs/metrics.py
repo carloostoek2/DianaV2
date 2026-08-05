@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
 from diana.application.metrics_service import MetricsAggregationService
-from diana.application.mexico_tz import cdmx_local_date
+from diana.application.mexico_tz import cdmx_local_date, cdmx_local_midnight
 
 logger = logging.getLogger("diana.jobs")
 
@@ -160,7 +160,9 @@ class MetricsJob:
         if self._last_atencion_log_day is not None and self._last_atencion_log_day == fecha_local:
             return
         try:
-            since_utc = now - timedelta(days=1)
+            # "today" = CDMX civil day, not a rolling 24h window, so the turn
+            # counter matches the daily cap counter scoped by fecha_local.
+            since_utc = cdmx_local_midnight(now)
             turns = await self._atencion_counts.count_atencion_turns_since(since_utc)
             caps = await self._atencion_counts.count_atencion_limit_reached_on(fecha_local)
         except Exception:
