@@ -60,6 +60,20 @@ def test_composition_orchestrator_receives_autonomous_deps(_comp_src: str) -> No
     assert "delivery_mode=" in _comp_src
 
 
+def test_composition_trace_reader_and_metrics_data_wired(_comp_src: str) -> None:
+    """F9: trace_reader reaches the orch and metrics_data is the real SQL source.
+
+    Guards silent no-op degradation: REQ-ATN-12 payment detection and the
+    REQ-ATN-14 daily atencion log both need a real source wired at boot.
+    """
+    orch_start = _comp_src.find("orchestrator = TurnOrchestrator(")
+    assert orch_start != -1
+    orch_block = _comp_src[orch_start : orch_start + 900]
+    assert "trace_reader=traces" in orch_block
+    assert "metrics_data = SqlMetricsDataSource(sf)" in _comp_src
+    assert "metrics_data=metrics_data" in _comp_src
+
+
 def test_composition_orchestrator_receives_catalog_provider(_comp_src: str) -> None:
     """REQ-ATN-05: the channel-aware PersonaCatalogProvider reaches the orch."""
     assert "from diana.application.persona_catalog_provider import PersonaCatalogProvider" in _comp_src
@@ -103,6 +117,28 @@ def test_build_app_binds_real_catalog_provider_into_orchestrator(
         app.orchestrator._catalog_provider,  # noqa: SLF001
         PersonaCatalogProvider,
     )
+
+
+def test_build_app_binds_trace_reader_and_metrics_data(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F9: binding smoke — trace_reader and metrics_data are real at boot."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:test-token-not-real")
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "999001")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://diana:diana@localhost:5432/diana"
+    )
+
+    from diana.composition import build_app
+    from diana.config import Settings
+    from diana.infrastructure.db.repositories.metrics_data import (
+        SqlMetricsDataSource,
+    )
+
+    app = build_app(Settings())
+    assert app.orchestrator._trace_reader is not None  # noqa: SLF001
+    assert isinstance(app.metrics_data, SqlMetricsDataSource)
 
 
 def test_composition_daily_limit_store_wired(_comp_src: str) -> None:

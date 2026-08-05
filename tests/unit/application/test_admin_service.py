@@ -334,6 +334,35 @@ async def test_handle_correct_sandbox_skips_staging_still_delivers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handle_correct_atencion_payload_carries_channel() -> None:
+    """F19: atencion correction staging payload keeps channel_type='atencion'."""
+    staging, staging_repo = _real_staging()
+    history = InMemoryMessageHistoryWriter()
+    await history.append(
+        43, role="vip", text="atencion trigger text", telegram_message_id=7
+    )
+    g = _admin_graph(staging=staging, history=history)
+    turn = await g["coordinator"].begin_turn(
+        chat_id=43, trigger_message_id=7, channel_type="atencion"
+    )
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, telegram_message_id=7),
+        _decision(draft="original draft"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_correct(
+        turn.id, "corrected final", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success
+    staging_repo.insert.assert_awaited_once()
+    payload = staging_repo.insert.await_args.args[1]
+    assert payload["channel_type"] == "atencion"
+    assert payload["corrected_text"] == "corrected final"
+    assert g["actuator"].send_count() == 1
+
+
+@pytest.mark.asyncio
 async def test_handle_correct_skips_staging_when_none(admin_graph: dict) -> None:
     """H7: staging None is a no-op; correct still delivers."""
     g = admin_graph

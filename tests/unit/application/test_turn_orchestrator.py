@@ -2312,6 +2312,7 @@ async def test_consult_doctrine_happy_path() -> None:
     assert gz.queries[0]["turn_id"] == turn_id
     assert gz.queries[0]["question"] == "hola diana"
     assert gz.queries[0]["draft"] == "need policy"
+    assert gz.queries[0]["chat_id"] == 100  # F19: chat_id propagated to query
     assert len(g["notifier"].doctrines) == 1
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "gray_zone"
