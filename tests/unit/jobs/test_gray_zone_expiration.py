@@ -64,9 +64,38 @@ class FakeNotifier:
         self.info_calls.append(text)
 
 
-def make_expired_item(turn_id: UUID | None = None) -> SimpleNamespace:
+class FakeAdmin:
+    """Record create_supervised_delivery_from_gray_zone calls."""
+
+    def __init__(self) -> None:
+        self.supervised_calls: list[tuple[UUID, object]] = []
+        self._failures: set[UUID] = set()
+
+    def fail_on(self, turn_id: UUID) -> None:
+        self._failures.add(turn_id)
+
+    async def create_supervised_delivery_from_gray_zone(
+        self, turn_id: UUID, row: object
+    ) -> bool:
+        self.supervised_calls.append((turn_id, row))
+        if turn_id in self._failures:
+            raise RuntimeError(f"simulated delivery error for {turn_id}")
+        return True
+
+
+def make_expired_item(
+    turn_id: UUID | None = None,
+    *,
+    draft: str | None = None,
+    business_connection_id: str | None = None,
+) -> SimpleNamespace:
     """Create a minimal object that looks like an expired GrayZoneQuery row."""
-    return SimpleNamespace(turn_id=turn_id or uuid4())
+    item: dict = {"turn_id": turn_id or uuid4()}
+    if draft is not None:
+        item["draft"] = draft
+    if business_connection_id is not None:
+        item["business_connection_id"] = business_connection_id
+    return SimpleNamespace(**item)
 
 
 @pytest.mark.asyncio
@@ -166,3 +195,127 @@ async def test_pre_stopped_job_does_not_run() -> None:
 
     assert len(gray_zone.expire_calls) == 0
     assert len(coordinator.transitions) == 0
+
+
+# --- R-A: expiry with draft → supervised delivery (admin injected) ---
+
+
+@pytest.mark.asyncio
+async def test_expiry_with_draft_calls_supervised_delivery() -> None:
+    """Draft + admin → supervised delivery called once, no escalated transition."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_result(
+        [make_expired_item(turn_id, draft="texto", business_connection_id="bc123")]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        admin=admin,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert len(admin.supervised_calls) == 1
+    called_turn_id, called_row = admin.supervised_calls[0]
+    assert called_turn_id == turn_id
+    assert called_row.draft == "texto"
+    assert coordinator.transitions == []
+
+
+@pytest.mark.asyncio
+async def test_expiry_without_draft_still_escalates_with_admin() -> None:
+    """Draft empty/None → escalated even when admin is injected."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_result([make_expired_item(turn_id, draft="")])
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        admin=admin,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert admin.supervised_calls == []
+    assert coordinator.transitions == [(turn_id, "escalated")]
+
+
+@pytest.mark.asyncio
+async def test_expiry_with_draft_admin_none_falls_back_to_escalated() -> None:
+    """admin=None (flag OFF) → draft items still escalate (safe fallback)."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    turn_id = uuid4()
+    gray_zone.add_result(
+        [make_expired_item(turn_id, draft="texto", business_connection_id="bc1")]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert coordinator.transitions == [(turn_id, "escalated")]
+
+
+@pytest.mark.asyncio
+async def test_expiry_supervised_error_does_not_break_loop() -> None:
+    """A failing supervised delivery must not stop the remaining items."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    admin = FakeAdmin()
+    failing_turn = uuid4()
+    ok_turn = uuid4()
+    admin.fail_on(failing_turn)
+    gray_zone.add_result(
+        [
+            make_expired_item(failing_turn, draft="d1", business_connection_id="b1"),
+            make_expired_item(ok_turn, draft="d2", business_connection_id="b2"),
+        ]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        admin=admin,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    # Both items were attempted; the failing one did not derail the second.
+    assert len(admin.supervised_calls) == 2
+    assert {c[0] for c in admin.supervised_calls} == {failing_turn, ok_turn}
+    assert coordinator.transitions == []

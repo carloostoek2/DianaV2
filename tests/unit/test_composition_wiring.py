@@ -365,6 +365,17 @@ def test_main_calls_load_runtime_thresholds() -> None:
     assert "await load_runtime_thresholds(app)" in main
 
 
+def test_main_expiration_job_receives_admin() -> None:
+    """R-A: GrayZoneExpirationJob is built with admin for supervised delivery."""
+    from pathlib import Path
+
+    main = Path("src/diana/main.py").read_text(encoding="utf-8")
+    assert "GrayZoneExpirationJob(" in main
+    job_start = main.find("GrayZoneExpirationJob(")
+    job_block = main[job_start : job_start + 200]
+    assert "admin=app.admin" in job_block
+
+
 def test_composition_passes_ops_middleware_knobs(_comp_src: str) -> None:
     """SUG-1: Settings rate/dedup knobs reach build_dispatcher."""
     assert "rate_limit_max_events=settings.rate_limit_max_events" in _comp_src

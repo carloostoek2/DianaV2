@@ -9,6 +9,7 @@ from collections.abc import Coroutine
 from typing import Any
 from uuid import UUID
 
+from diana.application.admin_service import AdminService
 from diana.application.ports import GrayZoneServicePort, OwnerNotifierPort
 from diana.application.turn_coordinator import TurnCoordinator
 
@@ -16,7 +17,13 @@ logger = logging.getLogger("diana.jobs")
 
 
 class GrayZoneExpirationJob:
-    """Periodically expire stale queries and escalate their turns.
+    """Periodically expire stale queries and escalate (or deliver) their turns.
+
+    With ``admin`` injected, an expired query that still has a non-empty
+    draft is converted into a supervised PendingApproval (via
+    ``AdminService.create_supervised_delivery_from_gray_zone``) instead of
+    being silently escalated. Queries without a draft, or with ``admin=None``
+    (flag OFF), keep the legacy ``escalated`` behavior byte-identical.
 
     ``start()`` is one-shot — once it returns (after ``stop()`` is called),
     the instance cannot be restarted. Create a new instance if needed.
@@ -28,11 +35,13 @@ class GrayZoneExpirationJob:
         coordinator: TurnCoordinator,
         notifier: OwnerNotifierPort,
         *,
+        admin: AdminService | None = None,
         interval_seconds: int = 300,
     ) -> None:
         self._gray_zone = gray_zone
         self._coordinator = coordinator
         self._notifier = notifier
+        self._admin = admin
         self._interval = interval_seconds
         self._stop_event = asyncio.Event()
 
@@ -60,20 +69,39 @@ class GrayZoneExpirationJob:
                             if isinstance(row.turn_id, UUID)
                             else UUID(str(row.turn_id))
                         )
-                        try:
-                            await self._coordinator.transition(
-                                turn_id, "escalated"
-                            )
-                        except Exception:
-                            logger.exception(
-                                "expiration_escalate_error",
-                                extra={"turn_id": str(turn_id)},
-                            )
+                        draft = getattr(row, "draft", "") or ""
+                        if draft.strip() and self._admin is not None:
+                            try:
+                                await self._admin.create_supervised_delivery_from_gray_zone(
+                                    turn_id, row
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "expiration_delivery_error",
+                                    extra={"turn_id": str(turn_id)},
+                                )
+                        else:
+                            try:
+                                await self._coordinator.transition(
+                                    turn_id, "escalated"
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "expiration_escalate_error",
+                                    extra={"turn_id": str(turn_id)},
+                                )
 
                     try:
+                        delivery_count = sum(
+                            1 for row in expired
+                            if getattr(row, "draft", "").strip()
+                            and self._admin is not None
+                        )
+                        escalated_count = len(expired) - delivery_count
                         await self._notifier.notify_info(
-                            f"Gray zone queries expired and escalated: "
-                            f"{len(expired)} turn(s)."
+                            f"Gray zone queries expired: {delivery_count} "
+                            f"pending approval, {escalated_count} escalated "
+                            f"({len(expired)} total)."
                         )
                     except Exception:
                         logger.exception("expiration_notify_error")

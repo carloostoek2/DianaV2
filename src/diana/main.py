@@ -146,6 +146,7 @@ def _setup_expiration_job(app: AppContainer) -> asyncio.Task | None:
         app.gray_zone,
         coordinator=app.coordinator,
         notifier=app.notifier,
+        admin=app.admin,
         interval_seconds=300,
     )
     task = asyncio.create_task(job.start())
