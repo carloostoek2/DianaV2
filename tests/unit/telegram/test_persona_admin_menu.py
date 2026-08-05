@@ -991,6 +991,31 @@ def test_default_channel_is_vip() -> None:
     assert _current_channel(s, _OWNER_ID) == "vip"
 
 
+def test_menu_persona_channel_back_path_resolves_session_channel() -> None:
+    """REQ-ATN-06: the menu router's back re-render resolves the session channel.
+
+    The ``Volver``/``Cancelar`` buttons dispatch to the personalidad root via
+    ``build_menu_router``, which calls ``_menu_persona_channel`` to re-render the
+    keyboard with the active channel. If it regressed to VIP the admin would be
+    silently bounced back after switching to atencion.
+    """
+    from diana.telegram.handlers.menu import _menu_persona_channel
+
+    # missing sessions / missing actor → vip
+    assert _menu_persona_channel(None, _OWNER_ID) == "vip"
+    assert _menu_persona_channel(_sessions(), None) == "vip"
+    # no session for this actor → vip
+    assert _menu_persona_channel(_sessions(), _OWNER_ID) == "vip"
+    # fresh session (dataclass default) → vip
+    s = _sessions()
+    s.start(_OWNER_ID, "persona_edit", persona_section="rule")
+    assert _menu_persona_channel(s, _OWNER_ID) == "vip"
+    # switched channel survives the wizard / back navigation
+    s.start(_OWNER_ID, "persona_edit", persona_section="rule",
+            persona_channel="atencion")
+    assert _menu_persona_channel(s, _OWNER_ID) == "atencion"
+
+
 @pytest.mark.asyncio
 async def test_atencion_round_trip() -> None:
     """REQ-ATN-06: load → edit → save → list → restore for the atencion channel."""
