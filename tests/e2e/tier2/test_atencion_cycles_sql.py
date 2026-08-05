@@ -75,10 +75,17 @@ async def test_cycle_start_idempotent_keeps_original_start(engine) -> None:
         # re-trigger: start_if_absent must NOT reset started_at to a later time
         later = _NOW + timedelta(days=5)
         await store.start_if_absent(_CHAT, now=later)
-        # window already expired at later+1day (linear from ORIGINAL start)
+        # Window semantics: the CALLER defines the window via `since`
+        # (auth gate passes since = now - 30d). At now = original_start + 32d
+        # the ORIGINAL window (expires +30d) is expired — and it would NOT be
+        # if the re-trigger had extended it (extended expiry would be +35d).
+        # is_active False here proves the re-trigger never extended the window.
+        later_far = _NOW + timedelta(days=32)
         assert (
             await store.is_active(
-                _CHAT, since=later - timedelta(days=26), now=later + timedelta(days=1)
+                _CHAT,
+                since=later_far - timedelta(days=30),
+                now=later_far,
             )
             is False
         )
