@@ -45,7 +45,9 @@ class FakeQueueStore:
         self.failed_calls: list[tuple[UUID, str]] = []
         self.requeue_calls: list[tuple[UUID, int, str | None]] = []
         self.recover_calls = 0
+        self.recover_max_ages: list[timedelta | None] = []
         self.since_calls: list[tuple[UUID, datetime]] = []
+        self.since_failed_calls: list[tuple[UUID, datetime]] = []
 
     def _has_active(self, vip_id: UUID) -> bool:
         return any(
@@ -118,11 +120,13 @@ class FakeQueueStore:
         job.last_error = error
         job.updated_at = datetime.now(UTC)
 
-    async def recover_stale(self) -> int:
+    async def recover_stale(self, *, max_age: timedelta | None = None) -> int:
         self.recover_calls += 1
+        self.recover_max_ages.append(max_age)
         n = 0
+        cutoff = datetime.now(UTC) - (max_age or timedelta(hours=1))
         for job in self.jobs.values():
-            if job.status == "processing":
+            if job.status == "processing" and job.updated_at < cutoff:
                 job.status = "pending"
                 n += 1
         return n
@@ -139,17 +143,30 @@ class FakeQueueStore:
             for j in self.jobs.values()
         )
 
+    async def has_recent_failed(
+        self, vip_id: UUID, *, since: datetime
+    ) -> bool:
+        self.since_failed_calls.append((vip_id, since))
+        return any(
+            j.vip_id == vip_id and j.status == "failed" and j.updated_at >= since
+            for j in self.jobs.values()
+        )
+
 
 class FakeBackfill:
     """MemoryBackfillService double: scripted extract results + call records."""
 
     def __init__(
-        self, results: list[WindowExtractionResult] | None = None
+        self,
+        results: list[WindowExtractionResult] | None = None,
+        *,
+        finalize_status: str = "ok",
     ) -> None:
         self.results: deque[WindowExtractionResult] = deque(results or [])
         self.extract_window_calls: list[tuple[UUID, int, int, list[HechoExtracted]]] = []
         self.finalize_calls: list[tuple[UUID, int, list[HechoExtracted], int]] = []
         self.raise_on_extract = False
+        self.finalize_status = finalize_status
 
     async def extract_window(
         self,
@@ -178,7 +195,10 @@ class FakeBackfill:
     ) -> BackfillReport:
         self.finalize_calls.append((vip_id, chat_id, list(hechos), windows))
         return BackfillReport(
-            status="ok", vip_id=vip_id, facts=len(hechos), windows=windows
+            status=self.finalize_status,
+            vip_id=vip_id,
+            facts=len(hechos),
+            windows=windows,
         )
 
 
@@ -203,10 +223,15 @@ class FakeHistory:
     def __init__(self, counts: dict[int, int]) -> None:
         self._counts = dict(counts)
         self.calls: list[tuple[int, int]] = []
+        self.count_calls: list[int] = []
 
     async def list_all(self, chat_id: int, *, page_size: int = 500) -> list[dict]:
         self.calls.append((chat_id, page_size))
         return [{"text": "msg"} for _ in range(self._counts.get(chat_id, 0))]
+
+    async def count(self, chat_id: int) -> int:
+        self.count_calls.append(chat_id)
+        return self._counts.get(chat_id, 0)
 
 
 class FakeMemories:
@@ -578,3 +603,217 @@ async def test_enqueue_missing_vips_only_with_history_and_no_profile() -> None:
 async def test_enqueue_missing_vips_disabled_returns_zero() -> None:
     queue = _make_queue(enabled=False)
     assert await queue.enqueue_missing_vips() == 0
+
+
+# ----------------------------------------------------------------------
+# fix round (M1, L4, L5, L8, S2, S-F3, S-F4)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_process_one_finalize_failed_retries_then_fails() -> None:
+    """Fix round (M1): a ``failed`` finalize WITHOUT an exception (e.g. broken
+    chat↔vip binding) is a unit failure — retry with backoff and mark the job
+    ``failed`` at max_attempts; never a terminal ``done(outcome='failed')``."""
+    vip = _vip(123)
+    store = FakeQueueStore()
+    backfill = FakeBackfill(
+        [WindowExtractionResult([_hecho("x")], total_windows=1)] * 3,
+        finalize_status="failed",
+    )
+    queue = _make_queue(
+        store=store, backfill=backfill, vips=FakeVips([vip]), max_attempts=3
+    )
+    job = await store.enqueue(vip.id, 123)
+    assert job is not None
+
+    r1 = await queue.process_one()
+    assert r1.outcome == "failed_retry"
+    assert store.requeue_calls == [(job.id, 1, "finalize_failed")]
+    assert store.done_calls == []
+
+    r2 = await queue.process_one()
+    assert r2.outcome == "failed_retry"
+    assert store.requeue_calls[-1] == (job.id, 2, "finalize_failed")
+
+    r3 = await queue.process_one()
+    assert r3.outcome == "failed"
+    assert store.failed_calls == [(job.id, "finalize_failed")]
+    assert store.jobs[job.id].status == "failed"
+    assert store.jobs[job.id].last_error == "finalize_failed"
+    assert store.done_calls == []
+
+
+@pytest.mark.asyncio
+async def test_process_one_finalize_disabled_marks_done() -> None:
+    """Fix round (M1): flag off mid-run → terminal ``done(outcome='disabled')``,
+    not a retry burn and not an ambiguous outcome."""
+    vip = _vip(123)
+    store = FakeQueueStore()
+    backfill = FakeBackfill(
+        [WindowExtractionResult([_hecho("x")], total_windows=1)],
+        finalize_status="disabled",
+    )
+    queue = _make_queue(store=store, backfill=backfill, vips=FakeVips([vip]))
+    job = await store.enqueue(vip.id, 123)
+    assert job is not None
+
+    report = await queue.process_one()
+
+    assert report.outcome == "disabled"
+    assert store.done_calls == [(job.id, "disabled")]
+    assert store.requeue_calls == []
+    assert store.failed_calls == []
+
+
+@pytest.mark.asyncio
+async def test_process_one_invalid_state_fails_with_retries() -> None:
+    """Fix round (L4/F6): a corrupt ``state`` jsonb is a unit failure (retry
+    → failed with ``state_invalid``), never a job stuck in ``processing``
+    until the next restart."""
+    vip = _vip(123)
+    store = FakeQueueStore()
+    backfill = FakeBackfill([WindowExtractionResult([], 1)] * 3)
+    queue = _make_queue(
+        store=store, backfill=backfill, vips=FakeVips([vip]), max_attempts=3
+    )
+    job = await store.enqueue(vip.id, 123)
+    assert job is not None
+    job.state = {"hechos": [{"seccion": "bogus"}]}
+
+    r1 = await queue.process_one()
+    assert r1.outcome == "failed_retry"
+    assert store.requeue_calls == [(job.id, 1, "state_invalid")]
+    assert backfill.extract_window_calls == []  # never reached the service
+
+    r2 = await queue.process_one()
+    assert store.requeue_calls[-1] == (job.id, 2, "state_invalid")
+
+    r3 = await queue.process_one()
+    assert r3.outcome == "failed"
+    assert store.failed_calls == [(job.id, "state_invalid")]
+    assert store.jobs[job.id].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_process_one_attempts_reset_after_successful_window() -> None:
+    """Fix round (L5): the retry budget is PER WINDOW — a successful window
+    resets ``attempts`` so an early transient failure cannot exhaust the
+    retries of every later window of the same run."""
+    vip = _vip(123)
+    store = FakeQueueStore()
+    backfill = FakeBackfill([WindowExtractionResult([_hecho("x")], total_windows=2)])
+    queue = _make_queue(store=store, backfill=backfill, vips=FakeVips([vip]))
+    job = await store.enqueue(vip.id, 123)
+    assert job is not None
+    job.attempts = 2  # exhausted budget from a previous window's failures
+
+    report = await queue.process_one()
+
+    assert report.outcome == "window_done"
+    assert store.save_calls[-1][3] == 0  # attempts reset
+
+
+@pytest.mark.asyncio
+async def test_process_one_binding_failure_label() -> None:
+    """Fix round (L8): a binding failure is labeled ``binding_mismatch``, not
+    ``window_llm_failed`` — last_error tells the truth about the cause."""
+    vip = _vip(123)
+    store = FakeQueueStore()
+    backfill = FakeBackfill(
+        [
+            WindowExtractionResult(
+                [], 0, failed=True, failed_reason="binding_mismatch"
+            )
+        ]
+    )
+    queue = _make_queue(store=store, backfill=backfill, vips=FakeVips([vip]))
+    job = await store.enqueue(vip.id, 123)
+    assert job is not None
+
+    report = await queue.process_one()
+
+    assert report.outcome == "failed_retry"
+    assert store.requeue_calls == [(job.id, 1, "binding_mismatch")]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_missing_vips_skips_recently_failed() -> None:
+    """Fix round (S2): a VIP whose job FAILED in the last 24h is NOT
+    re-enqueued automatically (no LLM burn per restart while the provider is
+    degraded); the manual ficha button still works (enqueue ignores failed
+    rows)."""
+    a = _vip(1101, name="A")
+    b = _vip(1102, name="B")
+    store = FakeQueueStore()
+    job_failed = BackfillJobRecord(
+        id=uuid4(), vip_id=a.id, chat_id=a.telegram_user_id, status="failed",
+        window_index=0, state={}, attempts=2, last_error="window_llm_failed",
+        created_at=FAKE_NOW - timedelta(hours=2),
+        updated_at=FAKE_NOW - timedelta(hours=1),
+    )
+    store.jobs[job_failed.id] = job_failed
+
+    queue = _make_queue(
+        store=store,
+        vips=FakeVips([a, b]),
+        history=FakeHistory({1101: 5, 1102: 5}),
+    )
+
+    count = await queue.enqueue_missing_vips()
+
+    assert count == 1
+    assert store.enqueue_calls == [(b.id, 1102)]
+    since = FAKE_NOW - timedelta(hours=24)
+    assert store.since_failed_calls == [(a.id, since), (b.id, since)]
+
+
+@pytest.mark.asyncio
+async def test_schedule_enqueue_keeps_task_reference() -> None:
+    """Fix round (S-F4): the fire-and-forget task is kept in the queue's task
+    set (with done-callback cleanup) so GC cannot collect it mid-flight."""
+    vip = _vip(123, name="Ana")
+    store = FakeQueueStore()
+    queue = _make_queue(
+        store=store,
+        vips=FakeVips([vip]),
+        history=FakeHistory({123: 5}),
+    )
+
+    queue.schedule_enqueue(123)
+
+    assert len(queue._tasks) == 1
+    task = next(iter(queue._tasks))
+    assert task.get_name() == "backfill-enqueue-123"
+    await asyncio.gather(task)
+    assert len(queue._tasks) == 0  # done callback cleaned up
+    assert store.enqueue_calls == [(vip.id, 123)]
+
+
+@pytest.mark.asyncio
+async def test_recover_stale_forwards_max_age() -> None:
+    """Fix round (S-F3): the queue passes the age limit through to the store."""
+    store = FakeQueueStore()
+    queue = _make_queue(store=store)
+    max_age = timedelta(hours=2)
+    await queue.recover_stale(max_age=max_age)
+    assert store.recover_max_ages == [max_age]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_uses_history_count_not_full_read() -> None:
+    """Fix round (L6/F7): the step estimator uses count(*) — the full history
+    is never materialized just for the DM text."""
+    vip = _vip(123, name="Ana")
+    store = FakeQueueStore()
+    history = FakeHistory({123: 450})
+    queue = _make_queue(
+        store=store, vips=FakeVips([vip]), history=history, notifier=FakeNotifier()
+    )
+
+    report = await queue.enqueue_by_telegram_user(123)
+
+    assert report.status == "enqueued"
+    assert report.steps == 3  # ceil(450 / 200)
+    assert history.count_calls == [123]
+    assert history.calls == []  # list_all never called for the estimator

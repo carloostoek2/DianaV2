@@ -65,6 +65,9 @@ class FakeHistory:
         self.page_sizes.append(page_size)
         return list(self.messages)
 
+    async def count(self, chat_id: int) -> int:
+        return len(self.messages)
+
 
 class FakeMemoryWriter:
     def __init__(self) -> None:
@@ -897,3 +900,177 @@ async def test_generate_profile_full_run_still_works() -> None:
     assert report.windows == 3
     assert len(writer.replace_calls) == 1
     assert len(writer.replace_calls[0][1]) == 1
+
+
+# ---------------------------------------------------------------------------
+# fix round (M2, S1, L3, S-F5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_merge_propagates_sensible_and_confidence() -> None:
+    """Fix round (M2): merging a near-duplicate never loses sensitivity or
+    confidence — the dropped (shorter) fact's ``sensible=True`` and higher
+    ``confianza`` survive onto the kept fact, so the merged row can never be
+    born ``auto`` when either side was sensitive."""
+    vip_id = uuid4()
+    parallel = FakeParallelEmbedder(
+        {
+            "le gusta viajar": [1.0, 0.0, 0.0],
+            "le gusta mucho viajar a CDMX": [0.9, 0.4358898943540673, 0.0],
+        }
+    )
+    svc, _, _, writer, _ = _build_service(embedder=parallel)
+    await svc.finalize_profile(
+        vip_id,
+        chat_id=1,
+        hechos=[
+            HechoExtracted(
+                seccion="preferencias",
+                texto="le gusta viajar",
+                confianza=0.9,
+                sensible=True,  # short fact flagged sensitive (LLM window 1)
+            ),
+            HechoExtracted(
+                seccion="preferencias",
+                texto="le gusta mucho viajar a CDMX",
+                confianza=0.7,
+                sensible=False,  # long fact NOT flagged (window 2)
+            ),
+        ],
+        windows=2,
+    )
+    rows = writer.replace_calls[0][1]
+    assert len(rows) == 1  # merged
+    assert rows[0].text == "le gusta mucho viajar a CDMX"  # longest kept
+    assert rows[0].status == "pending_owner"  # sensible propagated
+    assert rows[0].approved_by is None
+    assert rows[0].confidence == 0.9  # max confidence propagated
+
+
+@pytest.mark.asyncio
+async def test_dedup_skipped_log_contains_no_fact_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Fix round (S1): the skipped-dedup log carries metadata only — the raw
+    fact text and the matched row content (PII from the VIP transcript) never
+    reach the log."""
+    vip_id = uuid4()
+    dedup = FakeDedupReader()
+    dedup.add_hit("preferencias", matched_text="texto secreto del VIP")
+    svc, _, _, _, _ = _build_service(dedup=dedup)
+    with caplog.at_level(INFO, logger="diana.application"):
+        await svc.finalize_profile(
+            vip_id,
+            chat_id=1,
+            hechos=[
+                HechoExtracted(seccion="preferencias", texto="le gusta viajar")
+            ],
+            windows=1,
+        )
+    skipped = [
+        r for r in caplog.records if r.getMessage() == "memory_backfill_dedup_skipped"
+    ]
+    assert len(skipped) == 1
+    extra = skipped[0].__dict__
+    assert "texto" not in extra and "matched" not in extra
+    assert extra["vip_id"] == str(vip_id)
+    assert extra["category"] == "preferencias"
+    assert extra["hits"] == 1
+    assert "texto secreto del VIP" not in caplog.text
+    assert "le gusta viajar" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_merge_log_contains_no_fact_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Fix round (S1): the merged-dedup log also avoids fact text."""
+    vip_id = uuid4()
+    parallel = FakeParallelEmbedder(
+        {
+            "le gusta viajar": [1.0, 0.0, 0.0],
+            "le gusta mucho viajar a CDMX": [0.9, 0.4358898943540673, 0.0],
+        }
+    )
+    svc, _, _, _, _ = _build_service(embedder=parallel)
+    with caplog.at_level(INFO, logger="diana.application"):
+        await svc.finalize_profile(
+            vip_id,
+            chat_id=1,
+            hechos=[
+                HechoExtracted(seccion="preferencias", texto="le gusta viajar"),
+                HechoExtracted(
+                    seccion="preferencias", texto="le gusta mucho viajar a CDMX"
+                ),
+            ],
+            windows=2,
+        )
+    merged = [
+        r for r in caplog.records if r.getMessage() == "memory_backfill_dedup_merged"
+    ]
+    assert len(merged) == 1
+    assert "le gusta viajar" not in caplog.text
+    assert "le gusta mucho viajar a CDMX" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_embedding_computed_once_per_fact() -> None:
+    """Fix round (L3/A11): each fact text is embedded exactly once per run —
+    the _dedup_semantic cache is reused for the DB dedup + the insert."""
+    vip_id = uuid4()
+    embedder = FakeEmbedder()
+    svc, _, _, writer, _ = _build_service(embedder=embedder)
+    await svc.finalize_profile(
+        vip_id,
+        chat_id=1,
+        hechos=[
+            HechoExtracted(seccion="preferencias", texto="le gusta viajar"),
+            HechoExtracted(seccion="identidad", texto="vive en buenos aires"),
+        ],
+        windows=2,
+    )
+    # One embed per fact text + one for the perfil JSON — never re-embedded
+    # in the insert loop.
+    texts = embedder.calls
+    assert texts.count("le gusta viajar") == 1
+    assert texts.count("vive en buenos aires") == 1
+    assert len(writer.replace_calls) == 1
+    assert len(writer.replace_calls[0][1]) == 2
+
+
+@pytest.mark.asyncio
+async def test_sensitive_terms_expanded_clinical_financial() -> None:
+    """Fix round (S-F5): the fail-closed backstop now covers common clinical,
+    financial and identity vocabulary — an LLM misclassification of those
+    facts is upgraded to ``pending_owner``."""
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="preferencias",
+                        texto="Tiene diabetes tipo 2",
+                        sensible=False,  # LLM misclassified
+                    ),
+                    HechoExtracted(
+                        seccion="comercial",
+                        texto="Debe $50.000 de alquiler",
+                        sensible=False,
+                    ),
+                    HechoExtracted(
+                        seccion="identidad",
+                        texto="Su DNI termina en 1234",
+                        sensible=False,
+                    ),
+                ]
+            )
+        ]
+    )
+    svc, _, _, writer, _ = _build_service(messages=[_msg("vip", "hola")], llm=llm)
+    report = await svc.generate_profile(uuid4(), chat_id=51)
+    assert report.status == "ok"
+    assert report.pending_owner == 3
+    for r in writer.replace_calls[0][1]:
+        assert r.status == "pending_owner"
+        assert r.approved_by is None

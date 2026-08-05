@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     # backfill_dedup_threshold gates the pgvector dedup of extracted facts.
     backfill_interval_sec: Annotated[int, Field(ge=1)] = 3600
     backfill_dedup_threshold: Annotated[float, Field(gt=0, le=1)] = 0.85
+    # Fix round (S-F3): recover_stale only reclaims ``processing`` jobs
+    # untouched for this long — an overlapping restart never double-extracts
+    # a window the previous process is still working on (LLM windows are
+    # minutes; 1h covers them with margin and bounds crash-recovery delay).
+    backfill_recover_stale_max_age_sec: Annotated[int, Field(ge=1)] = 3600
 
     @field_validator("health_host", mode="after")
     @classmethod

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 
 from diana.application.memory_backfill_queue import MemoryBackfillQueue
 
@@ -34,12 +35,14 @@ class BackfillJob:
         *,
         interval_seconds: int = 3600,
         idle_poll_seconds: int = 60,
+        recover_stale_max_age_sec: int = 3600,
         wake: asyncio.Event | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self._queue = queue
         self._interval = max(1, int(interval_seconds))
         self._idle_poll = max(1, int(idle_poll_seconds))
+        self._recover_stale_max_age = max(1, int(recover_stale_max_age_sec))
         self._wake = wake
         self._sleep = sleep or asyncio.sleep
         self._stop = asyncio.Event()
@@ -47,7 +50,9 @@ class BackfillJob:
     async def start(self) -> None:
         """Run the backfill loop until ``stop()`` is called (one-shot)."""
         try:
-            recovered = await self._queue.recover_stale()
+            recovered = await self._queue.recover_stale(
+                max_age=timedelta(seconds=self._recover_stale_max_age)
+            )
         except Exception:
             logger.exception("backfill_recover_stale_failed")
             recovered = 0

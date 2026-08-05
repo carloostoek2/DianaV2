@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, tuple_
+from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import MessageHistory
@@ -174,6 +174,20 @@ class SqlMessageHistoryRepo:
             if len(rows) < page_size:
                 break
         return out
+
+    async def count(self, chat_id: int) -> int:
+        """Row count of one chat's history (F5 Pool 2 fix round L6/F7).
+
+        Cheap ``count(*)`` for the queue's step estimator — the caller never
+        materializes the full history just to compute the DM's "~N pasos".
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(func.count())
+                .select_from(MessageHistory)
+                .where(MessageHistory.chat_id == chat_id)
+            )
+            return int(result.scalar_one() or 0)
 
 
 __all__ = ["SqlMessageHistoryRepo", "rows_to_recent_messages"]

@@ -83,15 +83,29 @@ _SENSITIVE_TERMS = (
     "salud",
     "enfermedad",
     "medicación",
+    "medicamento",
+    "diabetes",
+    "presión",
+    "tratamiento",
+    "operación",
+    "embarazo",
     # dinero / sueldo / pago / cuenta
     "dinero",
     "sueldo",
     "pago",
     "cuenta",
+    "deuda",
+    "tarjeta",
+    "alquiler",
+    "saldo",
+    "ingresos",
     # dirección / ubicación / vive en
     "dirección",
     "ubicación",
     "vive en",
+    # identidad / documentos
+    "dni",
+    "cédula",
     # esposo / esposa / pareja / relación
     "esposo",
     "esposa",
@@ -137,6 +151,10 @@ class HistoryReader(Protocol):
     """Full chronological history reader (backfill source)."""
 
     async def list_all(self, chat_id: int, *, page_size: int = 500) -> list[dict]: ...
+
+    # Fix round (L6/F7): cheap row count for the queue's step estimator —
+    # the caller never materializes the full history just for "~N pasos".
+    async def count(self, chat_id: int) -> int: ...
 
 
 class VipReader(Protocol):
@@ -230,6 +248,10 @@ class WindowExtractionResult:
     total_windows: int
     failed: bool = False
     history_empty: bool = False
+    # Fix round (L8): why the window failed (``window_llm_failed`` |
+    # ``binding_mismatch``) so the queue's retry/last_error labels tell the
+    # truth about the cause; None when ``failed`` is False.
+    failed_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -381,7 +403,12 @@ class MemoryBackfillService:
         if not self._enabled:
             return WindowExtractionResult([], 0)
         if not await self._check_binding(vip_id, chat_id):
-            return WindowExtractionResult([], 0, failed=True)
+            # Fix round (L8): a broken binding is NOT an LLM failure — label
+            # it so the queue can surface the real cause (retrying cannot fix
+            # a wiring problem).
+            return WindowExtractionResult(
+                [], 0, failed=True, failed_reason="binding_mismatch"
+            )
 
         msgs = await self._history.list_all(chat_id, page_size=500)
         if not msgs:
@@ -411,7 +438,9 @@ class MemoryBackfillService:
                 },
             )
             # R4: no partial writes — one failed window aborts the unit.
-            return WindowExtractionResult([], total_windows, failed=True)
+            return WindowExtractionResult(
+                [], total_windows, failed=True, failed_reason="window_llm_failed"
+            )
         return WindowExtractionResult(extracted, total_windows)
 
     async def finalize_profile(
@@ -443,7 +472,12 @@ class MemoryBackfillService:
             return BackfillReport(status="failed", vip_id=vip_id)
 
         consolidated = self._consolidate(hechos)
-        consolidated = await self._dedup_semantic(consolidated)
+        # Fix round (L3/A11): embeddings are computed ONCE per fact inside
+        # _dedup_semantic and the per-text cache is reused here for the DB
+        # dedup and the insert.
+        consolidated, emb_cache = await self._dedup_semantic(
+            vip_id, consolidated
+        )
         perfil_json = self._build_perfil(vip_id, consolidated)
 
         filas: list[MemoryInsert] = []
@@ -458,9 +492,7 @@ class MemoryBackfillService:
                 or h.sensible
                 or self._is_sensitive_text(h.texto)
             )
-            # A11: the embedding is computed ONCE per fact — reused for the
-            # DB dedup and for the insert.
-            emb = await self._embedder.embed(h.texto)
+            emb = emb_cache[h.texto]  # A11: computed once per fact (see _dedup_semantic)
             if self._dedup is not None:
                 hits = await self._dedup.find_similar_surviving(
                     vip_id,
@@ -469,19 +501,18 @@ class MemoryBackfillService:
                     category=h.seccion,
                 )
                 if hits:
-                    # REQ-MEM-08: only discard against surviving rows. The
-                    # matched row content is traced for the owner to review.
+                    # REQ-MEM-08: only discard against surviving rows. Fix
+                    # round (S1): never log the raw fact text nor the matched
+                    # row content (PII from the VIP transcript) — metadata
+                    # only; the owner DM already reports the outcome.
                     logger.info(
                         "memory_backfill_dedup_skipped",
                         extra={
                             "vip_id": str(vip_id),
                             "category": h.seccion,
-                            "texto": h.texto,
-                            "matched": (hits[0].get("content") or {}).get(
-                                "texto"
-                            )
-                            if isinstance(hits[0].get("content"), dict)
-                            else hits[0].get("content"),
+                            "confidence": h.confianza,
+                            "threshold": self._dedup_threshold,
+                            "hits": len(hits),
                         },
                     )
                     continue
@@ -675,8 +706,8 @@ class MemoryBackfillService:
         return out
 
     async def _dedup_semantic(
-        self, hechos: list[HechoExtracted]
-    ) -> list[HechoExtracted]:
+        self, vip_id: UUID, hechos: list[HechoExtracted]
+    ) -> tuple[list[HechoExtracted], dict[str, list[float]]]:
         """In-service semantic merge of near-duplicates across windows.
 
         REQ-MEM-08 / F5-07: two facts of the SAME section whose embeddings
@@ -684,11 +715,19 @@ class MemoryBackfillService:
         the longer text is kept (it carries more information), the shorter is
         dropped. This merge runs ONLY over facts of the current run, in
         memory; DB rows are never touched here (R5). Embeddings are computed
-        once per fact with the service embedder (A11, local cache of the
-        run). O(n²) over ≤ ~60 facts per VIP — acceptable.
+        once per fact with the service embedder and returned as a per-text
+        cache for the caller to reuse in the insert loop (A11). O(n²) over
+        ≤ ~60 facts per VIP — acceptable.
+
+        Fix round (M2): the merged fact inherits ``sensible=True`` and the
+        higher ``confianza`` from either side — a near-duplicate that one
+        window classified as sensitive can never silently become ``auto``.
+        Fix round (S1): the merge log carries metadata only (no fact text).
         """
         if len(hechos) < 2:
-            return hechos
+            return hechos, {
+                h.texto: await self._embedder.embed(h.texto) for h in hechos
+            }
         embs = [await self._embedder.embed(h.texto) for h in hechos]
         keep = [True] * len(hechos)
         for i in range(len(hechos)):
@@ -699,22 +738,35 @@ class MemoryBackfillService:
                     continue
                 if hechos[i].seccion != hechos[j].seccion:
                     continue
-                if self._cosine(embs[i], embs[j]) < self._dedup_threshold:
+                score = self._cosine(embs[i], embs[j])
+                if score < self._dedup_threshold:
                     continue
                 if len(hechos[i].texto) >= len(hechos[j].texto):
                     dropped, kept = j, i
                 else:
                     dropped, kept = i, j
+                kept_h, dropped_h = hechos[kept], hechos[dropped]
+                hechos[kept] = kept_h.model_copy(
+                    update={
+                        "sensible": kept_h.sensible or dropped_h.sensible,
+                        "confianza": max(kept_h.confianza, dropped_h.confianza),
+                    }
+                )
                 keep[dropped] = False
                 logger.info(
                     "memory_backfill_dedup_merged",
                     extra={
+                        "vip_id": str(vip_id),
                         "category": hechos[kept].seccion,
-                        "kept": hechos[kept].texto,
-                        "dropped": hechos[dropped].texto,
+                        "confidence_kept": hechos[kept].confianza,
+                        "similarity": round(score, 4),
+                        "threshold": self._dedup_threshold,
                     },
                 )
-        return [h for h, k in zip(hechos, keep) if k]
+        return (
+            [h for h, k in zip(hechos, keep) if k],
+            {h.texto: e for h, e in zip(hechos, embs)},
+        )
 
     @staticmethod
     def _cosine(a: list[float], b: list[float]) -> float:

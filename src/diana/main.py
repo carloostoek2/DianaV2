@@ -205,6 +205,7 @@ def _setup_backfill_job(app: AppContainer) -> asyncio.Task | None:
         app.backfill_queue,
         interval_seconds=app.settings.backfill_interval_sec,
         wake=app.backfill_wake,
+        recover_stale_max_age_sec=app.settings.backfill_recover_stale_max_age_sec,
     )
     task = asyncio.create_task(job.start())
     logger.info(

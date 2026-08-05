@@ -160,6 +160,13 @@ class MemoriesRepo:
         Powers ``enqueue_missing_vips``: VIPs that already have a profile are
         skipped. The ``category='perfil'`` row is written by
         ``replace_vip_profile`` on every successful finalize.
+
+        Review L9 (by design): an EMPTY card (all facts semantically deduped,
+        zero fact rows) still counts as "has profile" — that is the
+        deliberate anti-loop guard. Without it, a VIP whose facts were all
+        deduped against surviving rows would be re-enqueued at every startup
+        and burn LLM calls for no new information. The on-demand path already
+        avoids writing empty profiles (``empty_extraction`` report, no write).
         """
         async with self._sf() as session:
             result = await session.execute(

@@ -35,6 +35,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from diana.application.memory_backfill_service import (
     HechoExtracted,
     HistoryReader,
@@ -72,9 +74,11 @@ class BackfillQueueStore(Protocol):
         self, job_id: UUID, *, attempts: int, error: str | None = None
     ) -> None: ...
 
-    async def recover_stale(self) -> int: ...
+    async def recover_stale(self, *, max_age: timedelta | None = None) -> int: ...
 
     async def has_recent_empty_done(self, vip_id: UUID, *, since: datetime) -> bool: ...
+
+    async def has_recent_failed(self, vip_id: UUID, *, since: datetime) -> bool: ...
 
 
 class VipReader(Protocol):
@@ -145,6 +149,9 @@ class MemoryBackfillQueue:
         self._max_attempts = max(1, int(max_attempts))
         self._wake = wake
         self._clock = clock or (lambda: datetime.now(UTC))
+        # Fix round (S-F4): strong references to fire-and-forget tasks so GC
+        # cannot collect them mid-flight (pattern TimerManager).
+        self._tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # enqueue
@@ -193,7 +200,9 @@ class MemoryBackfillQueue:
         owner DM can promise a rough count ("~N pasos"). The wake event is set
         so a sleeping idle job starts processing immediately (R2).
         """
-        count = len(await self._history.list_all(chat_id))
+        # Fix round (L6/F7): count(*) instead of materializing the whole
+        # history just to estimate the DM's "~N pasos".
+        count = await self._history.count(chat_id)
         steps = max(1, math.ceil(count / self._window_size))
         record = await self._store.enqueue(vip_id, chat_id)
         label = name or str(telegram_user_id)
@@ -247,10 +256,12 @@ class MemoryBackfillQueue:
                 extra={"telegram_user_id": telegram_user_id},
             )
             return
-        loop.create_task(
+        task = loop.create_task(
             self._enqueue_safe(telegram_user_id),
             name=f"backfill-enqueue-{telegram_user_id}",
         )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _enqueue_safe(self, telegram_user_id: int) -> None:
         try:
@@ -266,8 +277,10 @@ class MemoryBackfillQueue:
 
         Guards: VIPs without any message history are skipped (the Telethon
         seed may still be pending) and VIPs marked ``done(empty_history)`` in
-        the last 24h are not re-queued (R4 — no re-enqueue loop). Runs at
-        startup / on demand, NEVER during the turn pipeline.
+        the last 24h — or whose last job FAILED in the last 24h (fix round
+        S2) — are not re-queued (R4 — no re-enqueue loop, no LLM burn per
+        restart while the provider is degraded). Runs at startup / on demand,
+        NEVER during the turn pipeline.
         """
         if not self._enabled:
             return 0
@@ -284,6 +297,11 @@ class MemoryBackfillQueue:
                 continue
             if await self._store.has_recent_empty_done(vip.id, since=since):
                 continue
+            # Fix round (S2): same 24h cooldown for FAILED jobs. The manual
+            # ficha button bypasses this (enqueue ignores failed rows); only
+            # the automatic path respects the cooldown.
+            if await self._store.has_recent_failed(vip.id, since=since):
+                continue
             report = await self._enqueue_vip(
                 vip.id,
                 chat_id=vip.telegram_user_id,
@@ -296,15 +314,17 @@ class MemoryBackfillQueue:
         logger.info("backfill_missing_enqueued", extra={"count": enqueued})
         return enqueued
 
-    async def recover_stale(self) -> int:
-        """Requeue orphaned ``processing`` jobs (crash recovery).
+    async def recover_stale(self, *, max_age: timedelta | None = None) -> int:
+        """Requeue ``processing`` jobs untouched for more than ``max_age``.
 
-        Delegates to the store; called once by ``BackfillJob.start()``
-        (jobs delegate to services — AGENTS.md §2.1).
+        Delegates to the store; called once by ``BackfillJob.start()`` (jobs
+        delegate to services — AGENTS.md §2.1). The age limit (fix round
+        S-F3) keeps an overlapping restart from reclaiming a window the
+        previous process is still extracting.
         """
         if not self._enabled:
             return 0
-        return await self._store.recover_stale()
+        return await self._store.recover_stale(max_age=max_age)
 
     # ------------------------------------------------------------------
     # processing (one unit = one window; lock = atomic pop + job loop)
@@ -323,18 +343,28 @@ class MemoryBackfillQueue:
         if job is None:
             return ProcessReport(status="idle")
 
-        already = [
-            HechoExtracted.model_validate(f)
-            for f in job.state.get("hechos", [])
-            if isinstance(f, dict)
-        ]
         try:
+            # Fix round (L4/F6): deserializing the accumulated state INSIDE
+            # the try — a corrupt/incompatible jsonb state is a unit failure
+            # (retry → failed), never a job stuck in ``processing`` until the
+            # next restart.
+            already = [
+                HechoExtracted.model_validate(f)
+                for f in job.state.get("hechos", [])
+                if isinstance(f, dict)
+            ]
             res = await self._backfill.extract_window(
                 job.vip_id,
                 job.chat_id,
                 window_index=job.window_index,
                 already=already,
             )
+        except ValidationError:
+            logger.exception(
+                "backfill_state_invalid",
+                extra={"vip_id": str(job.vip_id), "job_id": str(job.id)},
+            )
+            return await self._handle_unit_failure(job, "state_invalid")
         except Exception:
             logger.exception(
                 "backfill_window_unexpected_error",
@@ -343,9 +373,12 @@ class MemoryBackfillQueue:
             return await self._handle_unit_failure(job, "window_unexpected_error")
 
         if res.failed:
-            # LLM failure in this window → retry (respects the interval), no
-            # partial state (R9).
-            return await self._handle_unit_failure(job, "window_llm_failed")
+            # Fix round (L8): the service labels the real cause (LLM failure
+            # vs broken chat↔vip binding) so retries/last_error tell the
+            # truth; the fallback keeps legacy fakes working.
+            return await self._handle_unit_failure(
+                job, res.failed_reason or "window_llm_failed"
+            )
 
         if res.total_windows == 0:
             # Empty history OR empty transcript → done, no write (A6/R4). The
@@ -365,11 +398,14 @@ class MemoryBackfillQueue:
             # VIP; the scheduler sleeps backfill_interval_sec between units
             # (also between windows of the same VIP — REQ-MEM-05).
             state = {"hechos": [h.model_dump() for h in hechos]}
+            # Fix round (L5): the retry budget is PER WINDOW — a successful
+            # window resets ``attempts`` so an early transient failure cannot
+            # exhaust the retries of every later window of the same run.
             await self._store.save_progress(
                 job.id,
                 window_index=job.window_index + 1,
                 state=state,
-                attempts=job.attempts,
+                attempts=0,
             )
             return ProcessReport(
                 status="processed",
@@ -389,6 +425,28 @@ class MemoryBackfillQueue:
                 extra={"vip_id": str(job.vip_id), "job_id": str(job.id)},
             )
             return await self._handle_unit_failure(job, "finalize_error")
+
+        if report.status == "failed":
+            # Fix round (M1): a failed finalize WITHOUT an exception (e.g.
+            # broken chat↔vip binding) is a UNIT failure — retry with backoff
+            # and mark the job ``failed`` at max_attempts; never a terminal
+            # ``done(outcome='failed')`` that buries the job with no retry,
+            # no last_error and no visible failed state.
+            return await self._handle_unit_failure(job, "finalize_failed")
+        if report.status == "disabled":
+            # Flag turned off mid-run: not a failure — explicit terminal
+            # outcome keeps the status/outcome vocabulary coherent.
+            await self._store.mark_done(job.id, outcome="disabled")
+            logger.info(
+                "backfill_job_disabled",
+                extra={"vip_id": str(job.vip_id), "job_id": str(job.id)},
+            )
+            return ProcessReport(
+                status="processed",
+                vip_id=job.vip_id,
+                window_index=job.window_index,
+                outcome="disabled",
+            )
 
         await self._store.mark_done(job.id, outcome=report.status)
         logger.info(

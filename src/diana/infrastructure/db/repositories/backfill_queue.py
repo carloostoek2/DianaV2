@@ -18,7 +18,7 @@ No business logic here (AGENTS.md §2.1) — the queue service lives in
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -163,12 +163,25 @@ class SqlBackfillQueueRepo:
             )
             await session.commit()
 
-    async def recover_stale(self) -> int:
-        """Requeue every orphaned ``processing`` job (crash recovery)."""
+    async def recover_stale(
+        self, *, max_age: timedelta | None = None
+    ) -> int:
+        """Requeue ``processing`` jobs untouched for more than ``max_age``.
+
+        Crash recovery with an age limit (fix round S-F3): an overlapping
+        restart must NOT reclaim a window the previous process is still
+        extracting (that would double the LLM cost); only jobs whose
+        ``updated_at`` is older than the limit are considered orphaned.
+        Defaults to one hour.
+        """
+        cutoff = datetime.now(UTC) - (max_age or timedelta(hours=1))
         async with self._sf() as session:
             result = await session.execute(
                 update(BackfillQueue)
-                .where(BackfillQueue.status == "processing")
+                .where(
+                    BackfillQueue.status == "processing",
+                    BackfillQueue.updated_at < cutoff,
+                )
                 .values(status="pending", updated_at=datetime.now(UTC))
             )
             await session.commit()
@@ -189,6 +202,30 @@ class SqlBackfillQueueRepo:
                         BackfillQueue.vip_id == vip_id,
                         BackfillQueue.status == "done",
                         BackfillQueue.outcome == "empty_history",
+                        BackfillQueue.updated_at >= since,
+                    )
+                )
+            )
+            return bool(result.scalar_one())
+
+    async def has_recent_failed(
+        self, vip_id: UUID, *, since: datetime
+    ) -> bool:
+        """True iff the VIP has a job that FAILED after ``since``.
+
+        Fix round (S2): extends the ``enqueue_missing_vips`` cooldown to
+        ``failed`` jobs — while the LLM provider is degraded, every restart
+        would otherwise create a fresh pending job for the same VIP and burn
+        paid calls with no progress. Cooldown by ``updated_at`` (24h), the
+        same R4 semantics as ``has_recent_empty_done``; the manual ficha
+        button bypasses it (``enqueue`` ignores failed rows).
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(
+                    exists().where(
+                        BackfillQueue.vip_id == vip_id,
+                        BackfillQueue.status == "failed",
                         BackfillQueue.updated_at >= since,
                     )
                 )

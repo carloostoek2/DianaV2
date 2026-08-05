@@ -75,6 +75,15 @@ def upgrade() -> None:
             "status IN ('pending','processing','done','failed')",
             name="ck_backfill_queue_status",
         ),
+        # Fix round (L10): the done-outcome vocabulary is enforced at the
+        # schema level too (M1 made ``done(outcome='failed')`` impossible;
+        # ``disabled`` covers a flag turned off mid-run). The migration is
+        # NOT yet applied to production → edited in place instead of adding
+        # a 024 revision.
+        sa.CheckConstraint(
+            "outcome IS NULL OR outcome IN ('ok','empty_history','disabled')",
+            name="ck_backfill_queue_outcome",
+        ),
     )
     op.create_index(
         "ix_backfill_queue_status_created", "backfill_queue", ["status", "created_at"]

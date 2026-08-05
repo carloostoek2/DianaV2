@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -30,10 +31,12 @@ class FakeQueue:
         self._reports: deque[ProcessReport] = deque(reports or [])
         self.process_calls = 0
         self.recover_calls = 0
+        self.recover_max_ages: list[timedelta | None] = []
         self.raise_on_process = False
 
-    async def recover_stale(self) -> int:
+    async def recover_stale(self, *, max_age: timedelta | None = None) -> int:
         self.recover_calls += 1
+        self.recover_max_ages.append(max_age)
         return 2
 
     async def process_one(self) -> ProcessReport:
@@ -60,12 +63,14 @@ def _make_job(
     *,
     interval_seconds: int = 3600,
     idle_poll_seconds: int = 60,
+    recover_stale_max_age_sec: int = 3600,
     wake: asyncio.Event | None = None,
 ) -> BackfillJob:
     return BackfillJob(
         queue,  # type: ignore[arg-type]
         interval_seconds=interval_seconds,
         idle_poll_seconds=idle_poll_seconds,
+        recover_stale_max_age_sec=recover_stale_max_age_sec,
         wake=wake,
         sleep=sleep,  # type: ignore[arg-type]
     )
@@ -153,6 +158,23 @@ async def test_job_recover_stale_at_start() -> None:
     await task
 
     assert queue.recover_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_job_recover_stale_forwards_configured_max_age() -> None:
+    """Fix round (S-F3): the configured age limit reaches the queue/store."""
+    queue = FakeQueue([])
+    sleep = FakeSleep()
+    job = _make_job(
+        queue, sleep, idle_poll_seconds=60, recover_stale_max_age_sec=7200
+    )
+
+    task = asyncio.create_task(job.start())
+    await _wait_until(lambda: queue.recover_calls == 1)
+    await job.stop()
+    await task
+
+    assert queue.recover_max_ages == [timedelta(seconds=7200)]
 
 
 @pytest.mark.asyncio

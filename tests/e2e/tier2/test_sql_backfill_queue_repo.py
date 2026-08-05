@@ -11,8 +11,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import text, update
 
+from diana.infrastructure.db.models import BackfillQueue
 from diana.infrastructure.db.repositories.backfill_queue import (
     SqlBackfillQueueRepo,
 )
@@ -199,6 +200,20 @@ async def test_recover_stale_requeues_processing(session_factory) -> None:
     job = await repo.enqueue(vip_a, chat_id=609)
     assert job is not None
     await repo.pop_pending()  # leaves the job processing
+
+    # A fresh processing job must NOT be reclaimed (age limit, fix round):
+    # an overlapping restart could still be extracting that window.
+    recovered = await repo.recover_stale()
+    assert recovered == 0
+
+    # Age the job beyond the default 1h limit → now it is an orphan.
+    async with session_factory() as session:
+        await session.execute(
+            update(BackfillQueue)
+            .where(BackfillQueue.id == job.id)
+            .values(updated_at=datetime.now(UTC) - timedelta(hours=2))
+        )
+        await session.commit()
 
     recovered = await repo.recover_stale()
     assert recovered == 1
