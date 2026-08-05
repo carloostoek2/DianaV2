@@ -237,7 +237,7 @@ class _FakeProvider:
     def __init__(self, catalog) -> None:
         self.catalog = catalog
 
-    async def get_catalog(self):
+    async def get_catalog(self, channel_type: str = "vip"):
         return self.catalog
 
 

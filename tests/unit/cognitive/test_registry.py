@@ -377,7 +377,7 @@ class _FakeProvider:
     def __init__(self, catalog) -> None:
         self.catalog = catalog
 
-    async def get_catalog(self):
+    async def get_catalog(self, channel_type: str = "vip"):
         return self.catalog
 
 
@@ -421,6 +421,89 @@ async def test_registry_propagates_persona_catalog_provider() -> None:
     assert schedule is not None and schedule["tipo"] == "respuesta_libre"
     assert schedule["respuesta_sugerida"] == "live response"
 
+
+class _ChannelAwareProvider:
+    """PersonaCatalogProvider double returning a distinct catalog per channel."""
+
+    def __init__(self, catalogs: dict[str, dict]) -> None:
+        self.catalogs = catalogs
+        self.requested: list[str] = []
+
+    async def get_catalog(self, channel_type: str = "vip"):
+        self.requested.append(channel_type)
+        return self.catalogs[channel_type]
+
+
+_VIP_CATALOG = {
+    "persona_facts": [{"id": "vf", "tema": ["familia"], "hecho": "hecho VIP"}],
+    "voice_patterns": [{"id": "vp", "tags": ["positiva"], "patron": "jsjs", "uso": "coqueta VIP"}],
+    "policies": [{"id": "pol", "tema": ["contenido"], "regla": "política VIP"}],
+    "schedule": {
+        "timezone": "America/Mexico_City",
+        "default_responses": ["respuesta VIP"],
+        "bloques": [
+            {"dias": ["lunes"], "inicio": "09:00", "fin": "12:00", "actividad": "actividad VIP"}
+        ],
+    },
+}
+
+_ATENCION_CATALOG = {
+    "persona_facts": [{"id": "af", "tema": ["servicio"], "hecho": "hecho atencion"}],
+    "voice_patterns": [{"id": "ap", "tags": ["neutral"], "patron": "claro", "uso": "tono de servicio"}],
+    "policies": [{"id": "pol", "tema": ["contenido"], "regla": "política atencion"}],
+    "schedule": {
+        "timezone": "America/Mexico_City",
+        "default_responses": ["respuesta atencion"],
+        "bloques": [
+            {"dias": ["martes"], "inicio": "10:00", "fin": "12:00", "actividad": "atendiendo el negocio"}
+        ],
+    },
+}
+
+
+async def test_retrievers_are_channel_aware_per_channel_cache() -> None:
+    """N2/B2: an atencion turn resolves atencion slices, never the VIP ones,
+    and the per-channel identity cache keeps the switch bidirectional."""
+    provider = _ChannelAwareProvider(
+        {"vip": _VIP_CATALOG, "atencion": _ATENCION_CATALOG}
+    )
+    registry = build_default_registry(
+        InMemoryMessageHistory(),
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    atencion_turn = _turn()
+    atencion_turn.channel_type = "atencion"
+
+    # atencion turn → atencion slices, never VIP data.
+    facts = await registry.resolve("knowledge.persona_facts").fetch(
+        atencion_turn, _comprehension(topics=["servicio"])
+    )
+    assert facts is not None and facts["hecho"] == "hecho atencion"
+
+    patterns = await registry.resolve("knowledge.voice_patterns").fetch(
+        atencion_turn, _comprehension(emotion="neutral", topics=["servicio"])
+    )
+    assert patterns is not None and patterns["patron"] == "claro"
+
+    policies = await registry.resolve("knowledge.policy").fetch(
+        atencion_turn, _comprehension(topics=["contenido"])
+    )
+    assert policies == ["Trigger: pol | Rule: política atencion"]
+
+    schedule = await registry.resolve("knowledge.schedule").fetch(
+        atencion_turn, _comprehension()
+    )
+    assert schedule is not None and schedule["tipo"] == "respuesta_libre"
+    assert schedule["respuesta_sugerida"] == "respuesta atencion"
+
+    # VIP turn again → VIP slices (the per-channel cache must re-refresh).
+    facts = await registry.resolve("knowledge.persona_facts").fetch(
+        _turn(), _comprehension(topics=["familia"])
+    )
+    assert facts is not None and facts["hecho"] == "hecho VIP"
+
+    assert provider.requested.count("atencion") >= 1
+    assert provider.requested.count("vip") >= 1
 
 
 async def test_registry_static_slices_plus_provider_combination() -> None:

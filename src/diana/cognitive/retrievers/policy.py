@@ -58,19 +58,28 @@ class PolicyRetriever:
         self._embed = embedding_service
         self._repo = repo
         self._provider = persona_catalog_provider
-        self._last_policies: object = None
-        # Empty list is treated as "no static catalog" (same as None) for stub semantics.
-        self._static = list(static_policies) if static_policies else None
+        self._last_policies: dict[str, object] = {}
+        # Empty list is treated as "no static catalog" (same as None) for stub
+        # semantics. State is per-channel so atencion turns never load VIP policies.
+        self._static: dict[str, list[dict] | None] = {}
+        self._set_static("vip", static_policies)
 
-    async def _maybe_refresh(self) -> None:
-        """Pull a fresh policies slice from the live catalog when it changed.
+    def _set_static(
+        self, channel_type: str, policies: list[dict] | None
+    ) -> None:
+        self._static[channel_type] = list(policies) if policies else None
 
-        A ``None`` slice (key missing) or a non-list value keeps the last good
+    async def _maybe_refresh(self, channel_type: str) -> None:
+        """Pull a fresh per-channel policies slice from the live catalog.
+
+        The identity cache is keyed by channel so switching channels
+        re-refreshes (an atencion turn must never reuse the VIP slice). A
+        ``None`` slice (key missing) or a non-list value keeps the last good
         state — never wipe on corrupt rows.
         """
         if self._provider is None:
             return
-        catalog = await self._provider.get_catalog()
+        catalog = await self._provider.get_catalog(channel_type=channel_type)
         if catalog is None:
             return
         policies = catalog.get("policies")
@@ -78,9 +87,9 @@ class PolicyRetriever:
             return
         if not isinstance(policies, list):
             return
-        if policies is not self._last_policies:
-            self._last_policies = policies
-            self._static = list(policies) if policies else None
+        if self._last_policies.get(channel_type) is not policies:
+            self._last_policies[channel_type] = policies
+            self._set_static(channel_type, policies)
 
     async def fetch(
         self,
@@ -88,8 +97,9 @@ class PolicyRetriever:
         comprehension: Comprehension,
     ) -> Any | None:
         """Return formatted policies, empty list, or None if unavailable."""
-        await self._maybe_refresh()
-        has_static = self._static is not None
+        await self._maybe_refresh(turn.channel_type)
+        channel_static = self._static.get(turn.channel_type)
+        has_static = channel_static is not None
         has_db = self._repo is not None and self._embed is not None
 
         if not has_static and not has_db:
@@ -103,7 +113,7 @@ class PolicyRetriever:
             signals = {_norm(t) for t in comprehension.topics if str(t).strip()} | {
                 _norm(comprehension.intent)
             }
-            for policy in self._static or []:
+            for policy in channel_static or []:
                 temas = _as_tema_list(policy.get("tema"))
                 if not (signals & set(temas)):
                     continue

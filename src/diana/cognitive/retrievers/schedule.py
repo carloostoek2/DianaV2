@@ -46,35 +46,41 @@ class ScheduleRetriever:
         persona_catalog_provider: PersonaCatalogProvider | None = None,
     ) -> None:
         self._provider = persona_catalog_provider
-        self._last_schedule: object = None
+        self._last_schedule: dict[str, object] = {}
+        self._bloques: dict[str, list[dict]] = {}
+        self._defaults: dict[str, list[str]] = {}
+        self._tz: dict[str, ZoneInfo] = {}
         self._clock = clock
         self._rng = rng
-        self._set_schedule(bloques, default_responses, tz)
+        self._set_schedule("vip", bloques, default_responses, tz)
 
     def _set_schedule(
         self,
+        channel_type: str,
         bloques: list[dict],
         default_responses: list[str],
         tz: str,
     ) -> None:
-        """(Re)build internal state from a schedule slice."""
-        self._bloques = list(bloques)
-        self._defaults = list(default_responses)
+        """(Re)build per-channel state from a schedule slice."""
+        self._bloques[channel_type] = list(bloques)
+        self._defaults[channel_type] = list(default_responses)
         try:
-            self._tz = ZoneInfo(tz)
+            self._tz[channel_type] = ZoneInfo(tz)
         except Exception:
             # Defensive: a bad timezone string must not crash the turn.
-            self._tz = ZoneInfo(_DEFAULT_SCHEDULE_TZ)
+            self._tz[channel_type] = ZoneInfo(_DEFAULT_SCHEDULE_TZ)
 
-    async def _maybe_refresh(self) -> None:
-        """Pull a fresh schedule slice from the live catalog when it changed.
+    async def _maybe_refresh(self, channel_type: str) -> None:
+        """Pull a fresh per-channel schedule slice from the live catalog.
 
-        A ``None`` slice (key missing) or a non-dict value keeps the last good
+        The identity cache is keyed by channel so switching channels
+        re-refreshes (an atencion turn must never reuse the VIP slice). A
+        ``None`` slice (key missing) or a non-dict value keeps the last good
         state — never wipe on corrupt rows.
         """
         if self._provider is None:
             return
-        catalog = await self._provider.get_catalog()
+        catalog = await self._provider.get_catalog(channel_type=channel_type)
         if catalog is None:
             return
         schedule = catalog.get("schedule")
@@ -82,9 +88,10 @@ class ScheduleRetriever:
             return
         if not isinstance(schedule, dict):
             return
-        if schedule is not self._last_schedule:
-            self._last_schedule = schedule
+        if self._last_schedule.get(channel_type) is not schedule:
+            self._last_schedule[channel_type] = schedule
             self._set_schedule(
+                channel_type,
                 schedule.get("bloques") or [],
                 schedule.get("default_responses") or _DEFAULT_SCHEDULE_RESPONSES,
                 schedule.get("timezone") or _DEFAULT_SCHEDULE_TZ,
@@ -96,11 +103,14 @@ class ScheduleRetriever:
         comprehension: Comprehension,
     ) -> dict[str, Any]:
         _ = turn, comprehension
-        await self._maybe_refresh()
-        now_local = self._clock.now().astimezone(self._tz)
+        channel_type = turn.channel_type
+        await self._maybe_refresh(channel_type)
+        now_local = self._clock.now().astimezone(
+            self._tz.get(channel_type, ZoneInfo(_DEFAULT_SCHEDULE_TZ))
+        )
         dia = _WEEKDAY_ES[now_local.weekday()]
         hora = now_local.strftime("%H:%M")
-        for bloque in self._bloques:
+        for bloque in self._bloques.get(channel_type) or []:
             dias = bloque.get("dias") or []
             inicio = str(bloque.get("inicio") or "")
             fin = str(bloque.get("fin") or "")
@@ -111,9 +121,10 @@ class ScheduleRetriever:
                     "tipo": "actividad",
                     "actividad": bloque["actividad"],
                 }
+        defaults = self._defaults.get(channel_type) or _DEFAULT_SCHEDULE_RESPONSES
         return {
             "dia": dia,
             "hora_actual": hora,
             "tipo": "respuesta_libre",
-            "respuesta_sugerida": self._rng.choice(self._defaults),
+            "respuesta_sugerida": self._rng.choice(defaults),
         }

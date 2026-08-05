@@ -29,28 +29,30 @@ class VoicePatternsRetriever:
         persona_catalog_provider: PersonaCatalogProvider | None = None,
     ) -> None:
         self._provider = persona_catalog_provider
-        self._last_patterns: object = None
-        self._patterns: list[dict] = []
-        self._tag_freq: Counter[str] = Counter()
-        self._set_patterns(patterns or [])
+        self._last_patterns: dict[str, object] = {}
+        self._patterns: dict[str, list[dict]] = {}
+        self._tag_freq: dict[str, Counter[str]] = {}
+        self._set_patterns("vip", patterns or [])
 
-    def _set_patterns(self, patterns: list[dict]) -> None:
-        """(Re)build internal state from a voice_patterns slice."""
-        self._patterns = list(patterns)
-        self._tag_freq = Counter()
-        for pattern in self._patterns:
+    def _set_patterns(self, channel_type: str, patterns: list[dict]) -> None:
+        """(Re)build per-channel state from a voice_patterns slice."""
+        self._patterns[channel_type] = list(patterns)
+        self._tag_freq[channel_type] = Counter()
+        for pattern in self._patterns[channel_type]:
             for tag in set(_norm(t) for t in pattern.get("tags", [])):
-                self._tag_freq[tag] += 1
+                self._tag_freq[channel_type][tag] += 1
 
-    async def _maybe_refresh(self) -> None:
-        """Pull a fresh slice from the live catalog when it changed (by identity).
+    async def _maybe_refresh(self, channel_type: str) -> None:
+        """Pull a fresh per-channel slice from the live catalog when it changed.
 
-        A ``None`` slice (key missing) or a non-list value keeps the last good
+        The identity cache is keyed by channel so switching channels
+        re-refreshes (an atencion turn must never reuse the VIP slice). A
+        ``None`` slice (key missing) or a non-list value keeps the last good
         state — never wipe on corrupt rows.
         """
         if self._provider is None:
             return
-        catalog = await self._provider.get_catalog()
+        catalog = await self._provider.get_catalog(channel_type=channel_type)
         if catalog is None:
             return
         slice_ = catalog.get("voice_patterns")
@@ -58,9 +60,9 @@ class VoicePatternsRetriever:
             return
         if not isinstance(slice_, list):
             return
-        if slice_ is not self._last_patterns:
-            self._last_patterns = slice_
-            self._set_patterns(slice_)
+        if self._last_patterns.get(channel_type) is not slice_:
+            self._last_patterns[channel_type] = slice_
+            self._set_patterns(channel_type, slice_)
 
     async def fetch(
         self,
@@ -68,7 +70,11 @@ class VoicePatternsRetriever:
         comprehension: Comprehension,
     ) -> dict[str, str] | None:
         _ = turn  # match is comprehension-driven only
-        await self._maybe_refresh()
+        await self._maybe_refresh(turn.channel_type)
+        patterns = self._patterns.get(turn.channel_type)
+        if patterns is None:
+            return None  # channel never populated → no pattern, never VIP data
+        tag_freq = self._tag_freq[turn.channel_type]
         signals = {
             _norm(comprehension.emotion),
             _norm(comprehension.intent),
@@ -76,7 +82,7 @@ class VoicePatternsRetriever:
         }
         best: dict[str, str] | None = None
         best_score = 0.0
-        for pattern in self._patterns:
+        for pattern in patterns:
             tags = pattern.get("tags") or []
             if not isinstance(tags, list):
                 tags = [tags]
@@ -84,7 +90,7 @@ class VoicePatternsRetriever:
             inter = signals & tag_set
             if not inter:
                 continue
-            score = sum(1.0 / self._tag_freq[t] for t in inter)
+            score = sum(1.0 / tag_freq[t] for t in inter)
             if score > best_score:
                 best_score = score
                 best = {
