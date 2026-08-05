@@ -159,14 +159,14 @@ Cada VIP tiene una **ficha** compuesta por secciones. Cada sección es una fila 
 7. Resultado: notificación a la dueña ("Perfil generado para {VIP} — N hechos, M requieren tu aprobación") y log trazable.
 
 ### REQ-MEM-05 — Disparo
-- Comando de la dueña en el DM: `/perfil <vip>` (o acción en el panel de VIP): genera/regenera el perfil de ese VIP bajo demanda.
+- **Disparo desde la ficha existente** (sin comandos redundantes): la pantalla de ficha del panel de VIP (`menu_vip_profile_keyboard`, botón "👤 Ver ficha") incorpora la acción **"🔄 Generar perfil"** que genera/regenera el perfil de memoria de ese VIP bajo demanda (encola el backfill). No se crea un comando `/perfil` nuevo.
 - Automático: al **registrar un VIP nuevo** (tras el seed de historial), se agenda el backfill.
 - **Decisión de producto (2026-08-05)**: TODOS los VIPs se perfilan — no hay exclusión/opt-out por VIP. El historial completo se extrae y de ahí se arma el perfil (el contenido habitual son gustos/preferencias; los datos personales tipo teléfono/dirección son raros).
 - **Cuidado de la cuenta de Telegram (no oficial)**: el flujo de extracción replica el patrón de la v1 (`repos/diana/services/history_backfill.py`):
-  - Cola persistente de perfiles pendientes + lock global → **un VIP a la vez** (nunca extracciones concurrentes).
-  - **Timer entre VIPs**: `BACKFILL_INTERVAL_SEC` (v1 = 3600 s = 1 hora; configurable) entre el fin de un VIP y el inicio del siguiente.
-  - **Conversaciones largas partidas por turnos**: si el historial supera el tamaño de ventana, se procesa por turnos (200 msgs / 12K chars) y **al terminar la serie de turnos de un VIP se espera el intervalo antes del siguiente**.
+  - Cola persistente de perfiles pendientes + lock global → **una extracción a la vez** (nunca concurrentes).
+  - **Timer entre extracciones**: `BACKFILL_INTERVAL_SEC` (v1 = 3600 s = 1 hora; configurable) **entre cada extracción individual**, tanto entre VIPs distintos como **entre los turnos de un mismo VIP** cuando su historial se parte (200 msgs / 12K chars por turno). La prioridad es la seguridad de la cuenta: que el proceso completo tome horas o días es aceptable ("no importa que nos tome tiempo, es lo de menos").
 - Un job de "perfiles pendientes" (bajo demanda, NO en cada arranque de forma agresiva; puede encolar al arranque como v1 con `enqueue_missing_vips`): procesa VIPs con historial nuevo y sin perfil. Nunca corre durante el pipeline de turnos.
+- UX de cola: al encolar se informa a la dueña ("Perfil de {VIP} en cola — se procesará en ~N pasos") y el estado avanza sin bloquear el panel.
 
 ### REQ-MEM-06 — Costo y límites
 - El backfill es una operación puntual con costo de LLM (1+ llamadas por VIP según longitud). Se ejecuta en **cola de a uno** (sin saturar).
