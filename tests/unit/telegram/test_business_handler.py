@@ -95,6 +95,52 @@ async def test_router_default_channel_type_is_vip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_router_forwards_counted_marker() -> None:
+    """F4-02: atencion_limit_counted travels from aiogram data to counts_toward_limit."""
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_business = router.business_message.handlers[0].callback
+    await on_business(
+        _biz_message(), channel_type="atencion", atencion_limit_counted=True
+    )
+    orch.handle_vip_message.assert_awaited_once()
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert isinstance(arg, VipInboundMessage)
+    assert arg.channel_type == "atencion"
+    assert arg.counts_toward_limit is True
+
+
+@pytest.mark.asyncio
+async def test_router_default_counted_false() -> None:
+    """F4-02: no marker in data → counts_toward_limit defaults False."""
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_business = router.business_message.handlers[0].callback
+    await on_business(_biz_message(), channel_type="atencion")
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert isinstance(arg, VipInboundMessage)
+    assert arg.counts_toward_limit is False
+
+
+@pytest.mark.asyncio
+async def test_edited_router_forwards_counted_marker() -> None:
+    """F4-02: the edited-business path forwards the marker (hook still drops edits)."""
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_edited = router.edited_business_message.handlers[0].callback
+    await on_edited(
+        _biz_message(), channel_type="atencion", atencion_limit_counted=True
+    )
+    orch.handle_vip_message.assert_awaited_once()
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert arg.is_edit is True
+    assert arg.counts_toward_limit is True
+
+
+@pytest.mark.asyncio
 async def test_edited_message_keeps_channel_and_is_edit() -> None:
     """N6: the edited-business path forwards channel_type and flags is_edit."""
     orch = AsyncMock()

@@ -185,6 +185,10 @@ class AuthMiddleware(BaseMiddleware):
                 # channel travels in data; no vip_id/vip_record is set.
                 if self._feature_general_mode_enabled:
                     data["channel_type"] = "atencion"
+                    # F4-02: ONLY the general-mode gate sets the limit-counted
+                    # marker. Sandbox (auth.py sandbox gate) and training mode
+                    # never set it, so their atencion messages are NOT counted.
+                    data["atencion_limit_counted"] = True
                     logger.info(
                         "general_mode_bypass",
                         extra={

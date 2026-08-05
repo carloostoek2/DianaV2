@@ -232,6 +232,9 @@ class VipInboundMessage(BaseModel):
     # F4: channel type ("vip" | "atencion"). Set by AuthMiddleware for the
     # general-mode path; default keeps the VIP pipeline unchanged.
     channel_type: Literal["vip", "atencion"] = "vip"
+    # F4-02: True ONLY when the general-mode atencion gate set it (auth.py).
+    # Sandbox/training atencion and VIP never count; edits never count.
+    counts_toward_limit: bool = False
 
 
 class VipRecord(BaseModel):

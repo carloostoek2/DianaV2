@@ -24,6 +24,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
         business_connection_id: str | None = None,
         vip_id: UUID | None = None,
         channel_type: str = "vip",
+        atencion_limit_counted: bool = False,
         **_: Any,
     ) -> None:
         bc = business_connection_id or message.business_connection_id
@@ -35,6 +36,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             business_connection_id=bc,
             vip_id=vip_id,
             channel_type=channel_type,
+            counts_toward_limit=atencion_limit_counted,
         )
         try:
             turn_id = await orchestrator.handle_vip_message(inbound)
@@ -59,6 +61,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
         business_connection_id: str | None = None,
         vip_id: UUID | None = None,
         channel_type: str = "vip",
+        atencion_limit_counted: bool = False,
         **_: Any,
     ) -> None:
         bc = business_connection_id or message.business_connection_id
@@ -73,6 +76,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             vip_id=vip_id,
             is_edit=True,
             channel_type=channel_type,
+            counts_toward_limit=atencion_limit_counted,
         )
         try:
             # Same path as new message: bumps VIP epoch → cancels in-flight
@@ -104,6 +108,7 @@ async def handle_business_message(
     telegram_message_id: int | None,
     business_connection_id: str | None,
     vip_id: UUID | None,
+    counts_toward_limit: bool = False,
 ) -> UUID:
     """Pure callable used by unit tests (no aiogram Router required)."""
     inbound = VipInboundMessage(
@@ -112,6 +117,7 @@ async def handle_business_message(
         telegram_message_id=telegram_message_id,
         business_connection_id=business_connection_id,
         vip_id=vip_id,
+        counts_toward_limit=counts_toward_limit,
     )
     return await orchestrator.handle_vip_message(inbound)
 

@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.gray_zone_service import GrayZoneService
+from diana.application.mexico_tz import cdmx_local_date
 from diana.application.observability import log_swallowed
 from diana.application.owner_history import append_owner_delivery_history
 from diana.application.ports import (
@@ -48,6 +49,14 @@ logger = logging.getLogger("diana.application")
 # Open VIP burst: trailing consecutive role=vip lines since last owner/bot reply.
 _BURST_HISTORY_LIMIT = 40
 _MULTI_VIP_BURST_HEADER = "(el VIP envió varios mensajes seguidos)"
+
+# F4-02: fixed closing reply for the atencion channel when the daily
+# client-message limit (20) is reached. Sent best-effort, direct to the
+# client chat, never LLM / never supervised. Fixed constant (locked #7).
+ATENCION_DAILY_LIMIT_CLOSE = (
+    "¡Hola! Por hoy ya cubrimos todo, "
+    "si necesitas algo más escríbeme mañana 😊"
+)
 
 
 def trailing_vip_texts(history_rows: list[dict]) -> list[str]:
@@ -128,6 +137,7 @@ class TurnOrchestrator:
         delay_policy: DelayPolicy | None = None,
         runtime_timers: RuntimeTimerStore | None = None,
         clock: object | None = None,
+        daily_message_limit_store: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -146,6 +156,7 @@ class TurnOrchestrator:
         self._delay_policy = delay_policy
         self._runtime_timers = runtime_timers
         self._clock = clock
+        self._daily_limit = daily_message_limit_store
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
@@ -170,6 +181,70 @@ class TurnOrchestrator:
             return "supervised"
         enabled = await self._autonomous_mode.is_autonomous_enabled(vip_id)
         return "autonomous" if enabled else "supervised"
+
+    def _should_enforce_daily_limit(self, incoming: VipInboundMessage) -> bool:
+        # F4-02: general-mode atencion only; edits never count.
+        return (
+            bool(incoming.counts_toward_limit)
+            and not incoming.is_edit
+            and self._daily_limit is not None
+        )
+
+    async def _enforce_daily_limit(self, incoming: VipInboundMessage) -> str:
+        """Return "proceed" | "closed" | "dropped" after the atomic increment."""
+        now = (
+            self._clock.now()  # type: ignore[union-attr]
+            if self._clock is not None and hasattr(self._clock, "now")
+            else datetime.now(UTC)
+        )
+        fecha_local = cdmx_local_date(now)
+        count = await self._daily_limit.increment(  # type: ignore[union-attr]
+            incoming.chat_id, fecha_local=fecha_local
+        )
+        if count <= 20:
+            return "proceed"
+        if count == 21:
+            await self._send_atencion_limit_close(incoming)
+            return "closed"
+        logger.info(
+            "atencion_limit_dropped",
+            extra={
+                "chat_id": incoming.chat_id,
+                "fecha_local": fecha_local.isoformat(),
+                "count": count,
+            },
+        )
+        return "dropped"
+
+    async def _send_atencion_limit_close(self, incoming: VipInboundMessage) -> None:
+        """Best-effort direct-to-chat closing reply; never supervised/LLM."""
+        bc = incoming.business_connection_id
+        if self._behavior is None or not bc or not str(bc).strip():
+            logger.info(
+                "atencion_limit_close_skipped",
+                extra={"chat_id": incoming.chat_id, "reason": "no_sender_or_bc"},
+            )
+            return
+        ctx = DeliveryContext(
+            chat_id=incoming.chat_id,
+            business_connection_id=str(bc),
+            vip_id=None,
+            mode=self._delivery_mode,
+            is_frozen=False,
+            telegram_message_id=incoming.telegram_message_id,
+        )
+        try:
+            await self._behavior.deliver(
+                [ATENCION_DAILY_LIMIT_CLOSE],
+                ctx,
+                uuid4(),
+                decision=None,
+            )
+        except Exception:
+            logger.exception(
+                "atencion_limit_close_failed",
+                extra={"chat_id": incoming.chat_id},
+            )
 
     async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
         if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
@@ -214,6 +289,14 @@ class TurnOrchestrator:
     async def handle_vip_message(self, incoming: VipInboundMessage) -> UUID:
         """Process one VIP message; return the minted turn_id."""
         chat_id = incoming.chat_id
+        # F4-02: enforce the atencion daily limit BEFORE any pipeline work
+        # (epoch bump, durable history, mint, LLM). Over-limit messages never
+        # write history, never advance the epoch, never enter the cognitive
+        # pipeline; a synthetic uuid4 is returned (business.py only logs it).
+        if self._should_enforce_daily_limit(incoming):
+            outcome = await self._enforce_daily_limit(incoming)
+            if outcome != "proceed":
+                return uuid4()
         # Capture before any await so owner marks during pre-mint are visible.
         before_inbound = time.monotonic()
         bc = incoming.business_connection_id

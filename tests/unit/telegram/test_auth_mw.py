@@ -696,3 +696,83 @@ async def test_general_mode_training_wins() -> None:
     handler.assert_awaited_once()
     assert data.get("channel_type") == "atencion"
     assert data.get("vip_id") is None
+
+
+# ---------------------------------------------------------------------------
+# F4-02 daily limit marker (general-mode atencion only)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_general_mode_sets_limit_counted_marker() -> None:
+    """F4-02: the general-mode gate sets the atencion_limit_counted marker."""
+    vips = InMemoryVipStore()
+    mw = AuthMiddleware(vips=vips, feature_general_mode_enabled=True)
+    handler = AsyncMock(return_value="orch")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111), data)
+    assert result == "orch"
+    handler.assert_awaited_once()
+    assert data.get("channel_type") == "atencion"
+    assert data.get("atencion_limit_counted") is True
+
+
+@pytest.mark.asyncio
+async def test_training_and_sandbox_do_not_set_marker() -> None:
+    """F4-02: training and sandbox atencion never set the limit-counted marker."""
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+
+    vips = InMemoryVipStore()
+    handler = AsyncMock(return_value="orch")
+
+    # Training-mode bypass: atencion channel, marker absent.
+    training = _TrainingModeStore(enabled=True)
+    mw = AuthMiddleware(vips=vips, training_mode=training)
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111), data)
+    assert result == "orch"
+    assert data.get("channel_type") == "atencion"
+    assert data.get("atencion_limit_counted") is None
+
+    # Sandbox-atencion (non-VIP preview): atencion channel, marker absent.
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "cercano")
+    mw2 = AuthMiddleware(vips=vips, sandbox=sandbox)
+    data2: dict = {"business_connection_id": "bc-1"}
+    await mw2(handler, _biz_msg(111, chat_id=42), data2)
+    assert data2.get("channel_type") == "atencion"
+    assert data2.get("atencion_limit_counted") is None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -24,7 +24,10 @@ from diana.application.memory import (
 )
 from diana.application.ports import VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
-from diana.application.turn_orchestrator import TurnOrchestrator
+from diana.application.turn_orchestrator import (
+    ATENCION_DAILY_LIMIT_CLOSE,
+    TurnOrchestrator,
+)
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
 from diana.cognitive.analyst import Analyst
@@ -157,6 +160,7 @@ def _build(
     clock: object | None = None,
     delay_policy: FixedDelayPolicy | None = None,
     behavior_override: object | None = None,
+    daily_limit: object | None = None,
 ) -> dict:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -216,6 +220,7 @@ def _build(
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
         feature_advanced_behavior=feature_advanced_behavior,
         delay_policy=delay_policy,
+        daily_message_limit_store=daily_limit,
     )
     return {
         "orch": orch,
@@ -2775,3 +2780,193 @@ async def test_sandbox_consult_doctrine_demotes_when_no_vip() -> None:
     assert turn.status == "pending_approval"
     assert len(g["notifier"].drafts) == 1
     assert "SANDBOX" in g["notifier"].drafts[0].reason
+
+
+# ── F4-02: atencion daily limit (20 msgs/chat, CDMX civil day) ──────────
+
+
+class _MemoryDailyLimitStore:
+    """In-memory DailyMessageLimitStore for orchestrator limit tests."""
+
+    def __init__(
+        self, seed: dict[tuple[int, date], int] | None = None
+    ) -> None:
+        self._counts = dict(seed or {})
+        self.calls: list[tuple[int, date]] = []
+
+    async def increment(self, chat_id: int, *, fecha_local: date) -> int:
+        self.calls.append((chat_id, fecha_local))
+        key = (chat_id, fecha_local)
+        self._counts[key] = self._counts.get(key, 0) + 1
+        return self._counts[key]
+
+
+class FakeDayClock:
+    """Mutable now()-clock to pin the CDMX civil date for limit tests."""
+
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
+
+    def set(self, now: datetime) -> None:
+        self._now = now
+
+
+# 2026-08-05 18:00 UTC == 12:00 America/Mexico_City 2026-08-05 (UTC-6).
+_FIXED_DAY = datetime(2026, 8, 5, 18, 0, tzinfo=UTC)
+
+
+def _limit_decision() -> Decision:
+    return Decision(
+        action="approve",
+        reason="good",
+        evaluation=_eval(),
+        draft_text="reply draft",
+    )
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_20_processes_normally() -> None:
+    """F4-02: message #20 of the day still proceeds (turn minted)."""
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 19})
+    g = _build(FakeDirector(_limit_decision()), daily_limit=store)
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=101,
+        )
+    )
+    assert await g["turns"].get(turn_id) is not None
+    assert store.calls == [(100, date(2026, 8, 5))]
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_21_sends_closing_once() -> None:
+    """F4-02: message #21 closes with the fixed reply; no turn, no history."""
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
+    spy = _CapturingDeliverer()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=spy,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=21,
+        )
+    )
+    # Closing reply delivered exactly once, straight to chat (no pipeline).
+    assert spy.texts == [[ATENCION_DAILY_LIMIT_CLOSE]]
+    assert spy.ctxs[0].chat_id == 100
+    assert spy.ctxs[0].business_connection_id == "bc-vip"
+    # No turn minted and no history write for the over-limit message.
+    assert await g["turns"].get(turn_id) is None
+    history_ids = [
+        row.get("telegram_message_id")
+        for row in g["history"]._messages.get(100, [])  # noqa: SLF001
+    ]
+    assert 21 not in history_ids
+    assert store.calls == [(100, date(2026, 8, 5))]
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_23_drops_silently() -> None:
+    """F4-02: message #23 drops with no closing reply and no turn."""
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 22})
+    spy = _CapturingDeliverer()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=spy,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=23,
+        )
+    )
+    assert spy.texts == []
+    assert await g["turns"].get(turn_id) is None
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_skips_edits() -> None:
+    """F4-02: edits never count toward the daily limit (marker ignored)."""
+    store = _MemoryDailyLimitStore()
+    g = _build(FakeDirector(_limit_decision()), daily_limit=store)
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            is_edit=True,
+            channel_type="atencion",
+            telegram_message_id=31,
+        )
+    )
+    assert await g["turns"].get(turn_id) is not None
+    assert store.calls == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_skips_when_not_counted() -> None:
+    """F4-02: sandbox/training atencion (no marker) is never counted."""
+    store = _MemoryDailyLimitStore()
+    g = _build(FakeDirector(_limit_decision()), daily_limit=store)
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(channel_type="atencion", telegram_message_id=41)
+    )
+    assert await g["turns"].get(turn_id) is not None
+    assert store.calls == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_no_store_processes_normally() -> None:
+    """F4-02: without a store wired the hook is a no-op."""
+    g = _build(FakeDirector(_limit_decision()))
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(counts_toward_limit=True, channel_type="atencion")
+    )
+    assert await g["turns"].get(turn_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_day_boundary_resets() -> None:
+    """F4-02: a new CDMX civil date starts a fresh counter."""
+    store = _MemoryDailyLimitStore()
+    day_clock = FakeDayClock(_FIXED_DAY)
+    g = _build(FakeDirector(_limit_decision()), daily_limit=store)
+    g["orch"]._clock = day_clock  # noqa: SLF001
+    # 18:00 UTC → 12:00 CDMX 2026-08-05.
+    t1 = await g["orch"].handle_vip_message(
+        _vip(counts_toward_limit=True, channel_type="atencion", telegram_message_id=1)
+    )
+    assert await g["turns"].get(t1) is not None
+    # 05:30 UTC next day → 23:30 CDMX 2026-08-05 (still the same civil date).
+    day_clock.set(datetime(2026, 8, 6, 5, 30, tzinfo=UTC))
+    t2 = await g["orch"].handle_vip_message(
+        _vip(counts_toward_limit=True, channel_type="atencion", telegram_message_id=2)
+    )
+    assert await g["turns"].get(t2) is not None
+    # 06:30 UTC → 00:30 CDMX 2026-08-06 (new civil date → counter resets).
+    day_clock.set(datetime(2026, 8, 6, 6, 30, tzinfo=UTC))
+    t3 = await g["orch"].handle_vip_message(
+        _vip(counts_toward_limit=True, channel_type="atencion", telegram_message_id=3)
+    )
+    assert await g["turns"].get(t3) is not None
+    assert store.calls == [
+        (100, date(2026, 8, 5)),
+        (100, date(2026, 8, 5)),
+        (100, date(2026, 8, 6)),
+    ]
+    # Counts 1, 2, 1 — never over limit across the boundary.
+    assert list(store._counts.values()) == [2, 1]  # noqa: SLF001
