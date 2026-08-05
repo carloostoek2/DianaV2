@@ -260,7 +260,18 @@ class MemoryExtractionService:
                 )
 
         all_msgs = await self._history.list_all(chat_id)
-        msgs = self._filter_turn_messages(all_msgs, turn.created_at)
+        # Fix round (M1): the window starts at the TRIGGER message, not at
+        # ``turn.created_at`` — the orchestrator appends the trigger to
+        # message_history BEFORE minting the turn, so its timestamp is always
+        # < created_at and a ``>= created_at`` filter would drop the very
+        # message that started the turn (single-message turns extracted
+        # nothing). The trigger IS the first message of the turn; its own
+        # timestamp is the exact lower bound. ``_window_since`` falls back to
+        # ``created_at`` when the trigger is unknown/not persisted.
+        since = self._window_since(turn, all_msgs)
+        msgs = self._filter_turn_messages(
+            all_msgs, since, max_messages=_WINDOW_MAX_MESSAGES
+        )
         if not msgs:
             logger.info(
                 "memory_extraction_skipped_no_messages",
@@ -402,34 +413,161 @@ class MemoryExtractionService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _filter_turn_messages(
-        msgs: list[dict], since: datetime | None
-    ) -> list[dict]:
-        """Keep vip/owner messages at or after the turn started (A3).
+    def _normalize_utc(value: datetime) -> datetime:
+        """UTC-aware datetime; naive values are assumed UTC (A3/L7).
 
-        Timestamps arrive as ISO strings from ``list_all``; rows without a
-        valid timestamp are kept when the role matches (tolerant parsing).
+        DB timestamps are UTC-aware, but stores in-memory or legacy rows may
+        yield naive datetimes — comparing a naive value against an aware one
+        raises TypeError and degrades the whole extraction to ``failed``.
         """
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @staticmethod
+    def _parse_timestamp(value: Any) -> datetime | None:
+        """Parse a history timestamp (datetime or ISO string) to UTC-aware.
+
+        Returns None when the value is missing or unparseable — callers
+        decide whether that means \"outside the window\" (filter) or \"fall
+        back\" (trigger lookup).
+        """
+        if isinstance(value, datetime):
+            return MemoryExtractionService._normalize_utc(value)
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return MemoryExtractionService._normalize_utc(parsed)
+        return None
+
+    @staticmethod
+    def _window_since(turn: TurnRecord, msgs: list[dict]) -> datetime | None:
+        """Lower bound of the turn window (fix round M1).
+
+        The trigger message IS the first message of the turn: the orchestrator
+        appends it to ``message_history`` (``_append_vip_history_if_persist``)
+        BEFORE minting the turn, so ``turn.created_at`` is always strictly
+        later than the trigger's timestamp — filtering ``>= created_at`` would
+        exclude the very message that started the turn (single-message turns
+        extracted nothing or only the draft). Using the trigger's own
+        timestamp as the bound includes it exactly (``>=``). Falls back to
+        ``turn.created_at`` when the trigger id is unknown or its row is
+        absent from the history (recovery-created turns, sandbox-skipped or
+        purged rows).
+        """
+        trigger_id = turn.trigger_message_id
+        if trigger_id is not None:
+            for m in msgs:
+                if m.get("telegram_message_id") == trigger_id:
+                    ts = MemoryExtractionService._parse_timestamp(
+                        m.get("timestamp")
+                    )
+                    if ts is not None:
+                        return ts
+                    break
+        return turn.created_at
+
+    @staticmethod
+    def _filter_turn_messages(
+        msgs: list[dict],
+        since: datetime | None,
+        *,
+        max_messages: int | None = None,
+    ) -> list[dict]:
+        """Keep vip/owner messages of the turn window (A3, M1-fixed).
+
+        Window: ``role in (vip, owner)`` AND ``timestamp >= since`` (the
+        trigger's timestamp — M1 — or ``turn.created_at`` as fallback).
+        Messages WITHOUT a valid timestamp are OUT of the window (fail-closed,
+        SEC audit F4): an untimestamped row must not leak into every later
+        turn. All timestamps are normalized to UTC-aware before comparing
+        (L7). With ``max_messages`` only the NEWEST messages of the window
+        are kept — the window is bounded (S-MED cap).
+        """
+        since_norm = (
+            MemoryExtractionService._normalize_utc(since)
+            if since is not None
+            else None
+        )
         out: list[dict] = []
         for m in msgs:
             if m.get("role") not in _TURN_ROLES:
                 continue
-            ts = m.get("timestamp")
+            ts = MemoryExtractionService._parse_timestamp(m.get("timestamp"))
             if ts is None:
-                out.append(m)
                 continue
-            if isinstance(ts, datetime):
-                parsed: datetime | None = ts
-            elif isinstance(ts, str) and ts.strip():
-                try:
-                    parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                except ValueError:
-                    parsed = None
-            else:
-                parsed = None
-            if parsed is None or since is None or parsed >= since:
-                out.append(m)
+            if since_norm is not None and ts < since_norm:
+                continue
+            out.append(m)
+        if max_messages and len(out) > max_messages:
+            out = out[-max_messages:]
         return out
+
+    async def _dedup_intra_run(
+        self, vip_id: UUID, hechos: list[HechoExtracted]
+    ) -> tuple[list[HechoExtracted], dict[str, list[float]], int]:
+        """Semantic merge of near-duplicates WITHIN one turn (fix round L5).
+
+        ``_consolidate`` only drops exact-normalized duplicates; two facts of
+        the SAME section with similar embeddings from the same run would both
+        pass the DB dedup (neither is persisted yet) and both be inserted.
+        Mirrors Pool 2's ``_dedup_semantic``: same section + cosine ≥
+        ``dedup_threshold`` → keep the longer text, inherit ``sensible=True``
+        and the higher ``confianza`` from either side (fail-closed: a
+        near-duplicate one classification marked sensitive can never silently
+        become ``auto``). Embeddings are computed once per fact and returned
+        as the per-text cache for the insert loop (A11). O(n²) over the few
+        facts of one turn — acceptable. Logs are metadata-only (fix S1).
+        Returns ``(kept, emb_cache, merged_count)``.
+        """
+        if len(hechos) < 2:
+            return hechos, {
+                h.texto: await self._embedder.embed(h.texto) for h in hechos
+            }, 0
+        embs = [await self._embedder.embed(h.texto) for h in hechos]
+        keep = [True] * len(hechos)
+        merged = 0
+        for i in range(len(hechos)):
+            if not keep[i]:
+                continue
+            for j in range(i + 1, len(hechos)):
+                if not keep[j]:
+                    continue
+                if hechos[i].seccion != hechos[j].seccion:
+                    continue
+                score = MemoryBackfillService._cosine(embs[i], embs[j])
+                if score < self._dedup_threshold:
+                    continue
+                if len(hechos[i].texto) >= len(hechos[j].texto):
+                    dropped, kept = j, i
+                else:
+                    dropped, kept = i, j
+                kept_h, dropped_h = hechos[kept], hechos[dropped]
+                hechos[kept] = kept_h.model_copy(
+                    update={
+                        "sensible": kept_h.sensible or dropped_h.sensible,
+                        "confianza": max(kept_h.confianza, dropped_h.confianza),
+                    }
+                )
+                keep[dropped] = False
+                merged += 1
+                logger.info(
+                    "memory_extraction_dedup_merged",
+                    extra={
+                        "vip_id": str(vip_id),
+                        "category": hechos[kept].seccion,
+                        "confidence_kept": hechos[kept].confianza,
+                        "similarity": round(score, 4),
+                        "threshold": self._dedup_threshold,
+                    },
+                )
+        return (
+            [h for h, k in zip(hechos, keep) if k],
+            {h.texto: e for h, e in zip(hechos, embs)},
+            merged,
+        )
 
     @staticmethod
     def _cap_transcript(lines: list[str]) -> list[str]:
