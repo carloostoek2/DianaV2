@@ -812,3 +812,123 @@ async def test_startup_timer_recovery_reschedules_active_timer() -> None:
     call = behavior.deliver_calls[0]
     assert call["texts"] == list(delivery.texts)
     assert call["turn_id"] == delivery.turn_id
+
+
+@pytest.mark.asyncio
+async def test_resume_pre_delay_corrupt_payload_does_not_abort_pass() -> None:
+    """FIX-R2-5: a corrupt pre-delay payload is skipped per-timer — the
+    remaining timers still resume and the whole recovery pass completes."""
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
+
+    from diana.application.memory import (
+        InMemoryRuntimeTimerStore,
+        InMemoryTurnStore,
+    )
+    from diana.application.ports import RuntimeTimerRecord, TurnRecord
+    from diana.application.recovery_startup import resume_pre_delay_timers
+    from diana.behavior.fake import ImmediateClock
+
+    turns = InMemoryTurnStore()
+    timers = InMemoryRuntimeTimerStore()
+    clock = ImmediateClock(now=datetime(2026, 8, 2, 12, 0, tzinfo=UTC))
+    good_turn_id = uuid4()
+    bad_turn_id = uuid4()
+    vip_id = uuid4()
+    await turns.create(
+        TurnRecord(
+            id=good_turn_id,
+            chat_id=100,
+            status="waiting_delay",
+            vip_id=vip_id,
+            trigger_message_id=9,
+        )
+    )
+    await turns.create(
+        TurnRecord(
+            id=bad_turn_id,
+            chat_id=200,
+            status="waiting_delay",
+            vip_id=None,
+            trigger_message_id=8,
+        )
+    )
+    now = clock.now()
+    await timers.create_active(
+        RuntimeTimerRecord(
+            id=uuid4(),
+            chat_id=100,
+            turn_id=good_turn_id,
+            delivery_id=None,
+            kind="pre_delay",
+            scheduled_at=now - timedelta(seconds=40),
+            initial_delay_seconds=120.0,
+            status="active",
+            created_at=now - timedelta(seconds=40),
+            payload={
+                "vip_epoch": 2,
+                "incoming": {
+                    "chat_id": 100,
+                    "text": "hola vip",
+                    "telegram_message_id": 9,
+                    "business_connection_id": "bc-1",
+                    "vip_id": str(vip_id),
+                    "is_edit": False,
+                    "channel_type": "vip",
+                },
+            },
+        )
+    )
+    await timers.create_active(
+        RuntimeTimerRecord(
+            id=uuid4(),
+            chat_id=200,
+            turn_id=bad_turn_id,
+            delivery_id=None,
+            kind="pre_delay",
+            scheduled_at=now - timedelta(seconds=40),
+            initial_delay_seconds=120.0,
+            status="active",
+            created_at=now - timedelta(seconds=40),
+            payload={
+                "vip_epoch": 2,
+                "incoming": {
+                    "chat_id": 200,
+                    "text": "corrupt",
+                    "telegram_message_id": 8,
+                    "business_connection_id": "bc-2",
+                    # Fails the Literal["vip","atencion"] validation.
+                    "channel_type": "invalid-channel",
+                },
+            },
+        )
+    )
+
+    class _Orch:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def resume_waiting_delay(self, **kwargs: object) -> object:
+            self.calls.append(dict(kwargs))
+            turn_id = kwargs["turn_id"]
+            await turns.transition(turn_id, "pending_approval")
+            return turn_id
+
+    orch = _Orch()
+    n = await resume_pre_delay_timers(
+        timers=timers,
+        turns=turns,
+        orchestrator=orch,
+        clock=clock,
+    )
+    # Only the healthy timer resumed; the corrupt one was skipped.
+    assert n == 1
+    assert len(orch.calls) == 1
+    assert orch.calls[0]["turn_id"] == good_turn_id
+    good = await turns.get(good_turn_id)
+    assert good is not None and good.status == "pending_approval"
+    # The corrupt timer was marked completed, so the orphan sweep fails the
+    # turn (crash_recovery) instead of stranding it — the pass never aborts.
+    bad = await turns.get(bad_turn_id)
+    assert bad is not None and bad.status == "failed"
+    assert bad.error == "crash_recovery"

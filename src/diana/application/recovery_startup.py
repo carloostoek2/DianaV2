@@ -613,15 +613,32 @@ async def resume_pre_delay_timers(
                 vip_id = _UUID(str(vip_raw))
             except (TypeError, ValueError):
                 vip_id = None
-        incoming = VipInboundMessage(
-            chat_id=int(raw_in.get("chat_id") or timer.chat_id),
-            text=str(raw_in.get("text") or ""),
-            telegram_message_id=raw_in.get("telegram_message_id"),
-            business_connection_id=raw_in.get("business_connection_id"),
-            vip_id=vip_id,
-            is_edit=bool(raw_in.get("is_edit")),
-            channel_type=str(raw_in.get("channel_type") or "vip"),
-        )
+        try:
+            incoming = VipInboundMessage(
+                chat_id=int(raw_in.get("chat_id") or timer.chat_id),
+                text=str(raw_in.get("text") or ""),
+                telegram_message_id=raw_in.get("telegram_message_id"),
+                business_connection_id=raw_in.get("business_connection_id"),
+                vip_id=vip_id,
+                is_edit=bool(raw_in.get("is_edit")),
+                channel_type=str(raw_in.get("channel_type") or "vip"),
+            )
+        except Exception:
+            # A corrupt/manual payload must not abort the whole recovery pass
+            # (asyncio.gather would re-raise); skip this timer and resume the
+            # rest (mirrors the resume-failure path below).
+            logger.exception(
+                "pre_delay_reconstruction_failed",
+                extra={
+                    "timer_id": str(timer.id),
+                    "turn_id": str(timer.turn_id),
+                },
+            )
+            try:
+                await timers.mark_completed(timer.id)
+            except Exception:
+                pass
+            return 0
         now_val = clock.now()
         elapsed = (now_val - timer.scheduled_at).total_seconds()
         remaining = max(0.0, float(timer.initial_delay_seconds) - elapsed)
