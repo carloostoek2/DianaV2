@@ -1665,8 +1665,10 @@ class _FakePersonaProvider:
 
     def __init__(self, catalog) -> None:
         self.catalog = catalog
+        self.requested_channels: list[str] = []
 
-    async def get_catalog(self):
+    async def get_catalog(self, channel_type: str = "vip"):
+        self.requested_channels.append(channel_type)
         return self.catalog
 
 
@@ -1695,6 +1697,33 @@ async def test_persona_provider_overrides_persona_in_prompt() -> None:
     assert "db rule uno" in prompt
     assert "db rule dos" in prompt
     assert "You are Diana." not in prompt
+
+
+async def test_persona_provider_resolves_turn_channel() -> None:
+    """Director propagates turn.channel_type to the provider (channel-scoped persona)."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _FakePersonaProvider(
+        {
+            "voz_configurada": {
+                "persona": "Persona atencion",
+                "reglas_estilo": ["r atencion"],
+            }
+        }
+    )
+    director, trace, _ = make_director(
+        llm, persona="Boot persona", persona_catalog_provider=provider
+    )
+    turn = _turn()
+    turn.channel_type = "atencion"
+    await director.handle_turn(turn)
+
+    assert provider.requested_channels == ["atencion"]
+    prompt = trace.get(turn.turn_id, "prompt_text")
+    assert "Persona atencion" in prompt
+    assert "r atencion" in prompt
 
 
 async def test_persona_provider_none_falls_back_to_constructor() -> None:

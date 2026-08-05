@@ -24,6 +24,7 @@ def persona_version_orm_to_record(row: PersonaVersion) -> PersonaVersionRecord:
         created_by=row.created_by,
         created_at=row.created_at,
         applied_at=row.applied_at,
+        channel_type=row.channel_type,
     )
 
 
@@ -46,6 +47,7 @@ class PersonaVersionRepo:
         source: str,
         payload: dict[str, Any],
         created_by: int | None = None,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord:
         """Insert a new inactive version row."""
         async with self._sf() as session:
@@ -54,17 +56,24 @@ class PersonaVersionRepo:
                 source=source,
                 payload=payload,
                 created_by=created_by,
+                channel_type=channel_type,
             )
             session.add(row)
             await session.commit()
             await session.refresh(row)
             return persona_version_orm_to_record(row)
 
-    async def list_versions(self) -> list[PersonaVersionRecord]:
-        """All versions, newest first (created_at DESC, version DESC)."""
+    async def list_versions(
+        self, *, channel_type: str | None = None
+    ) -> list[PersonaVersionRecord]:
+        """All versions for a channel (or all when channel_type is None),
+        newest first (created_at DESC, version DESC)."""
+        query = select(PersonaVersion)
+        if channel_type is not None:
+            query = query.where(PersonaVersion.channel_type == channel_type)
         async with self._sf() as session:
             result = await session.execute(
-                select(PersonaVersion).order_by(
+                query.order_by(
                     PersonaVersion.created_at.desc(),
                     PersonaVersion.version.desc(),
                 )
@@ -78,27 +87,40 @@ class PersonaVersionRepo:
             row = await session.get(PersonaVersion, persona_version_id)
             return persona_version_orm_to_record(row) if row is not None else None
 
-    async def get_active(self) -> PersonaVersionRecord | None:
+    async def get_active(
+        self, *, channel_type: str = "vip"
+    ) -> PersonaVersionRecord | None:
         async with self._sf() as session:
             result = await session.execute(
-                select(PersonaVersion).where(PersonaVersion.is_active.is_(True))
+                select(PersonaVersion).where(
+                    PersonaVersion.is_active.is_(True),
+                    PersonaVersion.channel_type == channel_type,
+                )
             )
             row = result.scalar_one_or_none()
             return persona_version_orm_to_record(row) if row is not None else None
 
     async def activate_version(
-        self, persona_version_id: UUID, *, now: datetime
+        self,
+        persona_version_id: UUID,
+        *,
+        now: datetime,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord | None:
         """Activate *persona_version_id* and deactivate any other active row (atomic).
 
-        No-op (returns None) when the target id does not exist: the swap only
-        runs if the target row exists, so an unknown id never deactivates the
-        currently active version. The partial unique index is evaluated after
-        the statement, so the swap never observes two active rows.
+        Scoped to *channel_type*: a target id that does not exist (or belongs to
+        another channel) is a no-op (returns None) — the swap only runs if the
+        target row exists in this channel, so an unknown id never deactivates
+        the currently active version. The partial unique index is evaluated
+        after the statement, so the swap never observes two active rows.
         """
         exists = (
             select(PersonaVersion.id)
-            .where(PersonaVersion.id == persona_version_id)
+            .where(
+                PersonaVersion.id == persona_version_id,
+                PersonaVersion.channel_type == channel_type,
+            )
             .exists()
         )
         async with self._sf() as session:
@@ -106,7 +128,8 @@ class PersonaVersionRepo:
                 update(PersonaVersion)
                 .where(
                     or_(
-                        PersonaVersion.is_active.is_(True),
+                        (PersonaVersion.is_active.is_(True))
+                        & (PersonaVersion.channel_type == channel_type),
                         PersonaVersion.id == persona_version_id,
                     )
                     & exists

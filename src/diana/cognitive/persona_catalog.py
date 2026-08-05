@@ -58,6 +58,39 @@ def get_persona_catalog() -> dict[str, Any]:
     return load_persona_catalog()
 
 
+def load_persona_atencion_catalog() -> dict[str, Any]:
+    """Load and validate the atencion-channel persona catalog (uncached).
+
+    Same structural contract as ``load_persona_catalog`` but reads
+    ``diana.config.persona_atencion.json`` (REQ-ATN-07 service persona).
+
+    Raises:
+        FileNotFoundError / OSError: package data file missing or unreadable.
+        ValueError: JSON present but structurally invalid.
+    """
+    resource = importlib.resources.files("diana.config").joinpath(
+        "persona_atencion.json"
+    )
+    try:
+        raw = resource.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise
+    except OSError:
+        raise
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"persona atencion catalog not found or unreadable: {resource!r}"
+        ) from exc
+
+    return _parse_and_validate(raw)
+
+
+@lru_cache(maxsize=1)
+def get_persona_atencion_catalog() -> dict[str, Any]:
+    """Cached atencion-channel catalog for boot/composition."""
+    return load_persona_atencion_catalog()
+
+
 def _parse_and_validate(raw: str) -> dict[str, Any]:
     try:
         data = json.loads(raw)
@@ -231,4 +264,10 @@ def _validate_schedule(schedule: Any) -> None:
             )
 
 
-__all__ = ["load_persona_catalog", "get_persona_catalog", "validate_persona_catalog"]
+__all__ = [
+    "load_persona_catalog",
+    "get_persona_catalog",
+    "load_persona_atencion_catalog",
+    "get_persona_atencion_catalog",
+    "validate_persona_catalog",
+]

@@ -179,11 +179,16 @@ class CognitiveDirector:
         )
         self._knowledge_augmenter = knowledge_augmenter
 
-    async def _resolve_persona(self) -> tuple[str, list[str] | None]:
+    async def _resolve_persona(
+        self, channel_type: str = "vip"
+    ) -> tuple[str, list[str] | None]:
         """Resolve persona + style rules for this turn (live catalog when available).
 
-        Falls back to the boot-time ``persona`` / ``style_rules`` when no
-        provider is wired or the provider reports no live catalog.
+        The channel (``vip`` | ``atencion``) scopes which catalog the provider
+        resolves, so the non-VIP service persona never leaks into the VIP flow
+        (and vice versa). Falls back to the boot-time ``persona`` /
+        ``style_rules`` when no provider is wired or the provider reports no
+        live catalog.
 
         Note: under a concurrent owner save the catalog snapshot may vary
         intra-turn (retrievers refresh before this resolves). That is
@@ -191,7 +196,7 @@ class CognitiveDirector:
         """
         if self._persona_catalog_provider is None:
             return self._persona, self._style_rules
-        catalog = await self._persona_catalog_provider.get_catalog()
+        catalog = await self._persona_catalog_provider.get_catalog(channel_type)
         if catalog is None:
             return self._persona, self._style_rules
         voz = catalog.get("voz_configurada") or {}
@@ -372,7 +377,7 @@ class CognitiveDirector:
         await self._status.transition(turn_id, TurnStatus.BUILDING_CONTEXT)
         # Dual BuiltContext: single assembly pass for Generator + Evaluator (Anexo D).
         # On ContextExceedsLimitError: do not store partial prompt_text; re-raise.
-        persona, style_rules = await self._resolve_persona()
+        persona, style_rules = await self._resolve_persona(turn.channel_type)
         with TimingContext("context_builder") as tc:
             built = self._context_builder.build(
                 turn,

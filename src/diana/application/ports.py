@@ -399,12 +399,15 @@ class PersonaVersionRecord(BaseModel):
 
     ``payload`` is the complete validated catalog dict
     (voz_configurada, persona_facts, voice_patterns, policies, schedule).
+    ``channel_type`` scopes the active row per channel (``vip`` | ``atencion``);
+    the version counter stays a global sequence shared across channels.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     id: UUID
     version: int
+    channel_type: str = "vip"
     source: str  # "seed" | "db"
     payload: dict[str, Any]
     is_active: bool = False
@@ -415,7 +418,7 @@ class PersonaVersionRecord(BaseModel):
 
 @runtime_checkable
 class PersonaAdminStore(Protocol):
-    """Versioned persona catalog persistence (owner admin)."""
+    """Versioned persona catalog persistence (owner admin, channel-scoped)."""
 
     async def insert_version(
         self,
@@ -424,16 +427,25 @@ class PersonaAdminStore(Protocol):
         source: str,
         payload: dict[str, Any],
         created_by: int | None = None,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord: ...
 
-    async def list_versions(self) -> list[PersonaVersionRecord]: ...
+    async def list_versions(
+        self, *, channel_type: str | None = None
+    ) -> list[PersonaVersionRecord]: ...
 
     async def get_by_id(self, persona_version_id: UUID) -> PersonaVersionRecord | None: ...
 
-    async def get_active(self) -> PersonaVersionRecord | None: ...
+    async def get_active(
+        self, *, channel_type: str = "vip"
+    ) -> PersonaVersionRecord | None: ...
 
     async def activate_version(
-        self, persona_version_id: UUID, *, now: datetime
+        self,
+        persona_version_id: UUID,
+        *,
+        now: datetime,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord | None: ...
 
 

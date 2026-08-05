@@ -39,6 +39,7 @@ class _MemoryPersonaAdminStore:
         source: str,
         payload: dict,
         created_by: int | None = None,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord:
         record = PersonaVersionRecord(
             id=uuid4(),
@@ -47,14 +48,22 @@ class _MemoryPersonaAdminStore:
             payload=payload,
             created_by=created_by,
             created_at=_now(),
+            channel_type=channel_type,
         )
         self.records.append(record)
         self.inserted.append(record)
         return record
 
-    async def list_versions(self) -> list[PersonaVersionRecord]:
+    async def list_versions(
+        self, *, channel_type: str | None = None
+    ) -> list[PersonaVersionRecord]:
+        records = (
+            self.records
+            if channel_type is None
+            else [r for r in self.records if r.channel_type == channel_type]
+        )
         return sorted(
-            self.records,
+            records,
             key=lambda r: (r.created_at, r.version),
             reverse=True,
         )
@@ -65,19 +74,29 @@ class _MemoryPersonaAdminStore:
                 return record
         return None
 
-    async def get_active(self) -> PersonaVersionRecord | None:
+    async def get_active(
+        self, *, channel_type: str = "vip"
+    ) -> PersonaVersionRecord | None:
         for record in self.records:
-            if record.is_active:
+            if record.is_active and record.channel_type == channel_type:
                 return record
         return None
 
     async def activate_version(
-        self, persona_version_id, *, now: datetime
+        self,
+        persona_version_id,
+        *,
+        now: datetime,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord | None:
         target = await self.get_by_id(persona_version_id)
-        if target is None:
+        if target is None or target.channel_type != channel_type:
             return None
+        # Mirror the repo UPDATE: only rows in this channel are flipped; rows
+        # from other channels are never touched.
         for record in self.records:
+            if record.channel_type != channel_type:
+                continue
             record.is_active = record.id == persona_version_id
             record.applied_at = (
                 now if record.id == persona_version_id else record.applied_at
@@ -202,6 +221,7 @@ class _RaiseOnActivateStore(_MemoryPersonaAdminStore):
         source: str,
         payload: dict[str, Any],
         created_by: int | None = None,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord:
         if self.raise_on_insert:
             raise type("IntegrityError", (Exception,), {})("version conflict")
@@ -210,14 +230,21 @@ class _RaiseOnActivateStore(_MemoryPersonaAdminStore):
             source=source,
             payload=payload,
             created_by=created_by,
+            channel_type=channel_type,
         )
 
     async def activate_version(
-        self, persona_version_id, *, now: datetime
+        self,
+        persona_version_id,
+        *,
+        now: datetime,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord | None:
         if self.raise_on_activate:
             raise type("IntegrityError", (Exception,), {})("activation conflict")
-        return await super().activate_version(persona_version_id, now=now)
+        return await super().activate_version(
+            persona_version_id, now=now, channel_type=channel_type
+        )
 
 
 @pytest.mark.asyncio
@@ -268,6 +295,38 @@ async def test_list_versions_owner_returns_newest_first() -> None:
     versions = await service.list_versions(OWNER_ID)
     assert [v.version for v in versions] == [2, 1]
     assert all(v.created_by == OWNER_ID for v in versions)
+
+
+@pytest.mark.asyncio
+async def test_save_persona_scoped_by_channel() -> None:
+    """Versions are numbered per channel and both can be active simultaneously."""
+    store = _MemoryPersonaAdminStore()
+    service = _make_service(store)
+    vip = await service.save_persona(OWNER_ID, _valid_catalog(), channel_type="vip")
+    atencion = await service.save_persona(
+        OWNER_ID, _valid_catalog(), channel_type="atencion"
+    )
+    assert (vip.version, atencion.version) == (1, 1)
+    assert vip.channel_type == "vip" and atencion.channel_type == "atencion"
+    assert len([r for r in store.records if r.is_active]) == 2
+    # list_versions scoped by channel returns only that channel's rows
+    vip_versions = await service.list_versions(OWNER_ID, channel_type="vip")
+    atencion_versions = await service.list_versions(
+        OWNER_ID, channel_type="atencion"
+    )
+    assert [v.version for v in vip_versions] == [1]
+    assert [v.version for v in atencion_versions] == [1]
+
+
+@pytest.mark.asyncio
+async def test_get_current_persona_channel_scoped() -> None:
+    store = _MemoryPersonaAdminStore()
+    service = _make_service(store)
+    await service.save_persona(OWNER_ID, _valid_catalog(), channel_type="atencion")
+    assert await service.get_current_persona(channel_type="vip") is None
+    atencion_current = await service.get_current_persona(channel_type="atencion")
+    assert atencion_current is not None
+    assert atencion_current == _valid_catalog()
 
 
 @pytest.mark.asyncio

@@ -62,9 +62,14 @@ class PersonaCatalogProvider(Protocol):
     (injected at the composition root). Returns the FULL validated catalog dict
     (voz_configurada, persona_facts, voice_patterns, policies, schedule) or
     ``None`` to signal "no live catalog — keep the static fallback".
+
+    ``channel_type`` scopes the read: ``"vip"`` (default) resolves the VIP
+    persona, ``"atencion"`` the non-VIP service persona.
     """
 
-    async def get_catalog(self) -> dict[str, Any] | None: ...
+    async def get_catalog(
+        self, channel_type: str = "vip"
+    ) -> dict[str, Any] | None: ...
 
 
 @runtime_checkable

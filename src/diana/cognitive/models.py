@@ -101,6 +101,7 @@ class IncomingTurn(BaseModel):
     text: str
     telegram_message_id: int | None = None
     business_connection_id: str | None = None
+    channel_type: str = "vip"
 
 
 # Closed emotion enum (contrato_analista.md A.3). Free strings are forbidden.

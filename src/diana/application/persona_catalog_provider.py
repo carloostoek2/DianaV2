@@ -27,7 +27,11 @@ import logging
 from typing import Any
 
 from diana.application.persona_admin_service import PersonaAdminService
-from diana.cognitive.persona_catalog import get_persona_catalog, validate_persona_catalog
+from diana.cognitive.persona_catalog import (
+    get_persona_atencion_catalog,
+    get_persona_catalog,
+    validate_persona_catalog,
+)
 
 logger = logging.getLogger("diana.application")
 
@@ -42,16 +46,31 @@ class PersonaCatalogProvider:
     ) -> None:
         self._service = persona_admin_service
         self._static_catalog = static_catalog  # None → use get_persona_catalog()
-        self._cached: dict[str, Any] | None = None
+        self._cached: dict[str, dict[str, Any] | None] = {}
         self._epoch = 0
 
     def invalidate(self) -> None:
-        """Drop the cached catalog; the next ``get_catalog`` re-reads the service."""
-        self._epoch += 1
-        self._cached = None
+        """Drop the cached catalogs; the next ``get_catalog`` re-reads the service.
 
-    async def get_catalog(self) -> dict[str, Any] | None:
-        """Full active catalog (DB version when flag on and active, else static).
+        Invalidates every channel (owner saves are rare; a single shared epoch
+        counter keeps the logic simple and safe).
+        """
+        self._epoch += 1
+        self._cached.clear()
+
+    def _static_fallback(self, channel_type: str) -> dict[str, Any] | None:
+        """Channel-scoped static catalog (boot-time persona files)."""
+        if channel_type == "atencion":
+            return get_persona_atencion_catalog()
+        if self._static_catalog is not None:
+            return self._static_catalog
+        return get_persona_catalog()
+
+    async def get_catalog(
+        self, channel_type: str = "vip"
+    ) -> dict[str, Any] | None:
+        """Full active catalog for a channel (DB version when flag on and active,
+        else the channel's static persona).
 
         Returns ``None`` on DB failure or corrupt payload (never cached, so the
         next call retries). ``None`` from the service (flag off / no active
@@ -63,11 +82,13 @@ class PersonaCatalogProvider:
         returned to the in-flight caller but only cached if no invalidation
         happened meanwhile.
         """
-        if self._cached is not None:
-            return self._cached
+        if channel_type in self._cached:
+            return self._cached[channel_type]
         epoch = self._epoch
         try:
-            catalog = await self._service.get_current_persona()
+            catalog = await self._service.get_current_persona(
+                channel_type=channel_type
+            )
             if catalog is not None:
                 # Defense-in-depth: the write path already validates; re-validating
                 # on read keeps a corrupt DB row from crashing pipeline consumers.
@@ -80,13 +101,9 @@ class PersonaCatalogProvider:
             )
             return None
         if catalog is None:
-            catalog = (
-                self._static_catalog
-                if self._static_catalog is not None
-                else get_persona_catalog()
-            )
+            catalog = self._static_fallback(channel_type)
         if epoch == self._epoch:
-            self._cached = catalog
+            self._cached[channel_type] = catalog
         return catalog
 
 

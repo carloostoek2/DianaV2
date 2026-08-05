@@ -7,7 +7,10 @@ from typing import Any
 import pytest
 
 from diana.application.persona_catalog_provider import PersonaCatalogProvider
-from diana.cognitive.persona_catalog import get_persona_catalog
+from diana.cognitive.persona_catalog import (
+    get_persona_atencion_catalog,
+    get_persona_catalog,
+)
 
 
 def _catalog(marker: str) -> dict[str, Any]:
@@ -34,7 +37,9 @@ class _FakeService:
         self.catalog = catalog
         self.calls = 0
 
-    async def get_current_persona(self) -> dict[str, Any] | None:
+    async def get_current_persona(
+        self, channel_type: str = "vip"
+    ) -> dict[str, Any] | None:
         self.calls += 1
         return self.catalog
 
@@ -90,6 +95,32 @@ async def test_custom_static_catalog_fallback() -> None:
     assert await provider.get_catalog() is static
 
 
+@pytest.mark.asyncio
+async def test_get_catalog_scoped_by_channel_fallback() -> None:
+    """Channel-scoped fallback: vip→persona_diana.json, atencion→persona_atencion.json."""
+    service = _FakeService(None)
+    provider = PersonaCatalogProvider(persona_admin_service=service)  # type: ignore[arg-type]
+    vip = await provider.get_catalog("vip")
+    atencion = await provider.get_catalog("atencion")
+    assert vip is get_persona_catalog()
+    assert atencion is get_persona_atencion_catalog()
+    assert vip is not atencion
+    assert vip["voz_configurada"]["persona"] != atencion["voz_configurada"]["persona"]
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_caches_per_channel() -> None:
+    """Per-channel cache: each channel is read from the service exactly once."""
+    service = _FakeService(None)
+    provider = PersonaCatalogProvider(persona_admin_service=service)  # type: ignore[arg-type]
+    await provider.get_catalog("vip")
+    await provider.get_catalog("vip")
+    assert service.calls == 1
+    await provider.get_catalog("atencion")
+    await provider.get_catalog("atencion")
+    assert service.calls == 2
+
+
 def test_protocol_exported_in_cognitive_ports() -> None:
     import diana.cognitive.ports as ports
 
@@ -106,7 +137,7 @@ class _SlowService(_FakeService):
         super().__init__(catalog)
         self.release: asyncio.Event | None = None
 
-    async def get_current_persona(self):
+    async def get_current_persona(self, channel_type: str = "vip"):
         self.calls += 1
         snapshot = self.catalog
         if self.release is not None:
@@ -147,7 +178,7 @@ async def test_service_exception_returns_none_and_not_cached() -> None:
         def __init__(self) -> None:
             self.down = True
 
-        async def get_current_persona(self):
+        async def get_current_persona(self, channel_type: str = "vip"):
             if self.down:
                 raise RuntimeError("db down")
             return _catalog("recovered")
@@ -171,7 +202,7 @@ async def test_corrupt_payload_returns_none_and_not_cached() -> None:
         def __init__(self) -> None:
             self.corrupt = True
 
-        async def get_current_persona(self):
+        async def get_current_persona(self, channel_type: str = "vip"):
             if self.corrupt:
                 return {"voz_configurada": {}}  # structurally invalid
             return _catalog("ok")

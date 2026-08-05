@@ -23,7 +23,9 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _record(version: int = 1, *, is_active: bool = False) -> PersonaVersionRecord:
+def _record(
+    version: int = 1, *, is_active: bool = False, channel_type: str = "vip"
+) -> PersonaVersionRecord:
     return PersonaVersionRecord(
         id=uuid4(),
         version=version,
@@ -33,6 +35,7 @@ def _record(version: int = 1, *, is_active: bool = False) -> PersonaVersionRecor
         created_by=123,
         created_at=_now(),
         applied_at=None,
+        channel_type=channel_type,
     )
 
 
@@ -62,12 +65,14 @@ def test_orm_to_record_mapper_pure() -> None:
         created_by=42,
         created_at=_now(),
         applied_at=None,
+        channel_type="atencion",
     )
     record = persona_version_orm_to_record(row)  # type: ignore[arg-type]
     assert record.version == 3
     assert record.is_active is True
     assert record.created_by == 42
     assert record.applied_at is None
+    assert record.channel_type == "atencion"
 
 
 def test_persona_version_repo_surface() -> None:
@@ -116,6 +121,7 @@ class _MemoryPersonaAdminStore:
         source: str,
         payload: dict,
         created_by: int | None = None,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord:
         record = PersonaVersionRecord(
             id=uuid4(),
@@ -124,14 +130,22 @@ class _MemoryPersonaAdminStore:
             payload=payload,
             created_by=created_by,
             created_at=_now(),
+            channel_type=channel_type,
         )
         self.records.append(record)
         self.inserted.append(record)
         return record
 
-    async def list_versions(self) -> list[PersonaVersionRecord]:
+    async def list_versions(
+        self, *, channel_type: str | None = None
+    ) -> list[PersonaVersionRecord]:
+        records = (
+            self.records
+            if channel_type is None
+            else [r for r in self.records if r.channel_type == channel_type]
+        )
         return sorted(
-            self.records,
+            records,
             key=lambda r: (r.created_at, r.version),
             reverse=True,
         )
@@ -142,21 +156,33 @@ class _MemoryPersonaAdminStore:
                 return record
         return None
 
-    async def get_active(self) -> PersonaVersionRecord | None:
+    async def get_active(
+        self, *, channel_type: str = "vip"
+    ) -> PersonaVersionRecord | None:
         for record in self.records:
-            if record.is_active:
+            if record.is_active and record.channel_type == channel_type:
                 return record
         return None
 
     async def activate_version(
-        self, persona_version_id, *, now: datetime
+        self,
+        persona_version_id,
+        *,
+        now: datetime,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord | None:
         target = await self.get_by_id(persona_version_id)
-        if target is None:
+        if target is None or target.channel_type != channel_type:
             return None
+        # Mirror the repo UPDATE: only rows in this channel are flipped; rows
+        # from other channels are never touched.
         for record in self.records:
+            if record.channel_type != channel_type:
+                continue
             record.is_active = record.id == persona_version_id
-            record.applied_at = now if record.id == persona_version_id else record.applied_at
+            record.applied_at = (
+                now if record.id == persona_version_id else record.applied_at
+            )
         return target
 
 
@@ -234,3 +260,51 @@ def test_activate_version_source_keeps_exists_guard() -> None:
     source = inspect.getsource(PersonaVersionRepo.activate_version)
     assert ".exists()" in source
     assert "& exists" in source
+    # channel scoping must be part of the exists guard (cross-channel no-op)
+    assert "PersonaVersion.channel_type == channel_type" in source
+
+
+@pytest.mark.asyncio
+async def test_activation_scoped_by_channel() -> None:
+    """The same version number can be active per channel simultaneously."""
+    store = _MemoryPersonaAdminStore()
+    vip = await store.insert_version(
+        version=1, source="db", payload={"a": 1}, created_by=1, channel_type="vip"
+    )
+    atencion = await store.insert_version(
+        version=1,
+        source="db",
+        payload={"a": 2},
+        created_by=1,
+        channel_type="atencion",
+    )
+    await store.activate_version(vip.id, now=_now(), channel_type="vip")
+    await store.activate_version(atencion.id, now=_now(), channel_type="atencion")
+
+    vip_active = await store.get_active(channel_type="vip")
+    atencion_active = await store.get_active(channel_type="atencion")
+    assert vip_active is not None and vip_active.id == vip.id
+    assert atencion_active is not None and atencion_active.id == atencion.id
+    # both active rows coexist (different channels)
+    assert len([r for r in store.records if r.is_active]) == 2
+
+
+@pytest.mark.asyncio
+async def test_activation_cross_channel_id_is_noop() -> None:
+    """An id belonging to another channel must not deactivate the active row."""
+    store = _MemoryPersonaAdminStore()
+    vip = await store.insert_version(
+        version=1, source="db", payload={"a": 1}, created_by=1, channel_type="vip"
+    )
+    atencion = await store.insert_version(
+        version=1,
+        source="db",
+        payload={"a": 2},
+        created_by=1,
+        channel_type="atencion",
+    )
+    await store.activate_version(vip.id, now=_now(), channel_type="vip")
+    # try to activate the atencion row scoped to vip → no-op, vip stays active
+    assert await store.activate_version(atencion.id, now=_now(), channel_type="vip") is None
+    active = await store.get_active(channel_type="vip")
+    assert active is not None and active.id == vip.id

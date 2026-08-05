@@ -87,12 +87,15 @@ class PersonaAdminService:
             )
 
     async def save_persona(
-        self, actor_id: int | None, payload: dict[str, Any]
+        self,
+        actor_id: int | None,
+        payload: dict[str, Any],
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord:
         """Validate the full catalog, persist it as a new active version."""
         self._assert_owner(actor_id)
         validated = validate_persona_catalog(dict(payload))
-        versions = await self._store.list_versions()
+        versions = await self._store.list_versions(channel_type=channel_type)
         next_version = max((v.version for v in versions), default=0) + 1
         try:
             record = await self._store.insert_version(
@@ -100,6 +103,7 @@ class PersonaAdminService:
                 source="db",
                 payload=validated,
                 created_by=actor_id,
+                channel_type=channel_type,
             )
         except Exception as exc:
             if _is_integrity_error(exc):
@@ -111,7 +115,9 @@ class PersonaAdminService:
                 raise ValueError("persona_version_conflict") from exc
             raise
         try:
-            active = await self._store.activate_version(record.id, now=self._clock())
+            active = await self._store.activate_version(
+                record.id, now=self._clock(), channel_type=channel_type
+            )
         except Exception as exc:
             if _is_integrity_error(exc):
                 logger.warning(
@@ -141,13 +147,16 @@ class PersonaAdminService:
         return active
 
     async def restore(
-        self, actor_id: int | None, persona_version_id: UUID
+        self,
+        actor_id: int | None,
+        persona_version_id: UUID,
+        channel_type: str = "vip",
     ) -> PersonaVersionRecord | None:
         """Activate a previous version. Returns None when the id is unknown."""
         self._assert_owner(actor_id)
         try:
             restored = await self._store.activate_version(
-                persona_version_id, now=self._clock()
+                persona_version_id, now=self._clock(), channel_type=channel_type
             )
         except Exception as exc:
             if _is_integrity_error(exc):
@@ -170,16 +179,20 @@ class PersonaAdminService:
             self._notify_change()
         return restored
 
-    async def list_versions(self, actor_id: int | None) -> list[PersonaVersionRecord]:
-        """All versions, newest first (owner-only)."""
+    async def list_versions(
+        self, actor_id: int | None, channel_type: str | None = None
+    ) -> list[PersonaVersionRecord]:
+        """All versions (optionally scoped to a channel), newest first (owner-only)."""
         self._assert_owner(actor_id)
-        return await self._store.list_versions()
+        return await self._store.list_versions(channel_type=channel_type)
 
-    async def get_current_persona(self) -> dict[str, Any] | None:
-        """Active payload when the feature flag is on; else ``None``."""
+    async def get_current_persona(
+        self, channel_type: str = "vip"
+    ) -> dict[str, Any] | None:
+        """Active payload for a channel when the feature flag is on; else ``None``."""
         if not self._enabled:
             return None
-        record = await self._store.get_active()
+        record = await self._store.get_active(channel_type=channel_type)
         return record.payload if record is not None else None
 
 
