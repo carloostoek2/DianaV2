@@ -55,6 +55,7 @@ class GrayZoneService:
         *,
         freeze_duration_hours: int | None = None,
         chat_id: int | None = None,
+        business_connection_id: str | None = None,
     ) -> object:
         """Create an open gray zone query; freeze the VIP when present.
 
@@ -81,6 +82,7 @@ class GrayZoneService:
             draft=draft,
             freeze_until=frozen_until,
             chat_id=chat_id,
+            business_connection_id=business_connection_id,
         )
 
         logger.info(

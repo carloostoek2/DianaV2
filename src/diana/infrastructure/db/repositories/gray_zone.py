@@ -29,6 +29,7 @@ class GrayZoneQueryRepo:
         draft: str,
         freeze_until: datetime | None = None,
         chat_id: int | None = None,
+        business_connection_id: str | None = None,
     ) -> GrayZoneQuery:
         async with self._sf() as session:
             row = GrayZoneQuery(
@@ -39,6 +40,7 @@ class GrayZoneQueryRepo:
                 status="open",
                 freeze_until=freeze_until,
                 chat_id=chat_id,
+                business_connection_id=business_connection_id,
             )
             session.add(row)
             await session.commit()

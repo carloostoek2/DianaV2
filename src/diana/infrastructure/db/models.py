@@ -403,6 +403,8 @@ class GrayZoneQuery(Base):
     )
     # F4: atencion chat freeze resolves by chat_id (vip_id is NULL there).
     chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # F4: source business connection for supervised-delivery reconstruction.
+    business_connection_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     turn_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("turns.id"), nullable=False,
     )

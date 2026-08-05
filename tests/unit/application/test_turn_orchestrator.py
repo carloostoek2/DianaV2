@@ -149,6 +149,7 @@ class FakeGrayZone:
             "question": question,
             "draft": draft,
             "chat_id": kwargs.get("chat_id"),
+            "business_connection_id": kwargs.get("business_connection_id"),
         })
         # Return a simple object matching GrayZoneQueryView protocol (id: UUID).
         return type("_Query", (), {"id": self.next_query_id})()
@@ -2314,6 +2315,7 @@ async def test_consult_doctrine_happy_path() -> None:
     assert gz.queries[0]["question"] == "hola diana"
     assert gz.queries[0]["draft"] == "need policy"
     assert gz.queries[0]["chat_id"] == 100  # F19: chat_id propagated to query
+    assert gz.queries[0]["business_connection_id"] == "bc-vip"  # F4: bc propagated
     assert len(g["notifier"].doctrines) == 1
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "gray_zone"
@@ -2438,6 +2440,8 @@ async def test_consult_doctrine_atencion_gray_zone_creates_query() -> None:
     assert q["vip_id"] is None
     assert q["chat_id"] == 4242
     assert q["turn_id"] == turn_id
+    # F4: business_connection_id propagated to the atencion query too.
+    assert q["business_connection_id"] == "bc-vip"
     # the atencion channel travelled through the director unchanged
     assert g["director"].calls[0].channel_type == "atencion"
 

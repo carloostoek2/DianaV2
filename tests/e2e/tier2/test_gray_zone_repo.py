@@ -75,6 +75,46 @@ async def test_insert_default_chat_id_none(session_factory):
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_insert_persists_business_connection_id(session_factory):
+    """F4: insert round-trips business_connection_id (supervised delivery)."""
+    repo = GrayZoneQueryRepo(session_factory)
+    turn = await _new_turn(session_factory, 4343)
+    row = await repo.insert(
+        vip_id=None,
+        turn_id=turn.id,
+        question="q",
+        draft="d",
+        freeze_until=_future_freeze(),
+        chat_id=4343,
+        business_connection_id="bc-4343",
+    )
+    stored = await repo.get_by_id(row.id)
+    assert stored is not None
+    assert stored.business_connection_id == "bc-4343"
+    assert stored.chat_id == 4343
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_insert_default_business_connection_id_none(session_factory):
+    """F4: legacy insert keeps business_connection_id NULL (flag OFF identity)."""
+    repo = GrayZoneQueryRepo(session_factory)
+    turn = await _new_turn(session_factory, 4444)
+    row = await repo.insert(
+        vip_id=None,
+        turn_id=turn.id,
+        question="q",
+        draft="d",
+        freeze_until=_future_freeze(),
+        chat_id=4444,
+    )
+    stored = await repo.get_by_id(row.id)
+    assert stored is not None
+    assert stored.business_connection_id is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_get_open_by_chat_id_returns_most_recent_open(session_factory):
     """A1: get_open_by_chat_id returns the newest open row for the chat."""
     repo = GrayZoneQueryRepo(session_factory)

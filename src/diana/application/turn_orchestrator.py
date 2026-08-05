@@ -1478,6 +1478,7 @@ class TurnOrchestrator:
                         turn_id=turn_id,
                         question=turn_ctx.text,
                         draft=decision.draft_text or "",
+                        business_connection_id=turn_ctx.business_connection_id,
                     )
                     try:
                         await self._admin.send_doctrine_query(
@@ -1575,6 +1576,7 @@ class TurnOrchestrator:
                     question=turn_ctx.text,
                     draft=decision.draft_text or "",
                     chat_id=turn_ctx.chat_id,
+                    business_connection_id=turn_ctx.business_connection_id,
                 )
                 await self._admin.send_doctrine_query(
                     turn_ctx, decision, turn_id, query
