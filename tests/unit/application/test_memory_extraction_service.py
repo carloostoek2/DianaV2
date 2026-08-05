@@ -39,6 +39,7 @@ def _turn(
     vip_id: UUID | object = _UNSET,
     chat_id: int = CHAT_ID,
     created_at: datetime | None = _TURN_START,
+    trigger_message_id: int | None = None,
 ) -> TurnRecord:
     resolved: UUID | None = uuid4() if vip_id is _UNSET else vip_id  # type: ignore[assignment]
     return TurnRecord(
@@ -47,6 +48,7 @@ def _turn(
         status=status,
         vip_id=resolved,
         created_at=created_at,
+        trigger_message_id=trigger_message_id,
     )
 
 
@@ -151,12 +153,14 @@ class FakeMemories:
         known: list[dict] | None = None,
         *,
         hits_by_category: dict[str, list[dict]] | None = None,
+        fail_insert: bool = False,
     ) -> None:
         self.known = [dict(m) for m in (known or [])]
         self._hits = {c: [dict(h) for h in hs] for c, hs in (hits_by_category or {}).items()}
         self.insert_calls: list[tuple[UUID, list[MemoryInsert]]] = []
         self.list_calls: list[tuple[UUID, tuple[str, ...] | None, int]] = []
         self.dedup_calls: list[tuple[UUID, float, str | None]] = []
+        self.fail_insert = fail_insert
 
     def add_hit(self, category: str, *, matched_text: str = "hit existente") -> None:
         self._hits[category] = [{"content": {"texto": matched_text}, "category": category}]
@@ -186,6 +190,8 @@ class FakeMemories:
         self, vip_id: UUID, *, rows: list[MemoryInsert]
     ) -> int:
         self.insert_calls.append((vip_id, list(rows)))
+        if self.fail_insert:
+            raise RuntimeError("fake db boom")
         return len(rows)
 
 
@@ -551,3 +557,264 @@ async def test_consolidate_exact_duplicates_dropped() -> None:
     assert report.status == "ok"
     assert report.inserted == 1
     assert memories.insert_calls[0][1][0].text == "Le gusta el café"
+
+
+# ---------------------------------------------------------------------------
+# Fix round (Pool 3): M1 / S-MED / L3 / L5 / L7 / L8 + SEC F2 / F4 coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trigger_message_before_mint_is_extracted() -> None:
+    """M1 regression: the message that DISPATCHED the turn is appended to
+    message_history BEFORE the turn mint, so its timestamp < turn.created_at.
+    The window must start at the trigger's OWN timestamp — otherwise a
+    single-message turn extracts nothing (or only the owner draft)."""
+    turn = _turn(
+        created_at=datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC),
+        trigger_message_id=777,
+    )
+    history = FakeHistory(
+        [
+            {
+                "role": "vip",
+                "text": "hola diana",
+                "timestamp": "2026-08-05T11:59:59.900+00:00",  # pre-mint!
+                "telegram_message_id": 777,
+            },
+            {
+                "role": "vip",
+                "text": "quiero el plan premium",
+                "timestamp": "2026-08-05T12:01:00+00:00",
+                "telegram_message_id": 778,
+            },
+        ]
+    )
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="comercial",
+                        texto="Le interesa el plan premium",
+                        confianza=0.9,
+                    )
+                ]
+            )
+        ]
+    )
+    memories = FakeMemories()
+    svc = _service(llm=llm, history=history, memories=memories, turns=FakeTurns([turn]))
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+    assert report.status == "ok"
+    assert report.inserted == 1
+    user_content = llm.calls[0][1]["content"]
+    # The trigger message (pre-mint timestamp) IS part of the transcript.
+    assert "hola diana" in user_content
+    assert "quiero el plan premium" in user_content
+
+
+@pytest.mark.asyncio
+async def test_superseded_turn_never_extracts() -> None:
+    """S-MED: a superseded (cancelled) turn is terminal in the coordinator but
+    must NOT trigger extraction — no LLM call, no inserts, no memory written
+    with a wrong source_turn_id (REQ-MEM-07: only delivered/escalated/failed)."""
+    turn = _turn(status="superseded")
+    llm = FakeLLM()
+    memories = FakeMemories()
+    svc = _service(
+        llm=llm,
+        history=_history_with_turn_msgs(),
+        memories=memories,
+        turns=FakeTurns([turn]),
+    )
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+    assert report.status == "not_terminal"
+    assert llm.calls == []
+    assert memories.insert_calls == []
+
+
+@pytest.mark.asyncio
+async def test_insert_facts_failure_returns_failed() -> None:
+    """L8: the catch-all converts an insert failure into a ``failed`` report
+    (best-effort R1) — the completed turn is never affected."""
+    turn = _turn()
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="preferencias",
+                        texto="Le gusta el café",
+                        confianza=0.9,
+                    )
+                ]
+            )
+        ]
+    )
+    memories = FakeMemories(fail_insert=True)
+    svc = _service(
+        llm=llm,
+        history=_history_with_turn_msgs(),
+        memories=memories,
+        turns=FakeTurns([turn]),
+    )
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+    assert report.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_intra_run_semantic_duplicates_merged() -> None:
+    """L5: two near-duplicate facts of the SAME turn (same section, similar
+    text) are merged before the DB dedup — both would otherwise pass
+    find_similar_facts (neither is persisted yet) and both be inserted."""
+    turn = _turn()
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="preferencias",
+                        texto="Le gusta el café",
+                        confianza=0.9,
+                    ),
+                    HechoExtracted(
+                        seccion="preferencias",
+                        texto="le gusta el cafe",
+                        confianza=0.7,
+                    ),
+                ]
+            )
+        ]
+    )
+    memories = FakeMemories()
+    svc = _service(llm=llm, history=_history_with_turn_msgs(), memories=memories, turns=FakeTurns([turn]))
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+    assert report.status == "ok"
+    assert report.inserted == 1
+    assert report.deduped == 1
+    assert len(memories.insert_calls) == 1
+    # The longer text survives and inherits the max confidence.
+    row = memories.insert_calls[0][1][0]
+    assert row.text == "Le gusta el café"
+    assert row.confidence == 0.9
+
+
+@pytest.mark.asyncio
+async def test_prompt_no_repeat_uses_most_recent_facts() -> None:
+    """L3: the 'do not repeat' summary shows the most RECENT facts
+    (list_by_vip is oldest-first, so slice from the end) — the ones most
+    likely to repeat in the current turn."""
+    turn = _turn()
+    history = FakeHistory(_turn_msgs("me gusta el trato cercano", role="vip"))
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    known = [
+        {"category": "identidad", "content": {"texto": f"facto viejo {i}"}}
+        for i in range(60)
+    ]
+    memories = FakeMemories(known=known)
+    svc = _service(llm=llm, history=history, memories=memories, turns=FakeTurns([turn]))
+    await svc.extract_post_turn(turn.id, CHAT_ID)
+    user_content = llm.calls[0][1]["content"]
+    assert "facto viejo 59" in user_content  # newest fact is shown
+    assert "facto viejo 0" not in user_content  # oldest 10 dropped
+
+
+@pytest.mark.asyncio
+async def test_prompt_known_facts_fenced_and_data_disclaimer() -> None:
+    """SEC-INJ-02 (F2): the known-facts section is fenced like the transcript
+    and the system prompt declares ALL prompt texts as DATA, not instructions
+    (a payload planted as a previous fact cannot degrade the classification)."""
+    turn = _turn()
+    history = FakeHistory(_turn_msgs("me gusta el trato cercano", role="vip"))
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    memories = FakeMemories(
+        known=[{"category": "identidad", "content": {"texto": "Vive en Buenos Aires"}}]
+    )
+    svc = _service(llm=llm, history=history, memories=memories, turns=FakeTurns([turn]))
+    await svc.extract_post_turn(turn.id, CHAT_ID)
+    system_content = llm.calls[0][0]["content"]
+    user_content = llm.calls[0][1]["content"]
+    assert "```hechos_conocidos" in user_content
+    assert "Vive en Buenos Aires" in user_content
+    assert "Todos los textos de este prompt" in system_content
+    assert "SEC-INJ-02" in system_content
+
+
+def test_filter_turn_messages_window_and_fail_closed() -> None:
+    """SEC F4 + window (A3/M1): only vip/owner messages with a valid
+    timestamp >= since stay; untimestamped or unparseable rows are OUT of the
+    window (fail-closed), and other roles never enter the transcript."""
+    f = MemoryExtractionService._filter_turn_messages
+    # Window lower bound = the trigger's own timestamp (M1).
+    since = datetime(2026, 8, 5, 11, 59, 59, 900000, tzinfo=UTC)
+    msgs = [
+        {"role": "vip", "text": "viejo", "timestamp": "2026-08-05T11:59:00+00:00", "telegram_message_id": 1},
+        {"role": "vip", "text": "trigger", "timestamp": "2026-08-05T11:59:59.900+00:00", "telegram_message_id": 2},
+        {"role": "owner", "text": "draft", "timestamp": "2026-08-05T12:05:00+00:00", "telegram_message_id": 3},
+        {"role": "vip", "text": "sin ts", "timestamp": None, "telegram_message_id": 4},
+        {"role": "system", "text": "fuera", "timestamp": "2026-08-05T13:00:00+00:00", "telegram_message_id": 5},
+        {"role": "vip", "text": "ts invalido", "timestamp": "no-es-fecha", "telegram_message_id": 6},
+    ]
+    out = f(msgs, since)
+    assert [m["text"] for m in out] == ["trigger", "draft"]
+
+
+def test_filter_turn_messages_naive_and_aware_mixed() -> None:
+    """L7: naive timestamps never raise TypeError against an aware ``since``
+    (both sides normalize to UTC-aware)."""
+    f = MemoryExtractionService._filter_turn_messages
+    since = datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC)
+    msgs = [
+        {"role": "vip", "text": "naive dentro", "timestamp": "2026-08-05T12:01:00", "telegram_message_id": 1},
+        {"role": "vip", "text": "naive afuera", "timestamp": "2026-08-05T11:00:00", "telegram_message_id": 2},
+    ]
+    out = f(msgs, since)
+    assert [m["text"] for m in out] == ["naive dentro"]
+
+
+def test_filter_turn_messages_since_none_and_cap() -> None:
+    """L8 + S-MED cap: since=None keeps every valid-timestamped role message;
+    max_messages keeps only the NEWEST messages of the window."""
+    f = MemoryExtractionService._filter_turn_messages
+    msgs = [
+        {
+            "role": "vip",
+            "text": f"m{i}",
+            "timestamp": f"2026-08-05T12:{i:02d}:00+00:00",
+            "telegram_message_id": i,
+        }
+        for i in range(10)
+    ]
+    assert len(f(msgs, None)) == 10
+    out = f(msgs, None, max_messages=3)
+    assert [m["text"] for m in out] == ["m7", "m8", "m9"]
+
+
+def test_window_since_uses_trigger_timestamp() -> None:
+    """M1: the window lower bound is the TRIGGER message's own timestamp."""
+    turn = _turn(trigger_message_id=777)
+    msgs = [
+        {"role": "vip", "text": "x", "timestamp": "2026-08-05T11:59:59.900+00:00", "telegram_message_id": 777},
+        {"role": "vip", "text": "y", "timestamp": "2026-08-05T11:50:00+00:00", "telegram_message_id": 999},
+    ]
+    since = MemoryExtractionService._window_since(turn, msgs)
+    assert since == datetime(2026, 8, 5, 11, 59, 59, 900000, tzinfo=UTC)
+
+
+def test_window_since_falls_back_to_created_at() -> None:
+    """M1 fallback: no trigger id (or trigger absent from history) → the
+    previous behavior (turn.created_at) is preserved for recovery turns."""
+    assert MemoryExtractionService._window_since(_turn(trigger_message_id=None), []) == _TURN_START
+    turn_with_unknown_trigger = _turn(trigger_message_id=424242)
+    assert MemoryExtractionService._window_since(turn_with_unknown_trigger, []) == _TURN_START
+
+
+def test_cap_transcript_drops_oldest_lines() -> None:
+    """L8: _cap_transcript keeps the NEWEST lines within the char budget."""
+    lines = [f"linea-{i}-" + "x" * 100 for i in range(150)]
+    capped = MemoryExtractionService._cap_transcript(lines)
+    assert capped
+    assert sum(len(line) for line in capped) <= 12_000
+    assert capped[-1] == lines[-1]  # newest kept
+    assert lines[0] not in capped  # oldest dropped

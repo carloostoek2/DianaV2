@@ -104,8 +104,8 @@ class MemoriesRepo:
                 )
             if len(r.embedding) != _EMBEDDING_DIM:
                 raise ValueError(
-                    f"invalid embedding dimension {len(r.embedding)} for fact "
-                    f"{r.text!r}; expected {_EMBEDDING_DIM}"
+                    f"invalid embedding dimension {len(r.embedding)} "
+                    f"(category {r.category!r}); expected {_EMBEDDING_DIM}"
                 )
         if len(perfil_embedding) != _EMBEDDING_DIM:
             raise ValueError(
@@ -307,8 +307,8 @@ class MemoriesRepo:
                 )
             if len(r.embedding) != _EMBEDDING_DIM:
                 raise ValueError(
-                    f"invalid embedding dimension {len(r.embedding)} for fact "
-                    f"{r.text!r}; expected {_EMBEDDING_DIM}"
+                    f"invalid embedding dimension {len(r.embedding)} "
+                    f"(category {r.category!r}); expected {_EMBEDDING_DIM}"
                 )
         async with self._sf() as session:
             for r in rows:
