@@ -291,6 +291,12 @@ class Memory(Base):
     content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     category: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    # F5-09 (REQ-MEM-09): visibility lifecycle. auto | pending_owner | approved | discarded.
+    # Server default keeps existing (pre-022) rows readable as 'auto'.
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'auto'"))
+    # Soft reference to the turn that originated the fact (backfill rows: NULL).
+    # Intentionally no FK — same loose coupling as Policy.source_query_id.
+    source_turn_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
