@@ -448,6 +448,61 @@ async def test_binding_mismatch_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_binding_match_proceeds_and_unknown_vip_fails_closed() -> None:
+    """Binding gate (Pool 1 pattern F5, L8): a VIP bound to the SAME chat_id
+    lets the extraction proceed; an unknown VIP (``get_by_id`` → None) fails
+    closed with zero I/O. Both positive branches of the fail-closed check —
+    the mismatch branch is covered by test_binding_mismatch_fails_closed
+    (mirror of the backfill service test pair)."""
+    turn = _turn()
+    history = _history_with_turn_msgs()
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="preferencias",
+                        texto="Le gusta el tono juguetón",
+                        confianza=0.9,
+                    )
+                ]
+            )
+        ]
+    )
+    # Match: the VIP row carries the SAME telegram_user_id as the chat.
+    match_vips = FakeVips(
+        [VipRecord(id=turn.vip_id or uuid4(), telegram_user_id=CHAT_ID)]
+    )
+    memories = FakeMemories()
+    svc = _service(
+        llm=llm,
+        history=history,
+        memories=memories,
+        turns=FakeTurns([turn]),
+        vips=match_vips,
+    )
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+    assert report.status == "ok"
+    assert memories.insert_calls != []
+
+    # Unknown VIP (get_by_id → None): fail-closed, no LLM, no insert.
+    unknown_vips = FakeVips([])
+    llm2 = FakeLLM()
+    memories2 = FakeMemories()
+    svc2 = _service(
+        llm=llm2,
+        history=history,
+        memories=memories2,
+        turns=FakeTurns([turn]),
+        vips=unknown_vips,
+    )
+    report2 = await svc2.extract_post_turn(turn.id, CHAT_ID)
+    assert report2.status == "failed"
+    assert llm2.calls == []
+    assert memories2.insert_calls == []
+
+
+@pytest.mark.asyncio
 async def test_llm_failure_fail_soft() -> None:
     turn = _turn()
     llm = FakeLLM(fail_on_call=1)
