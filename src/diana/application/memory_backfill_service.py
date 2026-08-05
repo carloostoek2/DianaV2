@@ -8,8 +8,17 @@ a sectioned profile written to ``memories`` via ``replace_vip_profile``:
   ``CalibrationService``); no composition wiring in this pool.
 - Long histories are paginated in ``window_size`` windows with an
   accumulating prompt so facts are not repeated across windows (F5-08).
-- Consolidation is code-side: normalized exact-text dedup across windows;
-  semantic dedup 0.85 arrives in Pool 2 (F5-07).
+- Consolidation is code-side: normalized exact-text dedup across windows
+  plus semantic dedup 0.85 (F5-07/REQ-MEM-08): near-duplicate facts from
+  different windows of the same run are merged in-service (longest text
+  kept), and facts semantically close to *surviving* rows of the same VIP
+  (``approved``/``discarded``) are discarded before insert — surviving rows
+  are never modified (owner decisions, fix round F4).
+- Window-by-window API (Pool 2): ``extract_window`` extracts ONE transcript
+  window (the queue processes one unit per cycle and resumes via
+  ``window_index`` + accumulated facts), ``finalize_profile`` consolidates,
+  de-dups and writes the profile. ``generate_profile`` keeps its on-demand
+  contract by delegating to both.
 - Sensible facts (section ``sensible`` or ``sensible=True``) are born
   ``pending_owner``; the rest ``auto`` (REQ-MEM-09). A code-side term
   heuristic (SEC-INJ-02 backstop) can only *upgrade* sensitivity — never
@@ -29,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -48,9 +58,12 @@ __all__ = [
     "HistoryReader",
     "LLMStructuredPort",
     "MemoryBackfillService",
+    "MemoryDedupReader",
     "MemoryProfileWriter",
+    "ProfilePresenceReader",
     "VipReader",
     "WindowExtraction",
+    "WindowExtractionResult",
 ]
 
 _SECTIONS = ("identidad", "preferencias", "comercial", "limites", "sensible")
@@ -130,10 +143,36 @@ class VipReader(Protocol):
     """Optional VIP lookup used to bind ``chat_id`` to ``vip_id`` (fix F5).
 
     Contract: ``vip.telegram_user_id == chat_id`` (convention A4 of the plan).
-    When no store is wired (Pool 2 wiring), the binding check is skipped.
+    When no store is wired, the binding check is skipped (fail-open for
+    legacy callers); the Pool 2 wiring passes ``SqlVipStore`` so the check
+    runs fail-closed.
     """
 
     async def get_by_id(self, vip_id: UUID) -> VipRecord | None: ...
+
+
+class MemoryDedupReader(Protocol):
+    """Semantic dedup source (REQ-MEM-08): surviving rows of the same VIP.
+
+    Implemented by ``MemoriesRepo.find_similar_surviving`` (pgvector). The
+    backfill only *discards* against these rows — surviving
+    (``approved``/``discarded``) facts are never modified.
+    """
+
+    async def find_similar_surviving(
+        self,
+        vip_id: UUID,
+        embedding: list[float],
+        *,
+        threshold: float,
+        category: str | None = None,
+    ) -> list[dict]: ...
+
+
+class ProfilePresenceReader(Protocol):
+    """Tells whether a VIP already has a profile (``enqueue_missing_vips``)."""
+
+    async def has_profile(self, vip_id: UUID) -> bool: ...
 
 
 class LLMStructuredPort(Protocol):
@@ -176,6 +215,23 @@ class WindowExtraction(BaseModel):
     hechos: list[HechoExtracted]
 
 
+@dataclass(frozen=True, slots=True)
+class WindowExtractionResult:
+    """Outcome of extracting ONE transcript window (Pool 2 queue unit).
+
+    ``hechos`` are the facts of this window only; ``total_windows`` lets the
+    queue know whether more windows remain (``window_index + 1 < total``).
+    ``failed`` means the LLM call failed (no partial state) and
+    ``history_empty`` means the VIP has no messages at all (the queue marks
+    the job ``done(empty_history)`` — 24h guard prevents a re-enqueue loop).
+    """
+
+    hechos: list[HechoExtracted]
+    total_windows: int
+    failed: bool = False
+    history_empty: bool = False
+
+
 @dataclass(frozen=True)
 class BackfillReport:
     """Structured outcome of one ``generate_profile`` run."""
@@ -201,6 +257,9 @@ class MemoryBackfillService:
         embedder: EmbeddingPort,
         notifier: OwnerNotifierPort | None = None,
         vips: VipReader | None = None,
+        dedup: MemoryDedupReader | None = None,
+        profile_presence: ProfilePresenceReader | None = None,
+        dedup_threshold: float = 0.85,
         window_size: int = 200,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -213,11 +272,23 @@ class MemoryBackfillService:
         # Fix round (F5): optional VIP store to verify chat_id ↔ vip_id
         # (fail-closed). The Pool 2 wiring passes SqlVipStore here.
         self._vips = vips
+        # Pool 2 (REQ-MEM-08): semantic dedup against surviving rows of the
+        # same VIP. When no reader is wired the DB dedup is skipped (legacy
+        # callers); the Pool 2 wiring passes MemoriesRepo.
+        self._dedup = dedup
+        self._profile_presence = profile_presence
+        self._dedup_threshold = max(0.0, min(1.0, float(dedup_threshold)))
         self._window_size = max(1, int(window_size))
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def generate_profile(self, vip_id: UUID, chat_id: int) -> BackfillReport:
-        """Generate (or regenerate) the VIP profile from history. Idempotent."""
+        """Generate (or regenerate) the VIP profile from history. Idempotent.
+
+        On-demand path (Pool 1 contract): reads the full history, extracts
+        every window and finalizes in one run. The queue (Pool 2) uses
+        ``extract_window``/``finalize_profile`` directly, one window per
+        cycle.
+        """
         if not self._enabled:
             logger.info(
                 "memory_backfill_disabled",
@@ -228,24 +299,14 @@ class MemoryBackfillService:
         # Fix round (F5): fail-closed chat_id ↔ vip_id binding (A4). The
         # service reads history by chat_id and writes memories by vip_id — if
         # the wiring ever resolves a wrong pair, refuse before touching data.
-        if self._vips is not None:
-            vip = await self._vips.get_by_id(vip_id)
-            if vip is None or vip.telegram_user_id != chat_id:
-                logger.error(
-                    "memory_backfill_binding_mismatch",
-                    extra={
-                        "vip_id": str(vip_id),
-                        "chat_id": chat_id,
-                        "vip_telegram_user_id": getattr(vip, "telegram_user_id", None),
-                    },
-                )
-                return BackfillReport(status="failed", vip_id=vip_id)
+        if not await self._check_binding(vip_id, chat_id):
+            return BackfillReport(status="failed", vip_id=vip_id)
 
         try:
             # Fix round (M4): the whole pipeline (history read, embedder,
             # writer) shares one failure contract — any exception becomes a
             # ``failed`` report instead of propagating raw. The per-window LLM
-            # failure keeps its specific log inside _run_backfill.
+            # failure keeps its specific log inside extract_window.
             return await self._run_backfill(vip_id, chat_id)
         except Exception:
             logger.exception(
@@ -255,52 +316,36 @@ class MemoryBackfillService:
             return BackfillReport(status="failed", vip_id=vip_id)
 
     async def _run_backfill(self, vip_id: UUID, chat_id: int) -> BackfillReport:
-        """Backfill pipeline (called after flag + binding checks)."""
-        msgs = await self._history.list_all(chat_id, page_size=500)
-        if not msgs:
+        """On-demand pipeline (called after flag + binding checks).
+
+        Delegates to the window-by-window API: one ``extract_window`` per
+        transcript window (accumulating facts in the prompt), then a single
+        ``finalize_profile``. A failed window aborts the run (R4: no partial
+        writes); an empty extraction keeps the Pool 1 ``empty_extraction``
+        contract (no write, no owner DM). History is re-read once per window
+        (A4 — accepted for this rare on-demand path; the queue is the main
+        path and reads once per cycle by design).
+        """
+        res = await self.extract_window(vip_id, chat_id, window_index=0, already=[])
+        if res.history_empty:
             logger.info(
                 "memory_backfill_empty_history",
                 extra={"vip_id": str(vip_id), "chat_id": chat_id},
             )
             return BackfillReport(status="empty_history", vip_id=vip_id)
+        if res.failed:
+            # R4: no partial writes — one failed window aborts the run.
+            return BackfillReport(status="failed", vip_id=vip_id)
 
-        lines = self._build_transcript(msgs)
-        # Fix round (M2): windows are bounded by message count AND by a hard
-        # char budget, so a chat full of long messages cannot blow the LLM
-        # context (the 200-message cap alone is not enough).
-        windows: list[list[str]] = []
-        current: list[str] = []
-        current_chars = 0
-        for line in lines:
-            if len(current) >= self._window_size or (
-                current and current_chars + len(line) > _WINDOW_MAX_CHARS
-            ):
-                windows.append(current)
-                current, current_chars = [], 0
-            current.append(line)
-            current_chars += len(line)
-        if current:
-            windows.append(current)
-
-        already: list[str] = []
-        hechos: list[HechoExtracted] = []
-        for idx, window in enumerate(windows, start=1):
-            try:
-                extracted = await self._extract_window(window, already)
-            except Exception:
-                logger.exception(
-                    "memory_backfill_window_failed",
-                    extra={"vip_id": str(vip_id), "chat_id": chat_id, "window": idx},
-                )
-                # R4: no partial writes — one failed window aborts the run.
-                return BackfillReport(status="failed", vip_id=vip_id)
-            hechos.extend(extracted)
-            # Fix round (L4): never feed empty fact texts to the accumulating prompt.
-            already.extend(
-                f"[{h.seccion}] {h.texto}"
-                for h in extracted
-                if h.texto and h.texto.strip()
+        total = res.total_windows
+        hechos: list[HechoExtracted] = list(res.hechos)
+        for i in range(1, total):
+            res = await self.extract_window(
+                vip_id, chat_id, window_index=i, already=hechos
             )
+            if res.failed:
+                return BackfillReport(status="failed", vip_id=vip_id)
+            hechos.extend(res.hechos)
 
         consolidated = self._consolidate(hechos)
         if not consolidated:
@@ -308,11 +353,97 @@ class MemoryBackfillService:
             # report it and skip writing the (empty) profile + owner DM.
             logger.info(
                 "memory_backfill_empty_extraction",
-                extra={"vip_id": str(vip_id), "chat_id": chat_id, "windows": len(windows)},
+                extra={"vip_id": str(vip_id), "chat_id": chat_id, "windows": total},
             )
             return BackfillReport(
-                status="empty_extraction", vip_id=vip_id, windows=len(windows)
+                status="empty_extraction", vip_id=vip_id, windows=total
             )
+        return await self.finalize_profile(
+            vip_id, chat_id, hechos=consolidated, windows=total
+        )
+
+    async def extract_window(
+        self,
+        vip_id: UUID,
+        chat_id: int,
+        *,
+        window_index: int,
+        already: list[HechoExtracted] | None = None,
+    ) -> WindowExtractionResult:
+        """Extract ONE transcript window (Pool 2 queue unit).
+
+        Reads the full history (cheap: the queue spaces units and the on-demand
+        path re-reads per window — A4), chunks it and asks the LLM only for
+        ``windows[window_index]``, passing the accumulated facts so they are
+        not repeated. An LLM failure yields ``failed=True`` (no partial
+        state); history/embedder failures propagate (the queue handles them).
+        """
+        if not self._enabled:
+            return WindowExtractionResult([], 0)
+        if not await self._check_binding(vip_id, chat_id):
+            return WindowExtractionResult([], 0, failed=True)
+
+        msgs = await self._history.list_all(chat_id, page_size=500)
+        if not msgs:
+            return WindowExtractionResult([], 0, history_empty=True)
+
+        windows = self._build_windows(self._build_transcript(msgs))
+        total_windows = len(windows)
+        if window_index >= total_windows:
+            return WindowExtractionResult([], total_windows)
+
+        already_strs = [
+            f"[{h.seccion}] {h.texto}"
+            for h in (already or [])
+            if h.texto and h.texto.strip()
+        ]
+        try:
+            extracted = await self._extract_window_llm(
+                windows[window_index], already_strs
+            )
+        except Exception:
+            logger.exception(
+                "memory_backfill_window_failed",
+                extra={
+                    "vip_id": str(vip_id),
+                    "chat_id": chat_id,
+                    "window": window_index + 1,
+                },
+            )
+            # R4: no partial writes — one failed window aborts the unit.
+            return WindowExtractionResult([], total_windows, failed=True)
+        return WindowExtractionResult(extracted, total_windows)
+
+    async def finalize_profile(
+        self,
+        vip_id: UUID,
+        chat_id: int,
+        *,
+        hechos: list[HechoExtracted],
+        windows: int,
+    ) -> BackfillReport:
+        """Consolidate, de-dup and write the profile for one VIP run.
+
+        Pipeline: exact-text consolidation → in-service semantic merge of
+        near-duplicates across windows → per-fact DB dedup against surviving
+        rows (``approved``/``discarded``) → ``replace_vip_profile`` →
+        best-effort owner DM. A fact semantically close (≥ threshold, same
+        section) to a surviving row is DISCARDED — surviving rows are never
+        modified (R5). Zero facts after dedup still writes the ``perfil`` row
+        (empty visible card) and reports ``ok`` with ``facts=0``; the
+        history-empty case is handled by the queue, not here.
+        """
+        if not self._enabled:
+            logger.info(
+                "memory_backfill_disabled",
+                extra={"vip_id": str(vip_id), "chat_id": chat_id},
+            )
+            return BackfillReport(status="disabled", vip_id=vip_id)
+        if not await self._check_binding(vip_id, chat_id):
+            return BackfillReport(status="failed", vip_id=vip_id)
+
+        consolidated = self._consolidate(hechos)
+        consolidated = await self._dedup_semantic(consolidated)
         perfil_json = self._build_perfil(vip_id, consolidated)
 
         filas: list[MemoryInsert] = []
@@ -327,13 +458,40 @@ class MemoryBackfillService:
                 or h.sensible
                 or self._is_sensitive_text(h.texto)
             )
+            # A11: the embedding is computed ONCE per fact — reused for the
+            # DB dedup and for the insert.
+            emb = await self._embedder.embed(h.texto)
+            if self._dedup is not None:
+                hits = await self._dedup.find_similar_surviving(
+                    vip_id,
+                    emb,
+                    threshold=self._dedup_threshold,
+                    category=h.seccion,
+                )
+                if hits:
+                    # REQ-MEM-08: only discard against surviving rows. The
+                    # matched row content is traced for the owner to review.
+                    logger.info(
+                        "memory_backfill_dedup_skipped",
+                        extra={
+                            "vip_id": str(vip_id),
+                            "category": h.seccion,
+                            "texto": h.texto,
+                            "matched": (hits[0].get("content") or {}).get(
+                                "texto"
+                            )
+                            if isinstance(hits[0].get("content"), dict)
+                            else hits[0].get("content"),
+                        },
+                    )
+                    continue
             if is_pending:
                 pending += 1
             filas.append(
                 MemoryInsert(
                     category=h.seccion,
                     text=h.texto,
-                    embedding=await self._embedder.embed(h.texto),
+                    embedding=emb,
                     confidence=h.confianza,
                     status="pending_owner" if is_pending else "auto",
                     source_turn_id=None,
@@ -360,7 +518,7 @@ class MemoryBackfillService:
                 "chat_id": chat_id,
                 "facts": facts,
                 "pending_owner": pending,
-                "windows": len(windows),
+                "windows": windows,
             },
         )
         return BackfillReport(
@@ -369,14 +527,58 @@ class MemoryBackfillService:
             sections=len(perfil_json["secciones"]),
             facts=facts,
             pending_owner=pending,
-            windows=len(windows),
+            windows=windows,
         )
 
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
 
-    async def _extract_window(
+    async def _check_binding(self, vip_id: UUID, chat_id: int) -> bool:
+        """Fail-closed chat_id ↔ vip_id binding check (fix round F5, A4).
+
+        ``vips is None`` → True (legacy callers without a store). Otherwise
+        the VIP must exist and its ``telegram_user_id`` must equal the
+        ``chat_id`` the history is read from — a mismatch refuses any I/O.
+        """
+        if self._vips is None:
+            return True
+        vip = await self._vips.get_by_id(vip_id)
+        if vip is None or vip.telegram_user_id != chat_id:
+            logger.error(
+                "memory_backfill_binding_mismatch",
+                extra={
+                    "vip_id": str(vip_id),
+                    "chat_id": chat_id,
+                    "vip_telegram_user_id": getattr(vip, "telegram_user_id", None),
+                },
+            )
+            return False
+        return True
+
+    def _build_windows(self, lines: list[str]) -> list[list[str]]:
+        """Chunk transcript lines into LLM windows.
+
+        Fix round (M2): windows are bounded by message count AND by a hard
+        char budget, so a chat full of long messages cannot blow the LLM
+        context (the 200-message cap alone is not enough).
+        """
+        windows: list[list[str]] = []
+        current: list[str] = []
+        current_chars = 0
+        for line in lines:
+            if len(current) >= self._window_size or (
+                current and current_chars + len(line) > _WINDOW_MAX_CHARS
+            ):
+                windows.append(current)
+                current, current_chars = [], 0
+            current.append(line)
+            current_chars += len(line)
+        if current:
+            windows.append(current)
+        return windows
+
+    async def _extract_window_llm(
         self, lines: list[str], already: list[str]
     ) -> list[HechoExtracted]:
         already_block = "\n".join(f"- {a}" for a in already) if already else "(ninguno)"
@@ -471,6 +673,63 @@ class MemoryBackfillService:
             seen.add(norm)
             out.append(h)
         return out
+
+    async def _dedup_semantic(
+        self, hechos: list[HechoExtracted]
+    ) -> list[HechoExtracted]:
+        """In-service semantic merge of near-duplicates across windows.
+
+        REQ-MEM-08 / F5-07: two facts of the SAME section whose embeddings
+        have cosine similarity ≥ ``dedup_threshold`` are merged into one —
+        the longer text is kept (it carries more information), the shorter is
+        dropped. This merge runs ONLY over facts of the current run, in
+        memory; DB rows are never touched here (R5). Embeddings are computed
+        once per fact with the service embedder (A11, local cache of the
+        run). O(n²) over ≤ ~60 facts per VIP — acceptable.
+        """
+        if len(hechos) < 2:
+            return hechos
+        embs = [await self._embedder.embed(h.texto) for h in hechos]
+        keep = [True] * len(hechos)
+        for i in range(len(hechos)):
+            if not keep[i]:
+                continue
+            for j in range(i + 1, len(hechos)):
+                if not keep[j]:
+                    continue
+                if hechos[i].seccion != hechos[j].seccion:
+                    continue
+                if self._cosine(embs[i], embs[j]) < self._dedup_threshold:
+                    continue
+                if len(hechos[i].texto) >= len(hechos[j].texto):
+                    dropped, kept = j, i
+                else:
+                    dropped, kept = i, j
+                keep[dropped] = False
+                logger.info(
+                    "memory_backfill_dedup_merged",
+                    extra={
+                        "category": hechos[kept].seccion,
+                        "kept": hechos[kept].texto,
+                        "dropped": hechos[dropped].texto,
+                    },
+                )
+        return [h for h, k in zip(hechos, keep) if k]
+
+    @staticmethod
+    def _cosine(a: list[float], b: list[float]) -> float:
+        """Cosine similarity with stdlib ``math`` only (purity, no numpy).
+
+        Zero-norm or dimension-mismatched vectors score 0.0.
+        """
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(y * y for y in b))
+        if norm_a == 0.0 or norm_b == 0.0:
+            return 0.0
+        return dot / (norm_a * norm_b)
 
     def _build_perfil(
         self, vip_id: UUID, consolidated: list[HechoExtracted]

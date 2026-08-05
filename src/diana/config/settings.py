@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     telethon_session_path: str = ""  # e.g. /path/to/diana_session (no .session)
     vip_history_seed_limit: Annotated[int, Field(ge=1, le=100)] = 20
 
+    # F5 Pool 2 (REQ-MEM-05/08): backfill pacing + semantic dedup threshold.
+    # backfill_interval_sec spaces EVERY processed unit (between VIPs AND
+    # between windows of the same VIP) to protect the account from bursts;
+    # backfill_dedup_threshold gates the pgvector dedup of extracted facts.
+    backfill_interval_sec: Annotated[int, Field(ge=1)] = 3600
+    backfill_dedup_threshold: Annotated[float, Field(gt=0, le=1)] = 0.85
+
     @field_validator("health_host", mode="after")
     @classmethod
     def require_loopback_health_host(cls, value: str) -> str:

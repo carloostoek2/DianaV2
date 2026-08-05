@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import UTC, datetime
+from logging import INFO
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+import zlib
 
 from diana.application.memory_backfill_service import (
     BackfillReport,
     HechoExtracted,
     MemoryBackfillService,
     WindowExtraction,
+    WindowExtractionResult,
 )
 from diana.application.ports import MemoryInsert
 
@@ -82,18 +85,75 @@ class FakeMemoryWriter:
 
 
 class FakeEmbedder:
-    """Deterministic bag-of-char pseudo-embedding (pattern test_calibration)."""
+    """Deterministic char-bigram pseudo-embedding (384d).
 
-    def __init__(self, dim: int = 8) -> None:
+    A crude bag-of-char 8-dim vector conflates unrelated texts (cosine ≥
+    0.85 between clearly different facts), which would false-positive the
+    Pool 2 semantic merge. Char-bigram hashing is discriminative enough:
+    distinct facts score low, identical/near-identical texts score high.
+    """
+
+    def __init__(self, dim: int = 384) -> None:
         self.dim = dim
         self.calls: list[str] = []
 
     async def embed(self, text: str) -> list[float]:
         self.calls.append(text)
         vec = [0.0] * self.dim
-        for i, ch in enumerate(text.encode("utf-8")):
-            vec[i % self.dim] += float(ch) / 255.0
+        norm = " ".join((text or "").casefold().split())
+        for i in range(len(norm) - 1):
+            h = zlib.crc32(norm[i : i + 2].encode("utf-8")) % self.dim
+            vec[h] += 1.0
         return vec
+
+
+class FakeParallelEmbedder:
+    """Embedder with a per-text vector table (semantic merge tests).
+
+    Lets a test control the cosine similarity of a pair exactly (e.g. two
+    vectors with cos = 0.9 to sit between thresholds 0.85 and 0.99).
+    """
+
+    def __init__(
+        self,
+        vectors: dict[str, list[float]],
+        fallback: list[float] | None = None,
+    ) -> None:
+        self._vectors = dict(vectors)
+        self._fallback = fallback or [1.0, 0.0, 0.0]
+
+    async def embed(self, text: str) -> list[float]:
+        return list(self._vectors.get(text, self._fallback))
+
+
+class FakeDedupReader:
+    """Configurable MemoryDedupReader double (Pool 2 DB-dedup tests).
+
+    ``hits_by_category`` maps a category to the rows returned when the
+    service asks ``find_similar_surviving(category=...)``; a missing category
+    means no hit. All calls are recorded for assertions.
+    """
+
+    def __init__(
+        self,
+        hits_by_category: dict[str, list[dict]] | None = None,
+    ) -> None:
+        self._hits = dict(hits_by_category or {})
+        self.calls: list[tuple[UUID, float, str | None]] = []
+
+    def add_hit(self, category: str, *, matched_text: str = "hit existente") -> None:
+        self._hits[category] = [{"content": {"texto": matched_text}}]
+
+    async def find_similar_surviving(
+        self,
+        vip_id: UUID,
+        embedding: list[float],
+        *,
+        threshold: float,
+        category: str | None = None,
+    ) -> list[dict]:
+        self.calls.append((vip_id, threshold, category))
+        return list(self._hits.get(category or "", []))
 
 
 class FakeNotifier:
@@ -148,25 +208,30 @@ def _build_service(
     notifier: FakeNotifier | None = None,
     window_size: int = 200,
     vips: FakeVipStore | None = None,
+    dedup: FakeDedupReader | None = None,
+    embedder: FakeEmbedder | FakeParallelEmbedder | None = None,
+    dedup_threshold: float = 0.85,
 ) -> tuple[
-    MemoryBackfillService, FakeHistory, FakeLLM, FakeMemoryWriter, FakeEmbedder
+    MemoryBackfillService, FakeHistory, FakeLLM, FakeMemoryWriter, Any
 ]:
     history = FakeHistory(messages)
     fake_llm = llm or FakeLLM()
     writer = FakeMemoryWriter()
-    embedder = FakeEmbedder()
+    fake_embedder = embedder or FakeEmbedder()
     svc = MemoryBackfillService(
         feature_memory_enabled=enabled,
         history=history,
         llm=fake_llm,
         memories=writer,
-        embedder=embedder,
+        embedder=fake_embedder,
         notifier=notifier or FakeNotifier(),
         vips=vips,
+        dedup=dedup,
+        dedup_threshold=dedup_threshold,
         window_size=window_size,
         clock=FakeClock(),
     )
-    return svc, history, fake_llm, writer, embedder
+    return svc, history, fake_llm, writer, fake_embedder
 
 
 # ---------------------------------------------------------------------------
@@ -609,3 +674,226 @@ async def test_transcript_line_truncation_and_char_budget() -> None:
     # the tail lines, and the accumulating prompt is still passed along.
     second_window = llm.calls[1][1]["content"]
     assert "Hechos ya extraídos" in second_window
+
+
+# ---------------------------------------------------------------------------
+# Pool 2: window-by-window API + semantic dedup 0.85 (F5-07 / REQ-MEM-08)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_extract_window_returns_window_and_total() -> None:
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="preferencias", texto="Hecho de la ventana 2"
+                    )
+                ]
+            )
+        ]
+    )
+    messages = [_msg("vip", f"msg {i}") for i in range(450)]
+    svc, history, _, _, _ = _build_service(messages=messages, llm=llm)
+
+    already = [HechoExtracted(seccion="identidad", texto="Hecho ventana 0")]
+    res = await svc.extract_window(uuid4(), chat_id=31, window_index=1, already=already)
+
+    assert isinstance(res, WindowExtractionResult)
+    assert res.total_windows == 3  # 200 + 200 + 50
+    assert res.failed is False
+    assert res.history_empty is False
+    assert [h.texto for h in res.hechos] == ["Hecho de la ventana 2"]
+    # The accumulating prompt carries the facts already extracted.
+    user_content = llm.calls[0][1]["content"]
+    assert "[identidad] Hecho ventana 0" in user_content
+    assert history.chat_ids == [31]  # one history read per window (A4)
+
+
+@pytest.mark.asyncio
+async def test_extract_window_empty_history_flag() -> None:
+    svc, _, llm, _, _ = _build_service(messages=[])
+    res = await svc.extract_window(uuid4(), chat_id=32, window_index=0)
+    assert res.history_empty is True
+    assert res.total_windows == 0
+    assert res.hechos == []
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_extract_window_out_of_range() -> None:
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    messages = [_msg("vip", f"msg {i}") for i in range(250)]
+    svc, _, _, _, _ = _build_service(messages=messages, llm=llm)
+    res = await svc.extract_window(uuid4(), chat_id=33, window_index=99)
+    assert res.total_windows == 2
+    assert res.hechos == []
+    assert res.failed is False
+    assert llm.calls == []  # out-of-range windows never hit the LLM
+
+
+@pytest.mark.asyncio
+async def test_extract_window_disabled_flag() -> None:
+    svc, history, llm, _, _ = _build_service(enabled=False, messages=[_msg("vip", "x")])
+    res = await svc.extract_window(uuid4(), chat_id=34, window_index=0)
+    assert res == WindowExtractionResult([], 0)
+    assert history.chat_ids == []
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_extract_window_llm_failure_failed_flag() -> None:
+    llm = FakeLLM(
+        [WindowExtraction(hechos=[])],
+        fail_on_call=1,
+    )
+    svc, _, _, _, _ = _build_service(messages=[_msg("vip", "hola")], llm=llm)
+    res = await svc.extract_window(uuid4(), chat_id=35, window_index=0)
+    assert res.failed is True
+    assert res.hechos == []
+    assert res.total_windows == 1
+
+
+@pytest.mark.asyncio
+async def test_finalize_profile_skips_semantic_duplicate_against_surviving(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vip_id = uuid4()
+    dedup = FakeDedupReader()
+    dedup.add_hit("preferencias", matched_text="Le gusta viajar (ya aprobado)")
+    svc, _, _, writer, _ = _build_service(dedup=dedup)
+    with caplog.at_level(INFO, logger="diana.application"):
+        await svc.finalize_profile(
+            vip_id,
+            chat_id=1,
+            hechos=[
+                HechoExtracted(seccion="preferencias", texto="Le gusta viajar")
+            ],
+            windows=1,
+        )
+    # The perfil row is still written (empty visible card), but the fact row
+    # is discarded — surviving rows are never touched (R5).
+    assert len(writer.replace_calls) == 1
+    assert writer.replace_calls[0][1] == []
+    assert dedup.calls == [(vip_id, 0.85, "preferencias")]
+    assert any(
+        r.getMessage() == "memory_backfill_dedup_skipped" for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_profile_keeps_different_category_hit() -> None:
+    vip_id = uuid4()
+    dedup = FakeDedupReader()
+    dedup.add_hit("identidad")  # hit only for a DIFFERENT category
+    svc, _, _, writer, _ = _build_service(dedup=dedup)
+    await svc.finalize_profile(
+        vip_id,
+        chat_id=1,
+        hechos=[
+            HechoExtracted(seccion="preferencias", texto="Prefiere hablar de viajes")
+        ],
+        windows=1,
+    )
+    rows = writer.replace_calls[0][1]
+    assert len(rows) == 1  # no hit for "preferencias" → inserted
+    assert rows[0].text == "Prefiere hablar de viajes"
+
+
+@pytest.mark.asyncio
+async def test_finalize_profile_merges_cross_window_semantic() -> None:
+    vip_id = uuid4()
+    # Two vectors with cosine 0.9 — above the 0.85 threshold.
+    parallel = FakeParallelEmbedder(
+        {
+            "le gusta viajar": [1.0, 0.0, 0.0],
+            "le gusta mucho viajar a CDMX": [0.9, 0.4358898943540673, 0.0],
+        }
+    )
+    svc, _, _, writer, _ = _build_service(embedder=parallel)
+    await svc.finalize_profile(
+        vip_id,
+        chat_id=1,
+        hechos=[
+            HechoExtracted(seccion="preferencias", texto="le gusta viajar"),
+            HechoExtracted(
+                seccion="preferencias", texto="le gusta mucho viajar a CDMX"
+            ),
+        ],
+        windows=2,
+    )
+    rows = writer.replace_calls[0][1]
+    assert len(rows) == 1  # merged
+    assert rows[0].text == "le gusta mucho viajar a CDMX"  # longest kept
+
+
+@pytest.mark.asyncio
+async def test_dedup_threshold_configurable() -> None:
+    vip_id = uuid4()
+    parallel = FakeParallelEmbedder(
+        {
+            "le gusta viajar": [1.0, 0.0, 0.0],
+            "le gusta mucho viajar a CDMX": [0.9, 0.4358898943540673, 0.0],
+        }
+    )
+    hechos = [
+        HechoExtracted(seccion="preferencias", texto="le gusta viajar"),
+        HechoExtracted(seccion="preferencias", texto="le gusta mucho viajar a CDMX"),
+    ]
+    # 0.99 > 0.9 → the parallel pair is NOT merged.
+    svc_high, _, _, writer_high, _ = _build_service(
+        embedder=parallel, dedup_threshold=0.99
+    )
+    await svc_high.finalize_profile(vip_id, chat_id=1, hechos=hechos, windows=2)
+    assert len(writer_high.replace_calls[0][1]) == 2
+    # 0.85 ≤ 0.9 → merged.
+    svc_low, _, _, writer_low, _ = _build_service(
+        embedder=parallel, dedup_threshold=0.85
+    )
+    await svc_low.finalize_profile(vip_id, chat_id=1, hechos=hechos, windows=2)
+    assert len(writer_low.replace_calls[0][1]) == 1
+
+
+@pytest.mark.asyncio
+async def test_finalize_profile_zero_facts_still_writes_perfil() -> None:
+    vip_id = uuid4()
+    svc, _, _, writer, _ = _build_service()
+    report = await svc.finalize_profile(vip_id, chat_id=1, hechos=[], windows=0)
+    assert report.status == "ok"
+    assert report.facts == 0
+    assert len(writer.replace_calls) == 1
+    _, rows, perfil, _ = writer.replace_calls[0]
+    assert rows == []
+    assert perfil["secciones"] == {
+        "identidad": [],
+        "preferencias": [],
+        "comercial": [],
+        "limites": [],
+        "sensible": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_profile_full_run_still_works() -> None:
+    """Regression: the on-demand path keeps its Pool 1 contract."""
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(seccion="identidad", texto="Vive en Buenos Aires")
+                ]
+            ),
+            WindowExtraction(hechos=[]),
+            WindowExtraction(hechos=[]),
+        ]
+    )
+    messages = [_msg("vip", f"msg {i}") for i in range(450)]
+    svc, _, _, writer, _ = _build_service(messages=messages, llm=llm)
+
+    report = await svc.generate_profile(uuid4(), chat_id=41)
+
+    assert report.status == "ok"
+    assert report.windows == 3
+    assert len(writer.replace_calls) == 1
+    assert len(writer.replace_calls[0][1]) == 1

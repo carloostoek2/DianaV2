@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.ports import MemoryInsert
@@ -152,6 +152,60 @@ class MemoriesRepo:
             )
             await session.commit()
         return len(rows) + 1
+
+
+    async def has_profile(self, vip_id: UUID) -> bool:
+        """True iff the VIP already has a ``perfil`` row (F5 Pool 2, F5-07).
+
+        Powers ``enqueue_missing_vips``: VIPs that already have a profile are
+        skipped. The ``category='perfil'`` row is written by
+        ``replace_vip_profile`` on every successful finalize.
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(
+                    exists().where(
+                        Memory.vip_id == vip_id,
+                        Memory.category == "perfil",
+                    )
+                )
+            )
+            return bool(result.scalar_one())
+
+    async def find_similar_surviving(
+        self,
+        vip_id: UUID,
+        embedding: list[float],
+        *,
+        threshold: float = 0.85,
+        category: str | None = None,
+    ) -> list[dict]:
+        """Find *surviving* memories of ``vip_id`` semantically close to ``embedding``.
+
+        REQ-MEM-08 / F5-07 backfill dedup: only rows the owner already decided
+        on — ``approved`` and ``discarded`` (fix F4 survivors) — are compared
+        against; a new backfill may only *discard* a duplicate fact, never
+        modify a surviving row (that would overwrite an owner decision). The
+        ``perfil`` row is excluded (it is the panel card, not a fact).
+        Returns up to 5 closest rows ordered by cosine distance, as plain
+        dicts (``memory_to_dict``).
+        """
+        async with self._sf() as session:
+            stmt = (
+                select(Memory)
+                .where(
+                    Memory.vip_id == vip_id,
+                    Memory.status.in_(("approved", "discarded")),
+                    Memory.category != "perfil",
+                    Memory.embedding.cosine_distance(embedding) < 1 - threshold,
+                )
+                .order_by(Memory.embedding.cosine_distance(embedding))
+                .limit(5)
+            )
+            if category is not None:
+                stmt = stmt.where(Memory.category == category)
+            result = await session.execute(stmt)
+            return [memory_to_dict(row) for row in result.scalars().all()]
 
 
 __all__ = ["MemoriesRepo", "memory_to_dict"]

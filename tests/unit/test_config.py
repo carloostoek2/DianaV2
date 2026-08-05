@@ -71,6 +71,19 @@ def test_settings_defaults_supervised_and_ttl(
     assert settings.deepseek_api_key.get_secret_value() == ""
 
 
+def test_settings_backfill_defaults(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F5 Pool 2: backfill pacing + semantic dedup thresholds (REQ-MEM-05/08)."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    assert settings.backfill_interval_sec == 3600
+    assert settings.backfill_dedup_threshold == 0.85
+
+
 def test_settings_has_no_hardcoded_bot_token_default(
     clear_settings_env: None,
 ) -> None:

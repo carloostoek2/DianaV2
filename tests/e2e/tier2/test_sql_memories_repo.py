@@ -418,3 +418,118 @@ async def test_replace_vip_profile_rejects_invalid_status_and_dimension(
 
     # Nothing was written by the rejected calls.
     assert await _count_memories(session_factory, vip_id) == 0
+
+
+# ---------------------------------------------------------------------------
+# F5 Pool 2: find_similar_surviving (pgvector dedup vs surviving rows) + has_profile
+# ---------------------------------------------------------------------------
+
+_EMBEDDING_B = [0.1] * 192 + [-0.1] * 192  # orthogonal to _EMBEDDING_384 (cos 0)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_find_similar_surviving_threshold_and_category(session_factory):
+    """REQ-MEM-08: only surviving rows (approved/discarded) of the same VIP
+    are returned; `auto` (regenerable) and other categories are filtered."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 508)
+
+    def _insert(category: str, status: str, embedding: list[float]) -> MemoryInsert:
+        return MemoryInsert(
+            category=category,
+            text=f"hecho {category} {status}",
+            embedding=embedding,
+            confidence=0.9,
+            status=status,  # type: ignore[arg-type]
+            approved_by="owner" if status in ("approved", "discarded") else "auto",
+        )
+
+    await repo.replace_vip_profile(
+        vip_id,
+        rows=[
+            _insert("preferencias", "approved", _EMBEDDING_384),  # (a)
+            _insert("identidad", "discarded", _EMBEDDING_384),  # (b)
+            _insert("preferencias", "auto", _EMBEDDING_384),  # (c) not a survivor
+            _insert("comercial", "approved", _EMBEDDING_B),  # (d) orthogonal
+        ],
+        perfil={"vip_id": str(vip_id), "secciones": {}},
+        perfil_embedding=_EMBEDDING_384,
+    )
+
+    # Query with vector A → (a) approved and (b) discarded match; the `auto`
+    # row (c) and the `perfil` row never appear.
+    hits_a = await repo.find_similar_surviving(
+        vip_id, _EMBEDDING_384, threshold=0.85
+    )
+    cats_a = {h["category"] for h in hits_a}
+    assert cats_a == {"preferencias", "identidad"}
+    assert all(h["status"] in ("approved", "discarded") for h in hits_a)
+
+    # Same vector, category filter → only (a).
+    hits_pref = await repo.find_similar_surviving(
+        vip_id, _EMBEDDING_384, threshold=0.85, category="preferencias"
+    )
+    assert [h["category"] for h in hits_pref] == ["preferencias"]
+    assert hits_pref[0]["status"] == "approved"
+
+    # Query with the orthogonal vector B → only (d) matches.
+    hits_b = await repo.find_similar_surviving(vip_id, _EMBEDDING_B, threshold=0.85)
+    assert [h["category"] for h in hits_b] == ["comercial"]
+    assert all(h["category"] != "preferencias" for h in hits_b)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_find_similar_surviving_excludes_perfil(session_factory):
+    """The `perfil` card row never shows up as a dedup target (it is the
+    panel card, not a fact — same rule as the retriever filter)."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 509)
+
+    await repo.replace_vip_profile(
+        vip_id,
+        rows=[
+            MemoryInsert(
+                category="identidad",
+                text="Vive en Buenos Aires",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="approved",
+                approved_by="owner",
+            )
+        ],
+        perfil={"vip_id": str(vip_id), "secciones": {}},
+        perfil_embedding=_EMBEDDING_384,
+    )
+
+    hits = await repo.find_similar_surviving(vip_id, _EMBEDDING_384, threshold=0.85)
+    assert len(hits) == 1
+    assert hits[0]["category"] == "identidad"
+    assert all(h["category"] != "perfil" for h in hits)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_has_profile(session_factory):
+    """has_profile is True after a profile write, False for a fresh VIP."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 510)
+    assert await repo.has_profile(vip_id) is False
+
+    await repo.replace_vip_profile(
+        vip_id,
+        rows=[
+            MemoryInsert(
+                category="identidad",
+                text="Vive en Buenos Aires",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="auto",
+                approved_by="auto",
+            )
+        ],
+        perfil={"vip_id": str(vip_id), "secciones": {}},
+        perfil_embedding=_EMBEDDING_384,
+    )
+    assert await repo.has_profile(vip_id) is True
