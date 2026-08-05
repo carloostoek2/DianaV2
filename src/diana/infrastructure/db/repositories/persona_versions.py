@@ -31,10 +31,12 @@ def persona_version_orm_to_record(row: PersonaVersion) -> PersonaVersionRecord:
 class PersonaVersionRepo:
     """Thin versioned-catalog persistence — no validation / feature flags.
 
-    ``activate_version`` performs a single set-based UPDATE that flips exactly
-    one row to ``is_active`` (and clears any previously active row) in the same
-    statement, so the partial unique index ``uq_persona_versions_active`` is
-    evaluated after the swap and never sees two active rows.
+    ``activate_version`` performs a deactivate-then-activate two-statement swap
+    in one transaction (see the method docstring): a single set-based UPDATE
+    that flips two rows in one go can transiently violate the partial unique
+    index ``uq_persona_versions_active``, because Postgres evaluates unique
+    indexes per-row during an UPDATE. Deactivating first never observes two
+    active rows within a single statement.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:

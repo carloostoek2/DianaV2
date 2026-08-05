@@ -464,12 +464,22 @@ _ATENCION_CATALOG = {
 async def test_retrievers_are_channel_aware_per_channel_cache() -> None:
     """N2/B2: an atencion turn resolves atencion slices, never the VIP ones,
     and the per-channel identity cache keeps the switch bidirectional."""
+    from datetime import UTC, datetime
+
+    class _FixedClock:
+        def now(self) -> datetime:
+            # Fixed Wednesday (2026-07-22), outside the atencion catalog's
+            # "martes 10:00-12:00" window, so the schedule fetch stays on the
+            # respuesta_libre branch regardless of the real run date.
+            return datetime(2026, 7, 22, 23, 0, tzinfo=UTC)
+
     provider = _ChannelAwareProvider(
         {"vip": _VIP_CATALOG, "atencion": _ATENCION_CATALOG}
     )
     registry = build_default_registry(
         InMemoryMessageHistory(),
         persona_catalog_provider=provider,  # type: ignore[arg-type]
+        clock=_FixedClock(),
     )
     atencion_turn = _turn()
     atencion_turn.channel_type = "atencion"

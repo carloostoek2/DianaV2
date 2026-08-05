@@ -29,6 +29,7 @@ packages = ["src/diana"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/diana/config/persona_diana.json" = "diana/config/persona_diana.json"
 "src/diana/config/sandbox_profiles.json" = "diana/config/sandbox_profiles.json"
+"src/diana/config/persona_atencion.json" = "diana/config/persona_atencion.json"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
