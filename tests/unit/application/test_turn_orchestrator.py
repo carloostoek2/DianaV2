@@ -27,7 +27,9 @@ from diana.application.ports import TurnRecord, VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import (
     ATENCION_DAILY_LIMIT_CLOSE,
+    ATENCION_PAYMENT_NOTICE,
     TurnOrchestrator,
+    _detect_payment_intent,
 )
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
@@ -146,6 +148,19 @@ class FakeGrayZone:
         return type("_Query", (), {"id": self.next_query_id})()
 
 
+class _FakeTraceReader:
+    """Fixed pipeline trace for REQ-ATN-12 payment detection tests."""
+
+    def __init__(self, trace: dict | None, *, error: bool = False) -> None:
+        self._trace = trace
+        self._error = error
+
+    async def get_full_trace(self, turn_id: UUID) -> dict | None:
+        if self._error:
+            raise RuntimeError("trace down")
+        return self._trace
+
+
 def _build(
     director: object,
     *,
@@ -165,6 +180,7 @@ def _build(
     daily_limit: object | None = None,
     turns: InMemoryTurnStore | None = None,
     persona_catalog_provider: object | None = None,
+    trace_reader: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -227,6 +243,7 @@ def _build(
         daily_message_limit_store=daily_limit,
         turns=turns,
         persona_catalog_provider=persona_catalog_provider,
+        trace_reader=trace_reader,
     )
     return {
         "orch": orch,
@@ -2400,6 +2417,157 @@ async def test_consult_doctrine_atencion_gray_zone_creates_query() -> None:
     assert q["turn_id"] == turn_id
     # the atencion channel travelled through the director unchanged
     assert g["director"].calls[0].channel_type == "atencion"
+
+
+# ── REQ-ATN-12 payment detection ─────────────────────────────────────────
+
+
+def test_detect_payment_intent_pure() -> None:
+    """Deterministic payment signal: policy trigger OR confirmar_entrega+topics."""
+    # empty / None → False
+    assert _detect_payment_intent(None) is False
+    assert _detect_payment_intent({}) is False
+    # primary signal: knowledge.policy contains the datos_pago trigger
+    assert _detect_payment_intent(
+        {"retrieved": {"knowledge.policy": "Trigger: datos_pago\nRegla: ..."}}
+    ) is True
+    # secondary signal: confirmar_entrega intent + payment topic
+    assert _detect_payment_intent(
+        {
+            "retrieved": {"knowledge.policy": "otra"},
+            "comprehension": {"intent": "confirmar_entrega", "topics": ["pago"]},
+        }
+    ) is True
+    # case/whitespace insensitive
+    assert _detect_payment_intent(
+        {
+            "comprehension": {"intent": " Confirmar_Entrega ", "topics": ["CONTENIDO"]},
+        }
+    ) is True
+    # confirmar_entrega without a payment topic → False
+    assert _detect_payment_intent(
+        {
+            "comprehension": {"intent": "confirmar_entrega", "topics": ["otro"]},
+        }
+    ) is False
+    # payment topic but wrong intent → False
+    assert _detect_payment_intent(
+        {
+            "comprehension": {"intent": "saludo", "topics": ["pago"]},
+        }
+    ) is False
+    # malformed shapes never raise
+    assert _detect_payment_intent({"retrieved": None, "comprehension": None}) is False
+    assert _detect_payment_intent({"retrieved": "string"}) is False
+
+
+def _payment_decision() -> Decision:
+    return Decision(
+        action="approve",
+        reason="good",
+        evaluation=_eval(),
+        draft_text="reply draft",
+    )
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_policy_trigger_notifies_owner() -> None:
+    """REQ-ATN-12: retrieved datos_pago trigger → ONE informational DM."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": "Trigger: datos_pago"}}
+        ),
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None and turn.status == "pending_approval"
+    expected = ATENCION_PAYMENT_NOTICE.format(chat_id=100)
+    assert (expected, 100) in g["notifier"].infos
+    assert len(g["notifier"].infos) == 1
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_confirm_intent_notifies_owner() -> None:
+    """REQ-ATN-12: confirmar_entrega + payment topic → informational DM."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {
+                "comprehension": {
+                    "intent": "confirmar_entrega",
+                    "topics": ["pago"],
+                }
+            }
+        ),
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=505)
+    )
+    expected = ATENCION_PAYMENT_NOTICE.format(chat_id=505)
+    assert (expected, 505) in g["notifier"].infos
+
+
+@pytest.mark.asyncio
+async def test_vip_payment_signal_not_notified() -> None:
+    """REQ-ATN-12: VIP channel never fires the atencion payment DM."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": "Trigger: datos_pago"}}
+        ),
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=uuid4(), chat_id=100))
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_without_payment_signal_not_notified() -> None:
+    """REQ-ATN-12: atencion turn without a payment signal stays silent."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {
+                "comprehension": {
+                    "intent": "confirmar_entrega",
+                    "topics": ["otro"],
+                }
+            }
+        ),
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_reader_failure_fail_soft() -> None:
+    """REQ-ATN-12: trace read failure never breaks the turn flow."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(None, error=True),
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None and turn.status == "pending_approval"
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_without_reader_is_noop() -> None:
+    """REQ-ATN-12: no trace_reader injected → no payment DM (A3 fail-soft)."""
+    g = _build(FakeDirector(_payment_decision()))
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None and turn.status == "pending_approval"
+    assert g["notifier"].infos == []
 
 
 @pytest.mark.asyncio

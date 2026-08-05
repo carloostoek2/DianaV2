@@ -97,6 +97,8 @@ class SqlCalibrationDataSource:
                         PipelineTrace.created_at >= since,
                         PipelineTrace.created_at <= now,
                         PipelineTrace.evaluation.is_not(None),
+                        # REQ-ATN-13: calibration reads VIP traces only.
+                        PipelineTrace.channel_type == "vip",
                     )
                 )
             )
@@ -125,6 +127,8 @@ class SqlCalibrationDataSource:
                         PipelineTrace.created_at >= since,
                         PipelineTrace.generated_text.is_not(None),
                         PipelineTrace.generated_text != "",
+                        # REQ-ATN-13: calibration reads VIP traces only.
+                        PipelineTrace.channel_type == "vip",
                     )
                 )
                 .order_by(func.random())
@@ -142,6 +146,8 @@ class SqlCalibrationDataSource:
                     and_(
                         PipelineTrace.generated_text.is_not(None),
                         PipelineTrace.generated_text != "",
+                        # REQ-ATN-13: calibration reads VIP traces only.
+                        PipelineTrace.channel_type == "vip",
                     )
                 )
             )
@@ -158,6 +164,8 @@ class SqlCalibrationDataSource:
                         PipelineTrace.created_at < window_end,
                         PipelineTrace.generated_text.is_not(None),
                         PipelineTrace.generated_text != "",
+                        # REQ-ATN-13: calibration reads VIP traces only.
+                        PipelineTrace.channel_type == "vip",
                     )
                 )
                 .order_by(func.random())

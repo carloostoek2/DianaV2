@@ -93,10 +93,35 @@ async def test_save_correction_creates_pending_candidate(
 
     repos["staging"].insert.assert_awaited_once_with(
         "example",
-        {"original_draft": "old draft", "corrected_text": "new text", "context": {"turn_text": "VIP says hi"}},
+        {
+            "original_draft": "old draft",
+            "corrected_text": "new text",
+            "context": {"turn_text": "VIP says hi"},
+            "channel_type": None,
+        },
         turn_id,
     )
     assert result is fake_row
+
+
+@pytest.mark.asyncio
+async def test_save_correction_records_channel_type(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    """REQ-ATN-13: atencion corrections carry channel_type in the payload."""
+    turn_id = uuid4()
+    repos["staging"].insert.return_value = _fake_staging_row()
+
+    await service.save_correction(
+        turn_id=turn_id,
+        original_draft="old draft",
+        corrected_text="new text",
+        context={"turn_text": "cliente dice hola"},
+        channel_type="atencion",
+    )
+
+    insert_kwargs = repos["staging"].insert.await_args.args
+    assert insert_kwargs[1]["channel_type"] == "atencion"
 
 
 # --- promote_to_example ---
@@ -128,6 +153,56 @@ async def test_promote_to_example_happy_path(
         context=payload["context"],
         is_counter_example=False,
     )
+    repos["staging"].update_status.assert_awaited_once_with(candidate_id, "promoted")
+    assert result is fake_example
+
+
+@pytest.mark.asyncio
+async def test_promote_to_example_blocks_atencion_candidate(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    """REQ-ATN-13: atencion-originated candidates never reach the VIP bank."""
+    candidate_id = uuid4()
+    payload = {
+        "original_draft": "old draft",
+        "corrected_text": "new text",
+        "context": {"turn_text": "cliente dice hola"},
+        "channel_type": "atencion",
+    }
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload=payload
+    )
+
+    with pytest.raises(ValueError, match="atencion candidates"):
+        await service.promote_to_example(candidate_id=candidate_id)
+
+    # neither inserted into examples nor marked promoted — stays pending
+    repos["examples"].insert.assert_not_awaited()
+    repos["staging"].update_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_promote_to_example_vip_candidate_promotes(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    """REQ-ATN-13: explicit VIP channel candidate promotes normally."""
+    candidate_id = uuid4()
+    payload = {
+        "original_draft": "old draft",
+        "corrected_text": "new text",
+        "context": {"turn_text": "VIP says hi"},
+        "channel_type": "vip",
+    }
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload=payload
+    )
+    fake_example = _fake_example_row()
+    repos["examples"].insert.return_value = fake_example
+    repos["staging"].update_status.return_value = True
+
+    result = await service.promote_to_example(candidate_id=candidate_id)
+
+    repos["examples"].insert.assert_awaited_once()
     repos["staging"].update_status.assert_awaited_once_with(candidate_id, "promoted")
     assert result is fake_example
 

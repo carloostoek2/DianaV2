@@ -25,6 +25,7 @@ from diana.application.ports import (
     MessageHistoryWriter,
     RuntimeTimerRecord,
     RuntimeTimerStore,
+    TraceReader,
     TurnRecord,
     TurnStore,
     VipInboundMessage,
@@ -59,6 +60,42 @@ ATENCION_DAILY_LIMIT_CLOSE = (
     "¡Hola! Por hoy ya cubrimos todo, "
     "si necesitas algo más escríbeme mañana 😊"
 )
+
+
+# A7: exact informational DM text when an atencion turn shows payment intent.
+ATENCION_PAYMENT_NOTICE = (
+    "Cliente {chat_id} está en proceso de pago / confirmó pago — "
+    "entrega manual pendiente"
+)
+
+# A2: topics that corroborate a confirmation-of-delivery payment intent.
+_PAYMENT_TOPICS = frozenset({"pago", "suscripcion", "contenido"})
+
+
+def _detect_payment_intent(trace: dict | None) -> bool:
+    """Deterministic payment-intent detection from the committed pipeline trace.
+
+    Primary signal: the activated knowledge policy contains
+    ``Trigger: datos_pago``. Secondary signal: comprehension intent is
+    ``confirmar_entrega`` (the only confirmation intent in the closed
+    catalog) AND its topics intersect the payment vocabulary. Pure function —
+    never raises, never touches IO.
+    """
+    if not trace:
+        return False
+    retrieved = trace.get("retrieved") or {}
+    if isinstance(retrieved, dict):
+        policy = retrieved.get("knowledge.policy")
+        if isinstance(policy, str) and "Trigger: datos_pago" in policy:
+            return True
+    comp = trace.get("comprehension") or {}
+    if not isinstance(comp, dict):
+        return False
+    intent = str(comp.get("intent") or "").strip().lower()
+    if intent != "confirmar_entrega":
+        return False
+    topics = {str(t).strip().lower() for t in (comp.get("topics") or [])}
+    return bool(topics & _PAYMENT_TOPICS)
 
 
 def trailing_vip_texts(history_rows: list[dict]) -> list[str]:
@@ -142,6 +179,7 @@ class TurnOrchestrator:
         daily_message_limit_store: object | None = None,
         turns: TurnStore | None = None,
         persona_catalog_provider: object | None = None,
+        trace_reader: TraceReader | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -163,6 +201,7 @@ class TurnOrchestrator:
         self._daily_limit = daily_message_limit_store
         self._turns = turns
         self._catalog_provider = persona_catalog_provider
+        self._trace_reader = trace_reader
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
@@ -385,6 +424,42 @@ class TurnOrchestrator:
             await self._admin.notify_info(message, chat_id=chat_id)
         except Exception:
             log_swallowed(logger, event, chat_id=chat_id, **extra)
+
+    async def _maybe_notify_payment_intent(
+        self,
+        *,
+        turn_id: UUID,
+        turn_ctx: IncomingTurn,
+    ) -> None:
+        """REQ-ATN-12: informational DM to the owner on payment intent.
+
+        Runs only for the atencion channel and only when a ``trace_reader``
+        is injected. Reads the committed trace (already stored by the
+        Director), detects the payment signal deterministically, and sends
+        ONE fail-soft informational DM (A7). The turn flow is never altered.
+        """
+        if turn_ctx.channel_type != "atencion":
+            return
+        if self._trace_reader is None:
+            return
+        try:
+            trace = await self._trace_reader.get_full_trace(turn_id)
+        except Exception:
+            log_swallowed(
+                logger,
+                "atencion_payment_trace_read_failed",
+                turn_id=str(turn_id),
+                chat_id=turn_ctx.chat_id,
+            )
+            return
+        if not _detect_payment_intent(trace):
+            return
+        await self._safe_notify_info(
+            ATENCION_PAYMENT_NOTICE.format(chat_id=turn_ctx.chat_id),
+            chat_id=turn_ctx.chat_id,
+            event="atencion_payment_intent_notified",
+            turn_id=str(turn_id),
+        )
 
     async def _fail_director_typed(
         self,
@@ -1242,6 +1317,12 @@ class TurnOrchestrator:
                 },
             )
             return turn_id, None
+
+        # REQ-ATN-12: informational payment notice for atencion (fail-soft,
+        # never alters the supervised flow).
+        await self._maybe_notify_payment_intent(
+            turn_id=turn_id, turn_ctx=turn_ctx
+        )
 
         if decision.action == "approve":
             await self._coordinator.transition(

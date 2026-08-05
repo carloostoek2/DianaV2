@@ -298,9 +298,12 @@ async def test_handle_correct_saves_staging_candidate() -> None:
     assert payload["context"]["chat_id"] == 42
     assert payload["context"]["turn_text"] == "vip trigger text"
     assert insert_args.args[2] == turn.id
+    # REQ-ATN-13: channel_type flows from the turn into the staging payload.
+    assert payload["channel_type"] == "vip"
     # PLAN DoD: keyword-only chat_id= for sandbox isolation.
     save_spy.assert_awaited_once()
     assert save_spy.await_args.kwargs["chat_id"] == turn.chat_id
+    assert save_spy.await_args.kwargs["channel_type"] == turn.channel_type
     # Delivery still happened after staging (timing A).
     assert g["actuator"].send_count() == 1
     assert g["actuator"].calls[-1]["text"] == "corrected final"

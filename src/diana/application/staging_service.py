@@ -44,12 +44,16 @@ class StagingService:
         context: dict,
         *,
         chat_id: int | None = None,
+        channel_type: str | None = None,
     ) -> object | None:
         """Save a correction as a pending staging candidate (type='example').
 
         The owner must later confirm promotion for this to become a live example.
         Returns the ORM StagingCandidate row (id, type, payload, status, turn_id).
         When sandbox is active for ``chat_id``, returns None without insert.
+        ``channel_type`` is recorded so ``promote_to_example`` can block
+        atencion-originated candidates from entering the VIP example bank
+        (REQ-ATN-13 anti-contamination).
         """
         if (
             chat_id is not None
@@ -65,6 +69,7 @@ class StagingService:
             "original_draft": original_draft,
             "corrected_text": corrected_text,
             "context": context,
+            "channel_type": channel_type,
         }
         row = await self._staging.insert("example", payload, turn_id)
         logger.info(
@@ -99,7 +104,19 @@ class StagingService:
                 f"{candidate.candidate_type!r}, expected 'example'"
             )
 
+        # REQ-ATN-13 anti-contamination: atencion corrections must NEVER reach
+        # the VIP example bank. Blocked BEFORE any insert so the candidate
+        # stays pending (owner can still discard it).
         payload = candidate.payload
+        if payload.get("channel_type") == "atencion":
+            logger.info(
+                "staging_atencion_promote_blocked",
+                extra={"candidate_id": str(candidate_id)},
+            )
+            raise ValueError(
+                "atencion candidates cannot be promoted to the VIP example bank"
+            )
+
         example = await self._examples.insert(
             turn_text=payload.get("context", {}).get("turn_text", ""),
             draft_text=payload.get("original_draft", ""),

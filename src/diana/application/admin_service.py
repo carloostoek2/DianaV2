@@ -377,6 +377,7 @@ class AdminService:
                             "turn_text": turn_text,
                         },
                         chat_id=turn.chat_id,
+                        channel_type=turn.channel_type,
                     )
                 except Exception:
                     logger.exception(
