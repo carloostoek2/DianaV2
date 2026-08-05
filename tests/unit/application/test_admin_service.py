@@ -1083,6 +1083,74 @@ async def test_gray_zone_supervised_delivery_superseded_cancels_approval(
     assert approval.status == "cancelled"
 
 
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_idempotent_when_approval_exists(
+    admin_graph: dict,
+) -> None:
+    """Double invocation (dx: racing expiry) → True, no second approval/DM."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    first = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert first is True
+    drafts_after_first = len(g["notifier"].drafts)
+
+    second = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert second is True
+    assert len(g["notifier"].drafts) == drafts_after_first
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.status == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_terminal_turn_skips(
+    admin_graph: dict,
+) -> None:
+    """Terminal turn (superseded/delivered) → False, no ghost approval + DM."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="superseded")
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert result is False
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert len(g["notifier"].drafts) == 0
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_query_turn_mismatch(
+    admin_graph: dict,
+) -> None:
+    """query.turn_id != turn_id → False (defense-in-depth, no wrong-chat draft)."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = _gray_zone_query(turn_id=uuid4())  # belongs to another turn
+
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert result is False
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert len(g["notifier"].drafts) == 0
+
+
 # --- Item4 Task4: advanced behavior builder wiring ---
 
 

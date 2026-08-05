@@ -48,12 +48,17 @@ class FakeAdmin:
 
     def __init__(self) -> None:
         self.create_supervised_calls: list[tuple[UUID, object]] = []
+        self._denials: set[UUID] = set()
+
+    def deny_on(self, turn_id: UUID) -> None:
+        """Simulate a fail-soft False (e.g. legacy query without bc)."""
+        self._denials.add(turn_id)
 
     async def create_supervised_delivery_from_gray_zone(
         self, turn_id: UUID, query: object
     ) -> bool:
         self.create_supervised_calls.append((turn_id, query))
-        return True
+        return turn_id not in self._denials
 
 
 @dataclass
@@ -344,6 +349,116 @@ async def test_resolve_with_draft_no_admin_skips_supervised() -> None:
     )
     assert status == "resolved"
     assert len(gray_zone.confirm_calls) == 1
+    assert len(admin.create_supervised_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_confirm_before_supervised_delivery() -> None:
+    """dx: ordering — confirm_and_apply (closes query + unfreezes) runs first.
+
+    The VIP must be unfrozen before the owner approves; the supervised
+    delivery synthesis must never run before the query is confirmed.
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id, draft="use-this-draft")
+
+    events: list[str] = []
+
+    async def _confirm_and_apply(query_id: UUID, candidate_id: UUID) -> object:
+        events.append("confirm")
+        return object()
+
+    async def _create_supervised(
+        turn_id_: UUID, query: object
+    ) -> bool:
+        events.append("supervised")
+        return True
+
+    gray_zone.confirm_and_apply = _confirm_and_apply  # type: ignore[method-assign]
+    admin.create_supervised_delivery_from_gray_zone = _create_supervised  # type: ignore[method-assign]
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=admin,
+    )
+    assert status == "resolved"
+    assert events == ["confirm", "supervised"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_delivery_denied_falls_back_to_escalate() -> None:
+    """dx: supervised delivery unavailable → turn escalated, never stuck.
+
+    Legacy query without business_connection_id: the query is already closed
+    by confirm_and_apply, so the handler escalates the turn and reports
+    'escalated' instead of claiming a resolution that never scheduled a draft.
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id, draft="use-this-draft")
+    admin.deny_on(turn_id)
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=admin,
+    )
+    assert status == "escalated"
+    assert len(gray_zone.confirm_calls) == 1
+    assert len(admin.create_supervised_calls) == 1
+    assert coordinator.transitions == [(turn_id, "escalated")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_delivery_error_falls_back_to_escalate() -> None:
+    """dx: supervised delivery raises → turn escalated, still no zombie."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id, draft="use-this-draft")
+
+    async def _boom(turn_id_: UUID, query: object) -> bool:
+        msg = "simulated delivery failure"
+        raise RuntimeError(msg)
+
+    admin.create_supervised_delivery_from_gray_zone = _boom  # type: ignore[method-assign]
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=admin,
+    )
+    assert status == "escalated"
+    assert coordinator.transitions == [(turn_id, "escalated")]
+
+
+@pytest.mark.asyncio
+async def test_escalate_never_creates_supervised_delivery() -> None:
+    """de: stays byte-identical — no supervised approval is ever created."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id, draft="must-not-deliver")
+
+    status = await handle_doctrine_escalate(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+    )
+    assert status == "escalated"
+    assert coordinator.transitions == [(turn_id, "escalated")]
+    assert len(gray_zone.discard_calls) == 1
     assert len(admin.create_supervised_calls) == 0
 
 

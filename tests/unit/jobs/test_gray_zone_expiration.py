@@ -70,9 +70,14 @@ class FakeAdmin:
     def __init__(self) -> None:
         self.supervised_calls: list[tuple[UUID, object]] = []
         self._failures: set[UUID] = set()
+        self._denials: set[UUID] = set()
 
     def fail_on(self, turn_id: UUID) -> None:
         self._failures.add(turn_id)
+
+    def deny_on(self, turn_id: UUID) -> None:
+        """Simulate a fail-soft False (e.g. legacy row without bc)."""
+        self._denials.add(turn_id)
 
     async def create_supervised_delivery_from_gray_zone(
         self, turn_id: UUID, row: object
@@ -80,6 +85,8 @@ class FakeAdmin:
         self.supervised_calls.append((turn_id, row))
         if turn_id in self._failures:
             raise RuntimeError(f"simulated delivery error for {turn_id}")
+        if turn_id in self._denials:
+            return False
         return True
 
 
@@ -318,4 +325,84 @@ async def test_expiry_supervised_error_does_not_break_loop() -> None:
     # Both items were attempted; the failing one did not derail the second.
     assert len(admin.supervised_calls) == 2
     assert {c[0] for c in admin.supervised_calls} == {failing_turn, ok_turn}
-    assert coordinator.transitions == []
+    # The failed delivery falls back to the legacy escalate so the turn is
+    # never left stuck in gray_zone; the healthy one stays pending approval.
+    assert coordinator.transitions == [(failing_turn, "escalated")]
+
+
+@pytest.mark.asyncio
+async def test_expiry_with_draft_denied_falls_back_to_escalated() -> None:
+    """Fail-soft False (e.g. legacy row without business_connection_id) → escalated.
+
+    Guards the R-A regression: before the supervised-delivery path, every
+    expired query escalated; a draft row that cannot become a PendingApproval
+    must keep that guarantee instead of being stranded in gray_zone.
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    admin.deny_on(turn_id)
+    gray_zone.add_result(
+        [make_expired_item(turn_id, draft="texto", business_connection_id=None)]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        admin=admin,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert len(admin.supervised_calls) == 1
+    assert coordinator.transitions == [(turn_id, "escalated")]
+
+
+@pytest.mark.asyncio
+async def test_expiry_notification_reflects_actual_outcomes() -> None:
+    """The grouped notification counts real outcomes, not row attributes."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    admin = FakeAdmin()
+    delivered_turn = uuid4()
+    denied_turn = uuid4()
+    escalated_turn = uuid4()
+    admin.deny_on(denied_turn)
+    gray_zone.add_result(
+        [
+            make_expired_item(delivered_turn, draft="d1", business_connection_id="b1"),
+            make_expired_item(denied_turn, draft="d2", business_connection_id=None),
+            make_expired_item(escalated_turn, draft=""),
+        ]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        admin=admin,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert coordinator.transitions == [
+        (denied_turn, "escalated"),
+        (escalated_turn, "escalated"),
+    ]
+    assert notifier.info_calls
+    last_info = notifier.info_calls[-1]
+    assert "1 pending approval" in last_info
+    assert "2 escalated" in last_info
+    assert "3 total" in last_info
