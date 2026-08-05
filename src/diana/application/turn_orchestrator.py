@@ -262,14 +262,24 @@ class TurnOrchestrator:
                 extra={"chat_id": incoming.chat_id, "reason": "no_turn_store"},
             )
             return None
-        turn = await self._turns.create(
-            TurnRecord(
-                id=uuid4(),
-                chat_id=incoming.chat_id,
-                status=TurnStatus.PROMO_PENDING.value,
-                vip_id=None,
+        try:
+            turn = await self._turns.create(
+                TurnRecord(
+                    id=uuid4(),
+                    chat_id=incoming.chat_id,
+                    status=TurnStatus.PROMO_PENDING.value,
+                    vip_id=None,
+                )
             )
-        )
+        except Exception:
+            logger.exception(
+                "atencion_limit_close_skipped",
+                extra={
+                    "chat_id": incoming.chat_id,
+                    "reason": "turn_create_failed",
+                },
+            )
+            return None
         ctx = DeliveryContext(
             chat_id=incoming.chat_id,
             business_connection_id=str(bc),
@@ -287,10 +297,11 @@ class TurnOrchestrator:
                 decision=None,
             )
         except Exception:
-            await self._turns.transition(
+            await self._try_transition(
                 turn.id,
                 TurnStatus.FAILED.value,
                 error="atencion_limit_close_failed",
+                chat_id=incoming.chat_id,
             )
             logger.exception(
                 "atencion_limit_close_failed",
@@ -302,12 +313,43 @@ class TurnOrchestrator:
             if result.success
             else TurnStatus.FAILED.value
         )
-        await self._turns.transition(
+        await self._try_transition(
             turn.id,
             status,
             error=None if result.success else result.error,
+            chat_id=incoming.chat_id,
         )
         return turn.id
+
+    async def _try_transition(
+        self,
+        turn_id: UUID,
+        status: str,
+        *,
+        error: str | None = None,
+        chat_id: int,
+    ) -> None:
+        """Fail-soft close-turn transition: never let a store error escape.
+
+        The closing reply is best-effort; a turn-store failure on bookkeeping
+        must not propagate out of ``_send_atencion_limit_close`` and drop the
+        client's 21st message (same fail-open invariant as the increment).
+        """
+        try:
+            await self._turns.transition(  # type: ignore[union-attr]
+                turn_id,
+                status,
+                error=error,
+            )
+        except Exception:
+            logger.exception(
+                "atencion_limit_close_transition_failed",
+                extra={
+                    "turn_id": str(turn_id),
+                    "status": status,
+                    "chat_id": chat_id,
+                },
+            )
 
     async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
         if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
