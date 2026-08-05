@@ -9,9 +9,9 @@ feeding the LLM an explicit "do not repeat" summary of the current profile.
 - Best-effort strict (R1): never raises; every step logs metadata-only
   (fix S1 — fact texts/transcripts never reach the logger).
 - Flag-gated: ``feature_memory_enabled`` off → ``disabled`` report.
-- Terminal-gate lives HERE (``is_turn_status_terminal``): only
+- Terminal-gate lives HERE (``_POST_TURN_EXTRACTABLE_STATUSES``): only
   ``delivered``/``escalated``/``failed`` turns are extracted (REQ-MEM-07);
-  a ``pending_approval`` turn stays out until the owner approves it
+  ``superseded`` (cancelled) and ``pending_approval`` turns stay out
   (outside ``_maybe_post_turn``).
 - Sensitivity fail-closed, reusing Pool 1 heuristic (``_SENSITIVE_TERMS`` +
   ``_is_sensitive_text``): sensitive facts are born ``pending_owner``
@@ -37,21 +37,21 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
 from diana.application.memory_backfill_service import (
     _SENSITIVE_TERMS,  # noqa: PLC2701 — Pool 1 vocabulary, imported (R4)
     EmbeddingPort,
+    HechoExtracted,
     HistoryReader,
     LLMStructuredPort,
     MemoryBackfillService,
     VipReader,
     WindowExtraction,
 )
-from diana.application.ports import MemoryInsert, TurnStore
-from diana.cognitive.models import is_turn_status_terminal
+from diana.application.ports import MemoryInsert, TurnRecord, TurnStore
 
 logger = logging.getLogger("diana.application")
 
@@ -62,9 +62,17 @@ __all__ = ["MemoryExtractionService", "PostTurnExtractionReport", "MemoryFactsWr
 
 # Top-N of the current profile summary fed to the prompt (R10).
 _SUMMARY_MAX_FACTS = 50
-# Same transcript budgets as Pool 1 (M2): per-line truncation + hard window.
-_LINE_MAX_CHARS = 400
+# Hard transcript window per turn: char budget (same constant as Pool 1 M2)
+# + message cap (fix round S-MED) — a turn window is bounded below by the
+# trigger message and above by the cap, so a concurrent next-turn message
+# cannot grow the window without limit. Per-line truncation lives in
+# MemoryBackfillService._build_transcript (Pool 1, single source).
 _WINDOW_MAX_CHARS = 12_000
+_WINDOW_MAX_MESSAGES = 200
+# Turns whose completed conversation is safe to learn from (REQ-MEM-07,
+# fix round S-MED): SUPERSEDED (cancelled by a newer message) is terminal
+# but deliberately excluded — the VIP never saw the reply nor approved it.
+_POST_TURN_EXTRACTABLE_STATUSES = frozenset({"delivered", "escalated", "failed"})
 # Messages that belong to the conversation the VIP saw (draft is role=owner).
 _TURN_ROLES = ("vip", "owner")
 
@@ -211,7 +219,12 @@ class MemoryExtractionService:
             )
             return PostTurnExtractionReport(status="failed", turn_id=turn_id)
 
-        if not is_turn_status_terminal(turn.status):
+        # Terminal-gate (fix round S-MED): ONLY delivered/escalated/failed
+        # turns are extracted (REQ-MEM-07). ``superseded`` is terminal in the
+        # coordinator but a cancelled conversation — never extracted, so a
+        # burst of cancelled turns pays no LLM cost and never writes memory
+        # with a wrong source_turn_id.
+        if turn.status not in _POST_TURN_EXTRACTABLE_STATUSES:
             logger.info(
                 "memory_extraction_skipped_not_terminal",
                 extra={"turn_id": str(turn_id), "status": turn.status},
