@@ -126,6 +126,7 @@ def build_dispatcher(
         notifier=notifier,
         vips=vips,
         behavior=behavior,  # type: ignore[arg-type]  # engine implements deliver
+        feature_general_mode_enabled=feature_general_mode_enabled,
     )
     middlewares: list[Any] = [
         ErrorHandlerMiddleware(),

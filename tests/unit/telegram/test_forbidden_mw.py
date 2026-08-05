@@ -340,3 +340,161 @@ async def test_non_vip_business_j4_does_not_escalate() -> None:
     handler.assert_awaited_once()
     assert g["escalations"].events == []
     assert g["notifier"].escalations == []
+
+
+# ---------------------------------------------------------------------------
+# REQ-ATN-08 — forbidden keywords cover the atencion channel (general mode)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_atencion_forbidden_hit_when_flag_on() -> None:
+    """Flag ON + atencion non-VIP → forbidden check fires and escalates (no VIP)."""
+    g = _graph()
+    # user 100 is NOT a VIP → is_allowed False
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["encuentro"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=50,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="quiero un encuentro",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, data)
+    assert result is None
+    handler.assert_not_awaited()
+    assert g["escalations"].events
+    assert g["notifier"].escalations
+    # atencion has no VIP → the escalated turn carries vip_id None
+    turns = list(g["turns"]._turns.values())  # noqa: SLF001
+    escalated = [t for t in turns if t.status == "escalated"]
+    assert escalated
+    assert escalated[0].vip_id is None
+
+
+@pytest.mark.asyncio
+async def test_atencion_forbidden_skip_when_flag_off() -> None:
+    """Flag OFF → non-VIP skip fires (byte-identical to today)."""
+    g = _graph()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["encuentro"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=False,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=51,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="quiero un encuentro",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, data)
+    assert result == "next"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+    assert g["notifier"].escalations == []
+
+
+@pytest.mark.asyncio
+async def test_vip_forbidden_unchanged() -> None:
+    """VIP user forbidden hit → intercepted (unchanged, even with flag ON)."""
+    g = _graph()
+    await g["vips"].add(100, display_name="Vip")
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["encuentro"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=52,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Vip"),
+        text="quiero un encuentro",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, data)
+    assert result is None
+    handler.assert_not_awaited()
+    assert g["escalations"].events
+
+
+@pytest.mark.asyncio
+async def test_atencion_no_forbidden_keyword_passes() -> None:
+    """Flag ON + atencion + clean text → message passes through."""
+    g = _graph()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["encuentro"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=53,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="hola buenas tardes",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, data)
+    assert result == "next"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+
+
+def test_atencion_explicit_content_seed_rules_present() -> None:
+    """REQ-ATN-08: the atencion seed persona carries the anti-explicit hard gate."""
+    import json
+    import unicodedata
+    from pathlib import Path
+
+    import diana
+
+    path = Path(diana.__file__).resolve().parent / "config" / "persona_atencion.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    def _norm(text: str) -> str:
+        return "".join(
+            c for c in unicodedata.normalize("NFD", text.lower())
+            if unicodedata.category(c) != "Mn"
+        )
+
+    persona = _norm(data["voz_configurada"]["persona"])
+    rules = [_norm(r) for r in data["voz_configurada"]["reglas_estilo"]]
+    assert "sin contenido explicito" in persona
+    assert "intim" in persona  # covers "íntima" (persona) / "íntimo" (reglas)
+    assert any("intimo" in r or "explicito" in r or "coqueta" in r for r in rules)

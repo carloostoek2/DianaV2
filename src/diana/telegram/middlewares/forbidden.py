@@ -85,6 +85,7 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         notifier: OwnerNotifierPort,
         vips: VipStore | None = None,
         behavior: BehaviorDeliverer | None = None,
+        feature_general_mode_enabled: bool = False,
     ) -> None:
         self._keywords = sanitize_forbidden_keywords(list(keywords))
         self._coordinator = coordinator
@@ -92,6 +93,7 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         self._notifier = notifier
         self._vips = vips
         self._behavior = behavior
+        self._feature_general = bool(feature_general_mode_enabled)
 
     def set_keywords(self, keywords: list[str]) -> None:
         """Replace keyword list in place (boot load from system_config)."""
@@ -126,14 +128,27 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                 return await handler(event, data)
             allowed = await self._vips.is_allowed(user.id)
             if not allowed:
-                logger.info(
-                    "j4_forbidden_skip_non_vip",
-                    extra={
-                        "chat_id": chat_id,
-                        "telegram_user_id": user.id,
-                    },
-                )
-                return await handler(event, data)
+                # REQ-ATN-08: atencion channel (general mode) must still be
+                # checked for forbidden keywords — the anti-explicit guarantee
+                # covers both channels. Flag-gated so flag-OFF behavior is
+                # byte-identical to today (non-VIP skips as before).
+                if self._feature_general and data.get("channel_type") == "atencion":
+                    logger.info(
+                        "forbidden_atencion_enforced",
+                        extra={
+                            "chat_id": chat_id,
+                            "telegram_user_id": user.id,
+                        },
+                    )
+                else:
+                    logger.info(
+                        "j4_forbidden_skip_non_vip",
+                        extra={
+                            "chat_id": chat_id,
+                            "telegram_user_id": user.id,
+                        },
+                    )
+                    return await handler(event, data)
 
         text = event.text or event.caption or ""
         j4 = classify_j4_text(text)
