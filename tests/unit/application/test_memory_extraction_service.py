@@ -377,7 +377,7 @@ async def test_prompt_incluye_resumen_no_repetir() -> None:
     assert len(llm.calls) == 1
     system_content = llm.calls[0][0]["content"]
     user_content = llm.calls[0][1]["content"]
-    assert "Hechos ya conocidos (NO repetir)" in user_content
+    assert "Hechos ya conocidos (DATOS" in user_content
     assert "Vive en Buenos Aires" in user_content
     assert "[identidad]" in user_content
     assert "me gusta el trato cercano" in user_content
