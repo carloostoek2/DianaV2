@@ -1,8 +1,10 @@
-"""E2E: atomic per-(chat_id, local-day) client-message upsert on real Postgres.
+"""E2E: SqlDailyMessageLimitStore on real Postgres (F4-02 atencion).
 
-Covers F4-02: the exact single-statement ``ON CONFLICT`` the repo uses returns
-the running count (1 then 2) without drift, and a new ``fecha_local`` civil
-date starts a fresh row at 1 — the daily reset has no TTL/inactivity trigger.
+Exercises the actual repository method (ORM statement generation, session
+lifecycle, commit placement, ``scalar_one()``) instead of a hand-copied SQL
+string: two increments land on 1 and 2 without drift, a new ``fecha_local``
+civil date starts a fresh row at 1, and concurrent increments serialize to
+distinct counts (1 and 2) with a third landing on 3.
 
 Runs on the session-level migrated DB (parent ``engine`` fixture applies
 ``alembic upgrade head``); rows written here are DELETEd at the end so other
@@ -11,23 +13,20 @@ tier2 tests are never polluted.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from diana.infrastructure.db.repositories.daily_message_limits import (
+    SqlDailyMessageLimitStore,
+)
 
 _CHAT = 988221
 _DAY = date(2026, 8, 5)
-
-_STMT = text(
-    """
-    INSERT INTO daily_message_limits (chat_id, fecha_local, count)
-    VALUES (:chat_id, :fecha_local, 1)
-    ON CONFLICT (chat_id, fecha_local)
-    DO UPDATE SET count = daily_message_limits.count + 1
-    RETURNING count
-    """
-)
+_DAY2 = date(2026, 8, 6)
 
 _DELETE = text(
     "DELETE FROM daily_message_limits "
@@ -35,19 +34,28 @@ _DELETE = text(
 )
 
 
+def _store(engine) -> SqlDailyMessageLimitStore:
+    """Build the real repo bound to the test engine's session factory."""
+    sf = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    return SqlDailyMessageLimitStore(sf)
+
+
+async def _cleanup(engine, *days: date) -> None:
+    async with engine.begin() as conn:
+        for day in days:
+            await conn.execute(_DELETE, {"chat_id": _CHAT, "fecha_local": day})
+
+
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_on_conflict_increment_is_atomic(engine) -> None:
-    async with engine.begin() as conn:
-        try:
-            first = (
-                await conn.execute(_STMT, {"chat_id": _CHAT, "fecha_local": _DAY})
-            ).scalar_one()
-            assert first == 1
-            second = (
-                await conn.execute(_STMT, {"chat_id": _CHAT, "fecha_local": _DAY})
-            ).scalar_one()
-            assert second == 2
+    store = _store(engine)
+    try:
+        first = await store.increment(_CHAT, fecha_local=_DAY)
+        assert first == 1
+        second = await store.increment(_CHAT, fecha_local=_DAY)
+        assert second == 2
+        async with engine.begin() as conn:
             stored = (
                 await conn.execute(
                     text(
@@ -57,26 +65,37 @@ async def test_on_conflict_increment_is_atomic(engine) -> None:
                     {"chat_id": _CHAT, "fecha_local": _DAY},
                 )
             ).scalar_one()
-            assert stored == 2
-        finally:
-            await conn.execute(_DELETE, {"chat_id": _CHAT, "fecha_local": _DAY})
+        assert stored == 2
+    finally:
+        await _cleanup(engine, _DAY)
 
 
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_new_local_day_resets_count(engine) -> None:
-    day2 = date(2026, 8, 6)
-    async with engine.begin() as conn:
-        try:
-            first = (
-                await conn.execute(_STMT, {"chat_id": _CHAT, "fecha_local": _DAY})
-            ).scalar_one()
-            assert first == 1
-            # Same chat, new civil date → fresh row, counter restarts at 1.
-            second = (
-                await conn.execute(_STMT, {"chat_id": _CHAT, "fecha_local": day2})
-            ).scalar_one()
-            assert second == 1
-        finally:
-            await conn.execute(_DELETE, {"chat_id": _CHAT, "fecha_local": _DAY})
-            await conn.execute(_DELETE, {"chat_id": _CHAT, "fecha_local": day2})
+    store = _store(engine)
+    try:
+        first = await store.increment(_CHAT, fecha_local=_DAY)
+        assert first == 1
+        # Same chat, new civil date → fresh row, counter restarts at 1.
+        second = await store.increment(_CHAT, fecha_local=_DAY2)
+        assert second == 1
+    finally:
+        await _cleanup(engine, _DAY, _DAY2)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_concurrent_increments_serialize(engine) -> None:
+    store = _store(engine)
+    try:
+        results = await asyncio.gather(
+            store.increment(_CHAT, fecha_local=_DAY),
+            store.increment(_CHAT, fecha_local=_DAY),
+        )
+        # ON CONFLICT serializes the pair → counts land on 1 and 2, no drift.
+        assert sorted(results) == [1, 2]
+        third = await store.increment(_CHAT, fecha_local=_DAY)
+        assert third == 3
+    finally:
+        await _cleanup(engine, _DAY)
