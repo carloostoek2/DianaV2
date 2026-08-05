@@ -1437,9 +1437,21 @@ class TurnOrchestrator:
                     # query (race TOCTOU): if a newer message already opened a
                     # query with a future freeze_until, drop this turn instead
                     # of creating a second query + second DM.
-                    already = await self._gray_zone.get_open_query_by_chat_id(
-                        turn_ctx.chat_id
-                    )
+                    # O3: the F20 re-check is fail-soft too — a transient DB
+                    # error must not escape to business.py and leave the turn
+                    # non-terminal. Fail open: proceed as if no open query.
+                    try:
+                        already = await self._gray_zone.get_open_query_by_chat_id(
+                            turn_ctx.chat_id
+                        )
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "atencion_gray_zone_recheck_failed",
+                            turn_id=str(turn_id),
+                            chat_id=incoming.chat_id,
+                        )
+                        already = None
                     if already is not None:
                         existing_freeze = getattr(already, "freeze_until", None)
                         if existing_freeze is not None:
