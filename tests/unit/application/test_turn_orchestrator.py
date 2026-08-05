@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -162,6 +163,7 @@ def _build(
     behavior_override: object | None = None,
     daily_limit: object | None = None,
     turns: InMemoryTurnStore | None = None,
+    persona_catalog_provider: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -223,6 +225,7 @@ def _build(
         delay_policy=delay_policy,
         daily_message_limit_store=daily_limit,
         turns=turns,
+        persona_catalog_provider=persona_catalog_provider,
     )
     return {
         "orch": orch,
@@ -3309,3 +3312,131 @@ async def test_atencion_limit_day_boundary_resets() -> None:
     ]
     # Counts 1, 2, 1 — never over limit across the boundary.
     assert list(store._counts.values()) == [2, 1]  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# REQ-ATN-05 — per-channel delivery_mode profile config
+# ---------------------------------------------------------------------------
+
+
+class _FakeCatalogProvider:
+    """Dict-backed PersonaCatalogProvider double for channel-mode resolution."""
+
+    def __init__(
+        self,
+        catalogs: dict[str, dict] | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.catalogs = catalogs or {}
+        self.error = error
+        self.calls: list[str] = []
+
+    async def get_catalog(self, channel_type: str = "vip") -> dict | None:
+        self.calls.append(channel_type)
+        if self.error is not None:
+            raise self.error
+        return self.catalogs.get(channel_type)
+
+
+def _mode_decision() -> Decision:
+    return Decision(
+        action="approve",
+        reason="good",
+        evaluation=_eval(),
+        draft_text="reply draft",
+    )
+
+
+@pytest.mark.asyncio
+async def test_atencion_stays_supervised_under_autonomous_global() -> None:
+    """Impact-report invariant: profile supervised wins over global autonomous.
+
+    The atencion profile short-circuits BEFORE the AMS gate, so the autonomous
+    global mode can never make atencion autonomous when the profile says
+    supervised. Assert AMS was never consulted.
+    """
+    provider = _FakeCatalogProvider({"atencion": {"delivery_mode": "supervised"}})
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="autonomous",
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        persona_catalog_provider=provider,
+    )
+    g["ams"].is_autonomous_enabled = AsyncMock(
+        side_effect=AssertionError("AMS must not be consulted")
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
+    assert mode == "supervised"
+    assert provider.calls == ["atencion"]
+
+
+@pytest.mark.asyncio
+async def test_atencion_supervised_from_profile_when_global_autonomous() -> None:
+    """Profile supervised beats global autonomous (the REQ-ATN-05 invariant)."""
+    provider = _FakeCatalogProvider({"atencion": {"delivery_mode": "supervised"}})
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="autonomous",
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        persona_catalog_provider=provider,
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
+    assert mode == "supervised"
+
+
+@pytest.mark.asyncio
+async def test_vip_uses_global_when_profile_absent() -> None:
+    """Catalog without delivery_mode → falls back to the global configured mode."""
+    provider = _FakeCatalogProvider({"vip": {}})  # no delivery_mode key
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="fake_delivery",
+        persona_catalog_provider=provider,
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "vip")  # noqa: SLF001
+    assert mode == "fake_delivery"
+
+
+@pytest.mark.asyncio
+async def test_catalog_read_failure_falls_back_to_global() -> None:
+    """Provider raises (unknown channel / DB error) → global mode, no crash."""
+    provider = _FakeCatalogProvider(error=ValueError("unknown channel"))
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="fake_delivery",
+        persona_catalog_provider=provider,
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
+    assert mode == "fake_delivery"
+
+
+@pytest.mark.asyncio
+async def test_atencion_autonomous_profile_still_demoted_by_ams() -> None:
+    """Safety net: even a catalog delivery_mode=autonomous is demoted for
+    vip_id=None when the AMS gate denies (global supervised, no vip)."""
+    provider = _FakeCatalogProvider({"atencion": {"delivery_mode": "autonomous"}})
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="autonomous",
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        persona_catalog_provider=provider,
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
+    assert mode == "supervised"
+
+
+@pytest.mark.asyncio
+async def test_provider_none_uses_global() -> None:
+    """No provider injected → global mode untouched (backward compat)."""
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="supervised",
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
+    assert mode == "supervised"

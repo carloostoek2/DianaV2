@@ -640,6 +640,7 @@ def build_app(
         clock=clock,
         daily_message_limit_store=daily_message_limit_repo,
         turns=turns,
+        persona_catalog_provider=catalog_provider,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).

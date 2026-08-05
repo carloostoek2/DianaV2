@@ -186,6 +186,13 @@ def validate_persona_catalog(data: dict[str, Any]) -> dict[str, Any]:
     _validate_unique_ids("voice_patterns", data["voice_patterns"])
     _validate_unique_ids("policies", data["policies"])
     _validate_schedule(data["schedule"])
+    # Optional: channel delivery_mode (REQ-ATN-05). Absent → consumer default.
+    dm = data.get("delivery_mode")
+    if dm is not None:
+        if dm not in ("supervised", "autonomous", "fake_delivery"):
+            raise ValueError(
+                f"delivery_mode must be supervised|autonomous|fake_delivery, got {dm!r}"
+            )
     return data
 
 

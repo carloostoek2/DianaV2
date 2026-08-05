@@ -141,6 +141,7 @@ class TurnOrchestrator:
         clock: object | None = None,
         daily_message_limit_store: object | None = None,
         turns: TurnStore | None = None,
+        persona_catalog_provider: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -161,6 +162,7 @@ class TurnOrchestrator:
         self._clock = clock
         self._daily_limit = daily_message_limit_store
         self._turns = turns
+        self._catalog_provider = persona_catalog_provider
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
@@ -170,15 +172,24 @@ class TurnOrchestrator:
         return self._delivery_mode
 
     async def _resolve_effective_mode(
-        self, vip_id: UUID | None
+        self, vip_id: UUID | None, channel_type: str = "vip",
     ) -> DeliveryMode:
         """Resolve the mode used for the pre-pipeline delay.
 
-        Autonomous mode must pass both L1 (feature flag) and L2
-        (global mode or per-VIP auto_send) gates. Falls back to
-        supervised otherwise.
+        Per-channel profile ``delivery_mode`` overrides the global mode when the
+        catalog is available and the field is present (REQ-ATN-05). Autonomous
+        mode must then pass both L1 (feature flag) and L2 (global mode or
+        per-VIP auto_send) gates. Falls back to supervised otherwise. The AMS
+        ``vip_id=None → supervised`` guard stays the final safety net.
         """
         mode = self._delivery_mode
+        if self._catalog_provider is not None:
+            try:
+                catalog = await self._catalog_provider.get_catalog(channel_type)
+            except Exception:
+                catalog = None
+            if catalog is not None:
+                mode = catalog.get("delivery_mode", mode)
         if mode != "autonomous":
             return mode
         if self._autonomous_mode is None:
@@ -446,7 +457,9 @@ class TurnOrchestrator:
             if aborted_owner:
                 return turn_id
 
-        mode = await self._resolve_effective_mode(incoming.vip_id)
+        mode = await self._resolve_effective_mode(
+            incoming.vip_id, incoming.channel_type
+        )
         pre_delay = (
             self._delay_policy.initial_delay_seconds(mode)
             if self._delay_policy is not None
