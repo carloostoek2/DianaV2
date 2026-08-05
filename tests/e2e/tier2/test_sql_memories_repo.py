@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from diana.application.ports import MemoryInsert
 from diana.infrastructure.db.repositories.memories import (
@@ -148,9 +149,12 @@ async def test_replace_vip_profile_inserts_sections_and_perfil(session_factory):
         assert status_row.status == "pending_owner"
         assert status_row.source_turn_id is None
 
-    # memory_to_dict exposes the F5 columns.
+    # memory_to_dict exposes the F5 columns. Fix round F1/M1: the perfil row
+    # is excluded from retrieval, so only the two auto facts come back
+    # (pending_owner sensible + category=perfil are both filtered out).
     found = await repo.find_by_vip_and_similarity(vip_id, _EMBEDDING_384)
-    assert len(found) == 3  # sensible pending_owner filtered out
+    assert len(found) == 2  # perfil + sensible pending_owner filtered out
+    assert all(d["category"] != "perfil" for d in found)
     first = found[0]
     assert "status" in first
     assert "source_turn_id" in first
@@ -271,10 +275,146 @@ async def test_replace_vip_profile_unknown_vip_fails_fk(session_factory):
             approved_by="auto",
         )
     ]
-    with pytest.raises(Exception):
+    # Fix round (L5): narrow the expectation to the actual failure class — a
+    # broad `Exception` could mask an unrelated error (e.g. connection) as pass.
+    with pytest.raises(IntegrityError):
         await repo.replace_vip_profile(
             uuid4(),
             rows=rows,
             perfil={"vip_id": str(uuid4()), "secciones": {}},
             perfil_embedding=_EMBEDDING_384,
         )
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_replace_vip_profile_preserves_approved_and_discarded(
+    session_factory,
+):
+    """Fix round (F4): regeneration must not destroy owner decisions.
+
+    Rows the owner approved/discarded survive the next backfill; only the
+    regenerable rows (auto/pending_owner) are replaced.
+    """
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 506)
+
+    rows = [
+        MemoryInsert(
+            category="identidad",
+            text="Vive en Buenos Aires",
+            embedding=_EMBEDDING_384,
+            confidence=0.9,
+            status="auto",
+            approved_by="auto",
+        ),
+        MemoryInsert(
+            category="sensible",
+            text="Mencionó problemas de salud",
+            embedding=_EMBEDDING_384,
+            confidence=0.7,
+            status="pending_owner",
+            approved_by=None,
+        ),
+    ]
+    perfil = {
+        "vip_id": str(vip_id),
+        "secciones": {"identidad": ["Vive en Buenos Aires"]},
+        "generado_el": "2026-08-05T12:00:00+00:00",
+        "actualizado_el": "2026-08-05T12:00:00+00:00",
+        "fuente": "backfill",
+        "version": 1,
+    }
+    first = await repo.replace_vip_profile(
+        vip_id, rows=rows, perfil=perfil, perfil_embedding=_EMBEDDING_384
+    )
+    assert first == 3  # 2 facts + perfil
+    assert await _count_memories(session_factory, vip_id) == 3
+
+    # The owner decides on both facts (simulating the future DM approval flow).
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "UPDATE memories SET status = 'approved' "
+                "WHERE vip_id = :vip AND category = 'identidad'"
+            ),
+            {"vip": vip_id},
+        )
+        await session.execute(
+            text(
+                "UPDATE memories SET status = 'discarded' "
+                "WHERE vip_id = :vip AND category = 'sensible'"
+            ),
+            {"vip": vip_id},
+        )
+        await session.commit()
+
+    # Regenerate: approved/discarded rows must survive; the regenerable ones
+    # (perfil auto + nothing else left in auto/pending_owner) are replaced.
+    second = await repo.replace_vip_profile(
+        vip_id, rows=rows, perfil=perfil, perfil_embedding=_EMBEDDING_384
+    )
+    assert second == 3  # 2 facts + perfil reinserted
+    assert await _count_memories(session_factory, vip_id) == 5  # 3 new + 2 kept
+
+    async with session_factory() as session:
+        statuses = (
+            await session.execute(
+                text(
+                    "SELECT status FROM memories WHERE vip_id = :vip ORDER BY category"
+                ),
+                {"vip": vip_id},
+            )
+        ).scalars().all()
+    assert sorted(statuses) == [
+        "approved",
+        "auto",
+        "auto",
+        "discarded",
+        "pending_owner",
+    ]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_replace_vip_profile_rejects_invalid_status_and_dimension(
+    session_factory,
+):
+    """Fix round (F6/L7): the DTO and the repo fail fast with a descriptive
+    ValueError instead of a raw DB error."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 507)
+    perfil = {"vip_id": str(vip_id), "secciones": {}}
+
+    # DTO-level (F6): out-of-domain status is rejected at construction time.
+    with pytest.raises(ValueError, match="invalid MemoryInsert.status"):
+        MemoryInsert(
+            category="identidad",
+            text="x",
+            embedding=_EMBEDDING_384,
+            confidence=0.9,
+            status="approved_by_typo",  # type: ignore[arg-type]  # intentional: F6 runtime validation
+            approved_by="auto",
+        )
+
+    # Repo-level (L7): embedding dimension validated at the repo boundary.
+    bad_dim = MemoryInsert(
+        category="identidad",
+        text="x",
+        embedding=[0.1] * 8,  # not 384
+        confidence=0.9,
+        status="auto",
+        approved_by="auto",
+    )
+    with pytest.raises(ValueError, match="embedding dimension"):
+        await repo.replace_vip_profile(
+            vip_id, rows=[bad_dim], perfil=perfil, perfil_embedding=_EMBEDDING_384
+        )
+
+    with pytest.raises(ValueError, match="perfil embedding dimension"):
+        await repo.replace_vip_profile(
+            vip_id, rows=[], perfil=perfil, perfil_embedding=[0.1] * 8
+        )
+
+    # Nothing was written by the rejected calls.
+    assert await _count_memories(session_factory, vip_id) == 0

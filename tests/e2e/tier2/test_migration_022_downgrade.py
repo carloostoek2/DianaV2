@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -138,6 +139,38 @@ async def test_022_downgrade_reverses_schema_and_preserves_rows(
                     )
                 ).scalar_one()
                 assert has_index == 1
+
+                # Fix round (L3): the status CHECK constraint exists and
+                # rejects out-of-domain values at the schema level.
+                has_check = (
+                    await conn.execute(
+                        text(
+                            "SELECT count(*) FROM pg_constraint "
+                            "WHERE conname = 'ck_memories_status'"
+                        )
+                    )
+                ).scalar_one()
+                assert has_check == 1
+
+            # The failed INSERT aborts its transaction — run it in its own
+            # block so the rest of the assertions are not poisoned.
+            with pytest.raises(IntegrityError):
+                async with engine2.begin() as conn:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO memories "
+                            "(vip_id, embedding, content, category, confidence, "
+                            " status) "
+                            "VALUES (:vip, CAST(:emb AS vector), "
+                            "        CAST(:content AS jsonb), 'identidad', 0.8, "
+                            "        'bogus_status')"
+                        ),
+                        {
+                            "vip": vip_id,
+                            "emb": _EMBEDDING_384,
+                            "content": '{"texto":"x","fact":"x"}',
+                        },
+                    )
         finally:
             await engine2.dispose()
 
@@ -157,6 +190,16 @@ async def test_022_downgrade_reverses_schema_and_preserves_rows(
                     )
                 ).scalar_one()
                 assert has_index == 0
+
+                has_check = (
+                    await conn.execute(
+                        text(
+                            "SELECT count(*) FROM pg_constraint "
+                            "WHERE conname = 'ck_memories_status'"
+                        )
+                    )
+                ).scalar_one()
+                assert has_check == 0  # CHECK dropped with the columns
 
                 memories_rows = (
                     await conn.execute(text("SELECT count(*) FROM memories"))

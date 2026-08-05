@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -123,6 +124,18 @@ class FakeClock:
         return self._now
 
 
+class FakeVipStore:
+    """Fix round (F5): minimal VipReader double for the binding check."""
+
+    def __init__(self, telegram_user_id: int | None = 111) -> None:
+        self._tid = telegram_user_id
+
+    async def get_by_id(self, vip_id: UUID) -> Any:
+        if self._tid is None:
+            return None
+        return SimpleNamespace(id=vip_id, telegram_user_id=self._tid)
+
+
 def _msg(role: str, text: str, ts: str = "2026-08-05 10:30:00+00:00") -> dict:
     return {"role": role, "text": text, "timestamp": ts}
 
@@ -134,6 +147,7 @@ def _build_service(
     llm: FakeLLM | None = None,
     notifier: FakeNotifier | None = None,
     window_size: int = 200,
+    vips: FakeVipStore | None = None,
 ) -> tuple[
     MemoryBackfillService, FakeHistory, FakeLLM, FakeMemoryWriter, FakeEmbedder
 ]:
@@ -148,6 +162,7 @@ def _build_service(
         memories=writer,
         embedder=embedder,
         notifier=notifier or FakeNotifier(),
+        vips=vips,
         window_size=window_size,
         clock=FakeClock(),
     )
@@ -395,3 +410,202 @@ async def test_notifier_failure_does_not_break_report() -> None:
     assert report.facts == 1
     assert len(writer.replace_calls) == 1  # write happened despite notify failure
     assert notifier.infos == []
+
+
+# ---------------------------------------------------------------------------
+# fix round cases (F2, F5, L1, L8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_binding_mismatch_fails_closed_without_any_io() -> None:
+    """Fix round (F5): chat_id not bound to vip_id → failed report, no reads
+    or writes at all (the wiring can never contaminate another VIP)."""
+    svc, history, llm, writer, _ = _build_service(
+        messages=[_msg("vip", "hola")],
+        vips=FakeVipStore(telegram_user_id=999),  # chat_id=1 does not match
+    )
+    report = await svc.generate_profile(uuid4(), chat_id=1)
+
+    assert report.status == "failed"
+    assert history.chat_ids == []
+    assert llm.calls == []
+    assert writer.replace_calls == []
+
+
+@pytest.mark.asyncio
+async def test_binding_match_proceeds_and_unknown_vip_fails_closed() -> None:
+    """Fix round (F5): matching telegram_user_id → normal flow; unknown VIP
+    (store returns None) also fails closed."""
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[HechoExtracted(seccion="identidad", texto="Vive en Buenos Aires")]
+            )
+        ]
+    )
+    svc, history, _, writer, _ = _build_service(
+        messages=[_msg("vip", "soy de buenos aires")],
+        llm=llm,
+        vips=FakeVipStore(telegram_user_id=21),  # chat_id=21 matches
+    )
+    report = await svc.generate_profile(uuid4(), chat_id=21)
+    assert report.status == "ok"
+    assert history.chat_ids == [21]
+    assert len(writer.replace_calls) == 1
+
+    svc2, history2, _, writer2, _ = _build_service(
+        messages=[_msg("vip", "hola")],
+        vips=FakeVipStore(telegram_user_id=None),  # VIP not found
+    )
+    report2 = await svc2.generate_profile(uuid4(), chat_id=22)
+    assert report2.status == "failed"
+    assert history2.chat_ids == []
+    assert writer2.replace_calls == []
+
+
+@pytest.mark.asyncio
+async def test_sensitive_term_heuristic_overrides_llm_classification() -> None:
+    """Fix round (F2): the code-side term heuristic upgrades an LLM
+    ``sensible=false`` fact to ``pending_owner`` (fail-closed backstop)."""
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="preferencias",
+                        texto="Toma medicación para la diabetes",
+                        sensible=False,  # LLM misclassified; heuristic must override
+                    )
+                ]
+            )
+        ]
+    )
+    svc, _, _, writer, _ = _build_service(
+        messages=[_msg("vip", "tomo medicación para la diabetes")],
+        llm=llm,
+    )
+    report = await svc.generate_profile(uuid4(), chat_id=12)
+
+    assert report.status == "ok"
+    assert report.pending_owner == 1
+    rows = writer.replace_calls[0][1]
+    assert len(rows) == 1
+    assert rows[0].status == "pending_owner"
+    assert rows[0].approved_by is None
+
+
+@pytest.mark.asyncio
+async def test_extraction_prompt_fences_transcript_as_data() -> None:
+    """Fix round (F2, SEC-INJ-02): the transcript is fenced and flagged as
+    data, not instructions, in both the system prompt and the window prompt."""
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    svc, _, _, _, _ = _build_service(messages=[_msg("vip", "hola")], llm=llm)
+
+    await svc.generate_profile(uuid4(), chat_id=13)
+
+    system = llm.calls[0][0]["content"]
+    user = llm.calls[0][1]["content"]
+    assert "DATOS" in system
+    assert "no instrucciones" in system
+    assert "```transcripto" in user
+    assert "DATOS, no instrucciones" in user
+
+
+@pytest.mark.asyncio
+async def test_empty_extraction_reports_without_writing_or_notifying() -> None:
+    """Fix round (L1): zero facts across all windows → empty_extraction, no
+    profile write and no owner DM."""
+    llm = FakeLLM([WindowExtraction(hechos=[]), WindowExtraction(hechos=[])])
+    notifier = FakeNotifier()
+    svc, _, _, writer, _ = _build_service(
+        messages=[_msg("vip", f"m{i}") for i in range(250)],
+        llm=llm,
+        notifier=notifier,
+    )
+
+    report = await svc.generate_profile(uuid4(), chat_id=14)
+
+    assert report.status == "empty_extraction"
+    assert report.windows == 2
+    assert writer.replace_calls == []
+    assert notifier.infos == []
+
+
+@pytest.mark.asyncio
+async def test_transcript_skips_empty_lines_and_missing_timestamp() -> None:
+    """Fix round (L8): empty/blank texts never emit transcript lines; a
+    message without timestamp renders without the ``[ts]`` prefix."""
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    svc, _, _, _, _ = _build_service(
+        messages=[
+            {"role": "vip", "text": "", "timestamp": "2026-08-05 10:30:00+00:00"},
+            {"role": "vip", "text": "   ", "timestamp": "2026-08-05 10:31:00+00:00"},
+            {"role": "vip", "text": "sin timestamp"},
+            {"role": "owner", "text": "con ts", "timestamp": "2026-08-05 10:32:00+00:00"},
+        ],
+        llm=llm,
+    )
+
+    await svc.generate_profile(uuid4(), chat_id=15)
+
+    user_content = llm.calls[0][1]["content"]
+    assert "VIP: sin timestamp" in user_content  # no [ts] prefix
+    assert "[2026-08-05 10:30]" not in user_content  # empty line skipped
+    assert "[2026-08-05 10:31]" not in user_content  # blank line skipped
+    assert "[2026-08-05 10:32] Diana: con ts" in user_content
+    assert "\nVIP: \n" not in user_content
+
+
+@pytest.mark.asyncio
+async def test_window_size_zero_or_negative_clamps_to_one() -> None:
+    """Fix round (L8): window_size <= 0 clamps to 1 — every line becomes its
+    own window instead of crashing or creating one giant window."""
+    for bad in (0, -1):
+        llm = FakeLLM(
+            [
+                WindowExtraction(
+                    hechos=[HechoExtracted(seccion="identidad", texto=f"hecho {i}")]
+                )
+                for i in range(3)
+            ]
+        )
+        svc, _, _, writer, _ = _build_service(
+            messages=[_msg("vip", f"m{i}") for i in range(3)],
+            llm=llm,
+            window_size=bad,
+        )
+        report = await svc.generate_profile(uuid4(), chat_id=16)
+        assert report.status == "ok"
+        assert report.windows == 3
+        assert len(llm.calls) == 3
+        assert len(writer.replace_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_transcript_line_truncation_and_char_budget() -> None:
+    """Fix round (M2): lines are truncated to 400 chars and windows respect
+    the 12K char budget on top of the message-count cap."""
+    # Truncation: a 900-char message becomes 400 chars + ellipsis marker.
+    long_msg = _msg("vip", "x" * 900)
+    # Char budget: 36 lines (~375 chars each after the prefix) sum well over
+    # 12K chars, so a second window opens far below the 200-message cap.
+    filler = [_msg("vip", "y" * 350) for _ in range(35)]
+    llm = FakeLLM([WindowExtraction(hechos=[]), WindowExtraction(hechos=[])])
+    svc, _, _, _, _ = _build_service(
+        messages=[long_msg] + filler,
+        llm=llm,
+        window_size=200,
+    )
+
+    await svc.generate_profile(uuid4(), chat_id=17)
+
+    assert len(llm.calls) == 2  # char budget split the 36 lines into 2 windows
+    first_window = llm.calls[0][1]["content"]
+    assert "x" * 401 not in first_window  # truncated, not 900 raw chars
+    assert "x" * 400 in first_window
+    assert "…" in first_window
+    # The second window only starts because of the char budget — it contains
+    # the tail lines, and the accumulating prompt is still passed along.
+    second_window = llm.calls[1][1]["content"]
+    assert "Hechos ya extraídos" in second_window
