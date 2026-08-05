@@ -28,6 +28,7 @@ class GrayZoneQueryRepo:
         question: str,
         draft: str,
         freeze_until: datetime | None = None,
+        chat_id: int | None = None,
     ) -> GrayZoneQuery:
         async with self._sf() as session:
             row = GrayZoneQuery(
@@ -37,6 +38,7 @@ class GrayZoneQueryRepo:
                 draft=draft,
                 status="open",
                 freeze_until=freeze_until,
+                chat_id=chat_id,
             )
             session.add(row)
             await session.commit()
@@ -104,6 +106,24 @@ class GrayZoneQueryRepo:
                 select(GrayZoneQuery)
                 .where(
                     GrayZoneQuery.vip_id == vip_id,
+                    GrayZoneQuery.status == "open",
+                )
+                .order_by(GrayZoneQuery.created_at.desc())
+                .limit(1)
+            )
+            return result.scalars().first()
+
+    async def get_open_by_chat_id(self, chat_id: int) -> GrayZoneQuery | None:
+        """Return the most recent open query for a chat (atencion), or None.
+
+        Used by the atencion freeze middleware: a non-VIP chat is "frozen"
+        while it has an open gray zone query (A1 — freeze is the query row).
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(GrayZoneQuery)
+                .where(
+                    GrayZoneQuery.chat_id == chat_id,
                     GrayZoneQuery.status == "open",
                 )
                 .order_by(GrayZoneQuery.created_at.desc())

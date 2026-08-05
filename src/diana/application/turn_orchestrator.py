@@ -1276,30 +1276,56 @@ class TurnOrchestrator:
                     },
                 )
             elif turn_ctx.channel_type == "atencion" and turn_ctx.vip_id is None:
-                # atencion channel (non-VIP) turn without vip_id: demote to
-                # approve instead of crashing. Real gray zone for atencion is
-                # Item 4; the owner reviews the draft directly. A vip-less turn
-                # on the VIP channel must NOT take this path — it falls through
-                # to the RuntimeError guard below.
-                demoted = decision.model_copy(
-                    update={
-                        "action": "approve",
-                        "reason": "atencion_no_vip_doctrine",
-                    }
-                )
-                await self._coordinator.transition(
-                    turn_id, TurnStatus.PENDING_APPROVAL
-                )
-                await self._admin.send_draft_for_approval(
-                    turn_ctx, demoted, turn_id
-                )
-                logger.info(
-                    "atencion_consult_doctrine_demoted",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "chat_id": incoming.chat_id,
-                    },
-                )
+                # atencion channel (non-VIP) turn without vip_id: real gray
+                # zone consult (create query with vip_id=None + chat_id) when
+                # enabled/injected; otherwise demote to approve (byte-identical
+                # pre-Item-4 behavior). A vip-less turn on the VIP channel must
+                # NOT take this path — it falls through to the RuntimeError
+                # guard below.
+                if self._feature_gray_zone_enabled and self._gray_zone is not None:
+                    query = await self._gray_zone.create_query(
+                        vip_id=None,
+                        chat_id=turn_ctx.chat_id,
+                        turn_id=turn_id,
+                        question=turn_ctx.text,
+                        draft=decision.draft_text or "",
+                    )
+                    await self._admin.send_doctrine_query(
+                        turn_ctx, decision, turn_id, query
+                    )
+                    await self._coordinator.transition(
+                        turn_id, TurnStatus.GRAY_ZONE
+                    )
+                    logger.info(
+                        "atencion_consult_doctrine_gray_zone",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "chat_id": incoming.chat_id,
+                            "query_id": str(query.id)
+                            if hasattr(query, "id")
+                            else None,
+                        },
+                    )
+                else:
+                    demoted = decision.model_copy(
+                        update={
+                            "action": "approve",
+                            "reason": "atencion_no_vip_doctrine",
+                        }
+                    )
+                    await self._coordinator.transition(
+                        turn_id, TurnStatus.PENDING_APPROVAL
+                    )
+                    await self._admin.send_draft_for_approval(
+                        turn_ctx, demoted, turn_id
+                    )
+                    logger.info(
+                        "atencion_consult_doctrine_demoted",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "chat_id": incoming.chat_id,
+                        },
+                    )
             elif not self._feature_gray_zone_enabled:
                 raise RuntimeError(
                     "consult_doctrine action returned but gray zone feature is disabled"
@@ -1320,6 +1346,7 @@ class TurnOrchestrator:
                     turn_id=turn_id,
                     question=turn_ctx.text,
                     draft=decision.draft_text or "",
+                    chat_id=turn_ctx.chat_id,
                 )
                 await self._admin.send_doctrine_query(
                     turn_ctx, decision, turn_id, query

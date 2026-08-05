@@ -140,6 +140,7 @@ class FakeGrayZone:
             "turn_id": turn_id,
             "question": question,
             "draft": draft,
+            "chat_id": kwargs.get("chat_id"),
         })
         # Return a simple object matching GrayZoneQueryView protocol (id: UUID).
         return type("_Query", (), {"id": self.next_query_id})()
@@ -2335,7 +2336,43 @@ async def test_consult_doctrine_vip_less_vip_channel_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_consult_doctrine_atencion_demotes_to_approve() -> None:
-    """atencion channel (vip_id=None) consult_doctrine demotes to approve, no crash."""
+    """atencion channel (vip_id=None) consult_doctrine demotes to approve, no crash.
+
+    Gray zone feature OFF: the atencion demote path stays byte-identical
+    (no query is created and the turn goes to pending_approval).
+    """
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=FakeGrayZone(),
+        feature_gray_zone_enabled=False,
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion")
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "atencion_no_vip_doctrine"
+    # no gray zone query was created for the demoted turn
+    assert g["gray_zone"].queries == []
+    # the atencion channel travelled through the director unchanged
+    assert g["director"].calls[0].channel_type == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_atencion_gray_zone_creates_query() -> None:
+    """atencion channel (vip_id=None) consult_doctrine creates query + GRAY_ZONE.
+
+    Gray zone feature ON: the open gray zone row (resolved by chat_id) is the
+    atencion chat freeze (A1) — no VIP freeze, query carries chat_id.
+    """
     decision = Decision(
         action="consult_doctrine",
         reason="doctrine_not_found",
@@ -2348,15 +2385,19 @@ async def test_consult_doctrine_atencion_demotes_to_approve() -> None:
         feature_gray_zone_enabled=True,
     )
     turn_id = await g["orch"].handle_vip_message(
-        _vip(vip_id=None, channel_type="atencion")
+        _vip(vip_id=None, channel_type="atencion", chat_id=4242)
     )
     turn = await g["turns"].get(turn_id)
     assert turn is not None
-    assert turn.status == "pending_approval"
-    assert len(g["notifier"].drafts) == 1
-    assert g["notifier"].drafts[0].reason == "atencion_no_vip_doctrine"
-    # no gray zone query was created for the demoted turn
-    assert g["gray_zone"].queries == []
+    assert turn.status == "gray_zone"
+    # owner was notified with the doctrine query
+    assert len(g["notifier"].doctrines) == 1
+    # one query was created, anchored to chat_id with no VIP freeze
+    assert len(g["gray_zone"].queries) == 1
+    q = g["gray_zone"].queries[0]
+    assert q["vip_id"] is None
+    assert q["chat_id"] == 4242
+    assert q["turn_id"] == turn_id
     # the atencion channel travelled through the director unchanged
     assert g["director"].calls[0].channel_type == "atencion"
 

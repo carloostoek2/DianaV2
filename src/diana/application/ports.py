@@ -159,6 +159,8 @@ class GrayZoneServicePort(Protocol):
 
     async def get_open_query_by_vip_id(self, vip_id: UUID) -> GrayZoneQueryView | None: ...
 
+    async def get_open_query_by_chat_id(self, chat_id: int) -> GrayZoneQueryView | None: ...
+
     async def resolve_with_doctrine(
         self,
         query_id: UUID,

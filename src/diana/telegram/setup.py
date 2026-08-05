@@ -141,7 +141,12 @@ def build_dispatcher(
         OwnerDetectionMiddleware(
             owner_telegram_id=owner_telegram_id, coordinator=coordinator, history=history
         ),
-        FreezeCheckMiddleware(vips=vips, gray_zone=gray_zone, notifier=notifier),
+        FreezeCheckMiddleware(
+            vips=vips,
+            gray_zone=gray_zone,
+            notifier=notifier,
+            general_mode_enabled=feature_general_mode_enabled,
+        ),
         AuthMiddleware(
             vips=vips,
             promo=promo,

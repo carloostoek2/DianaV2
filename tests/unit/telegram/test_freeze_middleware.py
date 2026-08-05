@@ -23,24 +23,39 @@ from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 class _FakeGrayZoneView:
     """Minimal structural match for GrayZoneQueryView used in tests."""
 
-    def __init__(self, *, turn_id, question="hola", draft="borrador"):
+    def __init__(
+        self, *, turn_id, question="hola", draft="borrador", freeze_until=None
+    ):
         self.id = uuid4()
         self.turn_id = turn_id
         self.question = question
         self.draft = draft
+        self.freeze_until = freeze_until
 
 
 class _FakeGrayZone:
     """Structural match for GrayZoneServicePort."""
 
-    def __init__(self, query: _FakeGrayZoneView | None = None, *, error: bool = False):
+    def __init__(
+        self,
+        query: _FakeGrayZoneView | None = None,
+        *,
+        error: bool = False,
+        chat_query: _FakeGrayZoneView | None = None,
+    ):
         self._query = query
+        self._chat_query = chat_query if chat_query is not None else query
         self._error = error
 
     async def get_open_query_by_vip_id(self, vip_id):
         if self._error:
             raise RuntimeError("db down")
         return self._query
+
+    async def get_open_query_by_chat_id(self, chat_id):
+        if self._error:
+            raise RuntimeError("db down")
+        return self._chat_query
 
     async def get_open_query_by_turn_id(self, turn_id):
         return None
@@ -373,6 +388,222 @@ async def test_frozen_vip_edited_message_skips_reminder() -> None:
         date=0,
         chat=Chat(id=42, type="private"),
         from_user=User(id=1313, is_bot=False, first_name="U"),
+        text="hello",
+        business_connection_id="bc-1",
+        edit_date=12345,
+    )
+    result = await mw(handler, msg, {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+# ---- Atencion chat freeze (A1, gated by general mode) ----
+
+
+def _atencion_msg(user_id: int, text: str = "hola", chat_id: int = 42) -> Message:
+    return Message(
+        message_id=1,
+        date=0,
+        chat=Chat(id=chat_id, type="private"),
+        from_user=User(id=user_id, is_bot=False, first_name="U"),
+        text=text,
+        business_connection_id="bc-1",
+    )
+
+
+def _future_freeze() -> datetime:
+    return datetime.now(UTC) + timedelta(hours=1)
+
+
+@pytest.mark.asyncio
+async def test_atencion_frozen_chat_drops_with_general_mode() -> None:
+    """A1: open atencion query with future freeze_until drops the message."""
+    vips = InMemoryVipStore()  # user 1414 is NOT a VIP
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=_future_freeze())
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1414), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_awaited_once()
+    payload: DoctrineNotification = notifier.notify_doctrine.call_args[0][0]
+    assert payload.turn_id == query.turn_id
+    assert payload.chat_id == 42
+    assert payload.reason == "recordatorio_zona_gris"
+
+
+@pytest.mark.asyncio
+async def test_atencion_freeze_off_when_general_mode_disabled() -> None:
+    """Flag OFF: atencion chat freeze must NOT engage (byte-identical)."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=_future_freeze())
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips, gray_zone=gray_zone, notifier=notifier, general_mode_enabled=False
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1415), {})
+
+    assert result == "next"
+    handler.assert_awaited_once()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_expired_freeze_passes() -> None:
+    """A1: expired freeze_until lets the message through."""
+    vips = InMemoryVipStore()
+    past = datetime.now(UTC) - timedelta(hours=1)
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=past)
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1416), {})
+
+    assert result == "next"
+    handler.assert_awaited_once()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_no_open_query_passes() -> None:
+    """A1: no open query → message passes through."""
+    vips = InMemoryVipStore()
+    gray_zone = _FakeGrayZone(chat_query=None)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1417), {})
+
+    assert result == "next"
+    handler.assert_awaited_once()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_lookup_error_fails_open() -> None:
+    """A1: gray zone lookup failure passes through (fail-soft), no drop."""
+    vips = InMemoryVipStore()
+    gray_zone = _FakeGrayZone(error=True)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    with patch("diana.telegram.freeze_middleware.logger") as mock_logger:
+        result = await mw(handler, _atencion_msg(1418), {})
+
+    assert result == "next"
+    handler.assert_awaited_once()
+    notifier.notify_doctrine.assert_not_awaited()
+    assert mock_logger.exception.call_args.args[0] == "atencion_freeze_lookup_error"
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_reminder_debounce() -> None:
+    """A1: second message within TTL does not send a second reminder."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=_future_freeze())
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+        reminder_ttl_s=3600.0,
+    )
+    handler = AsyncMock(return_value="next")
+
+    await mw(handler, _atencion_msg(1419), {})
+    assert notifier.notify_doctrine.await_count == 1
+
+    await mw(handler, _atencion_msg(1419, text="otro"), {})
+    assert notifier.notify_doctrine.await_count == 1  # still 1
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_notifier_exception_still_drops() -> None:
+    """A1: notifier failure still drops the message (fail-soft)."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=_future_freeze())
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(side_effect=RuntimeError("tg down"))
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1420), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_edited_message_skips_reminder() -> None:
+    """A1: edited atencion message drops but does not re-nag."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=_future_freeze())
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+
+    msg = Message(
+        message_id=1,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=1421, is_bot=False, first_name="U"),
         text="hello",
         business_connection_id="bc-1",
         edit_date=12345,

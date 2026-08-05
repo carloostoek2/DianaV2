@@ -48,30 +48,31 @@ class GrayZoneService:
 
     async def create_query(
         self,
-        vip_id: UUID,
+        vip_id: UUID | None,
         turn_id: UUID,
         question: str,
         draft: str,
         *,
         freeze_duration_hours: int | None = None,
+        chat_id: int | None = None,
     ) -> object:
-        """Create an open gray zone query and freeze the VIP.
+        """Create an open gray zone query; freeze the VIP when present.
 
         VIP is frozen FIRST so that no window exists where the query is
         inserted but the VIP is unfrozen. If freeze_vip raises, no insert
-        occurs.
+        occurs. For atencion (``vip_id is None``) there is no VIP to freeze —
+        the atencion chat freeze is the open query row itself (A1), resolved
+        by ``chat_id``.
 
         The VIP remains frozen until the query is resolved or expired.
         Returns the ORM GrayZoneQuery row.
         """
-        if vip_id is None:
-            raise ValueError("vip_id is required to create a gray zone query")
-
         duration = freeze_duration_hours or self._default_timeout
         frozen_until = datetime.now(UTC) + timedelta(hours=duration)
 
         # Freeze first — if this fails, no query is orphaned.
-        await self._vips.freeze_vip(vip_id, frozen_until)
+        if vip_id is not None:
+            await self._vips.freeze_vip(vip_id, frozen_until)
 
         row = await self._queries.insert(
             vip_id=vip_id,
@@ -79,6 +80,7 @@ class GrayZoneService:
             question=question,
             draft=draft,
             freeze_until=frozen_until,
+            chat_id=chat_id,
         )
 
         logger.info(
@@ -86,6 +88,7 @@ class GrayZoneService:
             extra={
                 "query_id": str(row.id),
                 "vip_id": str(vip_id),
+                "chat_id": chat_id,
                 "turn_id": str(turn_id),
                 "frozen_until": frozen_until.isoformat(),
             },
@@ -238,6 +241,10 @@ class GrayZoneService:
     async def get_open_query_by_vip_id(self, vip_id: UUID) -> object | None:
         """Look up an open query by VIP id. Returns the ORM row or None."""
         return await self._queries.get_open_by_vip_id(vip_id)
+
+    async def get_open_query_by_chat_id(self, chat_id: int) -> object | None:
+        """Look up an open query by chat id (atencion freeze). Returns row or None."""
+        return await self._queries.get_open_by_chat_id(chat_id)
 
     async def freeze_vip(self, vip_id: UUID, duration_hours: int | None = None) -> None:
         """Freeze a VIP for a given duration (or default timeout)."""

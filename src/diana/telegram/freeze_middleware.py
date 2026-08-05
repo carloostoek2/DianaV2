@@ -45,12 +45,16 @@ class FreezeCheckMiddleware(BaseMiddleware):
         gray_zone: GrayZoneServicePort | None = None,
         notifier: OwnerNotifierPort | None = None,
         reminder_ttl_s: float = _DEFAULT_REMINDER_TTL_S,
+        general_mode_enabled: bool = False,
     ) -> None:
         self._vips = vips
         self._gray_zone = gray_zone
         self._notifier = notifier
         self._reminder_ttl = timedelta(seconds=reminder_ttl_s)
         self._last_reminder: dict[UUID, datetime] = {}
+        self._general_mode_enabled = general_mode_enabled
+        # F4 (A1): atencion chat freeze debounce, keyed by chat_id.
+        self._last_chat_reminder: dict[int, datetime] = {}
 
     async def __call__(
         self,
@@ -75,6 +79,10 @@ class FreezeCheckMiddleware(BaseMiddleware):
             return None
 
         if vip_record is None:
+            # F4 (A5): atencion chat freeze runs ONLY when general mode is ON.
+            # With flag OFF this returns the handler unchanged (byte-identical).
+            if self._general_mode_enabled:
+                return await self._maybe_atencion_freeze(handler, event, data)
             return await handler(event, data)
 
         # Cache the record so AuthMiddleware can reuse it.
@@ -162,6 +170,92 @@ class FreezeCheckMiddleware(BaseMiddleware):
                 "vip_id": str(vip_id),
                 "turn_id": str(query.turn_id),
             },
+        )
+
+    async def _maybe_atencion_freeze(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: dict[str, Any],
+    ) -> Any:
+        """Drop atencion-chat messages while an open gray zone query freezes them.
+
+        A1: for non-VIP atencion the freeze is the open ``gray_zone_queries``
+        row with a future ``freeze_until``, resolved by ``chat_id``. Fail-soft:
+        any lookup/notify failure passes the message through; with
+        ``gray_zone is None`` no freeze is possible.
+        """
+        if self._gray_zone is None:
+            return await handler(event, data)
+
+        chat = getattr(event, "chat", None)
+        if chat is None or getattr(chat, "id", None) is None:
+            return await handler(event, data)
+        chat_id = chat.id
+
+        try:
+            query = await self._gray_zone.get_open_query_by_chat_id(chat_id)
+        except Exception:
+            logger.exception(
+                "atencion_freeze_lookup_error",
+                extra={"chat_id": chat_id},
+            )
+            return await handler(event, data)
+
+        if query is None:
+            return await handler(event, data)
+
+        freeze_until = getattr(query, "freeze_until", None)
+        if freeze_until is None:
+            return await handler(event, data)
+        if freeze_until.tzinfo is None:
+            freeze_until = freeze_until.replace(tzinfo=UTC)
+        if freeze_until <= datetime.now(UTC):
+            return await handler(event, data)
+
+        await self._maybe_notify_chat_freeze_reminder(event, query, chat_id)
+        return None
+
+    async def _maybe_notify_chat_freeze_reminder(
+        self, event: Message, query: Any, chat_id: int
+    ) -> None:
+        """Send a doctrine reminder for an atencion chat with an open query.
+
+        Mirrors the VIP reminder payload/buttons; debounced per chat_id.
+        Fail-soft so the drop path never depends on notification success.
+        """
+        if self._notifier is None:
+            return
+        if getattr(event, "edit_date", None) is not None:
+            return  # edits are not new messages — don't re-nag
+
+        now = datetime.now(UTC)
+        last = self._last_chat_reminder.get(chat_id)
+        if last is not None and now - last < self._reminder_ttl:
+            return
+
+        payload = DoctrineNotification(
+            turn_id=query.turn_id,
+            chat_id=chat_id,
+            vip_text=getattr(event, "text", None) or getattr(event, "caption", None) or getattr(query, "question", ""),
+            draft_text=getattr(query, "draft", None),
+            evaluation_summary="",
+            reason="recordatorio_zona_gris",
+            business_connection_id=getattr(event, "business_connection_id", None),
+        )
+        try:
+            await self._notifier.notify_doctrine(payload)
+        except Exception:
+            logger.exception(
+                "atencion_freeze_reminder_failed",
+                extra={"chat_id": chat_id, "turn_id": str(query.turn_id)},
+            )
+            return
+
+        self._last_chat_reminder[chat_id] = now
+        logger.info(
+            "atencion_freeze_reminder_sent",
+            extra={"chat_id": chat_id, "turn_id": str(query.turn_id)},
         )
 
 
