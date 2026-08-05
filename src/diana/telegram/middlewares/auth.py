@@ -107,16 +107,17 @@ class AuthMiddleware(BaseMiddleware):
             )
             return await handler(event, data)
 
-        allowed = await self._vips.is_allowed(user.id)
+        # Single VIP lookup: reuse the FreezeCheckMiddleware _vip_record cache
+        # (MED-3) when present (allowed is derived from that same snapshot); a
+        # stranger costs exactly one fetch (FIX-R2-8).
+        rec: Any = data.get("_vip_record")
+        rec, allowed = await self._vips.get_record_and_allowed(user.id, record=rec)
         if not allowed:
             # Distinguish "no VIP record at all" from "VIP record exists but
             # paused/inactive" (S4): only no-record users take the training /
             # general (atencion) gates. A paused/inactive VIP must NOT be
             # routed to atencion (it would lose VIP identity); it only reaches
             # promo/drop handling below.
-            rec = data.get("_vip_record")
-            if rec is None:
-                rec = await self._vips.get_by_telegram_user_id(user.id)
             has_vip_record = rec is not None
 
             # Promo primero (REQ-ATN-09): the promo trigger is evaluated before
@@ -199,12 +200,6 @@ class AuthMiddleware(BaseMiddleware):
             )
             return None
 
-        # Use _vip_record cached by FreezeCheckMiddleware (MED-3) to avoid a
-        # redundant DB lookup. This is safe because FreezeCheckMiddleware runs
-        # before AuthMiddleware in the middleware order.
-        rec: Any = data.get("_vip_record")
-        if rec is None:
-            rec = await self._vips.get_by_telegram_user_id(user.id)
         if rec is not None:
             data["vip_id"] = rec.id
             data["vip_record"] = rec

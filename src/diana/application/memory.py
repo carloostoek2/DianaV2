@@ -482,6 +482,27 @@ class InMemoryVipStore:
             paused = paused.replace(tzinfo=clock.tzinfo)
         return paused < clock
 
+    async def get_record_and_allowed(
+        self,
+        telegram_user_id: int,
+        *,
+        record: VipRecord | None = None,
+    ) -> tuple[VipRecord | None, bool]:
+        rec = record
+        if rec is None:
+            rec = self._by_tg.get(telegram_user_id)
+        if rec is None:
+            return None, False
+        if not rec.is_active:
+            return rec, False
+        if rec.paused_until is None:
+            return rec, True
+        clock = datetime.now(UTC)
+        paused = rec.paused_until
+        if paused.tzinfo is None and clock.tzinfo is not None:
+            paused = paused.replace(tzinfo=clock.tzinfo)
+        return rec, paused < clock
+
     async def _upsert(self, rec: VipRecord) -> None:
         """Store record in both indexes."""
         self._by_tg[rec.telegram_user_id] = rec

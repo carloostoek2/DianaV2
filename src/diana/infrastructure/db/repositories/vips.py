@@ -64,6 +64,19 @@ class SqlVipStore:
             return False
         return vip_is_allowed(rec, now=now)
 
+    async def get_record_and_allowed(
+        self,
+        telegram_user_id: int,
+        *,
+        record: VipRecord | None = None,
+    ) -> tuple[VipRecord | None, bool]:
+        rec = record
+        if rec is None:
+            rec = await self.get_by_telegram_user_id(telegram_user_id)
+        if rec is None:
+            return None, False
+        return rec, vip_is_allowed(rec)
+
     async def add(
         self, telegram_user_id: int, *, display_name: str | None = None
     ) -> VipRecord:

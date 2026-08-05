@@ -262,6 +262,23 @@ class VipStore(Protocol):
         """True iff VIP exists, is_active, and not paused (paused_until is None or < now)."""
         ...
 
+    async def get_record_and_allowed(
+        self,
+        telegram_user_id: int,
+        *,
+        record: VipRecord | None = None,
+    ) -> tuple[VipRecord | None, bool]:
+        """Return ``(record, allowed)`` in one lookup.
+
+        When ``record`` is given (e.g. FreezeCheckMiddleware's ``_vip_record``
+        cache), it is reused and no DB lookup happens — ``allowed`` is derived
+        from that same snapshot. Otherwise a single fetch returns both, so a
+        stranger's message costs exactly one round-trip. ``record`` is None iff
+        no VIP row exists (a paused/inactive VIP still returns its record with
+        ``allowed=False``).
+        """
+        ...
+
     async def add(
         self, telegram_user_id: int, *, display_name: str | None = None
     ) -> VipRecord: ...
