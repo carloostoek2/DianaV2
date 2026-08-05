@@ -125,9 +125,13 @@ class RecordingLearning:
 class FakeGrayZone:
     """Fake GrayZoneService for consult_doctrine tests."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, existing_chat_query: object | None = None
+    ) -> None:
         self.queries: list[dict] = []
         self.next_query_id: UUID = uuid4()
+        self.discarded: list[UUID] = []
+        self._existing_chat_query = existing_chat_query
 
     async def create_query(
         self,
@@ -138,6 +142,7 @@ class FakeGrayZone:
         **kwargs,
     ) -> object:
         self.queries.append({
+            "id": self.next_query_id,
             "vip_id": vip_id,
             "turn_id": turn_id,
             "question": question,
@@ -146,6 +151,14 @@ class FakeGrayZone:
         })
         # Return a simple object matching GrayZoneQueryView protocol (id: UUID).
         return type("_Query", (), {"id": self.next_query_id})()
+
+    async def get_open_query_by_chat_id(self, chat_id: int) -> object | None:
+        return self._existing_chat_query
+
+    async def discard_and_close(self, query_id: UUID) -> object:
+        self.discarded.append(query_id)
+        self.queries = [q for q in self.queries if q.get("id") != query_id]
+        return type("_Query", (), {"id": query_id, "vip_id": None})()
 
 
 class _FakeTraceReader:
@@ -167,6 +180,7 @@ def _build(
     learning: RecordingLearning | None = None,
     gray_zone: FakeGrayZone | None = None,
     feature_gray_zone_enabled: bool = False,
+    feature_general_mode_enabled: bool = False,
     wire_autonomous: bool = False,
     feature_autonomous_mode: bool = False,
     feature_advanced_behavior: bool = False,
@@ -233,6 +247,7 @@ def _build(
         history=history,
         gray_zone=gray_zone,
         feature_gray_zone_enabled=feature_gray_zone_enabled,
+        feature_general_mode_enabled=feature_general_mode_enabled,
         behavior=behavior if wire_autonomous else None,  # type: ignore[arg-type]
         autonomous_mode=ams,
         vip_store=vips if wire_autonomous else None,
@@ -2387,8 +2402,9 @@ async def test_consult_doctrine_atencion_demotes_to_approve() -> None:
 async def test_consult_doctrine_atencion_gray_zone_creates_query() -> None:
     """atencion channel (vip_id=None) consult_doctrine creates query + GRAY_ZONE.
 
-    Gray zone feature ON: the open gray zone row (resolved by chat_id) is the
-    atencion chat freeze (A1) — no VIP freeze, query carries chat_id.
+    General + gray zone features ON: the open gray zone row (resolved by
+    chat_id) is the atencion chat freeze (A1) — no VIP freeze, query carries
+    chat_id.
     """
     decision = Decision(
         action="consult_doctrine",
@@ -2400,6 +2416,7 @@ async def test_consult_doctrine_atencion_gray_zone_creates_query() -> None:
         FakeDirector(decision),
         gray_zone=FakeGrayZone(),
         feature_gray_zone_enabled=True,
+        feature_general_mode_enabled=True,
     )
     turn_id = await g["orch"].handle_vip_message(
         _vip(vip_id=None, channel_type="atencion", chat_id=4242)
@@ -2407,8 +2424,12 @@ async def test_consult_doctrine_atencion_gray_zone_creates_query() -> None:
     turn = await g["turns"].get(turn_id)
     assert turn is not None
     assert turn.status == "gray_zone"
+    # F19 R1-9: the minted turn carries the atencion channel.
+    assert turn.channel_type == "atencion"
     # owner was notified with the doctrine query
     assert len(g["notifier"].doctrines) == 1
+    # F13a: gray zone never auto-delivers anything.
+    assert g["actuator"].send_count() == 0
     # one query was created, anchored to chat_id with no VIP freeze
     assert len(g["gray_zone"].queries) == 1
     q = g["gray_zone"].queries[0]
@@ -2417,6 +2438,103 @@ async def test_consult_doctrine_atencion_gray_zone_creates_query() -> None:
     assert q["turn_id"] == turn_id
     # the atencion channel travelled through the director unchanged
     assert g["director"].calls[0].channel_type == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_atencion_requires_general_mode() -> None:
+    """F10: gray zone ON but general mode OFF → demote (training-mode parity).
+
+    Training mode sets channel_type=atencion without the general flag; the
+    atencion gray zone must NOT create a query (no freeze) in that case.
+    """
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=FakeGrayZone(),
+        feature_gray_zone_enabled=True,
+        feature_general_mode_enabled=False,
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=4343)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "pending_approval"
+    assert g["gray_zone"].queries == []
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "atencion_no_vip_doctrine"
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_atencion_skips_when_already_open() -> None:
+    """F20: an open atencion query with future freeze → supersede, no 2nd query."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    existing = type(
+        "_Query",
+        (),
+        {
+            "id": uuid4(),
+            "freeze_until": datetime.now(UTC) + timedelta(hours=1),
+        },
+    )()
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=FakeGrayZone(existing_chat_query=existing),
+        feature_gray_zone_enabled=True,
+        feature_general_mode_enabled=True,
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=4444)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "superseded"
+    assert g["gray_zone"].queries == []  # no second query created
+    assert g["notifier"].doctrines == []  # no second DM
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_atencion_notify_failure_discards_and_demotes() -> None:
+    """F6: doctrine notify failure discards the query and demotes to approve."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=FakeGrayZone(),
+        feature_gray_zone_enabled=True,
+        feature_general_mode_enabled=True,
+    )
+
+    async def boom(payload: object) -> None:
+        raise RuntimeError("tg down")
+
+    g["notifier"].notify_doctrine = boom  # type: ignore[method-assign]
+
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=4545)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "pending_approval"
+    # the orphaned query was discarded and the draft demoted for approval
+    assert len(g["gray_zone"].discarded) == 1
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "atencion_doctrine_notify_failed"
+    assert g["gray_zone"].queries == []
 
 
 # ── REQ-ATN-12 payment detection ─────────────────────────────────────────

@@ -376,6 +376,7 @@ def build_app(
     feature_sandbox_enabled = settings.feature_sandbox_enabled
     feature_autonomous_mode = settings.feature_autonomous_mode
     feature_staging_enabled = settings.feature_staging_enabled
+    feature_general_mode_enabled = settings.feature_general_mode_enabled
 
     # GrayZoneService — created only when the feature is enabled.
     # When disabled, TurnOrchestrator receives None (dead-code guard).
@@ -629,6 +630,7 @@ def build_app(
         history=history,
         gray_zone=gray_zone,
         feature_gray_zone_enabled=feature_gray_zone_enabled,
+        feature_general_mode_enabled=feature_general_mode_enabled,
         behavior=behavior,
         autonomous_mode=ams,
         vip_store=vips,
@@ -662,7 +664,6 @@ def build_app(
 
     # F3 promo (non-VIP) — always construct; feature flag gates execute/match path.
     feature_promo_enabled = settings.feature_promo_enabled
-    feature_general_mode_enabled = settings.feature_general_mode_enabled
     promo = PromoService(
         feature_promo_enabled=feature_promo_enabled,
         triggers=PromoTriggerRepo(sf),

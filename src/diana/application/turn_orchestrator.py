@@ -180,6 +180,7 @@ class TurnOrchestrator:
         history: MessageHistoryWriter,
         gray_zone: GrayZoneService | None = None,
         feature_gray_zone_enabled: bool = False,
+        feature_general_mode_enabled: bool = False,
         behavior: BehaviorDeliverer | None = None,
         autonomous_mode: AutonomousModeService | None = None,
         vip_store: VipStore | None = None,
@@ -202,6 +203,7 @@ class TurnOrchestrator:
         self._history = history
         self._gray_zone = gray_zone
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
+        self._feature_general_mode_enabled = feature_general_mode_enabled
         self._behavior = behavior
         self._autonomous_mode = autonomous_mode
         self._vip_store = vip_store
@@ -1406,11 +1408,44 @@ class TurnOrchestrator:
             elif turn_ctx.channel_type == "atencion" and turn_ctx.vip_id is None:
                 # atencion channel (non-VIP) turn without vip_id: real gray
                 # zone consult (create query with vip_id=None + chat_id) when
-                # enabled/injected; otherwise demote to approve (byte-identical
-                # pre-Item-4 behavior). A vip-less turn on the VIP channel must
-                # NOT take this path — it falls through to the RuntimeError
-                # guard below.
-                if self._feature_gray_zone_enabled and self._gray_zone is not None:
+                # ALL gates are on — general mode AND gray zone AND an injected
+                # service (F10: training mode sets channel_type=atencion without
+                # the general flag → demote, no query, no orphan freeze).
+                # Otherwise demote to approve (byte-identical pre-Item-4
+                # behavior). A vip-less turn on the VIP channel must NOT take
+                # this path — it falls through to the RuntimeError guard below.
+                if (
+                    self._feature_general_mode_enabled
+                    and self._feature_gray_zone_enabled
+                    and self._gray_zone is not None
+                ):
+                    # F20: re-check the atencion freeze before minting a second
+                    # query (race TOCTOU): if a newer message already opened a
+                    # query with a future freeze_until, drop this turn instead
+                    # of creating a second query + second DM.
+                    already = await self._gray_zone.get_open_query_by_chat_id(
+                        turn_ctx.chat_id
+                    )
+                    if already is not None:
+                        existing_freeze = getattr(already, "freeze_until", None)
+                        if existing_freeze is not None:
+                            if existing_freeze.tzinfo is None:
+                                existing_freeze = existing_freeze.replace(
+                                    tzinfo=UTC
+                                )
+                            if existing_freeze > datetime.now(UTC):
+                                await self._coordinator.transition(
+                                    turn_id, TurnStatus.SUPERSEDED
+                                )
+                                logger.info(
+                                    "atencion_gray_zone_already_open",
+                                    extra={
+                                        "turn_id": str(turn_id),
+                                        "chat_id": incoming.chat_id,
+                                        "query_id": str(getattr(already, "id", None)),
+                                    },
+                                )
+                                return turn_id, None
                     query = await self._gray_zone.create_query(
                         vip_id=None,
                         chat_id=turn_ctx.chat_id,
@@ -1418,22 +1453,61 @@ class TurnOrchestrator:
                         question=turn_ctx.text,
                         draft=decision.draft_text or "",
                     )
-                    await self._admin.send_doctrine_query(
-                        turn_ctx, decision, turn_id, query
-                    )
-                    await self._coordinator.transition(
-                        turn_id, TurnStatus.GRAY_ZONE
-                    )
-                    logger.info(
-                        "atencion_consult_doctrine_gray_zone",
-                        extra={
-                            "turn_id": str(turn_id),
-                            "chat_id": incoming.chat_id,
-                            "query_id": str(query.id)
-                            if hasattr(query, "id")
-                            else None,
-                        },
-                    )
+                    try:
+                        await self._admin.send_doctrine_query(
+                            turn_ctx, decision, turn_id, query
+                        )
+                    except Exception:
+                        # F6: a notify failure must not orphan the query and
+                        # freeze the chat without a DM. Close + demote approve.
+                        try:
+                            await self._gray_zone.discard_and_close(query.id)
+                        except Exception:
+                            log_swallowed(
+                                logger,
+                                "atencion_doctrine_discard_failed",
+                                turn_id=str(turn_id),
+                                chat_id=incoming.chat_id,
+                                query_id=str(query.id)
+                                if hasattr(query, "id")
+                                else None,
+                            )
+                        demoted = decision.model_copy(
+                            update={
+                                "action": "approve",
+                                "reason": "atencion_doctrine_notify_failed",
+                            }
+                        )
+                        await self._coordinator.transition(
+                            turn_id, TurnStatus.PENDING_APPROVAL
+                        )
+                        await self._admin.send_draft_for_approval(
+                            turn_ctx, demoted, turn_id
+                        )
+                        logger.warning(
+                            "atencion_doctrine_notify_failed",
+                            extra={
+                                "turn_id": str(turn_id),
+                                "chat_id": incoming.chat_id,
+                                "query_id": str(query.id)
+                                if hasattr(query, "id")
+                                else None,
+                            },
+                        )
+                    else:
+                        await self._coordinator.transition(
+                            turn_id, TurnStatus.GRAY_ZONE
+                        )
+                        logger.info(
+                            "atencion_consult_doctrine_gray_zone",
+                            extra={
+                                "turn_id": str(turn_id),
+                                "chat_id": incoming.chat_id,
+                                "query_id": str(query.id)
+                                if hasattr(query, "id")
+                                else None,
+                            },
+                        )
                 else:
                     demoted = decision.model_copy(
                         update={
