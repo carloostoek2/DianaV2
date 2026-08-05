@@ -76,7 +76,7 @@ Principios rectores:
 | F5-06 | Vista y edición de la ficha en el panel de VIP (existente) |
 | F5-07 | Dedup: no repetir hechos ya conocidos (similitud semántica) |
 | F5-08 | Manejo de historial largo (paginación por ventanas de mensajes) |
-| F5-09 | Migración 019: columnas `status` y `source_turn_id` en `memories` |
+| F5-09 | Migración 022: columnas `status` y `source_turn_id` en `memories` |
 | F5-10 | Anti-contaminación y trazabilidad (testeo explícito) |
 
 ### 2.2 Fuera de alcance (postergado)
@@ -185,7 +185,7 @@ Cada VIP tiene una **ficha** compuesta por secciones. Cada sección es una fila 
 
 ## 6. Control de la dueña (candidatos sensibles)
 
-### REQ-MEM-09 — Columnas nuevas en `memories` (migración 019)
+### REQ-MEM-09 — Columnas nuevas en `memories` (migración 022)
 - `status` text NOT NULL default `'auto'` (`auto` | `pending_owner` | `approved` | `discarded`).
 - `source_turn_id` uuid NULL (trazabilidad del turno que originó el hecho).
 - Índice por `(vip_id, status)`.
@@ -218,7 +218,7 @@ Cada VIP tiene una **ficha** compuesta por secciones. Cada sección es una fila 
 
 ---
 
-## 9. Cambios de esquema (migración 019)
+## 9. Cambios de esquema (migración 022)
 
 | Cambio | Detalle |
 |---|---|
