@@ -197,6 +197,7 @@ class TurnOrchestrator:
         persona_catalog_provider: object | None = None,
         trace_reader: TraceReader | None = None,
         atencion_cycles: AtencionCycleStore | None = None,
+        memory_extraction: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -221,6 +222,7 @@ class TurnOrchestrator:
         self._catalog_provider = persona_catalog_provider
         self._trace_reader = trace_reader
         self._atencion_cycles = atencion_cycles
+        self._memory_extraction = memory_extraction
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
 
@@ -431,6 +433,24 @@ class TurnOrchestrator:
             )
             return
         await self._learning.run_post_turn(turn_id)
+        # F5 Pool 3 (F5-04 / REQ-MEM-07): post-turn incremental memory
+        # extraction, composed AFTER LearningService (never modified). Best-
+        # effort strict (R1): a failure here NEVER propagates to the already
+        # completed turn. The service itself gates terminal turns, vip_id,
+        # binding and the feature flag; when nothing is wired (flag OFF,
+        # A8) this block is a no-op — byte-identical to pre-Pool 3.
+        if self._memory_extraction is not None:
+            extract = getattr(self._memory_extraction, "extract_post_turn", None)
+            if callable(extract):
+                try:
+                    await extract(turn_id, chat_id)  # type: ignore[misc]  # object-typed dep (plan A8)
+                except Exception:
+                    log_swallowed(
+                        logger,
+                        "memory_extraction_error",
+                        turn_id=str(turn_id),
+                        chat_id=chat_id,
+                    )
 
     async def _safe_notify_info(
         self,

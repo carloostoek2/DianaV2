@@ -123,6 +123,19 @@ class RecordingLearning:
         return None
 
 
+class RecordingExtraction:
+    """Fake post-turn memory extractor (F5 Pool 3): records (turn_id, chat_id)."""
+
+    def __init__(self, *, raise_on_call: bool = False) -> None:
+        self.calls: list[tuple[UUID, int]] = []
+        self._raise_on_call = raise_on_call
+
+    async def extract_post_turn(self, turn_id: UUID, chat_id: int) -> None:
+        if self._raise_on_call:
+            raise RuntimeError("extraction boom")
+        self.calls.append((turn_id, chat_id))
+
+
 class FakeGrayZone:
     """Fake GrayZoneService for consult_doctrine tests."""
 
@@ -198,6 +211,7 @@ def _build(
     persona_catalog_provider: object | None = None,
     trace_reader: object | None = None,
     atencion_cycles: object | None = None,
+    memory_extraction: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -263,6 +277,7 @@ def _build(
         persona_catalog_provider=persona_catalog_provider,
         trace_reader=trace_reader,
         atencion_cycles=atencion_cycles,
+        memory_extraction=memory_extraction,
     )
     return {
         "orch": orch,
@@ -547,6 +562,148 @@ async def test_send_autonomous_delivers_and_marks_delivered() -> None:
     assert g["learning"].calls == [turn_id]
     assert await g["approvals"].get_by_turn(turn_id) is None
     assert g["traces"].get_delivery_result(turn_id) is not None
+
+
+# ── F5 Pool 3: post-turn memory extraction composition (best-effort) ──────
+
+
+@pytest.mark.asyncio
+async def test_post_turn_memory_extraction_called_on_terminal_turn() -> None:
+    """Autonomous DELIVERED turn → _maybe_post_turn runs LearningService AND
+    the memory extraction (both composed; run_post_turn untouched)."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    extraction = RecordingExtraction()
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        memory_extraction=extraction,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    # Both run: Learning first, extraction after (same _maybe_post_turn).
+    assert g["learning"].calls == [turn_id]
+    assert extraction.calls == [(turn_id, 100)]
+
+
+@pytest.mark.asyncio
+async def test_post_turn_memory_extraction_not_called_when_none() -> None:
+    """Default wiring (memory_extraction=None) → extraction never invoked;
+    the pre-Pool 3 behavior (learning only) stays byte-identical."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+    assert g["orch"]._memory_extraction is None  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_post_turn_memory_extraction_error_does_not_break_turn() -> None:
+    """R1: an extraction failure is swallowed (log_swallowed) — the already
+    delivered turn completes and LearningService still ran."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    extraction = RecordingExtraction(raise_on_call=True)
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        memory_extraction=extraction,
+    )
+    # Must NOT raise despite the extractor blowing up.
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert g["learning"].calls == [turn_id]
+    assert g["actuator"].send_count() >= 1
+
+
+@pytest.mark.asyncio
+async def test_post_turn_memory_extraction_skipped_on_sandbox() -> None:
+    """The sandbox gate in _maybe_post_turn cuts BEFORE both run_post_turn
+    and the extraction (same guard, no extra logic — A1)."""
+    from diana.application.sandbox import SandboxService
+
+    # inline six-profile catalog (same fixture as test_sandbox_skips_learning_post_turn)
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    learn = RecordingLearning()
+    extraction = RecordingExtraction()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "nuevo")
+    g = _build(
+        FakeDirector(decision),
+        learning=learn,
+        memory_extraction=extraction,
+    )
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    await g["orch"].handle_vip_message(_vip(chat_id=100))
+    assert learn.calls == []
+    assert extraction.calls == []
 
 
 @pytest.mark.asyncio

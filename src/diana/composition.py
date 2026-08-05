@@ -628,6 +628,22 @@ def build_app(
     )
 
     learning = LearningService(traces)
+
+    # F5 Pool 3 (F5-04): post-turn incremental extraction — built ALWAYS
+    # (pattern Pool 2), injected into the orchestrator only when the flag is
+    # ON. Flag OFF → memory_extraction=None → _maybe_post_turn no-op (A8).
+    from diana.application.memory_extraction_service import MemoryExtractionService
+
+    memory_extraction = MemoryExtractionService(
+        feature_memory_enabled=settings.feature_memory_enabled,
+        llm=provider,
+        embedder=embedding_svc,
+        history=history,
+        turns=turns,
+        memories=memories_repo,
+        vips=vips,
+        dedup_threshold=settings.backfill_dedup_threshold,
+    )
     orchestrator = TurnOrchestrator(
         coordinator=coordinator,
         director=director,
@@ -652,6 +668,9 @@ def build_app(
         persona_catalog_provider=persona_catalog_provider,
         trace_reader=traces,
         atencion_cycles=atencion_cycles,
+        memory_extraction=(
+            memory_extraction if settings.feature_memory_enabled else None
+        ),
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
