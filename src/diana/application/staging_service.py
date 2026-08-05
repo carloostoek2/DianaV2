@@ -17,6 +17,14 @@ from diana.infrastructure.db.repositories.staging import StagingCandidateRepo
 logger = logging.getLogger("diana.application")
 
 
+class AtencionPromoteBlocked(ValueError):
+    """Raised when an atencion correction is promoted to the VIP example bank.
+
+    REQ-ATN-13 anti-contamination: atencion candidates are not promotable to
+    VIP examples; the owner sees a distinct status instead of a generic "stale".
+    """
+
+
 class StagingService:
     """Captures corrections and promotes them to examples or policies.
 
@@ -113,7 +121,7 @@ class StagingService:
                 "staging_atencion_promote_blocked",
                 extra={"candidate_id": str(candidate_id)},
             )
-            raise ValueError(
+            raise AtencionPromoteBlocked(
                 "atencion candidates cannot be promoted to the VIP example bank"
             )
 

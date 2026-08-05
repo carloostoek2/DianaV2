@@ -263,6 +263,7 @@ async def test_log_atencion_daily_counts_logs_once_per_local_day(caplog) -> None
         interval_seconds=3600,
         clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
         atencion_counts=counts,  # type: ignore[arg-type]
+        feature_general_mode_enabled=True,
     )
     with caplog.at_level(logging.INFO, logger="diana.jobs"):
         await job._log_atencion_daily_counts()  # noqa: SLF001
@@ -286,6 +287,7 @@ async def test_log_atencion_daily_counts_source_error_fail_soft(caplog) -> None:
         interval_seconds=3600,
         clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
         atencion_counts=counts,  # type: ignore[arg-type]
+        feature_general_mode_enabled=True,
     )
     with caplog.at_level(logging.WARNING, logger="diana.jobs"):
         await job._log_atencion_daily_counts()  # noqa: SLF001
@@ -305,6 +307,7 @@ async def test_log_atencion_daily_counts_retries_after_error(caplog) -> None:
         interval_seconds=3600,
         clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
         atencion_counts=counts,  # type: ignore[arg-type]
+        feature_general_mode_enabled=True,
     )
     with caplog.at_level(logging.INFO, logger="diana.jobs"):
         await job._log_atencion_daily_counts()  # noqa: SLF001  → fails
@@ -335,6 +338,7 @@ async def test_log_atencion_daily_counts_resets_on_new_local_day(caplog) -> None
         interval_seconds=3600,
         atencion_counts=counts,  # type: ignore[arg-type]
         clock=lambda: times.pop(0),
+        feature_general_mode_enabled=True,
     )
     with caplog.at_level(logging.INFO, logger="diana.jobs"):
         await job._log_atencion_daily_counts()  # noqa: SLF001
@@ -346,6 +350,31 @@ async def test_log_atencion_daily_counts_resets_on_new_local_day(caplog) -> None
     assert len(counts.turns_calls) == 2
     assert counts.turns_calls[0] == datetime(2026, 7, 20, 6, 0, tzinfo=UTC)
     assert counts.turns_calls[1] == datetime(2026, 7, 21, 6, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_log_atencion_daily_counts_skipped_when_flag_off(caplog) -> None:
+    """F18: general mode flag OFF → the daily atencion log is a no-op."""
+    svc = FakeMetricsService()
+    counts = FakeAtencionCounts(turns=3, caps=1)
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+        atencion_counts=counts,  # type: ignore[arg-type]
+    )
+    with caplog.at_level(logging.DEBUG, logger="diana.jobs"):
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+
+    assert counts.turns_calls == []
+    assert counts.caps_calls == []
+    assert not any(
+        r.getMessage() == "atencion_daily_metrics" for r in caplog.records
+    )
+    assert any(
+        r.getMessage() == "atencion_daily_metrics_skipped_flag_off"
+        for r in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -375,6 +404,7 @@ async def test_job_start_logs_atencion_daily_counts() -> None:
         interval_seconds=0.05,
         clock=lambda: datetime(2026, 7, 20, 4, 0, tzinfo=UTC),
         atencion_counts=counts,  # type: ignore[arg-type]
+        feature_general_mode_enabled=True,
     )
 
     async def _stop_soon() -> None:

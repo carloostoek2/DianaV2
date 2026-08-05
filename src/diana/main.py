@@ -191,6 +191,7 @@ def _setup_metrics_job(app: AppContainer) -> asyncio.Task | None:
         interval_seconds=3600,
         config=config,
         atencion_counts=app.metrics_data,
+        feature_general_mode_enabled=app.settings.feature_general_mode_enabled,
     )
     task = asyncio.create_task(job.start())
     logger.info("metrics_job_started", extra={"interval_seconds": 3600})

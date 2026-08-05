@@ -87,7 +87,7 @@ class GrayZoneService:
             "gray_zone_query_created",
             extra={
                 "query_id": str(row.id),
-                "vip_id": str(vip_id),
+                "vip_id": str(vip_id) if vip_id is not None else None,
                 "chat_id": chat_id,
                 "turn_id": str(turn_id),
                 "frozen_until": frozen_until.isoformat(),

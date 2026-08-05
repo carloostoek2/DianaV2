@@ -13,7 +13,10 @@ from uuid import UUID, uuid4
 import pytest
 from unittest.mock import AsyncMock
 
-from diana.application.staging_service import StagingService
+from diana.application.staging_service import (
+    AtencionPromoteBlocked,
+    StagingService,
+)
 
 
 def _fake_staging_row(
@@ -173,7 +176,7 @@ async def test_promote_to_example_blocks_atencion_candidate(
         candidate_id=candidate_id, payload=payload
     )
 
-    with pytest.raises(ValueError, match="atencion candidates"):
+    with pytest.raises(AtencionPromoteBlocked, match="atencion candidates"):
         await service.promote_to_example(candidate_id=candidate_id)
 
     # neither inserted into examples nor marked promoted — stays pending

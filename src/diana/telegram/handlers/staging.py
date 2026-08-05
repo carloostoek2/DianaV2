@@ -13,7 +13,10 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from diana.application.staging_service import StagingService
+from diana.application.staging_service import (
+    AtencionPromoteBlocked,
+    StagingService,
+)
 from diana.telegram.keyboards import parse_staging_callback, staging_candidate_keyboard
 
 logger = logging.getLogger("diana.telegram")
@@ -30,6 +33,7 @@ _TOKEN_UX: dict[str, tuple[str, bool]] = {
     "unavailable": (STAGING_UNAVAILABLE_UX, True),
     "invalid": ("Invalid callback", True),
     "stale": ("Already handled or not found", True),
+    "atencion_blocked": ("Atencion corrections cannot become VIP examples", True),
 }
 
 
@@ -108,6 +112,16 @@ async def dispatch_staging_callback(
                 },
             )
             return "discarded"
+    except AtencionPromoteBlocked:
+        logger.info(
+            "staging_atencion_promote_blocked",
+            extra={
+                "candidate_id": str(candidate_id),
+                "actor_id": actor_id,
+                "action": action,
+            },
+        )
+        return "atencion_blocked"
     except ValueError:
         logger.info(
             "staging_stale",

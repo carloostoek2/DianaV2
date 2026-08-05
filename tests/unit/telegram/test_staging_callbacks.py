@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from diana.application.staging_service import AtencionPromoteBlocked
 from diana.telegram.handlers.staging import (
     build_staging_router,
     dispatch_staging_callback,
@@ -104,6 +105,22 @@ async def test_promote_value_error_stale(staging: AsyncMock) -> None:
         owner_telegram_id=OWNER,
     )
     assert token == "stale"
+
+
+@pytest.mark.asyncio
+async def test_promote_atencion_blocked_distinct_status(staging: AsyncMock) -> None:
+    """F14: atencion block returns its own token, not the generic 'stale'."""
+    cid = uuid4()
+    staging.promote_to_example.side_effect = AtencionPromoteBlocked(
+        "atencion candidates cannot be promoted to the VIP example bank"
+    )
+    token = await dispatch_staging_callback(
+        staging=staging,
+        callback_data=encode_staging_promote(cid),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
+    assert token == "atencion_blocked"
 
 
 @pytest.mark.asyncio

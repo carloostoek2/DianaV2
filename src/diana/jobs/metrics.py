@@ -109,12 +109,14 @@ class MetricsJob:
         clock: Callable[[], datetime] | None = None,
         config: MetricsJobConfigStore | None = None,
         atencion_counts: AtencionCountsSource | None = None,
+        feature_general_mode_enabled: bool = False,
     ) -> None:
         self._service = service
         self._interval = interval_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._config = config
         self._atencion_counts = atencion_counts
+        self._feature_general_mode_enabled = feature_general_mode_enabled
         self._stop_event = asyncio.Event()
         self._last_success_week: date | None = None
         self._loaded_from_config = False
@@ -150,7 +152,13 @@ class MetricsJob:
 
         Read-only and fail-soft: any source error is logged and swallowed, so
         a DB hiccup never breaks the metrics loop (REQ-ATN-14).
+
+        Gated on the general mode flag (F18): with the feature OFF the daily
+        atencion log is a no-op (flag-OFF byte-identical).
         """
+        if not self._feature_general_mode_enabled:
+            logger.debug("atencion_daily_metrics_skipped_flag_off")
+            return
         if self._atencion_counts is None:
             return
         now = self._clock()

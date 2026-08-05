@@ -42,6 +42,11 @@ def test_main_metrics_job_passes_atencion_counts(_main_src: str) -> None:
     assert "atencion_counts=app.metrics_data" in _main_src
 
 
+def test_main_metrics_job_gated_by_general_mode_flag(_main_src: str) -> None:
+    """F18: the daily atencion log is flag-gated via the general mode flag."""
+    assert "feature_general_mode_enabled=app.settings.feature_general_mode_enabled" in _main_src
+
+
 def test_main_calibration_job_gated_by_feature_flag(_main_src: str) -> None:
     """Calibration job starts only when feature_calibration_enabled and service set."""
     assert "feature_calibration_enabled" in _main_src

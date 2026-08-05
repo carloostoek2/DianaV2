@@ -7,6 +7,7 @@ infrastructure boundary (GrayZoneQueryRepo and StagingCandidateRepo).
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -144,6 +145,45 @@ async def test_create_query_default_freeze_duration(
     expected_min = datetime.now(UTC) + timedelta(hours=23)
     expected_max = datetime.now(UTC) + timedelta(hours=25)
     assert expected_min <= frozen.frozen_until <= expected_max
+
+
+@pytest.mark.asyncio
+async def test_create_query_atencion_no_vip_no_freeze_keeps_chat_id(
+    service: GrayZoneService,
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """F13: atencion create_query(vip_id=None) skips the VIP freeze and stores chat_id."""
+    turn_id = uuid4()
+    query_repo.insert.return_value = _fake_query_row(vip_id=None, turn_id=turn_id)
+
+    result = await service.create_query(
+        vip_id=None,
+        turn_id=turn_id,
+        question="q",
+        draft="d",
+        chat_id=4545,
+    )
+
+    # No VIP to freeze; no VIP exists, so nothing was frozen.
+    assert result is not None
+    assert query_repo.insert.call_args[1]["vip_id"] is None
+    assert query_repo.insert.call_args[1]["chat_id"] == 4545
+    # F15: the log records the real None, never the string "None".
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        await service.create_query(
+            vip_id=None,
+            turn_id=uuid4(),
+            question="q",
+            draft="d",
+            chat_id=4545,
+        )
+    created = [
+        r for r in caplog.records if r.getMessage() == "gray_zone_query_created"
+    ]
+    assert created
+    assert created[0].__dict__.get("vip_id") is None
 
 
 # --- resolve_with_doctrine ---
