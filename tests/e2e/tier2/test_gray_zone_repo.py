@@ -180,3 +180,77 @@ async def test_get_open_by_chat_id_none_when_no_open(session_factory):
     """A1: no open query for the chat → None (chat not frozen)."""
     repo = GrayZoneQueryRepo(session_factory)
     assert await repo.get_open_by_chat_id(123456) is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_expire_older_than_skips_non_open_rows(session_factory):
+    """R-A: conditional UPDATE only expires rows still open at statement time.
+
+    A query resolved (or already expired) concurrently must not be flipped
+    back to 'expired' by the expiry sweep — even when it is older than the
+    timeout cutoff.
+    """
+    from sqlalchemy import text
+
+    repo = GrayZoneQueryRepo(session_factory)
+    chat_id = 555001
+    resolved_turn = await _new_turn(session_factory, chat_id)
+    open_turn = await _new_turn(session_factory, chat_id)
+    resolved = await repo.insert(
+        vip_id=None,
+        turn_id=resolved_turn.id,
+        question="resolved q",
+        draft="d",
+        chat_id=chat_id,
+    )
+    open_row = await repo.insert(
+        vip_id=None,
+        turn_id=open_turn.id,
+        question="open q",
+        draft="d",
+        chat_id=chat_id,
+    )
+    # Backdate both rows beyond the timeout cutoff.
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "UPDATE gray_zone_queries SET created_at = now() - interval '2 hours' "
+                "WHERE id IN (:a, :b)"
+            ),
+            {"a": resolved.id, "b": open_row.id},
+        )
+        await session.commit()
+    await repo.update_status(resolved.id, "resolved", resolved_at=datetime.now(UTC))
+
+    expired = await repo.expire_older_than(timeout_hours=1)
+
+    expired_ids = {r.id for r in expired}
+    assert open_row.id in expired_ids  # still open + old → expired
+    assert resolved.id not in expired_ids  # resolved rows are never re-expired
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reopen_query_clears_resolved_at(session_factory):
+    """R-A: reopen_query (status 'open') clears resolved_at so the row reads fresh."""
+    repo = GrayZoneQueryRepo(session_factory)
+    chat_id = 555002
+    turn = await _new_turn(session_factory, chat_id)
+    row = await repo.insert(
+        vip_id=None,
+        turn_id=turn.id,
+        question="q",
+        draft="d",
+        chat_id=chat_id,
+    )
+    await repo.update_status(row.id, "resolved", resolved_at=datetime.now(UTC))
+
+    # reopen_query on the service delegates here: status 'open' clears resolved_at.
+    reopened = await repo.update_status(row.id, "open")
+    assert reopened is True
+
+    fresh = await repo.get_by_id(row.id)
+    assert fresh is not None
+    assert fresh.status == "open"
+    assert fresh.resolved_at is None

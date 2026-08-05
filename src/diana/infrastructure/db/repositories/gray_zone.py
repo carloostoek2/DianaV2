@@ -57,11 +57,17 @@ class GrayZoneQueryRepo:
         status: str,
         resolved_at: datetime | None = None,
     ) -> bool:
-        """Set query status and optionally resolved_at. Returns False if not found."""
+        """Set query status and optionally resolved_at. Returns False if not found.
+
+        Re-opening a query (status ``open``) clears ``resolved_at`` so the row
+        reads as a fresh open query again.
+        """
         async with self._sf() as session:
             values: dict = {"status": status}
             if resolved_at is not None:
                 values["resolved_at"] = resolved_at
+            elif status == "open":
+                values["resolved_at"] = None
             result = await session.execute(
                 update(GrayZoneQuery)
                 .where(GrayZoneQuery.id == query_id)

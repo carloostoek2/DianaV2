@@ -1151,6 +1151,68 @@ async def test_gray_zone_supervised_delivery_query_turn_mismatch(
     assert len(g["notifier"].drafts) == 0
 
 
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_notify_failure_cancels_approval(
+    admin_graph: dict,
+) -> None:
+    """send_draft_for_approval fails after persisting → approval cancelled.
+
+    Otherwise the callers' fallback-escalate would leave a waiting orphan on
+    an escalated turn (the same ghost-approval class this item eliminates).
+    """
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    async def _boom_notify(payload: object) -> int | None:
+        msg = "simulated notify failure"
+        raise RuntimeError(msg)
+
+    g["notifier"].notify_draft = _boom_notify  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="simulated notify failure"):
+        await g["admin"].create_supervised_delivery_from_gray_zone(
+            turn_id, query
+        )
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_existing_non_waiting_approval(
+    admin_graph: dict,
+) -> None:
+    """Existing approval not 'waiting' (e.g. cancelled) → False, no re-create.
+
+    A unique constraint on pending_approvals.turn_id forbids a second row, so
+    the method declines and the caller escalates instead of stranding the turn.
+    """
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    first = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert first is True
+    await g["approvals"].mark_status(turn_id, "cancelled")
+
+    second = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert second is False
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.status == "cancelled"  # untouched
+
+
 # --- Item4 Task4: advanced behavior builder wiring ---
 
 

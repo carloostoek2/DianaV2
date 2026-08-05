@@ -489,3 +489,25 @@ async def test_expire_old_queries_skips_vip_without_vip_id(
     result = await service.expire_old_queries(timeout_hours=24)
 
     assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_reopen_query_delegates_to_repo(
+    service: GrayZoneService,
+    query_repo: AsyncMock,
+) -> None:
+    """reopen_query re-opens a closed query for retry (R-A double-failure)."""
+    query_id = uuid4()
+    query_repo.update_status.return_value = True
+
+    result = await service.reopen_query(query_id)
+
+    query_repo.update_status.assert_awaited_once_with(query_id, "open")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_reopen_query_requires_query_id(service: GrayZoneService) -> None:
+    """reopen_query without a query id is a programmer error."""
+    with pytest.raises(ValueError, match="query_id is required"):
+        await service.reopen_query(None)

@@ -248,6 +248,17 @@ class GrayZoneService:
         """Look up an open query by chat id (atencion freeze). Returns row or None."""
         return await self._queries.get_open_by_chat_id(chat_id)
 
+    async def reopen_query(self, query_id: UUID) -> bool:
+        """Re-open a closed query so a later run can retry it.
+
+        Used as a fallback when a supervised delivery AND the escalate
+        fallback both fail: without it the turn would stay in gray_zone with
+        a closed query that nothing ever revisits.
+        """
+        if query_id is None:
+            raise ValueError("query_id is required to reopen")
+        return await self._queries.update_status(query_id, "open")
+
     async def freeze_vip(self, vip_id: UUID, duration_hours: int | None = None) -> None:
         """Freeze a VIP for a given duration (or default timeout)."""
         if vip_id is None:

@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
+from diana.application.turn_coordinator import ChatLockTimeoutError
 
 
 class FakeGrayZone:
@@ -18,6 +19,11 @@ class FakeGrayZone:
         self.expire_calls: list[list[object]] = []
         self._results: list[list[object]] = []
         self._error_on: set[int] = set()
+        self.reopen_calls: list[object] = []
+
+    async def reopen_query(self, query_id: object) -> bool:
+        self.reopen_calls.append(query_id)
+        return True
 
     def add_result(self, items: list[object]) -> None:
         """Register the next result list for expire_old_queries.
@@ -49,9 +55,16 @@ class FakeCoordinator:
 
     def __init__(self) -> None:
         self.transitions: list[tuple[UUID, str]] = []
+        self._failures: set[UUID] = set()
+
+    def fail_on(self, turn_id: UUID) -> None:
+        self._failures.add(turn_id)
 
     async def transition(self, turn_id: UUID, status: str) -> None:
         self.transitions.append((turn_id, status))
+        if turn_id in self._failures:
+            msg = f"simulated transition error for {turn_id}"
+            raise RuntimeError(msg)
 
 
 class FakeNotifier:
@@ -71,6 +84,7 @@ class FakeAdmin:
         self.supervised_calls: list[tuple[UUID, object]] = []
         self._failures: set[UUID] = set()
         self._denials: set[UUID] = set()
+        self._lock_timeouts: set[UUID] = set()
 
     def fail_on(self, turn_id: UUID) -> None:
         self._failures.add(turn_id)
@@ -79,12 +93,20 @@ class FakeAdmin:
         """Simulate a fail-soft False (e.g. legacy row without bc)."""
         self._denials.add(turn_id)
 
+    def lock_timeout_on(self, turn_id: UUID) -> None:
+        """Simulate ChatLockTimeoutError (lock contention with dx:/owner)."""
+        self._lock_timeouts.add(turn_id)
+
     async def create_supervised_delivery_from_gray_zone(
         self, turn_id: UUID, row: object
     ) -> bool:
         self.supervised_calls.append((turn_id, row))
         if turn_id in self._failures:
             raise RuntimeError(f"simulated delivery error for {turn_id}")
+        if turn_id in self._lock_timeouts:
+            raise ChatLockTimeoutError(
+                f"simulated lock timeout for chat of {turn_id}"
+            )
         if turn_id in self._denials:
             return False
         return True
@@ -95,9 +117,13 @@ def make_expired_item(
     *,
     draft: str | None = None,
     business_connection_id: str | None = None,
+    query_id: UUID | None = None,
 ) -> SimpleNamespace:
     """Create a minimal object that looks like an expired GrayZoneQuery row."""
-    item: dict = {"turn_id": turn_id or uuid4()}
+    item: dict = {
+        "turn_id": turn_id or uuid4(),
+        "id": query_id or uuid4(),
+    }
     if draft is not None:
         item["draft"] = draft
     if business_connection_id is not None:
@@ -406,3 +432,82 @@ async def test_expiry_notification_reflects_actual_outcomes() -> None:
     assert "1 pending approval" in last_info
     assert "2 escalated" in last_info
     assert "3 total" in last_info
+
+
+@pytest.mark.asyncio
+async def test_expiry_lock_timeout_is_failed_not_escalated() -> None:
+    """ChatLockTimeoutError must NOT escalate (the lock holder may be mid-approval).
+
+    Escalating a turn whose approval is being created by the dx: path would
+    leave a waiting orphan on an escalated turn — count as failed instead.
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    admin.lock_timeout_on(turn_id)
+    gray_zone.add_result(
+        [make_expired_item(turn_id, draft="texto", business_connection_id="bc1")]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        admin=admin,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert len(admin.supervised_calls) == 1
+    assert coordinator.transitions == []  # never escalated on lock contention
+    assert gray_zone.reopen_calls == []  # nothing closed to reopen
+    assert notifier.info_calls
+    assert "1 failed" in notifier.info_calls[-1]
+
+
+@pytest.mark.asyncio
+async def test_expiry_double_failure_reopens_query_for_retry() -> None:
+    """Delivery AND escalate both fail → query reopened so a later run retries."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    query_id = uuid4()
+    admin.deny_on(turn_id)
+    coordinator.fail_on(turn_id)
+    gray_zone.add_result(
+        [
+            make_expired_item(
+                turn_id,
+                draft="texto",
+                business_connection_id=None,
+                query_id=query_id,
+            )
+        ]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        admin=admin,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert len(admin.supervised_calls) == 1
+    assert coordinator.transitions == [(turn_id, "escalated")]  # attempted
+    assert gray_zone.reopen_calls == [query_id]
+    assert notifier.info_calls
+    assert "1 failed" in notifier.info_calls[-1]

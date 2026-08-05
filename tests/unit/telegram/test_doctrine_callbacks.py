@@ -20,6 +20,7 @@ from diana.telegram.handlers.doctrine import (
     handle_doctrine_respond,
     handle_doctrine_resolve_with_draft,
 )
+from diana.application.turn_coordinator import ChatLockTimeoutError
 from diana.telegram.keyboards import (
     encode_doctrine_callback,
     encode_doctrine_escalate_callback,
@@ -76,9 +77,14 @@ class FakeGrayZone:
         self.resolve_calls: list[tuple[UUID, str, str]] = []
         self.confirm_calls: list[tuple[UUID, UUID]] = []
         self.discard_calls: list[UUID] = []
+        self.reopen_calls: list[UUID] = []
         self.lookup_errors: set[UUID] = set()
         self.resolve_errors: set[UUID] = set()
         self.discard_errors: set[UUID] = set()
+
+    async def reopen_query(self, query_id: UUID) -> bool:
+        self.reopen_calls.append(query_id)
+        return True
 
     def add_query(self, turn_id: UUID, *, draft: str = "test draft") -> FakeQuery:
         q = FakeQuery(turn_id=turn_id, draft=draft)
@@ -132,9 +138,16 @@ class FakeCoordinator:
 
     def __init__(self) -> None:
         self.transitions: list[tuple[UUID, str]] = []
+        self._failures: set[UUID] = set()
+
+    def fail_on(self, turn_id: UUID) -> None:
+        self._failures.add(turn_id)
 
     async def transition(self, turn_id: UUID, status: str) -> None:
         self.transitions.append((turn_id, status))
+        if turn_id in self._failures:
+            msg = f"simulated transition error for {turn_id}"
+            raise RuntimeError(msg)
 
 
 @pytest.mark.asyncio
@@ -440,6 +453,62 @@ async def test_resolve_with_draft_delivery_error_falls_back_to_escalate() -> Non
     )
     assert status == "escalated"
     assert coordinator.transitions == [(turn_id, "escalated")]
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_lock_timeout_is_error_not_escalated() -> None:
+    """dx: ChatLockTimeoutError → 'error' (retryable), no escalate, no reopen.
+
+    The lock holder (expiry job / owner callback) may be creating the
+    approval for this very turn; escalating would terminalize it mid-flight.
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id, draft="use-this-draft")
+
+    async def _lock_timeout(turn_id_: UUID, query: object) -> bool:
+        msg = "simulated lock contention"
+        raise ChatLockTimeoutError(msg)
+
+    admin.create_supervised_delivery_from_gray_zone = _lock_timeout  # type: ignore[method-assign]
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=admin,
+    )
+    assert status == "error"
+    assert coordinator.transitions == []
+    assert gray_zone.reopen_calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_double_failure_reopens_query() -> None:
+    """dx: delivery denied AND fallback escalate fails → query reopened, 'error'.
+
+    The turn stays gray_zone and the query is reopened so the expiry job
+    retries later — never silently stranded with a closed query.
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    query = gray_zone.add_query(turn_id, draft="use-this-draft")
+    admin.deny_on(turn_id)
+    coordinator.fail_on(turn_id)
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=admin,
+    )
+    assert status == "error"
+    assert coordinator.transitions == [(turn_id, "escalated")]  # attempted
+    assert gray_zone.reopen_calls == [query.id]
 
 
 @pytest.mark.asyncio

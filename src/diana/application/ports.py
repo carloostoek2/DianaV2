@@ -181,6 +181,8 @@ class GrayZoneServicePort(Protocol):
         self, timeout_hours: int | None = None
     ) -> list[object]: ...
 
+    async def reopen_query(self, query_id: UUID) -> bool: ...
+
 
 DeliveryMode = Literal["supervised", "autonomous", "fake_delivery"]
 

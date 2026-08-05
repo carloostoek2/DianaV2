@@ -11,7 +11,10 @@ from aiogram.types import CallbackQuery
 
 from diana.application.admin_service import AdminService
 from diana.application.ports import GrayZoneServicePort
-from diana.application.turn_coordinator import TurnCoordinator
+from diana.application.turn_coordinator import (
+    ChatLockTimeoutError,
+    TurnCoordinator,
+)
 from diana.telegram.keyboards import parse_doctrine_callback
 
 logger = logging.getLogger("diana.telegram")
@@ -84,6 +87,16 @@ async def handle_doctrine_resolve_with_draft(
                 created = await admin.create_supervised_delivery_from_gray_zone(
                     turn_id, query
                 )
+            except ChatLockTimeoutError:
+                # Lock contention with the expiry job or an owner callback:
+                # the other holder may be creating the approval for this very
+                # turn. Escalating would terminalize it mid-flight — report a
+                # retryable error and leave the turn untouched.
+                logger.warning(
+                    "doctrine_resolve_delivery_lock_timeout",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+                return "error"
             except Exception:
                 logger.exception(
                     "doctrine_resolve_delivery_error",
@@ -101,6 +114,19 @@ async def handle_doctrine_resolve_with_draft(
                         "doctrine_resolve_fallback_escalate_error",
                         extra={"turn_id": str(turn_id)},
                     )
+                    # Double failure: reopen the query so a later run (expiry)
+                    # retries instead of stranding the turn in gray_zone.
+                    try:
+                        await gray_zone.reopen_query(query.id)
+                    except Exception:
+                        logger.exception(
+                            "doctrine_resolve_reopen_error",
+                            extra={
+                                "turn_id": str(turn_id),
+                                "query_id": str(query.id),
+                            },
+                        )
+                    return "error"
                 logger.warning(
                     "doctrine_resolve_delivery_fallback_escalated",
                     extra={"turn_id": str(turn_id), "query_id": str(query.id)},

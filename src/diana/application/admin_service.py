@@ -251,7 +251,10 @@ class AdminService:
         query does not belong to the turn, the query lacks a non-empty
         ``business_connection_id``, the draft is empty, or the turn is already
         terminal. Returns True when a supervised approval is in place — created
-        now, or already existing (idempotent, no second approval/DM). If the
+        now, or already ``waiting`` (idempotent, no second approval/DM). If
+        ``send_draft_for_approval`` fails after persisting the approval, the
+        just-created approval is cancelled before the exception re-raises, so
+        callers' fallback-escalate never leaves a waiting orphan behind. If the
         transition raises ``TurnSupersededError``, the approval just created is
         cancelled (only while still ``waiting``) so no orphan approval is left
         behind.
@@ -301,20 +304,32 @@ class AdminService:
                 return False
             existing = await self._approvals.get_by_turn(turn_id)
             if existing is not None:
-                logger.info(
-                    "gray_zone_delivery_already_pending",
+                if existing.status == "waiting":
+                    logger.info(
+                        "gray_zone_delivery_already_pending",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "approval_status": existing.status,
+                        },
+                    )
+                    return True
+                # Non-waiting leftover (e.g. cancelled) on a non-terminal turn:
+                # do not re-create over it (unique turn_id); let the caller
+                # escalate so the turn is never stranded in gray_zone.
+                logger.warning(
+                    "gray_zone_delivery_existing_non_waiting",
                     extra={
                         "turn_id": str(turn_id),
                         "approval_status": existing.status,
                     },
                 )
-                return True
+                return False
 
             incoming = IncomingTurn(
                 turn_id=turn_id,
                 chat_id=fresh.chat_id,
                 vip_id=fresh.vip_id,
-                text=getattr(query, "question", "") or "",
+                text=(getattr(query, "question", "") or "").strip() or "(no text)",
                 telegram_message_id=fresh.trigger_message_id,
                 business_connection_id=bc,
                 channel_type=fresh.channel_type,
@@ -328,7 +343,23 @@ class AdminService:
                 ),
                 draft_text=draft,
             )
-            await self.send_draft_for_approval(incoming, decision, turn_id)
+            try:
+                await self.send_draft_for_approval(incoming, decision, turn_id)
+            except Exception:
+                # send_draft_for_approval persists the approval (waiting)
+                # BEFORE the owner DM; if the DM (or anything after persist)
+                # fails, cancel the just-created approval so the caller's
+                # fallback-escalate never leaves a waiting orphan behind.
+                approval = await self._approvals.get_by_turn(turn_id)
+                if approval is not None and approval.status == "waiting":
+                    try:
+                        await self._approvals.mark_status(turn_id, "cancelled")
+                    except Exception:
+                        logger.exception(
+                            "gray_zone_delivery_cancel_after_notify_error",
+                            extra={"turn_id": str(turn_id)},
+                        )
+                raise
             try:
                 await self._coordinator.transition(
                     turn_id, TurnStatus.PENDING_APPROVAL

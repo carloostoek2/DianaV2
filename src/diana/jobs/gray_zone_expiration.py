@@ -11,7 +11,10 @@ from uuid import UUID
 
 from diana.application.admin_service import AdminService
 from diana.application.ports import GrayZoneServicePort, OwnerNotifierPort
-from diana.application.turn_coordinator import TurnCoordinator
+from diana.application.turn_coordinator import (
+    ChatLockTimeoutError,
+    TurnCoordinator,
+)
 
 logger = logging.getLogger("diana.jobs")
 
@@ -82,6 +85,18 @@ class GrayZoneExpirationJob:
                                 created = await self._admin.create_supervised_delivery_from_gray_zone(
                                     turn_id, row
                                 )
+                            except ChatLockTimeoutError:
+                                # Lock contention with the dx: path or an owner
+                                # callback: the other holder may be creating an
+                                # approval for this very turn. Escalating would
+                                # terminalize it mid-flight — count as failed and
+                                # leave it for the next run instead.
+                                logger.warning(
+                                    "expiration_delivery_lock_timeout",
+                                    extra={"turn_id": str(turn_id)},
+                                )
+                                failed_count += 1
+                                continue
                             except Exception:
                                 logger.exception(
                                     "expiration_delivery_error",
@@ -106,6 +121,19 @@ class GrayZoneExpirationJob:
                                 extra={"turn_id": str(turn_id)},
                             )
                             failed_count += 1
+                            # Double failure (delivery + escalate): reopen the
+                            # query so a later run retries instead of stranding
+                            # the turn in gray_zone with an expired query.
+                            try:
+                                await self._gray_zone.reopen_query(row.id)
+                            except Exception:
+                                logger.exception(
+                                    "expiration_reopen_error",
+                                    extra={
+                                        "turn_id": str(turn_id),
+                                        "query_id": str(getattr(row, "id", None)),
+                                    },
+                                )
 
                     try:
                         parts = [
