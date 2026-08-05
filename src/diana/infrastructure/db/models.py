@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -280,6 +281,15 @@ class Memory(Base):
     """VIP-scoped episodic memory with embedding (BR-15: always filter by vip_id)."""
 
     __tablename__ = "memories"
+
+    # Fix round (L3): the visibility gate depends on `status` — the vocabulary
+    # is enforced at the schema level (mirrors migration 022 CheckConstraint).
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('auto', 'pending_owner', 'approved', 'discarded')",
+            name="ck_memories_status",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),

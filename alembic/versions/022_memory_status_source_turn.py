@@ -38,6 +38,13 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
+    # Fix round (L3): the visibility gate depends on `status` — enforce the
+    # vocabulary at the schema level (defense in depth with the DTO/repo).
+    op.create_check_constraint(
+        "ck_memories_status",
+        "memories",
+        "status IN ('auto', 'pending_owner', 'approved', 'discarded')",
+    )
     op.create_index(
         "ix_memories_vip_id_status",
         "memories",
@@ -47,5 +54,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_memories_vip_id_status", table_name="memories")
+    op.drop_constraint("ck_memories_status", "memories", type_="check")
     op.drop_column("memories", "source_turn_id")
     op.drop_column("memories", "status")

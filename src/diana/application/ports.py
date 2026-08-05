@@ -748,6 +748,12 @@ class PromoExecutionStore(Protocol):
 
 # --- F5 VIP memory profile (backfill writer DTO) -----------------------------
 
+# Fix round (F6/L3): the visibility gate depends on `status` — the domain is
+# enforced at the DTO (Literal + runtime check), at the repo boundary (L7)
+# and at the schema level (CheckConstraint `ck_memories_status`, migration 022).
+_MEMORY_STATUSES = ("auto", "pending_owner", "approved", "discarded")
+MemoryStatus = Literal["auto", "pending_owner", "approved", "discarded"]
+
 
 @dataclass(frozen=True, slots=True)
 class MemoryInsert:
@@ -763,9 +769,18 @@ class MemoryInsert:
     text: str
     embedding: list[float]
     confidence: float
-    status: str
+    status: MemoryStatus
     source_turn_id: UUID | None = None
     approved_by: str | None = None
+
+    def __post_init__(self) -> None:
+        # Fix round (F6): fail fast on out-of-domain status — a typo must not
+        # silently turn a sensitive fact visible (or vice versa).
+        if self.status not in _MEMORY_STATUSES:
+            raise ValueError(
+                f"invalid MemoryInsert.status {self.status!r}; "
+                f"expected one of {_MEMORY_STATUSES}"
+            )
 
 
 __all__ = [

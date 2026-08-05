@@ -12,6 +12,14 @@ from diana.infrastructure.db.models import Memory
 
 # F5-09: only facts the retriever may see (pending_owner/discarded never leak).
 _VISIBLE_STATUSES = ("auto", "approved")
+# Fix round (F6/L3/L7): the status vocabulary and the embedding dimension are
+# enforced at the repo boundary — an out-of-domain value must fail loudly
+# instead of silently becoming (in)visible to the retriever.
+_VALID_STATUSES = ("auto", "pending_owner", "approved", "discarded")
+_EMBEDDING_DIM = 384
+# Fix round (F4): rows the owner already decided on survive regeneration.
+# Only regenerable rows (auto/pending_owner) are replaced by a new backfill.
+_REGENERABLE_STATUSES = ("auto", "pending_owner")
 
 
 def memory_to_dict(row: Memory) -> dict:
@@ -45,6 +53,9 @@ class MemoriesRepo:
 
         Visibility filter (F5-09, REQ-MEM-10/11): only ``auto``/``approved``
         rows reach the retriever; ``pending_owner``/``discarded`` never do.
+        The ``category='perfil'`` row is also excluded (fix round F1/M1): it is
+        the full profile card for the owner's panel, not a retrievable fact —
+        its JSON embeds every section (including sensitive ones).
         """
         async with self._sf() as session:
             result = await session.execute(
@@ -52,6 +63,7 @@ class MemoriesRepo:
                 .where(
                     Memory.vip_id == vip_id,
                     Memory.status.in_(_VISIBLE_STATUSES),
+                    Memory.category != "perfil",
                     Memory.embedding.cosine_distance(embedding) < 1 - threshold,
                 )
                 .order_by(Memory.embedding.cosine_distance(embedding))
@@ -67,17 +79,46 @@ class MemoriesRepo:
         perfil: dict,
         perfil_embedding: list[float],
     ) -> int:
-        """Idempotently replace the VIP's whole profile in one transaction.
+        """Idempotently replace the VIP's profile in one transaction.
 
-        Deletes every existing ``memories`` row for ``vip_id`` and inserts the
-        section facts (``content`` with canonical ``texto`` + ``fact`` mirror)
-        plus the ``category='perfil'`` row (REQ-MEM-03). Returns the total
-        number of inserted rows. Never duplicates: regeneration replaces.
+        Fix round (F4, REQ-MEM-01/03): only the *regenerable* rows
+        (``auto``/``pending_owner``) are deleted and reinserted. Rows the owner
+        already decided on — ``approved`` and ``discarded`` — survive the
+        regeneration; a new backfill never silently resets the approval state
+        or drops an edited fact. The ``category='perfil'`` row (status
+        ``auto``) is regenerable and gets replaced.
+
+        Fix round (L7): the status vocabulary and the embedding dimension
+        (384) are validated before touching the DB — out-of-domain values
+        raise a descriptive ``ValueError`` instead of a raw DB error.
+
+        Returns the total number of inserted rows (facts + perfil row).
         The perfil embedding is computed by the caller (service) — the repo
         never calls the embedder.
         """
+        for r in rows:
+            if r.status not in _VALID_STATUSES:
+                raise ValueError(
+                    f"invalid MemoryInsert.status {r.status!r}; "
+                    f"expected one of {_VALID_STATUSES}"
+                )
+            if len(r.embedding) != _EMBEDDING_DIM:
+                raise ValueError(
+                    f"invalid embedding dimension {len(r.embedding)} for fact "
+                    f"{r.text!r}; expected {_EMBEDDING_DIM}"
+                )
+        if len(perfil_embedding) != _EMBEDDING_DIM:
+            raise ValueError(
+                f"invalid perfil embedding dimension {len(perfil_embedding)}; "
+                f"expected {_EMBEDDING_DIM}"
+            )
         async with self._sf() as session:
-            await session.execute(delete(Memory).where(Memory.vip_id == vip_id))
+            await session.execute(
+                delete(Memory).where(
+                    Memory.vip_id == vip_id,
+                    Memory.status.in_(_REGENERABLE_STATUSES),
+                )
+            )
             for r in rows:
                 session.add(
                     Memory(
