@@ -884,6 +884,7 @@ class TurnOrchestrator:
             text=turn_text,
             telegram_message_id=incoming.telegram_message_id,
             business_connection_id=str(bc).strip(),
+            channel_type=incoming.channel_type,
         )
 
         try:
@@ -1059,6 +1060,29 @@ class TurnOrchestrator:
                 )
                 logger.info(
                     "sandbox_consult_doctrine_demoted",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": incoming.chat_id,
+                    },
+                )
+            elif turn_ctx.vip_id is None:
+                # atencion channel (non-VIP) turn without vip_id: demote to
+                # approve instead of crashing. Real gray zone for atencion is
+                # Item 4; the owner reviews the draft directly.
+                demoted = decision.model_copy(
+                    update={
+                        "action": "approve",
+                        "reason": "atencion_no_vip_doctrine",
+                    }
+                )
+                await self._coordinator.transition(
+                    turn_id, TurnStatus.PENDING_APPROVAL
+                )
+                await self._admin.send_draft_for_approval(
+                    turn_ctx, demoted, turn_id
+                )
+                logger.info(
+                    "atencion_consult_doctrine_demoted",
                     extra={
                         "turn_id": str(turn_id),
                         "chat_id": incoming.chat_id,

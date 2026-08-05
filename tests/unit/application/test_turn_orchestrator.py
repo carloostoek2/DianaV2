@@ -2249,7 +2249,7 @@ async def test_consult_doctrine_raises_when_feature_disabled() -> None:
     )
     g = _build(FakeDirector(decision), gray_zone=FakeGrayZone())
     with pytest.raises(RuntimeError, match="gray zone feature is disabled"):
-        await g["orch"].handle_vip_message(_vip())
+        await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
     assert g["notifier"].doctrines == []
 
 
@@ -2263,24 +2263,33 @@ async def test_consult_doctrine_raises_when_gray_zone_none() -> None:
     )
     g = _build(FakeDirector(decision), feature_gray_zone_enabled=True)
     with pytest.raises(RuntimeError, match="GrayZoneService is not injected"):
-        await g["orch"].handle_vip_message(_vip())
+        await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
 
 
 @pytest.mark.asyncio
-async def test_consult_doctrine_raises_when_vip_id_none() -> None:
-    """Guard: consult_doctrine with vip_id=None raises RuntimeError."""
+async def test_consult_doctrine_atencion_demotes_to_approve() -> None:
+    """atencion channel (vip_id=None) consult_doctrine demotes to approve, no crash."""
     decision = Decision(
         action="consult_doctrine",
         reason="doctrine_not_found",
         evaluation=_eval(),
+        draft_text="draft",
     )
     g = _build(
         FakeDirector(decision),
         gray_zone=FakeGrayZone(),
         feature_gray_zone_enabled=True,
     )
-    with pytest.raises(RuntimeError, match="consult_doctrine requires vip_id"):
-        await g["orch"].handle_vip_message(_vip(vip_id=None))
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion")
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "atencion_no_vip_doctrine"
+    # no gray zone query was created for the demoted turn
+    assert g["gray_zone"].queries == []
 
 
 @pytest.mark.asyncio

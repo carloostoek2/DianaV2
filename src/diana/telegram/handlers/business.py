@@ -23,6 +23,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
         message: Message,
         business_connection_id: str | None = None,
         vip_id: UUID | None = None,
+        channel_type: str = "vip",
         **_: Any,
     ) -> None:
         bc = business_connection_id or message.business_connection_id
@@ -33,6 +34,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             telegram_message_id=message.message_id,
             business_connection_id=bc,
             vip_id=vip_id,
+            channel_type=channel_type,
         )
         try:
             turn_id = await orchestrator.handle_vip_message(inbound)
@@ -56,6 +58,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
         message: Message,
         business_connection_id: str | None = None,
         vip_id: UUID | None = None,
+        channel_type: str = "vip",
         **_: Any,
     ) -> None:
         bc = business_connection_id or message.business_connection_id
@@ -69,6 +72,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             business_connection_id=bc,
             vip_id=vip_id,
             is_edit=True,
+            channel_type=channel_type,
         )
         try:
             # Same path as new message: bumps VIP epoch → cancels in-flight

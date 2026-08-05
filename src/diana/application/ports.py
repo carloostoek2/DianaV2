@@ -229,6 +229,9 @@ class VipInboundMessage(BaseModel):
     vip_id: UUID | None = None
     # True for edited_business_message: replace history row, cancel prior turn.
     is_edit: bool = False
+    # F4: channel type ("vip" | "atencion"). Set by AuthMiddleware for the
+    # general-mode path; default keeps the VIP pipeline unchanged.
+    channel_type: str = "vip"
 
 
 class VipRecord(BaseModel):
