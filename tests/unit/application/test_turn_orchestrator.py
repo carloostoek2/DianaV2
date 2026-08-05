@@ -2539,6 +2539,37 @@ async def test_consult_doctrine_atencion_notify_failure_discards_and_demotes() -
     assert g["gray_zone"].queries == []
 
 
+class _FlakyRecheckGrayZone(FakeGrayZone):
+    """O3: DB failure on the freeze re-check — must fail OPEN."""
+
+    async def get_open_query_by_chat_id(self, chat_id: int) -> object | None:
+        raise RuntimeError("db down")
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_atencion_recheck_fail_opens() -> None:
+    """O3: DB error on the freeze re-check fails OPEN → query still created."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=_FlakyRecheckGrayZone(),
+        feature_gray_zone_enabled=True,
+        feature_general_mode_enabled=True,
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=5555)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "gray_zone"  # real post-create status after send_doctrine_query
+    assert len(g["gray_zone"].queries) == 1  # fail-open: query created despite re-check error
+
+
 # ── REQ-ATN-12 payment detection ─────────────────────────────────────────
 
 
@@ -2788,6 +2819,32 @@ async def test_atencion_payment_cooldown_limits_dm_per_chat() -> None:
         _vip(vip_id=None, channel_type="atencion", chat_id=100, text="pago 2")
     )
     assert len(g["notifier"].infos) == 1  # cooldown holds
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_notify_failure_does_not_consume_cooldown() -> None:
+    """O1: a failed informational DM must NOT consume the 20-min cooldown."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+    )
+    calls = {"n": 0}
+
+    async def flaky(text: str, *, chat_id: int | None = None) -> None:
+        calls["n"] += 1
+        raise RuntimeError("notify down")
+
+    g["notifier"].notify_info = flaky  # type: ignore[method-assign]
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    assert calls["n"] == 2  # 2nd attempt NOT suppressed → failure didn't stamp cooldown
 
 
 @pytest.mark.asyncio
