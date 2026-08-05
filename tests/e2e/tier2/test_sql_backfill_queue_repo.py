@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text, update
+from sqlalchemy.exc import IntegrityError
 
 from diana.infrastructure.db.models import BackfillQueue
 from diana.infrastructure.db.repositories.backfill_queue import (
@@ -259,3 +260,37 @@ async def test_done_job_does_not_block_reenqueue(session_factory) -> None:
     job2 = await repo.enqueue(vip_a, chat_id=612)
     assert job2 is not None
     assert job2.id != job.id
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_check_ck_backfill_queue_outcome_rejects_invalid(
+    session_factory,
+) -> None:
+    """Residual Pool 2: the ``ck_backfill_queue_outcome`` CHECK constraint
+    rejects out-of-domain outcomes. The UPDATE fires the CHECK exactly like an
+    INSERT would, so the test avoids column-default assumptions of a raw
+    INSERT — a valid enqueue (outcome NULL) passes, 'bogus' is rejected, and
+    a valid 'ok' passes the same constraint."""
+    repo = SqlBackfillQueueRepo(session_factory)
+    vip_a = await _create_vip(session_factory, 620)
+    rec = await repo.enqueue(vip_a, chat_id=620)
+    assert rec is not None
+
+    with pytest.raises(IntegrityError):
+        async with session_factory() as session:
+            await session.execute(
+                text(
+                    "UPDATE backfill_queue SET outcome = 'bogus' WHERE id = :jid"
+                ),
+                {"jid": rec.id},
+            )
+            await session.commit()
+
+    # Sanity: the same constraint accepts a valid outcome.
+    async with session_factory() as session:
+        await session.execute(
+            text("UPDATE backfill_queue SET outcome = 'ok' WHERE id = :jid"),
+            {"jid": rec.id},
+        )
+        await session.commit()

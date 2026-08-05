@@ -797,3 +797,197 @@ async def test_insert_facts_validates_status_and_dimension(session_factory):
 
     # Nothing was written by the rejected calls.
     assert await _count_memories(session_factory, vip_id) == 0
+
+
+# ---------------------------------------------------------------------------
+# F5 Pool 4: owner approval flow (F5-05 / REQ-MEM-10) — list/get/decide + visibility
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_pending_owner_returns_only_pending(session_factory):
+    """list_pending_owner lists ONLY pending_owner fact rows, never perfil."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 521)
+
+    for category, status in [
+        ("identidad", "auto"),
+        ("preferencias", "approved"),
+        ("comercial", "pending_owner"),
+        ("limites", "discarded"),
+    ]:
+        await _insert_memory_row(session_factory, vip_id, category=category, status=status)
+    # The perfil card row is never part of the approval queue.
+    await _insert_memory_row(session_factory, vip_id, category="perfil", status="auto")
+
+    pending = await repo.list_pending_owner()
+    assert all(r["status"] == "pending_owner" for r in pending)
+    assert all(r["category"] != "perfil" for r in pending)
+    # Our VIP's auto/approved/discarded rows are excluded; the single
+    # pending_owner row IS listed (the queue is multi-VIP by design — A3).
+    mine = [r for r in pending if r["vip_id"] == str(vip_id)]
+    assert len(mine) == 1
+    assert mine[0]["category"] == "comercial"
+
+    limited = await repo.list_pending_owner(limit=0)
+    assert limited == []
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_get_fact_returns_row_by_id_and_none_for_missing(session_factory):
+    """get_fact resolves a row by id (identity) and None for unknown ids."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 522)
+    await _insert_memory_row(
+        session_factory, vip_id, category="sensible", status="pending_owner"
+    )
+
+    async with session_factory() as session:
+        fact_id = (
+            await session.execute(
+                text(
+                    "SELECT id FROM memories "
+                    "WHERE vip_id = :vip AND category = 'sensible'"
+                ),
+                {"vip": vip_id},
+            )
+        ).scalar_one()
+
+    row = await repo.get_fact(fact_id)
+    assert row is not None
+    assert row["id"] == str(fact_id)
+    assert row["vip_id"] == str(vip_id)
+    assert row["status"] == "pending_owner"
+    assert row["category"] == "sensible"
+
+    assert await repo.get_fact(uuid4()) is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_set_fact_status_approve_discard_and_guards(session_factory):
+    """set_fact_status transitions ONLY pending_owner scoped by (id, vip_id)."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 523)
+    other_vip = await _create_vip(session_factory, 524)
+
+    async def _insert(category: str, status: str):
+        await _insert_memory_row(
+            session_factory, vip_id, category=category, status=status
+        )
+
+    await _insert("sensible", "pending_owner")  # approve target
+    await _insert("comercial", "pending_owner")  # discard target
+    await _insert("identidad", "auto")  # already-auto guard
+
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, category FROM memories WHERE vip_id = :vip "
+                    "ORDER BY category"
+                ),
+                {"vip": vip_id},
+            )
+        ).all()
+    by_cat = {cat: fid for fid, cat in rows}
+
+    # Approve → True, row becomes approved with aprobado_por='owner'.
+    approved = await repo.set_fact_status(
+        by_cat["sensible"], vip_id=vip_id, new_status="approved"
+    )
+    assert approved is True
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT status, content->>'aprobado_por' AS aprobado_por "
+                    "FROM memories WHERE id = :fid"
+                ),
+                {"fid": by_cat["sensible"]},
+            )
+        ).one()
+    assert row.status == "approved"
+    assert row.aprobado_por == "owner"
+
+    # Discard → True, row becomes discarded.
+    discarded = await repo.set_fact_status(
+        by_cat["comercial"], vip_id=vip_id, new_status="discarded"
+    )
+    assert discarded is True
+    async with session_factory() as session:
+        status = (
+            await session.execute(
+                text("SELECT status FROM memories WHERE id = :fid"),
+                {"fid": by_cat["comercial"]},
+            )
+        ).scalar_one()
+    assert status == "discarded"
+
+    # Already decided → stale (False); other VIP → not mine (False).
+    assert (
+        await repo.set_fact_status(
+            by_cat["sensible"], vip_id=vip_id, new_status="approved"
+        )
+        is False
+    )
+    assert (
+        await repo.set_fact_status(
+            by_cat["sensible"], vip_id=other_vip, new_status="approved"
+        )
+        is False
+    )
+    # auto row is not pending_owner → False.
+    assert (
+        await repo.set_fact_status(
+            by_cat["identidad"], vip_id=vip_id, new_status="approved"
+        )
+        is False
+    )
+    # Missing row → False.
+    assert (
+        await repo.set_fact_status(uuid4(), vip_id=vip_id, new_status="approved")
+        is False
+    )
+    # Out-of-domain target status → ValueError, nothing written.
+    with pytest.raises(ValueError, match="invalid target status"):
+        await repo.set_fact_status(
+            by_cat["sensible"], vip_id=vip_id, new_status="bogus"  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_pending_owner_invisible_to_retriever_until_approved(session_factory):
+    """(b)+(e): pending_owner is invisible to the retriever until the owner
+    approves it — then the same query returns the row."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 525)
+    await _insert_memory_row(
+        session_factory, vip_id, category="sensible", status="pending_owner"
+    )
+
+    assert await repo.find_by_vip_and_similarity(
+        vip_id, _EMBEDDING_384, threshold=0.75
+    ) == []
+
+    async with session_factory() as session:
+        fact_id = (
+            await session.execute(
+                text("SELECT id FROM memories WHERE vip_id = :vip"),
+                {"vip": vip_id},
+            )
+        ).scalar_one()
+    assert (
+        await repo.set_fact_status(fact_id, vip_id=vip_id, new_status="approved")
+        is True
+    )
+
+    found = await repo.find_by_vip_and_similarity(
+        vip_id, _EMBEDDING_384, threshold=0.75
+    )
+    assert len(found) == 1
+    assert found[0]["id"] == str(fact_id)
+    assert found[0]["status"] == "approved"

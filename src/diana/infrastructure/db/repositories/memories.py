@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import delete, exists, select
+from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.ports import MemoryInsert
@@ -333,6 +334,86 @@ class MemoriesRepo:
                 )
             await session.commit()
         return len(rows)
+
+    # ------------------------------------------------------------------
+    # F5 Pool 4: owner approval flow (F5-05 / REQ-MEM-10)
+    # ------------------------------------------------------------------
+
+    async def list_pending_owner(self, limit: int = 50) -> list[dict]:
+        """All ``pending_owner`` fact rows across VIPs, oldest first (A3).
+
+        Owner-admin multi-VIP read (BR-15 exception, documented decision):
+        this is the owner's DM approval queue (``/memoria``) — the same
+        owner-only nature as ``StagingService.list_pending_examples``. Every
+        row keeps its ``vip_id`` so the write path (``set_fact_status``)
+        stays scoped by (id, vip_id); bot consumers never see this list.
+        The ``category='perfil'`` card row is never listed (not a fact).
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Memory)
+                .where(
+                    Memory.status == "pending_owner",
+                    Memory.category != "perfil",
+                )
+                .order_by(Memory.created_at.asc(), Memory.id.asc())
+                .limit(limit)
+            )
+            return [memory_to_dict(row) for row in result.scalars().all()]
+
+    async def get_fact(self, fact_id: UUID) -> dict | None:
+        """Fetch one fact row by id (identity lookup, not scoped search).
+
+        The approval service resolves the row's ``vip_id`` from here and
+        passes it to ``set_fact_status`` so the write stays scoped by
+        (id, vip_id) — the callback payload only carries the fact id.
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Memory).where(Memory.id == fact_id)
+            )
+            row = result.scalar_one_or_none()
+            return memory_to_dict(row) if row is not None else None
+
+    async def set_fact_status(
+        self,
+        fact_id: UUID,
+        *,
+        vip_id: UUID,
+        new_status: Literal["approved", "discarded"],
+    ) -> bool:
+        """Owner decision on a pending_owner fact (F5-05 / REQ-MEM-10).
+
+        Scoped by (id, vip_id) — pertenencia (BR-15). Only
+        pending_owner → approved|discarded; any other row state (auto,
+        already decided, other VIP, missing) returns False (stale/not
+        mine). Marks content.aprobado_por = 'owner'.
+        """
+        if new_status not in ("approved", "discarded"):
+            raise ValueError(
+                f"invalid target status {new_status!r}; "
+                f"expected 'approved' or 'discarded'"
+            )
+        async with self._sf() as session:
+            result = await session.execute(
+                update(Memory)
+                .where(
+                    Memory.id == fact_id,
+                    Memory.vip_id == vip_id,
+                    Memory.status == "pending_owner",
+                )
+                .values(
+                    status=new_status,
+                    content=func.jsonb_set(
+                        Memory.content,
+                        text("'{aprobado_por}'"),
+                        text("'\"owner\"'"),
+                        text("true"),
+                    ),
+                )
+            )
+            await session.commit()
+            return result.rowcount == 1
 
 
 __all__ = ["MemoriesRepo", "memory_to_dict"]
