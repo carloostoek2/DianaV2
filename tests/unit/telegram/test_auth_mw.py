@@ -392,6 +392,7 @@ async def test_training_mode_on_non_vip_passes() -> None:
     handler.assert_awaited_once()
     assert "vip_id" not in data
     assert "vip_record" not in data
+    assert data.get("channel_type") == "atencion"
 
 
 @pytest.mark.asyncio
@@ -499,3 +500,113 @@ async def test_sandbox_inactive_non_vip_still_dropped() -> None:
     result = await mw(handler, _biz_msg(111, chat_id=42), {"business_connection_id": "bc-1"})
     assert result is None
     handler.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# F4 general mode gate (non-VIP + FEATURE_GENERAL_MODE_ENABLED → atencion)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_general_mode_bypass_no_vip_flag_on() -> None:
+    """Non-VIP + general flag ON → handler called with channel_type atencion, no vip_id."""
+    vips = InMemoryVipStore()
+    mw = AuthMiddleware(vips=vips, feature_general_mode_enabled=True)
+    handler = AsyncMock(return_value="orch")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111), data)
+    assert result == "orch"
+    handler.assert_awaited_once()
+    assert data.get("channel_type") == "atencion"
+    assert data.get("vip_id") is None
+    assert "vip_record" not in data
+
+
+@pytest.mark.asyncio
+async def test_general_mode_flag_off_drops_to_promo_or_none() -> None:
+    """Non-VIP + flag OFF → legacy behavior (promo/drop), handler not called."""
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=None)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=False,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111), data)
+    assert result is None
+    handler.assert_not_awaited()
+    promo.match_trigger.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_general_mode_sandbox_wins() -> None:
+    """Sandbox active + flag ON → sandbox wins, handler runs with sandbox_active."""
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+    vips = InMemoryVipStore()
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "nuevo")
+    mw = AuthMiddleware(
+        vips=vips, sandbox=sandbox, feature_general_mode_enabled=True
+    )
+    handler = AsyncMock(return_value="orch")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, chat_id=42), data)
+    assert result == "orch"
+    handler.assert_awaited_once()
+    assert data.get("sandbox_active") is True
+
+
+@pytest.mark.asyncio
+async def test_general_mode_training_wins() -> None:
+    """Training ON + flag ON → handler called with channel_type atencion (training bypass)."""
+    vips = InMemoryVipStore()
+    training = _TrainingModeStore(enabled=True)
+    mw = AuthMiddleware(
+        vips=vips,
+        training_mode=training,
+        feature_general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="orch")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111), data)
+    assert result == "orch"
+    handler.assert_awaited_once()
+    assert data.get("channel_type") == "atencion"
+    assert data.get("vip_id") is None

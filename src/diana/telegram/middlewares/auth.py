@@ -42,12 +42,14 @@ class AuthMiddleware(BaseMiddleware):
         vips: VipStore,
         promo: PromoMatcher | None = None,
         feature_promo_enabled: bool = False,
+        feature_general_mode_enabled: bool = False,
         sandbox: Any | None = None,
         training_mode: TrainingModeStore | None = None,
     ) -> None:
         self._vips = vips
         self._promo = promo
         self._feature_promo_enabled = feature_promo_enabled
+        self._feature_general_mode_enabled = feature_general_mode_enabled
         self._sandbox = sandbox
         self._training_mode = training_mode
 
@@ -107,8 +109,23 @@ class AuthMiddleware(BaseMiddleware):
             # to the cognitive pipeline WITHOUT setting vip_id/vip_record.
             # This gate fires BEFORE the promo check (training mode wins).
             if self._training_mode is not None and await self._training_mode.is_enabled():
+                data["channel_type"] = "atencion"
                 logger.info(
                     "training_mode_bypass",
+                    extra={
+                        "telegram_user_id": user.id,
+                        "chat_id": chat_id,
+                    },
+                )
+                return await handler(event, data)
+
+            # F4 general mode gate: non-VIP + flag ON → atencion channel,
+            # same deterministic path as training mode but permanent. The
+            # channel travels in data; no vip_id/vip_record is set.
+            if self._feature_general_mode_enabled:
+                data["channel_type"] = "atencion"
+                logger.info(
+                    "general_mode_bypass",
                     extra={
                         "telegram_user_id": user.id,
                         "chat_id": chat_id,

@@ -653,6 +653,7 @@ def build_app(
 
     # F3 promo (non-VIP) — always construct; feature flag gates execute/match path.
     feature_promo_enabled = settings.feature_promo_enabled
+    feature_general_mode_enabled = settings.feature_general_mode_enabled
     promo = PromoService(
         feature_promo_enabled=feature_promo_enabled,
         triggers=PromoTriggerRepo(sf),
@@ -731,6 +732,7 @@ def build_app(
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
+        feature_general_mode_enabled=feature_general_mode_enabled,
         sandbox=sandbox,
         training_mode=config_store,
         config_store=config_store,
