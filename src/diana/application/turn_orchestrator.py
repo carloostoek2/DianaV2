@@ -402,6 +402,7 @@ class TurnOrchestrator:
                 "business_connection_id": incoming.business_connection_id,
                 "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
                 "is_edit": bool(incoming.is_edit),
+                "channel_type": incoming.channel_type,
             },
         }
         try:
@@ -1065,10 +1066,12 @@ class TurnOrchestrator:
                         "chat_id": incoming.chat_id,
                     },
                 )
-            elif turn_ctx.vip_id is None:
+            elif turn_ctx.channel_type == "atencion" and turn_ctx.vip_id is None:
                 # atencion channel (non-VIP) turn without vip_id: demote to
                 # approve instead of crashing. Real gray zone for atencion is
-                # Item 4; the owner reviews the draft directly.
+                # Item 4; the owner reviews the draft directly. A vip-less turn
+                # on the VIP channel must NOT take this path — it falls through
+                # to the RuntimeError guard below.
                 demoted = decision.model_copy(
                     update={
                         "action": "approve",

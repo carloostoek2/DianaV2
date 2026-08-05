@@ -537,6 +537,85 @@ async def test_resume_pre_delay_continues_vip_pipeline() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resume_pre_delay_preserves_atencion_channel() -> None:
+    """B4: an atencion turn's channel_type survives a restart — the pre-delay
+    payload persists it and recovery resumes the turn on the atencion channel."""
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
+
+    from diana.application.memory import (
+        InMemoryRuntimeTimerStore,
+        InMemoryTurnStore,
+    )
+    from diana.application.ports import RuntimeTimerRecord, TurnRecord
+    from diana.application.recovery_startup import resume_pre_delay_timers
+    from diana.behavior.fake import ImmediateClock
+
+    turns = InMemoryTurnStore()
+    timers = InMemoryRuntimeTimerStore()
+    clock = ImmediateClock(now=datetime(2026, 8, 2, 12, 0, tzinfo=UTC))
+    turn_id = uuid4()
+    await turns.create(
+        TurnRecord(
+            id=turn_id,
+            chat_id=200,
+            status="waiting_delay",
+            vip_id=None,
+            trigger_message_id=7,
+        )
+    )
+    now = clock.now()
+    await timers.create_active(
+        RuntimeTimerRecord(
+            id=uuid4(),
+            chat_id=200,
+            turn_id=turn_id,
+            delivery_id=None,
+            kind="pre_delay",
+            scheduled_at=now - timedelta(seconds=40),
+            initial_delay_seconds=120.0,
+            status="active",
+            created_at=now - timedelta(seconds=40),
+            payload={
+                "vip_epoch": 0,
+                "mode": "general",
+                "incoming": {
+                    "chat_id": 200,
+                    "text": "hola atencion",
+                    "telegram_message_id": 7,
+                    "business_connection_id": "bc-atencion",
+                    "vip_id": None,
+                    "is_edit": False,
+                    "channel_type": "atencion",
+                },
+            },
+        )
+    )
+
+    class _Orch:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def resume_waiting_delay(self, **kwargs: object) -> object:
+            self.calls.append(dict(kwargs))
+            await turns.transition(turn_id, "pending_approval")
+            return turn_id
+
+    orch = _Orch()
+    n = await resume_pre_delay_timers(
+        timers=timers,
+        turns=turns,
+        orchestrator=orch,
+        clock=clock,
+    )
+    assert n == 1
+    incoming = orch.calls[0]["incoming"]
+    assert incoming.channel_type == "atencion"
+    assert incoming.vip_id is None
+    assert incoming.chat_id == 200
+
+
+@pytest.mark.asyncio
 async def test_resume_pre_delay_fails_orphan_waiting_delay() -> None:
     """waiting_delay without timer becomes failed crash_recovery after resume pass."""
     from diana.application.memory import InMemoryRuntimeTimerStore, InMemoryTurnStore

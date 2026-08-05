@@ -17,6 +17,7 @@ from diana.application.memory import (
     InMemoryMessageHistoryWriter,
     InMemoryPendingApprovalStore,
     InMemoryPendingDeliveryStore,
+    InMemoryRuntimeTimerStore,
     InMemoryTraceReaderWriter,
     InMemoryTurnStore,
     InMemoryVipStore,
@@ -1933,6 +1934,32 @@ async def test_autonomous_owner_during_pre_delay_no_send() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pre_delay_persists_channel_type() -> None:
+    """B4: the pre-delay timer payload carries the incoming channel_type so a
+    restart can resume the atencion turn on the atencion channel."""
+    decision = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    timers = InMemoryRuntimeTimerStore()
+    g = _build(
+        FakeDirector(decision),
+        delay_policy=FixedDelayPolicy(initial=0.001),
+    )
+    g["orch"]._runtime_timers = timers  # noqa: SLF001
+    await g["orch"].handle_vip_message(
+        _vip(channel_type="atencion", text="hola atencion")
+    )
+    # The pre-delay timer is persisted at mint time and marked completed after
+    # the (tiny) delay; the in-memory store keeps the record with its payload.
+    assert len(timers._timers) == 1  # noqa: SLF001
+    payload = next(iter(timers._timers.values())).payload  # noqa: SLF001
+    assert payload["incoming"]["channel_type"] == "atencion"
+
+
+@pytest.mark.asyncio
 async def test_autonomous_prepare_sets_skip_initial_delay() -> None:
     """Post-delay autonomous deliver must skip BehaviorEngine initial delay."""
     spy = _CapturingDeliverer()
@@ -2267,6 +2294,27 @@ async def test_consult_doctrine_raises_when_gray_zone_none() -> None:
 
 
 @pytest.mark.asyncio
+async def test_consult_doctrine_vip_less_vip_channel_raises() -> None:
+    """S2: only atencion vip-less turns demote; a VIP-channel turn without a
+    vip_id must NOT demote — the RuntimeError guard stays reachable."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=FakeGrayZone(),
+        feature_gray_zone_enabled=True,
+    )
+    with pytest.raises(RuntimeError, match="requires vip_id"):
+        await g["orch"].handle_vip_message(_vip(vip_id=None))  # channel vip
+    assert g["notifier"].drafts == []
+    assert g["gray_zone"].queries == []
+
+
+@pytest.mark.asyncio
 async def test_consult_doctrine_atencion_demotes_to_approve() -> None:
     """atencion channel (vip_id=None) consult_doctrine demotes to approve, no crash."""
     decision = Decision(
@@ -2290,6 +2338,8 @@ async def test_consult_doctrine_atencion_demotes_to_approve() -> None:
     assert g["notifier"].drafts[0].reason == "atencion_no_vip_doctrine"
     # no gray zone query was created for the demoted turn
     assert g["gray_zone"].queries == []
+    # the atencion channel travelled through the director unchanged
+    assert g["director"].calls[0].channel_type == "atencion"
 
 
 @pytest.mark.asyncio

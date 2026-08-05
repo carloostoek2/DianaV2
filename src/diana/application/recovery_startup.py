@@ -620,6 +620,7 @@ async def resume_pre_delay_timers(
             business_connection_id=raw_in.get("business_connection_id"),
             vip_id=vip_id,
             is_edit=bool(raw_in.get("is_edit")),
+            channel_type=str(raw_in.get("channel_type") or "vip"),
         )
         now_val = clock.now()
         elapsed = (now_val - timer.scheduled_at).total_seconds()
