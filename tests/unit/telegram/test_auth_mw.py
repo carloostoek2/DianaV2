@@ -48,6 +48,23 @@ def _trigger(text: str = "promos") -> PromoTriggerRecord:
     )
 
 
+class _CyclesStore:
+    """In-memory AtencionCycleStore double for auth middleware tests."""
+
+    def __init__(self, active: bool = True) -> None:
+        self._active = active
+        self.starts: list[int] = []
+
+    async def start_if_absent(self, chat_id: int, *, now) -> None:
+        self.starts.append(chat_id)
+
+    async def is_active(self, chat_id: int, *, since, now) -> bool:
+        return self._active
+
+    async def close_payment(self, chat_id: int, *, now) -> None:
+        pass
+
+
 @pytest.mark.asyncio
 async def test_non_vip_dropped() -> None:
     vips = InMemoryVipStore()
@@ -513,9 +530,14 @@ async def test_sandbox_inactive_non_vip_still_dropped() -> None:
 
 @pytest.mark.asyncio
 async def test_general_mode_bypass_no_vip_flag_on() -> None:
-    """Non-VIP + general flag ON → handler called with channel_type atencion, no vip_id."""
+    """Non-VIP + general flag ON + open atencion cycle → channel atencion, no vip_id."""
     vips = InMemoryVipStore()
-    mw = AuthMiddleware(vips=vips, feature_general_mode_enabled=True)
+    cycles = _CyclesStore(active=True)
+    mw = AuthMiddleware(
+        vips=vips,
+        feature_general_mode_enabled=True,
+        atencion_cycles=cycles,
+    )
     handler = AsyncMock(return_value="orch")
     data: dict = {"business_connection_id": "bc-1"}
     result = await mw(handler, _biz_msg(111), data)
@@ -524,6 +546,7 @@ async def test_general_mode_bypass_no_vip_flag_on() -> None:
     assert data.get("channel_type") == "atencion"
     assert data.get("vip_id") is None
     assert "vip_record" not in data
+    assert data.get("atencion_limit_counted") is True
 
 
 @pytest.mark.asyncio
@@ -568,7 +591,7 @@ async def test_general_mode_promo_wins_on_trigger_match() -> None:
 
 @pytest.mark.asyncio
 async def test_general_mode_wins_on_promo_non_match() -> None:
-    """N5b: flag ON + promo enabled + non-trigger text → atencion channel,
+    """N5b: flag ON + promo enabled + non-trigger text + OPEN cycle → atencion channel,
     match_trigger awaited but promo never runs."""
     vips = InMemoryVipStore()
     promo = _promo_mock(trigger=None)
@@ -577,6 +600,7 @@ async def test_general_mode_wins_on_promo_non_match() -> None:
         promo=promo,
         feature_promo_enabled=True,
         feature_general_mode_enabled=True,
+        atencion_cycles=_CyclesStore(active=True),
     )
     handler = AsyncMock(return_value="orch")
     data: dict = {"business_connection_id": "bc-1"}
@@ -705,9 +729,13 @@ async def test_general_mode_training_wins() -> None:
 
 @pytest.mark.asyncio
 async def test_general_mode_sets_limit_counted_marker() -> None:
-    """F4-02: the general-mode gate sets the atencion_limit_counted marker."""
+    """F4-02: the general-mode gate (with open cycle) sets the marker."""
     vips = InMemoryVipStore()
-    mw = AuthMiddleware(vips=vips, feature_general_mode_enabled=True)
+    mw = AuthMiddleware(
+        vips=vips,
+        feature_general_mode_enabled=True,
+        atencion_cycles=_CyclesStore(active=True),
+    )
     handler = AsyncMock(return_value="orch")
     data: dict = {"business_connection_id": "bc-1"}
     result = await mw(handler, _biz_msg(111), data)
@@ -776,3 +804,117 @@ async def test_training_and_sandbox_do_not_set_marker() -> None:
     await mw2(handler, _biz_msg(111, chat_id=42), data2)
     assert data2.get("channel_type") == "atencion"
     assert data2.get("atencion_limit_counted") is None
+
+
+# ---------------------------------------------------------------------------
+# F4 atencion cycle lifecycle (first promo opens 30d window; payment closes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_general_mode_cycle_inactive_drops() -> None:
+    """F4: flag ON but the chat never received the promo (cycle closed/absent)
+    → dropped, handler NOT called, no atencion channel."""
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=None)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+        atencion_cycles=_CyclesStore(active=False),
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, text="hola"), data)
+    assert result is None
+    handler.assert_not_awaited()
+    assert data.get("channel_type") is None
+
+
+@pytest.mark.asyncio
+async def test_general_mode_no_cycle_store_drops() -> None:
+    """F4: flag ON but no cycle store wired → fail-closed drop (no pipeline)."""
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=None)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, text="hola"), data)
+    assert result is None
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_promo_sent_opens_atencion_cycle() -> None:
+    """F4: successful promo delivery opens the chat's atencion cycle."""
+    vips = InMemoryVipStore()
+    trig = _trigger("promos")
+    promo = _promo_mock(trigger=trig)
+    cycles = _CyclesStore(active=False)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+        atencion_cycles=cycles,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, text="PROMOS", chat_id=555), data)
+    assert result is None
+    handler.assert_not_awaited()
+    promo.execute_promo.assert_awaited_once()
+    assert 555 in cycles.starts
+
+
+@pytest.mark.asyncio
+async def test_promo_failed_does_not_open_cycle() -> None:
+    """F4: a failed promo delivery must NOT open the atencion cycle."""
+    vips = InMemoryVipStore()
+    trig = _trigger("promos")
+    promo = _promo_mock(trigger=trig)
+    promo.execute_promo = AsyncMock(return_value="failed")
+    cycles = _CyclesStore(active=False)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+        atencion_cycles=cycles,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, text="PROMOS", chat_id=555), data)
+    assert result is None
+    assert cycles.starts == []
+
+
+@pytest.mark.asyncio
+async def test_promo_retrigger_does_not_reset_cycle() -> None:
+    """F4: a re-trigger of the promo runs again but start_if_absent keeps the
+    original started_at (idempotent) — linear window, never extended."""
+    vips = InMemoryVipStore()
+    trig = _trigger("promos")
+    promo = _promo_mock(trigger=trig)
+    cycles = _CyclesStore(active=True)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+        atencion_cycles=cycles,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, text="PROMOS", chat_id=555), data)
+    assert result is None
+    promo.execute_promo.assert_awaited_once()
+    # start_if_absent is called again (idempotent by SQL ON CONFLICT); the
+    # store records the attempt but never overwrites started_at.
+    assert 555 in cycles.starts

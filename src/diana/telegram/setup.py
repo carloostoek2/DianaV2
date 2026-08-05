@@ -12,6 +12,7 @@ from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ports import (
+    AtencionCycleStore,
     BehaviorCanceller,
     BusinessConnectionStore,
     EscalationStore,
@@ -102,6 +103,7 @@ def build_dispatcher(
     sandbox: object | None = None,
     training_mode: TrainingModeStore | None = None,
     config_store: TrainingModeStore | None = None,
+    atencion_cycles: AtencionCycleStore | None = None,
     rate_limit_max_events: int = 20,
     rate_limit_window_s: float = 10.0,
     history_seed: object | None = None,
@@ -154,6 +156,7 @@ def build_dispatcher(
             feature_general_mode_enabled=feature_general_mode_enabled,
             sandbox=sandbox,
             training_mode=training_mode,
+            atencion_cycles=atencion_cycles,
         ),
         forbidden_mw,
     ]

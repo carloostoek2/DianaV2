@@ -88,6 +88,7 @@ from diana.infrastructure.db.repositories.persona_versions import PersonaVersion
 from diana.infrastructure.db.repositories.daily_message_limits import (
     SqlDailyMessageLimitStore,
 )
+from diana.infrastructure.db.repositories.atencion_cycles import SqlAtencionCycleStore
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore
@@ -522,6 +523,7 @@ def build_app(
     # pipeline behaves exactly as before.
     persona_version_repo = PersonaVersionRepo(sf)
     daily_message_limit_repo = SqlDailyMessageLimitStore(sf)
+    atencion_cycles = SqlAtencionCycleStore(sf)
     persona_admin_service = PersonaAdminService(
         payload_store=persona_version_repo,
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
@@ -645,6 +647,7 @@ def build_app(
         turns=turns,
         persona_catalog_provider=persona_catalog_provider,
         trace_reader=traces,
+        atencion_cycles=atencion_cycles,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
@@ -748,6 +751,7 @@ def build_app(
         sandbox=sandbox,
         training_mode=config_store,
         config_store=config_store,
+        atencion_cycles=atencion_cycles,
         rate_limit_max_events=settings.rate_limit_max_events,
         rate_limit_window_s=settings.rate_limit_window_s,
         dedup_ttl_s=settings.dedup_ttl_s,

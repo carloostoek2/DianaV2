@@ -8,14 +8,24 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
-from diana.application.ports import PromoTriggerRecord, TrainingModeStore, VipStore
+from diana.application.ports import (
+    AtencionCycleStore,
+    PromoTriggerRecord,
+    TrainingModeStore,
+    VipStore,
+)
 
 logger = logging.getLogger("diana.telegram")
+
+# F4: linear 30-day atencion window anchored at the FIRST promo delivery.
+# Re-triggers of the promo never extend it (product decision, owner).
+ATENCION_CYCLE_WINDOW_DAYS = 30
 
 
 class PromoMatcher(Protocol):
@@ -45,6 +55,7 @@ class AuthMiddleware(BaseMiddleware):
         feature_general_mode_enabled: bool = False,
         sandbox: Any | None = None,
         training_mode: TrainingModeStore | None = None,
+        atencion_cycles: AtencionCycleStore | None = None,
     ) -> None:
         self._vips = vips
         self._promo = promo
@@ -52,6 +63,7 @@ class AuthMiddleware(BaseMiddleware):
         self._feature_general_mode_enabled = feature_general_mode_enabled
         self._sandbox = sandbox
         self._training_mode = training_mode
+        self._atencion_cycles = atencion_cycles
 
     async def __call__(
         self,
@@ -155,6 +167,13 @@ class AuthMiddleware(BaseMiddleware):
                                 "status": status,
                             },
                         )
+                        # F4: a successfully delivered promo opens the chat's
+                        # atencion cycle (linear 30-day window, never extended
+                        # by re-triggers — start_if_absent is idempotent).
+                        if status == "sent" and self._atencion_cycles is not None:
+                            await self._atencion_cycles.start_if_absent(
+                                chat_id, now=datetime.now(UTC)
+                            )
                     except Exception:
                         logger.exception(
                             "promo_failed",
@@ -180,23 +199,46 @@ class AuthMiddleware(BaseMiddleware):
                     )
                     return await handler(event, data)
 
-                # F4 general mode gate: non-VIP + flag ON → atencion channel,
-                # same deterministic path as training mode but permanent. The
-                # channel travels in data; no vip_id/vip_record is set.
+                # F4 general mode gate: non-VIP + flag ON + OPEN atencion cycle
+                # → atencion channel, same deterministic path as training mode
+                # but permanent and only for chats that received the promo
+                # (first promo opens a linear 30-day window; payment closes it).
                 if self._feature_general_mode_enabled:
-                    data["channel_type"] = "atencion"
-                    # F4-02: ONLY the general-mode gate sets the limit-counted
-                    # marker. Sandbox (auth.py sandbox gate) and training mode
-                    # never set it, so their atencion messages are NOT counted.
-                    data["atencion_limit_counted"] = True
+                    active = False
+                    if self._atencion_cycles is not None:
+                        now = datetime.now(UTC)
+                        since = now - timedelta(days=ATENCION_CYCLE_WINDOW_DAYS)
+                        try:
+                            active = await self._atencion_cycles.is_active(
+                                chat_id, since=since, now=now
+                            )
+                        except Exception:
+                            logger.exception(
+                                "atencion_cycle_check_failed",
+                                extra={"chat_id": chat_id},
+                            )
+                            active = False
+                    if active:
+                        data["channel_type"] = "atencion"
+                        # F4-02: ONLY the general-mode gate sets the limit-counted
+                        # marker. Sandbox (auth.py sandbox gate) and training mode
+                        # never set it, so their atencion messages are NOT counted.
+                        data["atencion_limit_counted"] = True
+                        logger.info(
+                            "general_mode_bypass",
+                            extra={
+                                "telegram_user_id": user.id,
+                                "chat_id": chat_id,
+                            },
+                        )
+                        return await handler(event, data)
                     logger.info(
-                        "general_mode_bypass",
+                        "atencion_cycle_inactive_drop",
                         extra={
                             "telegram_user_id": user.id,
                             "chat_id": chat_id,
                         },
                     )
-                    return await handler(event, data)
 
             logger.info(
                 "auth_drop_not_allowed",

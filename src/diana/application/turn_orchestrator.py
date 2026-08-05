@@ -17,6 +17,7 @@ from diana.application.mexico_tz import cdmx_local_date
 from diana.application.observability import log_swallowed
 from diana.application.owner_history import append_owner_delivery_history
 from diana.application.ports import (
+    AtencionCycleStore,
     BehaviorDeliverer,
     DeliveryContext,
     DeliveryMode,
@@ -195,6 +196,7 @@ class TurnOrchestrator:
         turns: TurnStore | None = None,
         persona_catalog_provider: object | None = None,
         trace_reader: TraceReader | None = None,
+        atencion_cycles: AtencionCycleStore | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -218,6 +220,7 @@ class TurnOrchestrator:
         self._turns = turns
         self._catalog_provider = persona_catalog_provider
         self._trace_reader = trace_reader
+        self._atencion_cycles = atencion_cycles
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
 
@@ -520,6 +523,24 @@ class TurnOrchestrator:
             turn_id=str(turn_id),
         ):
             self._last_payment_notify[turn_ctx.chat_id] = now
+            # F4: payment intent ends the chat's atencion cycle — the owner
+            # delivers manually afterwards and the chat leaves the pipeline
+            # (the auth gate only admits chats with an OPEN cycle). Fail-soft
+            # and idempotent: a later turn re-detecting payment simply no-ops.
+            if self._atencion_cycles is not None:
+                try:
+                    await self._atencion_cycles.close_payment(
+                        turn_ctx.chat_id, now=now
+                    )
+                    logger.info(
+                        "atencion_cycle_closed_payment",
+                        extra={"chat_id": turn_ctx.chat_id},
+                    )
+                except Exception:
+                    logger.exception(
+                        "atencion_cycle_close_failed",
+                        extra={"chat_id": turn_ctx.chat_id},
+                    )
 
     async def _fail_director_typed(
         self,

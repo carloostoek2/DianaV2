@@ -614,6 +614,26 @@ class DailyMessageLimitStore(Protocol):
     async def increment(self, chat_id: int, *, fecha_local: date) -> int: ...
 
 
+@runtime_checkable
+class AtencionCycleStore(Protocol):
+    """Chat-level atencion lifecycle (F4): first promo opens a 30-day window.
+
+    ``start_if_absent`` is idempotent: a re-trigger of the promo never resets
+    ``started_at`` (linear window, never extended). ``is_active`` requires the
+    window open (``started_at >= since``) AND no payment closure. ``close_payment``
+    ends the cycle early (owner delivers manually afterwards); it is idempotent
+    per chat (only closes an open cycle).
+    """
+
+    async def start_if_absent(self, chat_id: int, *, now: datetime) -> None: ...
+
+    async def is_active(
+        self, chat_id: int, *, since: datetime, now: datetime
+    ) -> bool: ...
+
+    async def close_payment(self, chat_id: int, *, now: datetime) -> None: ...
+
+
 # --- F3 proactivity (recontact + promo) ports ---------------------------------
 
 

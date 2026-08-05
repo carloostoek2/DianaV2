@@ -591,3 +591,25 @@ class DailyMessageLimit(Base):
     count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+
+
+class AtencionCycle(Base):
+    """Chat-level atencion lifecycle (F4): starts on first promo delivery.
+
+    The cycle is what enables the atencion pipeline for a non-VIP chat:
+    ``started_at`` anchors a 30-day linear window (started once, never
+    extended by re-triggers), and ``closed_at``/``close_reason`` terminate
+    the cycle early when payment intent is confirmed (owner delivers
+    manually afterwards).
+    """
+
+    __tablename__ = "atencion_cycles"
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

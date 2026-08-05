@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, date, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -197,6 +197,7 @@ def _build(
     turns: InMemoryTurnStore | None = None,
     persona_catalog_provider: object | None = None,
     trace_reader: object | None = None,
+    atencion_cycles: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -261,6 +262,7 @@ def _build(
         turns=turns,
         persona_catalog_provider=persona_catalog_provider,
         trace_reader=trace_reader,
+        atencion_cycles=atencion_cycles,
     )
     return {
         "orch": orch,
@@ -279,6 +281,7 @@ def _build(
         "deliveries": deliveries,
         "vip_store": vips,
         "ams": ams,
+        "atencion_cycles": atencion_cycles,
     }
 
 
@@ -2684,6 +2687,51 @@ async def test_atencion_payment_confirm_intent_notifies_owner() -> None:
     expected = ATENCION_PAYMENT_NOTICE.format(chat_id=505)
     assert (expected, 505) in g["notifier"].infos
     assert len(g["notifier"].infos) == 1
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_intent_closes_cycle() -> None:
+    """F4 lifecycle: payment intent → DM sent AND the atencion cycle closes.
+
+    The chat leaves the atencion pipeline (auth gate only admits open cycles),
+    so the owner delivers manually afterwards.
+    """
+    cycles = AsyncMock()
+    cycles.close_payment = AsyncMock()
+    g = _build(
+        FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+        atencion_cycles=cycles,
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=707)
+    )
+    expected = ATENCION_PAYMENT_NOTICE.format(chat_id=707)
+    assert (expected, 707) in g["notifier"].infos
+    cycles.close_payment.assert_awaited_once_with(707, now=ANY)
+
+
+@pytest.mark.asyncio
+async def test_atencion_no_payment_signal_keeps_cycle_open() -> None:
+    """F4 lifecycle: a normal atencion turn without payment signal never closes."""
+    cycles = AsyncMock()
+    cycles.close_payment = AsyncMock()
+    g = _build(
+        FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
+        trace_reader=_FakeTraceReader(
+            {"comprehension": {"intent": "saludo", "topics": ["promociones"]}}
+        ),
+        atencion_cycles=cycles,
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=808)
+    )
+    assert g["notifier"].infos == []
+    cycles.close_payment.assert_not_awaited()
 
 
 @pytest.mark.asyncio
