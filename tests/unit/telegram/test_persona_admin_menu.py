@@ -18,6 +18,7 @@ from diana.telegram.handlers.persona_admin import (
     load_current,
 )
 from diana.telegram.keyboards import (
+    MENU_CATEGORY_TEXT,
     MenuCallback,
     encode_menu,
     encode_menu_persona,
@@ -490,6 +491,40 @@ async def test_wizard_invalid_format_does_not_save() -> None:
     # error feedback shown (strict)
     assert bot.edit_message_text.await_count == 1
     assert "formato" in str(bot.edit_message_text.call_args.kwargs.get("text", ""))
+
+
+@pytest.mark.asyncio
+async def test_bare_session_free_text_reshows_panel_root() -> None:
+    """R1-7: a channel toggle leaves a section-less persona_edit session; typed
+    free text re-shows the panel root for the active channel — never a dead-end
+    invalid-op error and never a save."""
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = AsyncMock()
+    msg.text = "texto suelto sin sección"
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    bot = _bot()
+
+    bare = MenuSession(
+        kind="persona_edit",
+        persona_section=None,  # bare session right after a channel toggle
+        persona_channel="atencion",
+        last_bot_message_id=1,
+        last_chat_id=42,
+    )
+    await handle_persona_edit_text(msg, bot, bare, service, _sessions())
+    assert service.saved == []
+    bot.edit_message_text.assert_awaited_once()
+    kwargs = bot.edit_message_text.call_args.kwargs
+    assert kwargs["text"] == MENU_CATEGORY_TEXT["personalidad"]
+    # the panel-root keyboard is re-shown (channel row present)
+    datas = [
+        b.callback_data
+        for row in kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert encode_menu_persona("channel", "atencion") in datas
 
 
 @pytest.mark.asyncio

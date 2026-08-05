@@ -940,9 +940,15 @@ async def handle_persona_edit_text(
     if section not in (
         "persona", "rule", "fact", "pattern", "policy", "bloque", "default", "timezone",
     ):
+        # REQ-ATN-06: a bare persona_edit session can exist without a section
+        # (e.g. right after a channel toggle). Typed free text has no target op,
+        # so re-show the panel root for the active channel instead of a dead-end
+        # invalid-op error on the next message.
         await _edit_or_answer(
-            bot, "Operación de personalidad inválida. Usa /cancelar.",
-            session=session, fallback=message, keyboard=back,
+            bot,
+            MENU_CATEGORY_TEXT["personalidad"],
+            session=session, fallback=message,
+            keyboard=menu_personalidad_keyboard(active_channel=channel),
         )
         return
     op = section
