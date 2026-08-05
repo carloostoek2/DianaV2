@@ -286,10 +286,20 @@ class MemoryExtractionService:
         lines = self._cap_transcript(lines)
 
         known = await self._memories.list_by_vip(vip_id)
+        # Fix round (L3): the \"do not repeat\" summary must show the MOST
+        # RECENT facts — the ones most likely to repeat in the current turn.
+        # ``list_by_vip`` is oldest-first (A4 contract), so slice from the
+        # end; with more than ``limit`` facts the slice is still far newer
+        # than the oldest 50 (semantic dedup remains the real guard).
+        recent_known = (
+            known[-_SUMMARY_MAX_FACTS:]
+            if len(known) > _SUMMARY_MAX_FACTS
+            else known
+        )
         known_strs = [
             f"- [{m['category']}] "
             f"{m['content'].get('texto') or m['content'].get('fact') or ''}"
-            for m in known[:_SUMMARY_MAX_FACTS]
+            for m in recent_known
         ]
         if not known_strs:
             known_strs = ["(sin hechos previos)"]
@@ -339,10 +349,24 @@ class MemoryExtractionService:
                 status="ok", turn_id=turn_id, vip_id=vip_id
             )
 
+        # Fix round (L5): semantic merge of near-duplicates WITHIN this run
+        # (Pool 2 pattern) — two equivalent facts of the same turn would both
+        # pass the DB dedup (neither is persisted yet). Returns the kept
+        # facts, the per-text embedding cache (reused below, A11) and the
+        # number of merged-out duplicates.
+        hechos, emb_cache, merged = await self._dedup_intra_run(vip_id, hechos)
+        if not hechos:
+            logger.info(
+                "memory_extraction_empty",
+                extra={"turn_id": str(turn_id), "vip_id": str(vip_id)},
+            )
+            return PostTurnExtractionReport(
+                status="ok", turn_id=turn_id, vip_id=vip_id, deduped=merged
+            )
+
         rows: list[MemoryInsert] = []
         pending = 0
-        deduped = 0
-        emb_cache: dict[str, list[float]] = {}
+        deduped = merged
         for h in hechos:
             emb = emb_cache.get(h.texto)
             if emb is None:
