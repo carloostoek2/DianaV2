@@ -2818,6 +2818,37 @@ class _RaisingDailyLimitStore:
         raise RuntimeError("daily_message_limits store unavailable")
 
 
+class _RaisingCreateTurnStore(InMemoryTurnStore):
+    """InMemoryTurnStore whose create() raises after recording (outage probe)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.created: list[TurnRecord] = []
+
+    async def create(self, turn: TurnRecord) -> TurnRecord:
+        self.created.append(turn)
+        raise RuntimeError("turns store unavailable")
+
+
+class _RaisingTransitionTurnStore(InMemoryTurnStore):
+    """InMemoryTurnStore whose transition() raises after recording."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.transitions: list[tuple[UUID, str, str | None]] = []
+
+    async def transition(
+        self,
+        turn_id: UUID,
+        status: str,
+        *,
+        superseded_by: UUID | None = None,
+        error: str | None = None,
+    ) -> TurnRecord:
+        self.transitions.append((turn_id, status, error))
+        raise RuntimeError("turns store unavailable")
+
+
 class _RecordingTurnStore(InMemoryTurnStore):
     """TurnStore that records every minted TurnRecord (create/transition)."""
 
@@ -3121,6 +3152,72 @@ async def test_atencion_limit_close_failed_result_marks_turn_failed() -> None:
     # Non-raising failure → turn transitioned failed with result.error == "boom".
     assert (await g["turns"].get(turn_id)).status == "failed"
     assert turns.transitions == [(turn_id, "failed", "boom")]
+    assert g["director"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_close_skips_when_turn_create_raises() -> None:
+    """F4-02 (FIX-A): a turn-store outage on create skips the close, no crash.
+
+    The day is already closed at count 21; the fail-soft skip returns a
+    synthetic uuid and the message must NOT fall through to the pipeline.
+    """
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
+    turns = _RaisingCreateTurnStore()
+    spy = _CapturingDeliverer()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=spy,
+        turns=turns,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    close_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=21,
+        )
+    )
+    # Mint attempted (promo_pending) but create raised → no row persisted.
+    assert len(turns.created) == 1
+    assert turns.created[0].status == "promo_pending"
+    # Close skipped fail-soft (synthetic uuid), no crash, message NOT processed.
+    assert isinstance(close_id, UUID)
+    assert spy.texts == []
+    assert g["director"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_close_swallows_transition_error() -> None:
+    """F4-02 (FIX-A): a transition outage on the close turn is swallowed.
+
+    The best-effort close text is still sent once and the real close turn id
+    is returned; the failed bookkeeping must not drop the 21st message.
+    """
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
+    turns = _RaisingTransitionTurnStore()
+    spy = _CapturingDeliverer()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=spy,
+        turns=turns,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=21,
+        )
+    )
+    # Close delivered once with the real turn id; transition failure swallowed.
+    assert spy.texts == [[ATENCION_DAILY_LIMIT_CLOSE]]
+    assert spy.turn_ids == [turn_id]
+    assert turns.transitions == [(turn_id, "delivered", None)]
     assert g["director"].calls == []
 
 
