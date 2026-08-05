@@ -240,7 +240,7 @@ def test_settings_feature_flag_defaults_are_false(
     clear_settings_env: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F2 + F3: all 10 feature flags default to False."""
+    """F2 + F3 + F4: all feature flags default to False."""
     from diana.config import Settings
 
     _set_required_env(monkeypatch)
@@ -257,6 +257,8 @@ def test_settings_feature_flag_defaults_are_false(
     assert settings.feature_calibration_enabled is False
     assert settings.feature_advanced_behavior is False
     assert settings.feature_persona_admin_enabled is False
+    # F4
+    assert settings.feature_general_mode_enabled is False
 
 
 @pytest.mark.parametrize(
@@ -265,6 +267,7 @@ def test_settings_feature_flag_defaults_are_false(
         ("FEATURE_AUTONOMOUS_MODE", "feature_autonomous_mode"),
         ("FEATURE_RECONTACT_ENABLED", "feature_recontact_enabled"),
         ("FEATURE_PERSONA_ADMIN_ENABLED", "feature_persona_admin_enabled"),
+        ("FEATURE_GENERAL_MODE_ENABLED", "feature_general_mode_enabled"),
     ],
 )
 def test_settings_f3_flag_env_override_true(
@@ -279,7 +282,7 @@ def test_settings_f3_flag_env_override_true(
     monkeypatch.setenv(env_key, "true")
     settings = Settings()
     assert getattr(settings, attr) is True
-    # Sibling F3 flags remain false when only one env is set.
+    # Sibling F3/F4 flags remain false when only one env is set.
     for other in (
         "feature_autonomous_mode",
         "feature_recontact_enabled",
@@ -287,6 +290,7 @@ def test_settings_f3_flag_env_override_true(
         "feature_calibration_enabled",
         "feature_advanced_behavior",
         "feature_persona_admin_enabled",
+        "feature_general_mode_enabled",
     ):
         if other != attr:
             assert getattr(settings, other) is False

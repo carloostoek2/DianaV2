@@ -67,6 +67,50 @@ async def test_pure_helper_propagates_orchestrator_exception() -> None:
 
 
 @pytest.mark.asyncio
+async def test_router_maps_channel_type_into_inbound() -> None:
+    """F4: the atencion channel travels from aiogram data into VipInboundMessage."""
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_business = router.business_message.handlers[0].callback
+    # aiogram injects data keys (channel_type set by AuthMiddleware) as kwargs.
+    await on_business(_biz_message(), channel_type="atencion")
+    orch.handle_vip_message.assert_awaited_once()
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert isinstance(arg, VipInboundMessage)
+    assert arg.channel_type == "atencion"
+    assert arg.vip_id is None
+
+
+@pytest.mark.asyncio
+async def test_router_default_channel_type_is_vip() -> None:
+    """F4: no channel_type in data → VIP default, unchanged behavior."""
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_business = router.business_message.handlers[0].callback
+    await on_business(_biz_message())
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert arg.channel_type == "vip"
+
+
+@pytest.mark.asyncio
+async def test_edited_message_keeps_channel_and_is_edit() -> None:
+    """N6: the edited-business path forwards channel_type and flags is_edit."""
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_edited = router.edited_business_message.handlers[0].callback
+    await on_edited(_biz_message(), channel_type="atencion")
+    orch.handle_vip_message.assert_awaited_once()
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert isinstance(arg, VipInboundMessage)
+    assert arg.channel_type == "atencion"
+    assert arg.is_edit is True
+    assert arg.vip_id is None
+
+
+@pytest.mark.asyncio
 async def test_router_swallows_orchestrator_exception() -> None:
     orch = AsyncMock()
     orch.handle_vip_message = AsyncMock(side_effect=RuntimeError("orch down"))

@@ -114,6 +114,24 @@ def test_setup_auth_receives_promo_kwargs() -> None:
     assert "AuthMiddleware(" in setup_src
 
 
+def test_composition_general_mode_flag_wired_into_auth(_comp_src: str) -> None:
+    """F4: FEATURE_GENERAL_MODE_ENABLED reaches AuthMiddleware via build_dispatcher."""
+    import diana
+
+    root = Path(diana.__file__).resolve().parent
+    setup_src = (root / "telegram" / "setup.py").read_text(encoding="utf-8")
+    # composition root: flag read from settings + forwarded to build_dispatcher.
+    assert (
+        "feature_general_mode_enabled = settings.feature_general_mode_enabled"
+        in _comp_src
+    )
+    assert "feature_general_mode_enabled=feature_general_mode_enabled" in _comp_src
+    # setup: build_dispatcher signature + AuthMiddleware injection.
+    assert "feature_general_mode_enabled: bool = False" in setup_src
+    assert "feature_general_mode_enabled=feature_general_mode_enabled" in setup_src
+    assert "AuthMiddleware(" in setup_src
+
+
 def test_composition_app_container_has_promo_field() -> None:
     from diana.composition import AppContainer
 
