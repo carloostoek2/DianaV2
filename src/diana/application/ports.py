@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -590,6 +590,18 @@ class TrainingModeStore(Protocol):
     async def set_enabled(self, enabled: bool) -> None: ...
 
 
+@runtime_checkable
+class DailyMessageLimitStore(Protocol):
+    """Atomic per-chat daily client-message counter (F4-02, atencion).
+
+    Date-keyed: a distinct ``fecha_local`` is a fresh row (count starts at 1).
+    The increment is a single ``INSERT ... ON CONFLICT ... DO UPDATE ...
+    RETURNING count`` so two concurrent messages never drift.
+    """
+
+    async def increment(self, chat_id: int, *, fecha_local: date) -> int: ...
+
+
 # --- F3 proactivity (recontact + promo) ports ---------------------------------
 
 
@@ -707,6 +719,7 @@ __all__ = [
     "BehaviorDeliverer",
     "BusinessConnectionRecord",
     "BusinessConnectionStore",
+    "DailyMessageLimitStore",
     "DeliveryContext",
     "DeliveryMode",
     "DeliveryRecord",
