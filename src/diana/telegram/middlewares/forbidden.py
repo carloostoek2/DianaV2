@@ -123,6 +123,7 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         # VIP allowlist gate when store present (non-VIP → pass; no owner spam).
         chat_id = event.chat.id if event.chat else 0
         user = event.from_user
+        is_atencion_general = False
         if self._vips is not None:
             if user is None:
                 return await handler(event, data)
@@ -140,6 +141,7 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                             "telegram_user_id": user.id,
                         },
                     )
+                    is_atencion_general = True
                 else:
                     logger.info(
                         "j4_forbidden_skip_non_vip",
@@ -151,12 +153,21 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                     return await handler(event, data)
 
         text = event.text or event.caption or ""
-        j4 = classify_j4_text(text)
-        forbidden_hits = (
-            match_forbidden_keywords(text, self._keywords) if not j4 else []
-        )
-        if j4 is None and not forbidden_hits:
-            return await handler(event, data)
+        if is_atencion_general:
+            # REQ-ATN-08: atencion non-VIP is scoped to forbidden-keyword
+            # matching only (no J.4 classification); escalation mechanism is
+            # identical to VIP. VIP path below keeps full J.4 untouched.
+            forbidden_hits = match_forbidden_keywords(text, self._keywords)
+            if not forbidden_hits:
+                return await handler(event, data)
+            j4 = None
+        else:
+            j4 = classify_j4_text(text)
+            forbidden_hits = (
+                match_forbidden_keywords(text, self._keywords) if not j4 else []
+            )
+            if j4 is None and not forbidden_hits:
+                return await handler(event, data)
 
         vip_id = data.get("vip_id")
         if vip_id is not None and not isinstance(vip_id, UUID):

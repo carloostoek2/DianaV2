@@ -476,6 +476,39 @@ async def test_atencion_no_forbidden_keyword_passes() -> None:
     assert g["escalations"].events == []
 
 
+@pytest.mark.asyncio
+async def test_atencion_j4_only_text_passes_when_flag_on() -> None:
+    """REQ-ATN-08: atencion is scoped to forbidden keywords only — a J.4 hit
+    (price/identity/commitment) that is NOT a forbidden keyword passes through
+    with NO escalation. VIP J.4 classification is unchanged."""
+    g = _graph()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["zzz_never"],  # no forbidden keyword hits in the text
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=54,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="cuál es el precio?",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, data)
+    assert result == "next"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+    assert g["notifier"].escalations == []
+
+
 def test_atencion_explicit_content_seed_rules_present() -> None:
     """REQ-ATN-08: the atencion seed persona carries the anti-explicit hard gate."""
     import json
