@@ -54,6 +54,11 @@
 - Calibración de deriva: score 0.25 vs umbral 0.1 (esperado tras cambios de persona; se re-ancla en ~4 semanas).
 - Recalibración del umbral de dedup 0.85 tras uso real.
 
+### Diagnóstico verificado 2026-08-05 (perfil generado pero "no se ve nada" en el panel)
+- **Extracción y escritura: correctas** (verificado en DB: el VIP 08473338-… tiene 4 hechos + fila `perfil` en `memories`, status `auto`).
+- **Lectura: pendiente del Pool 4 (F5-06)** — la ficha del panel ("👤 Ver ficha") muestra la ficha manual (`profiles`), NO la memoria semántica (`memories`). La vista de memoria en el panel se implementa en el Pool 4, junto con la aprobación por DM. **No se adelanta** (decisión de la dueña: continuar gradual por pools).
+- **Notificación**: "Perfil generado para {uuid}" → usar el nombre del VIP (display_name) — pendiente menor, se incluye en el Pool 4 (UX de dueña).
+
 ---
 
 ## 4. Referencias
