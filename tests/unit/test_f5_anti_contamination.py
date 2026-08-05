@@ -41,20 +41,27 @@ def _comprehension() -> Comprehension:
 
 
 def test_telegram_layer_never_imports_memory_repos() -> None:
-    """F5-10a: telegram/ imports application services, not persistence repos."""
+    """F5-10a: telegram/ imports application services, not persistence repos.
+
+    Review fix (M1 Pool 4): the forbidden tokens carry the full module path
+    (``infrastructure.db.repositories.memories``) so a real
+    ``from diana.infrastructure.db.repositories.memories import ...`` is
+    always caught, and the memory services are included as tokens too.
+    """
     forbidden = (
-        "db.repositories.memories",
-        "db.repositories.backfill_queue",
+        "infrastructure.db.repositories.memories",
+        "infrastructure.db.repositories.backfill_queue",
         "cognitive.retrievers.memory",
+        "memory_backfill",
+        "memory_extraction",
+        "import MemoryRetriever",
     )
     hits: list[str] = []
     for path in _walk("telegram"):
         text = path.read_text(encoding="utf-8")
         for token in forbidden:
-            if f"import {token}" in text or f"from diana.{token}" in text:
+            if token in text:
                 hits.append(f"{path.name}:{token}")
-            if "import MemoryRetriever" in text:
-                hits.append(f"{path.name}:MemoryRetriever")
     assert hits == [], f"Telegram layer touching persistence directly: {hits}"
 
 
