@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import MessageHistory
@@ -133,18 +133,29 @@ class SqlMessageHistoryRepo:
         (F5-08); same dict shape as ``rows_to_recent_messages``
         (role/text/telegram_message_id/timestamp). A single query suffices for
         today's volumes, but the loop avoids assuming one.
+
+        Fix round (M3): keyset pagination on ``(timestamp, id)`` instead of
+        OFFSET — if the chat receives messages while the backfill runs, no
+        page shifts under the cursor, so rows are neither skipped nor
+        duplicated across pages.
         """
         out: list[dict] = []
-        offset = 0
+        last_ts: datetime | None = None
+        last_id: int | None = None
         while True:
             async with self._sf() as session:
-                result = await session.execute(
+                query = (
                     select(MessageHistory)
                     .where(MessageHistory.chat_id == chat_id)
                     .order_by(MessageHistory.timestamp.asc(), MessageHistory.id.asc())
-                    .offset(offset)
                     .limit(page_size)
                 )
+                if last_ts is not None:
+                    query = query.where(
+                        tuple_(MessageHistory.timestamp, MessageHistory.id)
+                        > (last_ts, last_id)
+                    )
+                result = await session.execute(query)
                 rows = list(result.scalars().all())
             if not rows:
                 break
@@ -158,7 +169,8 @@ class SqlMessageHistoryRepo:
                         "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                     }
                 )
-            offset += len(rows)
+            last_ts = rows[-1].timestamp
+            last_id = rows[-1].id
             if len(rows) < page_size:
                 break
         return out
