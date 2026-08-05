@@ -44,7 +44,7 @@ async def _count_memories(session_factory, vip_id) -> int:
 
 
 async def _insert_memory_row(
-    session_factory, vip_id, *, category: str, status: str
+    session_factory, vip_id, *, category: str, status: str, emb_sql: str | None = None
 ) -> None:
     async with session_factory() as session:
         await session.execute(
@@ -56,7 +56,7 @@ async def _insert_memory_row(
             ),
             {
                 "vip": vip_id,
-                "emb": _EMBEDDING_SQL,
+                "emb": emb_sql or _EMBEDDING_SQL,
                 "content": '{"texto":"x","fact":"x"}',
                 "cat": category,
                 "status": status,
@@ -533,3 +533,267 @@ async def test_has_profile(session_factory):
         perfil_embedding=_EMBEDDING_384,
     )
     assert await repo.has_profile(vip_id) is True
+
+
+# ---------------------------------------------------------------------------
+# F5 Pool 3: post-turn incremental extraction repo methods (F5-04 / REQ-MEM-07-08)
+# ---------------------------------------------------------------------------
+
+_EMBEDDING_B_SQL = "[" + ",".join(["0.1"] * 192 + ["-0.1"] * 192) + "]"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_by_vip_orders_and_filters(session_factory):
+    """list_by_vip returns every non-perfil fact (oldest first), never the
+    `perfil` card row; the optional status filter narrows the result."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 511)
+
+    await repo.replace_vip_profile(
+        vip_id,
+        rows=[
+            MemoryInsert(
+                category="preferencias",
+                text="Le gusta el tono juguetón",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="auto",
+                approved_by="auto",
+            ),
+            MemoryInsert(
+                category="identidad",
+                text="Vive en Buenos Aires",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="approved",
+                approved_by="owner",
+            ),
+        ],
+        perfil={"vip_id": str(vip_id), "secciones": {}},
+        perfil_embedding=_EMBEDDING_384,
+    )
+    # Age the identidad row so the created_at ordering is deterministic.
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "UPDATE memories SET created_at = now() - interval '1 day' "
+                "WHERE vip_id = :vip AND category = 'identidad'"
+            ),
+            {"vip": vip_id},
+        )
+        await session.commit()
+
+    all_rows = await repo.list_by_vip(vip_id)
+    assert [r["category"] for r in all_rows] == ["identidad", "preferencias"]
+    assert [r["status"] for r in all_rows] == ["approved", "auto"]
+    assert all(r["category"] != "perfil" for r in all_rows)
+
+    approved_only = await repo.list_by_vip(vip_id, statuses=("approved",))
+    assert [r["category"] for r in approved_only] == ["identidad"]
+
+    # The limit is honored.
+    limited = await repo.list_by_vip(vip_id, limit=1)
+    assert [r["category"] for r in limited] == ["identidad"]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_find_similar_facts_threshold_category_and_all_statuses(session_factory):
+    """A5: post-turn dedup compares against ALL non-perfil rows of the VIP
+    (auto/pending_owner/approved/discarded) — unlike find_similar_surviving
+    (Pool 2: only approved/discarded). Category filter and orthogonal vector
+    behave like the Pool 2 contract."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 512)
+
+    await repo.replace_vip_profile(
+        vip_id,
+        rows=[
+            MemoryInsert(
+                category="preferencias",
+                text="hecho preferencias auto",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="auto",
+                approved_by="auto",
+            ),
+            MemoryInsert(
+                category="identidad",
+                text="hecho identidad approved",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="approved",
+                approved_by="owner",
+            ),
+            MemoryInsert(
+                category="comercial",
+                text="hecho comercial discarded",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="discarded",
+                approved_by="owner",
+            ),
+            MemoryInsert(
+                category="limites",
+                text="hecho limites pending",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="pending_owner",
+                approved_by=None,
+            ),
+        ],
+        perfil={"vip_id": str(vip_id), "secciones": {}},
+        perfil_embedding=_EMBEDDING_384,
+    )
+    # 5th row: orthogonal vector + other category, inserted directly (a second
+    # replace_vip_profile would wipe the regenerable auto/pending_owner rows).
+    await _insert_memory_row(
+        session_factory,
+        vip_id,
+        category="comercial_b",
+        status="approved",
+        emb_sql=_EMBEDDING_B_SQL,
+    )
+
+    hits_a = await repo.find_similar_facts(vip_id, _EMBEDDING_384, threshold=0.85)
+    assert len(hits_a) == 4
+    assert {h["status"] for h in hits_a} == {
+        "auto",
+        "pending_owner",
+        "approved",
+        "discarded",
+    }
+    assert all(h["category"] != "perfil" for h in hits_a)
+
+    hits_pref = await repo.find_similar_facts(
+        vip_id, _EMBEDDING_384, threshold=0.85, category="preferencias"
+    )
+    assert [h["category"] for h in hits_pref] == ["preferencias"]
+    assert hits_pref[0]["status"] == "auto"
+
+    # Orthogonal query vector B → only the B row matches.
+    hits_b = await repo.find_similar_facts(vip_id, _EMBEDDING_B, threshold=0.85)
+    assert [h["category"] for h in hits_b] == ["comercial_b"]
+    assert all(h["category"] != "preferencias" for h in hits_b)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_insert_facts_appends_with_source_turn_and_preserves_existing(
+    session_factory,
+):
+    """A6: insert_facts is a pure append (source_turn_id set) — pre-existing
+    facts and the `perfil` card row stay untouched."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 513)
+
+    # Pre-existing profile: 1 fact + perfil row.
+    await repo.replace_vip_profile(
+        vip_id,
+        rows=[
+            MemoryInsert(
+                category="identidad",
+                text="Vive en Buenos Aires",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="auto",
+                approved_by="auto",
+            )
+        ],
+        perfil={"vip_id": str(vip_id), "secciones": {"identidad": ["Vive en Buenos Aires"]}},
+        perfil_embedding=_EMBEDDING_384,
+    )
+    assert await _count_memories(session_factory, vip_id) == 2
+
+    async with session_factory() as session:
+        turn_id = (
+            await session.execute(
+                text("INSERT INTO turns (chat_id, status) VALUES (513, 'delivered') RETURNING id")
+            )
+        ).scalar_one()
+        await session.commit()
+
+    inserted = await repo.insert_facts(
+        vip_id,
+        rows=[
+            MemoryInsert(
+                category="preferencias",
+                text="Le gusta el tono juguetón",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="auto",
+                source_turn_id=turn_id,
+                approved_by="auto",
+            ),
+            MemoryInsert(
+                category="sensible",
+                text="Mencionó problemas de salud",
+                embedding=_EMBEDDING_384,
+                confidence=0.7,
+                status="pending_owner",
+                source_turn_id=turn_id,
+                approved_by=None,
+            ),
+        ],
+    )
+    assert inserted == 2
+    assert await _count_memories(session_factory, vip_id) == 4  # 2 old + 2 new
+
+    all_rows = await repo.list_by_vip(vip_id)
+    by_cat = {r["category"]: r for r in all_rows}
+    assert by_cat["preferencias"]["status"] == "auto"
+    assert by_cat["preferencias"]["source_turn_id"] == str(turn_id)
+    assert by_cat["sensible"]["status"] == "pending_owner"
+    assert by_cat["sensible"]["source_turn_id"] == str(turn_id)
+    # Pre-existing fact untouched (source_turn_id still NULL).
+    assert by_cat["identidad"]["source_turn_id"] is None
+
+    # The `perfil` card row was not rewritten.
+    async with session_factory() as session:
+        perfil = (
+            await session.execute(
+                text(
+                    "SELECT category, status FROM memories "
+                    "WHERE vip_id = :vip AND category = 'perfil'"
+                ),
+                {"vip": vip_id},
+            )
+        ).one()
+    assert perfil.category == "perfil"
+    assert perfil.status == "auto"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_insert_facts_validates_status_and_dimension(session_factory):
+    """Same boundary contract as replace_vip_profile: out-of-domain status and
+    wrong embedding dimension fail fast with a descriptive ValueError."""
+    repo = MemoriesRepo(session_factory)
+    vip_id = await _create_vip(session_factory, 514)
+
+    # DTO-level (F6): out-of-domain status is rejected at construction time.
+    with pytest.raises(ValueError, match="invalid MemoryInsert.status"):
+        MemoryInsert(
+            category="identidad",
+            text="x",
+            embedding=_EMBEDDING_384,
+            confidence=0.9,
+            status="approved_by_typo",  # type: ignore[arg-type]  # intentional: F6 runtime validation
+            approved_by="auto",
+        )
+
+    # Repo-level (L7): embedding dimension validated at the repo boundary.
+    bad_dim = MemoryInsert(
+        category="identidad",
+        text="x",
+        embedding=[0.1] * 8,  # not 384
+        confidence=0.9,
+        status="auto",
+        approved_by="auto",
+    )
+    with pytest.raises(ValueError, match="embedding dimension"):
+        await repo.insert_facts(vip_id, rows=[bad_dim])
+
+    # Nothing was written by the rejected calls.
+    assert await _count_memories(session_factory, vip_id) == 0

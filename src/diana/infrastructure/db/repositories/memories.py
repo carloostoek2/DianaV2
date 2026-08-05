@@ -214,5 +214,125 @@ class MemoriesRepo:
             result = await session.execute(stmt)
             return [memory_to_dict(row) for row in result.scalars().all()]
 
+    # ------------------------------------------------------------------
+    # F5 Pool 3: post-turn incremental extraction (F5-04 / REQ-MEM-07-08)
+    # ------------------------------------------------------------------
+
+    async def list_by_vip(
+        self,
+        vip_id: UUID,
+        *,
+        statuses: tuple[str, ...] | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """All non-``perfil`` fact rows of ``vip_id``, oldest first (A4).
+
+        Feeds the \"do not repeat\" summary of the post-turn extraction
+        prompt: every fact of the VIP's card (``auto``/``pending_owner``/
+        ``approved``/``discarded``) is listed so the LLM never re-extracts a
+        known fact — including candidates already waiting for owner approval.
+        The ``category='perfil'`` row is excluded (the panel card, not a
+        fact — same rule as the retriever filter).
+        """
+        stmt = (
+            select(Memory)
+            .where(
+                Memory.vip_id == vip_id,
+                Memory.category != "perfil",
+            )
+            .order_by(Memory.created_at.asc(), Memory.id.asc())
+            .limit(limit)
+        )
+        if statuses is not None:
+            stmt = stmt.where(Memory.status.in_(statuses))
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return [memory_to_dict(row) for row in result.scalars().all()]
+
+    async def find_similar_facts(
+        self,
+        vip_id: UUID,
+        embedding: list[float],
+        *,
+        threshold: float = 0.85,
+        category: str | None = None,
+    ) -> list[dict]:
+        """Facts of ``vip_id`` semantically close to ``embedding`` — ALL statuses.
+
+        REQ-MEM-08 / A5: the post-turn dedup compares against every non-
+        ``perfil`` row of the VIP (``auto``/``pending_owner``/``approved``/
+        ``discarded``), unlike ``find_similar_surviving`` (Pool 2 backfill
+        contract: only approved/discarded). The incremental insert never
+        deletes, so a duplicate of a previous ``auto`` fact (backfill or an
+        earlier turn) must be discarded here. Returns up to 5 closest rows
+        ordered by cosine distance, as plain dicts.
+        """
+        stmt = (
+            select(Memory)
+            .where(
+                Memory.vip_id == vip_id,
+                Memory.category != "perfil",
+                Memory.embedding.cosine_distance(embedding) < 1 - threshold,
+            )
+            .order_by(Memory.embedding.cosine_distance(embedding))
+            .limit(5)
+        )
+        if category is not None:
+            stmt = stmt.where(Memory.category == category)
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return [memory_to_dict(row) for row in result.scalars().all()]
+
+    async def insert_facts(
+        self,
+        vip_id: UUID,
+        *,
+        rows: list[MemoryInsert],
+    ) -> int:
+        """Pure incremental append of fact rows with ``source_turn_id`` (A6).
+
+        F5-04 post-turn insert: adds the newly extracted facts of one turn
+        with the canonical ``content`` shape and ``fuente=\"incremental\"``.
+        NEVER deletes anything and NEVER touches the ``category='perfil'``
+        row — unlike ``replace_vip_profile`` (backfill/regeneration only).
+        Status vocabulary and embedding dimension are validated before any
+        write (same boundary contract as ``replace_vip_profile``). Returns
+        the number of inserted rows.
+        """
+        for r in rows:
+            if r.status not in _VALID_STATUSES:
+                raise ValueError(
+                    f"invalid MemoryInsert.status {r.status!r}; "
+                    f"expected one of {_VALID_STATUSES}"
+                )
+            if len(r.embedding) != _EMBEDDING_DIM:
+                raise ValueError(
+                    f"invalid embedding dimension {len(r.embedding)} for fact "
+                    f"{r.text!r}; expected {_EMBEDDING_DIM}"
+                )
+        async with self._sf() as session:
+            for r in rows:
+                session.add(
+                    Memory(
+                        vip_id=vip_id,
+                        embedding=r.embedding,
+                        content={
+                            "texto": r.text,
+                            "tipo": "hecho",
+                            "confianza": r.confidence,
+                            "fuente": "incremental",
+                            "turno_id": str(r.source_turn_id) if r.source_turn_id else None,
+                            "aprobado_por": r.approved_by,
+                            "fact": r.text,
+                        },
+                        category=r.category,
+                        confidence=r.confidence,
+                        status=r.status,
+                        source_turn_id=r.source_turn_id,
+                    )
+                )
+            await session.commit()
+        return len(rows)
+
 
 __all__ = ["MemoriesRepo", "memory_to_dict"]
