@@ -994,6 +994,32 @@ async def test_gray_zone_supervised_delivery_creates_approval_and_transitions(
 
 
 @pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_empty_question_fallback_text(
+    admin_graph: dict,
+) -> None:
+    """Empty/whitespace question → '(no text)' placeholder in the owner DM."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = SimpleNamespace(
+        id=uuid4(),
+        turn_id=turn_id,
+        question="   ",
+        draft="gray draft",
+        business_connection_id="bc-gray",
+    )
+
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert result is True
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].vip_text == "(no text)"
+
+
+@pytest.mark.asyncio
 async def test_gray_zone_supervised_delivery_atencion_no_vip(admin_graph: dict) -> None:
     """atencion: vip_id=None flows through without VIP freeze; bc from query."""
     g = admin_graph

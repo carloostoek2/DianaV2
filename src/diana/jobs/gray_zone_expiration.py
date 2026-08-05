@@ -132,17 +132,21 @@ class GrayZoneExpirationJob:
                             failed_count += 1
                             # Double failure (delivery + escalate): reopen the
                             # query so a later run retries instead of stranding
-                            # the turn in gray_zone with an expired query.
-                            try:
-                                await self._gray_zone.reopen_query(row.id)
-                            except Exception:
-                                logger.exception(
-                                    "expiration_reopen_error",
-                                    extra={
-                                        "turn_id": str(turn_id),
-                                        "query_id": str(getattr(row, "id", None)),
-                                    },
-                                )
+                            # the turn in gray_zone with an expired query. Only
+                            # when a supervised delivery was actually attempted
+                            # — the admin=None (flag OFF) path keeps the legacy
+                            # escalate-only failure behavior.
+                            if draft.strip() and self._admin is not None:
+                                try:
+                                    await self._gray_zone.reopen_query(row.id)
+                                except Exception:
+                                    logger.exception(
+                                        "expiration_reopen_error",
+                                        extra={
+                                            "turn_id": str(turn_id),
+                                            "query_id": str(getattr(row, "id", None)),
+                                        },
+                                    )
 
                     try:
                         parts = [

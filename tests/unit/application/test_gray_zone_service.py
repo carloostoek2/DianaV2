@@ -498,12 +498,51 @@ async def test_reopen_query_delegates_to_repo(
 ) -> None:
     """reopen_query re-opens a closed query for retry (R-A double-failure)."""
     query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id,
+        status="expired",
+    )
     query_repo.update_status.return_value = True
 
     result = await service.reopen_query(query_id)
 
+    query_repo.get_by_id.assert_awaited_once_with(query_id)
     query_repo.update_status.assert_awaited_once_with(query_id, "open")
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_reopen_query_skips_open_rows(
+    service: GrayZoneService,
+    query_repo: AsyncMock,
+) -> None:
+    """reopen_query only re-opens closed rows; an open row is left untouched."""
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id,
+        status="open",
+    )
+
+    result = await service.reopen_query(query_id)
+
+    query_repo.get_by_id.assert_awaited_once_with(query_id)
+    query_repo.update_status.assert_not_awaited()
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_reopen_query_missing_row_returns_false(
+    service: GrayZoneService,
+    query_repo: AsyncMock,
+) -> None:
+    """reopen_query on a missing row → False, no update."""
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = None
+
+    result = await service.reopen_query(query_id)
+
+    query_repo.update_status.assert_not_awaited()
+    assert result is False
 
 
 @pytest.mark.asyncio

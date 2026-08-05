@@ -253,10 +253,21 @@ class GrayZoneService:
 
         Used as a fallback when a supervised delivery AND the escalate
         fallback both fail: without it the turn would stay in gray_zone with
-        a closed query that nothing ever revisits.
+        a closed query that nothing ever revisits. Only re-opens rows that
+        are currently closed (``resolved``/``expired``) — an ``open`` row
+        (e.g. re-resolved concurrently) is left untouched.
         """
         if query_id is None:
             raise ValueError("query_id is required to reopen")
+        row = await self._queries.get_by_id(query_id)
+        if row is None:
+            return False
+        if row.status not in {"resolved", "expired"}:
+            logger.info(
+                "gray_zone_query_reopen_skipped",
+                extra={"query_id": str(query_id), "status": row.status},
+            )
+            return False
         return await self._queries.update_status(query_id, "open")
 
     async def freeze_vip(self, vip_id: UUID, duration_hours: int | None = None) -> None:
