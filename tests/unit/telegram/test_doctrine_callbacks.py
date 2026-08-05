@@ -40,6 +40,20 @@ class FakeQuery:
     question: str = "test question"
     draft: str = "test draft"
     frozen_until: object = None
+    business_connection_id: str | None = "bc-test"
+
+
+class FakeAdmin:
+    """Fake AdminService recording supervised-delivery synthesis calls."""
+
+    def __init__(self) -> None:
+        self.create_supervised_calls: list[tuple[UUID, object]] = []
+
+    async def create_supervised_delivery_from_gray_zone(
+        self, turn_id: UUID, query: object
+    ) -> bool:
+        self.create_supervised_calls.append((turn_id, query))
+        return True
 
 
 @dataclass
@@ -287,6 +301,50 @@ class _FakeGrayZoneWithConfirmError(FakeGrayZone):
         self.confirm_calls.append((query_id, candidate_id))
         msg = f"simulated confirm error for {query_id}"
         raise RuntimeError(msg)
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_with_admin_creates_supervised_delivery() -> None:
+    """dx: with admin injected → confirm_and_apply + exactly ONE supervised call."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    query = gray_zone.add_query(turn_id, draft="use-this-draft")
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=admin,
+    )
+    assert status == "resolved"
+
+    assert len(gray_zone.confirm_calls) == 1
+    assert len(admin.create_supervised_calls) == 1
+    called_turn_id, called_query = admin.create_supervised_calls[0]
+    assert called_turn_id == turn_id
+    assert called_query is query
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_draft_no_admin_skips_supervised() -> None:
+    """dx: without admin → legacy behavior (confirm_and_apply, no supervised call)."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id, draft="use-this-draft")
+
+    status = await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=None,
+    )
+    assert status == "resolved"
+    assert len(gray_zone.confirm_calls) == 1
+    assert len(admin.create_supervised_calls) == 0
 
 
 @pytest.mark.asyncio

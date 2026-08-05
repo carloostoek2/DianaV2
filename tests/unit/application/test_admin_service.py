@@ -19,6 +19,7 @@ from diana.application.memory import (
     InMemoryTraceReaderWriter,
     InMemoryTurnStore,
 )
+from diana.application.ports import TurnRecord
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
@@ -940,6 +941,146 @@ async def test_send_doctrine_query_omits_query_id_when_none(admin_graph: dict) -
     spec = g["notifier"].doctrines[0].reply_markup_spec
     assert spec is not None
     assert "query_id" not in spec
+
+
+# --- R-A: create_supervised_delivery_from_gray_zone ---
+
+
+def _gray_zone_query(
+    *, draft: str = "gray draft", bc: str | None = "bc-gray", turn_id=None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        turn_id=turn_id,
+        question="gray question",
+        draft=draft,
+        business_connection_id=bc,
+    )
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_creates_approval_and_transitions(
+    admin_graph: dict,
+) -> None:
+    """Happy path: PendingApproval created with draft + turn → pending_approval."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(
+            id=turn_id, chat_id=42, status="gray_zone",
+            channel_type="vip", trigger_message_id=7,
+        )
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert result is True
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "pending_approval"
+
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.status == "waiting"
+    assert approval.draft_text == "gray draft"
+    assert approval.business_connection_id == "bc-gray"
+    assert approval.chat_id == 42
+
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].draft_text == "gray draft"
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_atencion_no_vip(admin_graph: dict) -> None:
+    """atencion: vip_id=None flows through without VIP freeze; bc from query."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(
+            id=turn_id, chat_id=43, status="gray_zone",
+            channel_type="atencion", trigger_message_id=8,
+        )
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert result is True
+
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.vip_id is None
+    assert approval.chat_id == 43
+    assert approval.business_connection_id == "bc-gray"
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_missing_turn(admin_graph: dict) -> None:
+    """Missing turn → False, no approval, no notification."""
+    g = admin_graph
+    query = _gray_zone_query()
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        uuid4(), query
+    )
+    assert result is False
+    assert len(g["notifier"].drafts) == 0
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_missing_bc(admin_graph: dict) -> None:
+    """Legacy query without business_connection_id → False, no approval."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = _gray_zone_query(turn_id=turn_id, bc=None)
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert result is False
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert len(g["notifier"].drafts) == 0
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_empty_draft(admin_graph: dict) -> None:
+    """Empty draft → False (nothing to deliver), no approval."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = _gray_zone_query(turn_id=turn_id, draft="   ")
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert result is False
+    assert await g["approvals"].get_by_turn(turn_id) is None
+
+
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_superseded_cancels_approval(
+    admin_graph: dict,
+) -> None:
+    """TurnSupersededError on transition → approval cancelled, returns False."""
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    query = _gray_zone_query(turn_id=turn.id)
+    # Owner intervention after mint invalidates the turn → transition raises.
+    g["coordinator"].mark_owner_intervened(42)
+
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn.id, query
+    )
+    assert result is False
+    approval = await g["approvals"].get_by_turn(turn.id)
+    assert approval is not None
+    assert approval.status == "cancelled"
 
 
 # --- Item4 Task4: advanced behavior builder wiring ---

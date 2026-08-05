@@ -33,6 +33,16 @@ def test_composition_gray_zone_service_conditional(_comp_src: str) -> None:
     assert "gray_zone = GrayZoneService(" in _comp_src
 
 
+def test_composition_doctrine_router_receives_admin(_comp_src: str) -> None:
+    """R-A: build_doctrine_router is wired with admin for supervised delivery."""
+    assert "build_doctrine_router(" in _comp_src
+    router_start = _comp_src.find("build_doctrine_router(")
+    router_block = _comp_src[router_start : router_start + 200]
+    assert "gray_zone=gray_zone" in router_block
+    assert "coordinator=coordinator" in router_block
+    assert "admin=admin" in router_block
+
+
 def test_composition_decider_receives_feature_flags(_comp_src: str) -> None:
     """Decider is wired with gray-zone + autonomous flags and thresholds."""
     assert "feature_gray_zone_enabled=" in _comp_src

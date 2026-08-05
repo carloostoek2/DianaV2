@@ -657,6 +657,7 @@ def build_app(
             gray_zone=gray_zone,
             coordinator=coordinator,
             owner_telegram_id=settings.owner_telegram_id,
+            admin=admin,
         )
         if gray_zone is not None
         else None

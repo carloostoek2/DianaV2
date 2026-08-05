@@ -145,6 +145,9 @@ class GrayZoneQueryView(Protocol):
     turn_id: UUID
     question: str
     draft: str
+    # F4: source business connection used to reconstruct IncomingTurn for
+    # supervised-delivery approval synthesis (nullable for legacy rows).
+    business_connection_id: str | None = None
 
 
 @runtime_checkable

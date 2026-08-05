@@ -9,6 +9,7 @@ from uuid import UUID
 from aiogram import Router
 from aiogram.types import CallbackQuery
 
+from diana.application.admin_service import AdminService
 from diana.application.ports import GrayZoneServicePort
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.telegram.keyboards import parse_doctrine_callback
@@ -42,8 +43,15 @@ async def handle_doctrine_resolve_with_draft(
     gray_zone: GrayZoneServicePort,
     coordinator: TurnCoordinator,
     turn_id: UUID,
+    admin: AdminService | None = None,
 ) -> str:
     """Resolve using the existing query draft as doctrine, then confirm.
+
+    After ``confirm_and_apply`` closes the query (and unfreezes the VIP),
+    ``admin.create_supervised_delivery_from_gray_zone`` creates a supervised
+    PendingApproval with the query draft and transitions the turn to
+    ``PENDING_APPROVAL``. With ``admin=None`` the behavior is legacy:
+    only ``confirm_and_apply`` (no approval creation, no transition).
 
     Returns status token: 'resolved', 'not_found', or 'error'.
     """
@@ -69,12 +77,15 @@ async def handle_doctrine_resolve_with_draft(
         # created an orphan staging candidate. The query stays open so it
         # can be retried or expired later — safe but should be monitored.
         await gray_zone.confirm_and_apply(query.id, candidate.id)
+        if admin is not None:
+            await admin.create_supervised_delivery_from_gray_zone(turn_id, query)
         logger.info(
             "doctrine_resolved_with_draft",
             extra={
                 "turn_id": str(turn_id),
                 "query_id": str(query.id),
                 "candidate_id": str(candidate.id),
+                "supervised": admin is not None,
             },
         )
         return "resolved"
@@ -136,6 +147,7 @@ def build_doctrine_router(
     gray_zone: GrayZoneServicePort,
     coordinator: TurnCoordinator,
     owner_telegram_id: int | None = None,
+    admin: AdminService | None = None,
 ) -> Router:
     """Build a Router with doctrine callback handlers.
 
@@ -184,6 +196,7 @@ def build_doctrine_router(
             gray_zone=gray_zone,
             coordinator=coordinator,
             turn_id=turn_id,
+            admin=admin,
         )
         text, alert = _RESULT_MESSAGES.get(status, ("Processed", False))
         await callback.answer(text, show_alert=alert)

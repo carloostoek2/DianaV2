@@ -32,8 +32,10 @@ from diana.application.escalation_labels import tipo_from_reason
 from diana.application.owner_history import append_owner_delivery_history
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
+from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.models import (
     Decision,
+    EvaluationProfile,
     IncomingTurn,
     TurnStatus,
     is_turn_status_terminal,
@@ -231,6 +233,76 @@ class AdminService:
             "draft_for_approval",
             extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
         )
+
+    async def create_supervised_delivery_from_gray_zone(
+        self, turn_id: UUID, query: GrayZoneQueryView
+    ) -> bool:
+        """Create a supervised PendingApproval from a resolved/expired gray zone draft.
+
+        Synthesizes an ``IncomingTurn`` + minimal ``Decision`` from the turn
+        record and the persisted gray zone query, reuses
+        ``send_draft_for_approval`` to create the approval record and notify
+        the owner, then transitions the turn ``GRAY_ZONE`` → ``PENDING_APPROVAL``.
+
+        Fail-soft: returns False (with a log) when the turn is missing, the
+        query lacks a non-empty ``business_connection_id``, or the draft is
+        empty. If the transition raises ``TurnSupersededError``, the approval
+        already created is cancelled so no orphan approval is left behind.
+
+        Returns True when the supervised approval was created and the turn
+        transitioned to PENDING_APPROVAL.
+        """
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            logger.info("gray_zone_delivery_missing_turn", extra={"turn_id": str(turn_id)})
+            return False
+
+        bc = getattr(query, "business_connection_id", None) or ""
+        if not bc.strip():
+            logger.warning(
+                "gray_zone_delivery_missing_bc",
+                extra={"turn_id": str(turn_id), "query_id": str(getattr(query, "id", None))},
+            )
+            return False
+
+        draft = getattr(query, "draft", "") or ""
+        if not draft.strip():
+            logger.info("gray_zone_delivery_empty_draft", extra={"turn_id": str(turn_id)})
+            return False
+
+        incoming = IncomingTurn(
+            turn_id=turn_id,
+            chat_id=turn.chat_id,
+            vip_id=turn.vip_id,
+            text=getattr(query, "question", "") or "",
+            telegram_message_id=turn.trigger_message_id,
+            business_connection_id=bc,
+            channel_type=turn.channel_type,
+        )
+        decision = Decision(
+            action="approve",
+            reason="gray_zone_resolved_by_doctrine",
+            evaluation=EvaluationProfile(
+                naturalness=0.5, precision=0.5, doctrine=0.5,
+                consistency=0.5, safety=0.5, coverage=0.5, empathy=0.5,
+            ),
+            draft_text=draft,
+        )
+        await self.send_draft_for_approval(incoming, decision, turn_id)
+        try:
+            await self._coordinator.transition(turn_id, TurnStatus.PENDING_APPROVAL)
+        except TurnSupersededError:
+            await self._approvals.mark_status(turn_id, "cancelled")
+            logger.info(
+                "gray_zone_delivery_superseded",
+                extra={"turn_id": str(turn_id)},
+            )
+            return False
+        logger.info(
+            "gray_zone_supervised_delivery_created",
+            extra={"turn_id": str(turn_id)},
+        )
+        return True
 
     async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
         """Thin wrapper for operator/info notifications (e.g. Analyst schema fail)."""
