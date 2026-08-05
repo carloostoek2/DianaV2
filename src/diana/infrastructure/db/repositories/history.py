@@ -126,5 +126,42 @@ class SqlMessageHistoryRepo:
             rows = list(result.scalars().all())
             return rows_to_recent_messages(rows, limit=limit)
 
+    async def list_all(self, chat_id: int, *, page_size: int = 500) -> list[dict]:
+        """Read the complete chat history, chronological (oldest first).
+
+        Paginated in ``page_size`` chunks for backfill of long histories
+        (F5-08); same dict shape as ``rows_to_recent_messages``
+        (role/text/telegram_message_id/timestamp). A single query suffices for
+        today's volumes, but the loop avoids assuming one.
+        """
+        out: list[dict] = []
+        offset = 0
+        while True:
+            async with self._sf() as session:
+                result = await session.execute(
+                    select(MessageHistory)
+                    .where(MessageHistory.chat_id == chat_id)
+                    .order_by(MessageHistory.timestamp.asc(), MessageHistory.id.asc())
+                    .offset(offset)
+                    .limit(page_size)
+                )
+                rows = list(result.scalars().all())
+            if not rows:
+                break
+            for row in rows:
+                ts = row.timestamp
+                out.append(
+                    {
+                        "role": row.role,
+                        "text": row.text,
+                        "telegram_message_id": row.telegram_message_id,
+                        "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                    }
+                )
+            offset += len(rows)
+            if len(rows) < page_size:
+                break
+        return out
+
 
 __all__ = ["SqlMessageHistoryRepo", "rows_to_recent_messages"]

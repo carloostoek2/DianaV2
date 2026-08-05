@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
@@ -745,6 +746,28 @@ class PromoExecutionStore(Protocol):
         ...
 
 
+# --- F5 VIP memory profile (backfill writer DTO) -----------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryInsert:
+    """One fact row to persist via ``MemoryProfileWriter.replace_vip_profile``.
+
+    Application-side DTO (no ORM/session): the infrastructure repo maps it to
+    a ``memories`` row with the canonical ``content`` shape (``texto`` +
+    ``fact`` mirror). ``status`` is ``auto`` | ``pending_owner`` | ``approved``
+    | ``discarded``; ``source_turn_id`` stays NULL for backfill rows.
+    """
+
+    category: str
+    text: str
+    embedding: list[float]
+    confidence: float
+    status: str
+    source_turn_id: UUID | None = None
+    approved_by: str | None = None
+
+
 __all__ = [
     "ApprovalRecord",
     "BehaviorCanceller",
@@ -763,6 +786,7 @@ __all__ = [
     "EscalationStore",
     "GrayZoneQueryView",
     "GrayZoneServicePort",
+    "MemoryInsert",
     "MessageHistoryWriter",
     "OwnerNotifierPort",
     "PendingApprovalStore",
