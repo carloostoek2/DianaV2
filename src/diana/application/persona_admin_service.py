@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import UUID
 
 from diana.application.admin_service import OwnerAuthError
@@ -20,6 +20,11 @@ from diana.cognitive.persona_catalog import validate_persona_catalog
 
 logger = logging.getLogger("diana.application")
 
+# F4 channel isolation invariant: only two channels exist. The Pydantic DTOs
+# type this as Literal; the service re-asserts it so an unknown channel can
+# never silently fall back to the VIP persona.
+ChannelType = Literal["vip", "atencion"]
+
 
 def _is_integrity_error(exc: BaseException) -> bool:
     """True for SQLAlchemy/asyncpg IntegrityError without importing sqlalchemy."""
@@ -27,6 +32,13 @@ def _is_integrity_error(exc: BaseException) -> bool:
         if cls.__name__ == "IntegrityError":
             return True
     return False
+
+
+def _assert_channel(channel_type: str) -> ChannelType:
+    """Reject unknown channels instead of defaulting them to the VIP persona."""
+    if channel_type not in ("vip", "atencion"):
+        raise ValueError(f"unknown channel_type: {channel_type!r}")
+    return channel_type  # type: ignore[return-value]
 
 
 class PersonaAdminService:
@@ -94,6 +106,7 @@ class PersonaAdminService:
     ) -> PersonaVersionRecord:
         """Validate the full catalog, persist it as a new active version."""
         self._assert_owner(actor_id)
+        _assert_channel(channel_type)
         validated = validate_persona_catalog(dict(payload))
         # GLOBAL version counter: ``uq_persona_versions_version`` is a unique
         # index over ``version`` across every channel, so next_version must be
@@ -159,6 +172,7 @@ class PersonaAdminService:
     ) -> PersonaVersionRecord | None:
         """Activate a previous version. Returns None when the id is unknown."""
         self._assert_owner(actor_id)
+        _assert_channel(channel_type)
         try:
             restored = await self._store.activate_version(
                 persona_version_id, now=self._clock(), channel_type=channel_type
@@ -189,12 +203,15 @@ class PersonaAdminService:
     ) -> list[PersonaVersionRecord]:
         """All versions (optionally scoped to a channel), newest first (owner-only)."""
         self._assert_owner(actor_id)
+        if channel_type is not None:
+            _assert_channel(channel_type)
         return await self._store.list_versions(channel_type=channel_type)
 
     async def get_current_persona(
         self, channel_type: str = "vip"
     ) -> dict[str, Any] | None:
         """Active payload for a channel when the feature flag is on; else ``None``."""
+        _assert_channel(channel_type)
         if not self._enabled:
             return None
         record = await self._store.get_active(channel_type=channel_type)

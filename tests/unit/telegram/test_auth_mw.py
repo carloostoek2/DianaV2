@@ -306,6 +306,8 @@ async def test_sandbox_active_non_vip_passes() -> None:
     handler.assert_awaited_once()
     assert data.get("sandbox_active") is True
     assert "vip_id" not in data
+    # S6: no VIP record → sandbox previews the atencion persona.
+    assert data.get("channel_type") == "atencion"
 
 
 @pytest.mark.asyncio
@@ -359,6 +361,8 @@ async def test_sandbox_active_vip_still_sets_vip_id() -> None:
     handler.assert_awaited_once()
     assert data["vip_id"] == rec.id
     assert data.get("sandbox_active") is True
+    # S6: VIP record exists → VIP channel is kept (never forced to atencion).
+    assert data.get("channel_type") != "atencion"
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +546,89 @@ async def test_general_mode_flag_off_drops_to_promo_or_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_general_mode_sandbox_wins() -> None:
+async def test_general_mode_promo_wins_on_trigger_match() -> None:
+    """N5a: flag ON + promo enabled + trigger text → promo runs, pipeline NOT entered."""
+    vips = InMemoryVipStore()
+    trig = _trigger("promos")
+    promo = _promo_mock(trigger=trig)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, text="PROMOS", chat_id=555), data)
+    assert result is None
+    handler.assert_not_awaited()
+    promo.execute_promo.assert_awaited_once()
+    assert data.get("channel_type") != "atencion"
+
+
+@pytest.mark.asyncio
+async def test_general_mode_wins_on_promo_non_match() -> None:
+    """N5b: flag ON + promo enabled + non-trigger text → atencion channel,
+    match_trigger awaited but promo never runs."""
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=None)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="orch")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(111, text="hola quiero información"), data)
+    assert result == "orch"
+    handler.assert_awaited_once()
+    promo.match_trigger.assert_awaited_once()
+    promo.execute_promo.assert_not_awaited()
+    assert data.get("channel_type") == "atencion"
+    assert data.get("vip_id") is None
+
+
+@pytest.mark.asyncio
+async def test_general_mode_vip_still_normal_vip_path() -> None:
+    """N5c: active VIP + flag ON → normal VIP path (vip_id set, no atencion)."""
+    vips = InMemoryVipStore()
+    rec = await vips.add(222, display_name="Vip")
+    promo = _promo_mock(trigger=_trigger())
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="ok")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(222, text="promos"), data)
+    assert result == "ok"
+    handler.assert_awaited_once()
+    assert data["vip_id"] == rec.id
+    assert data.get("channel_type") != "atencion"
+    promo.match_trigger.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_general_mode_deactivated_vip_not_routed_to_atencion() -> None:
+    """S4: a deactivated VIP with flag ON is dropped, never routed to atencion."""
+    vips = InMemoryVipStore()
+    await vips.add(333)
+    await vips.deactivate(333)
+    mw = AuthMiddleware(vips=vips, feature_general_mode_enabled=True)
+    handler = AsyncMock(return_value="should-not-run")
+    data: dict = {"business_connection_id": "bc-1"}
+    result = await mw(handler, _biz_msg(333), data)
+    assert result is None
+    handler.assert_not_awaited()
+    assert data.get("channel_type") != "atencion"
+    assert "vip_id" not in data
+
+
+@pytest.mark.asyncio
+async def test_sandbox_wins() -> None:
     """Sandbox active + flag ON → sandbox wins, handler runs with sandbox_active."""
     from diana.application.sandbox import SandboxService
 

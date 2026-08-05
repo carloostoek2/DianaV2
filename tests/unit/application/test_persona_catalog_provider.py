@@ -36,12 +36,30 @@ class _FakeService:
     def __init__(self, catalog: dict[str, Any] | None) -> None:
         self.catalog = catalog
         self.calls = 0
+        self.requested: list[str] = []
 
     async def get_current_persona(
         self, channel_type: str = "vip"
     ) -> dict[str, Any] | None:
         self.calls += 1
+        self.requested.append(channel_type)
         return self.catalog
+
+
+class _ChannelDictService:
+    """PersonaAdminService double returning a distinct catalog per channel."""
+
+    def __init__(self, catalogs: dict[str, dict[str, Any]]) -> None:
+        self.catalogs = catalogs
+        self.calls = 0
+        self.requested: list[str] = []
+
+    async def get_current_persona(
+        self, channel_type: str = "vip"
+    ) -> dict[str, Any] | None:
+        self.calls += 1
+        self.requested.append(channel_type)
+        return self.catalogs.get(channel_type)
 
 
 @pytest.mark.asyncio
@@ -119,6 +137,37 @@ async def test_get_catalog_caches_per_channel() -> None:
     await provider.get_catalog("atencion")
     await provider.get_catalog("atencion")
     assert service.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_db_path_per_channel_distinct() -> None:
+    """N8: the channel_type is forwarded to the service and cached per channel
+    with distinct DB catalogs (atencion never reuses the VIP catalog)."""
+    service = _ChannelDictService(
+        {"vip": _catalog("vip-db"), "atencion": _catalog("atencion-db")}
+    )
+    provider = PersonaCatalogProvider(persona_admin_service=service)  # type: ignore[arg-type]
+    vip1 = await provider.get_catalog("vip")
+    atencion1 = await provider.get_catalog("atencion")
+    assert vip1["voz_configurada"]["persona"] == "Diana vip-db"
+    assert atencion1["voz_configurada"]["persona"] == "Diana atencion-db"
+    assert vip1 is not atencion1
+
+    vip2 = await provider.get_catalog("vip")
+    atencion2 = await provider.get_catalog("atencion")
+    assert vip2 is vip1 and atencion2 is atencion1  # per-channel cache
+    assert service.calls == 2  # one read per channel
+    assert service.requested == ["vip", "atencion"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_channel_type_raises_value_error() -> None:
+    """S3/S5: an unknown channel_type raises ValueError, never resolves VIP."""
+    service = _FakeService(_catalog("db"))
+    provider = PersonaCatalogProvider(persona_admin_service=service)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        await provider.get_catalog("bogus")
+    assert service.calls == 0
 
 
 def test_protocol_exported_in_cognitive_ports() -> None:

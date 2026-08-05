@@ -267,6 +267,10 @@ def test_activate_version_source_keeps_exists_guard() -> None:
     assert "& exists" in source
     # channel scoping must be part of the exists guard (cross-channel no-op)
     assert "PersonaVersion.channel_type == channel_type" in source
+    # S1: the post-UPDATE re-fetch must verify the channel before returning,
+    # so a cross-channel id (zero rows updated) returns None, not the record.
+    assert "record.channel_type != channel_type" in source
+    assert "return None" in source
 
 
 @pytest.mark.asyncio

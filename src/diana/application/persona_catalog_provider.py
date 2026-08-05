@@ -59,12 +59,24 @@ class PersonaCatalogProvider:
         self._cached.clear()
 
     def _static_fallback(self, channel_type: str) -> dict[str, Any] | None:
-        """Channel-scoped static catalog (boot-time persona files)."""
-        if channel_type == "atencion":
-            return get_persona_atencion_catalog()
-        if self._static_catalog is not None:
-            return self._static_catalog
-        return get_persona_catalog()
+        """Channel-scoped static catalog (boot-time persona files).
+
+        Returns ``None`` (per the documented failure contract) when the file is
+        missing/unreadable/invalid instead of raising out of ``get_catalog``.
+        """
+        try:
+            if channel_type == "atencion":
+                return get_persona_atencion_catalog()
+            if self._static_catalog is not None:
+                return self._static_catalog
+            return get_persona_catalog()
+        except (FileNotFoundError, OSError, ValueError):
+            logger.warning(
+                "persona_static_fallback_unavailable",
+                extra={"channel_type": channel_type},
+                exc_info=True,
+            )
+            return None
 
     async def get_catalog(
         self, channel_type: str = "vip"
@@ -82,6 +94,9 @@ class PersonaCatalogProvider:
         returned to the in-flight caller but only cached if no invalidation
         happened meanwhile.
         """
+        if channel_type not in ("vip", "atencion"):
+            # S5: an unknown channel must never silently resolve the VIP persona.
+            raise ValueError(f"unknown channel_type: {channel_type!r}")
         if channel_type in self._cached:
             return self._cached[channel_type]
         epoch = self._epoch

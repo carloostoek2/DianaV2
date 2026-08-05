@@ -92,6 +92,10 @@ class AuthMiddleware(BaseMiddleware):
             if rec is not None:
                 data["vip_id"] = rec.id
                 data["vip_record"] = rec
+            else:
+                # S6: no VIP record → sandbox previews the atencion persona
+                # instead of silently defaulting to the VIP channel.
+                data["channel_type"] = "atencion"
             data["sandbox_active"] = True
             logger.info(
                 "sandbox_auth_bypass",
@@ -105,34 +109,19 @@ class AuthMiddleware(BaseMiddleware):
 
         allowed = await self._vips.is_allowed(user.id)
         if not allowed:
-            # Training mode gate: non-VIP + training ON → pass through
-            # to the cognitive pipeline WITHOUT setting vip_id/vip_record.
-            # This gate fires BEFORE the promo check (training mode wins).
-            if self._training_mode is not None and await self._training_mode.is_enabled():
-                data["channel_type"] = "atencion"
-                logger.info(
-                    "training_mode_bypass",
-                    extra={
-                        "telegram_user_id": user.id,
-                        "chat_id": chat_id,
-                    },
-                )
-                return await handler(event, data)
+            # Distinguish "no VIP record at all" from "VIP record exists but
+            # paused/inactive" (S4): only no-record users take the training /
+            # general (atencion) gates. A paused/inactive VIP must NOT be
+            # routed to atencion (it would lose VIP identity); it only reaches
+            # promo/drop handling below.
+            rec = data.get("_vip_record")
+            if rec is None:
+                rec = await self._vips.get_by_telegram_user_id(user.id)
+            has_vip_record = rec is not None
 
-            # F4 general mode gate: non-VIP + flag ON → atencion channel,
-            # same deterministic path as training mode but permanent. The
-            # channel travels in data; no vip_id/vip_record is set.
-            if self._feature_general_mode_enabled:
-                data["channel_type"] = "atencion"
-                logger.info(
-                    "general_mode_bypass",
-                    extra={
-                        "telegram_user_id": user.id,
-                        "chat_id": chat_id,
-                    },
-                )
-                return await handler(event, data)
-
+            # Promo primero (REQ-ATN-09): the promo trigger is evaluated before
+            # any gate. An exact match runs the promo and the message NEVER
+            # enters the pipeline; a non-match falls through to the gates/drop.
             if (
                 self._feature_promo_enabled
                 and self._promo is not None
@@ -173,8 +162,36 @@ class AuthMiddleware(BaseMiddleware):
                                 "trigger_id": str(trigger.id),
                             },
                         )
-                # Always stop VIP pipeline for non-allowlisted (match or not).
-                return None
+                    return None
+
+            if not has_vip_record:
+                # No VIP record at all → the non-VIP atencion gates apply.
+                # Training mode gate: non-VIP + training ON → pass through to
+                # the cognitive pipeline WITHOUT vip_id/vip_record.
+                if self._training_mode is not None and await self._training_mode.is_enabled():
+                    data["channel_type"] = "atencion"
+                    logger.info(
+                        "training_mode_bypass",
+                        extra={
+                            "telegram_user_id": user.id,
+                            "chat_id": chat_id,
+                        },
+                    )
+                    return await handler(event, data)
+
+                # F4 general mode gate: non-VIP + flag ON → atencion channel,
+                # same deterministic path as training mode but permanent. The
+                # channel travels in data; no vip_id/vip_record is set.
+                if self._feature_general_mode_enabled:
+                    data["channel_type"] = "atencion"
+                    logger.info(
+                        "general_mode_bypass",
+                        extra={
+                            "telegram_user_id": user.id,
+                            "chat_id": chat_id,
+                        },
+                    )
+                    return await handler(event, data)
 
             logger.info(
                 "auth_drop_not_allowed",

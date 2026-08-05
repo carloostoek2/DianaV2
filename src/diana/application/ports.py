@@ -231,7 +231,7 @@ class VipInboundMessage(BaseModel):
     is_edit: bool = False
     # F4: channel type ("vip" | "atencion"). Set by AuthMiddleware for the
     # general-mode path; default keeps the VIP pipeline unchanged.
-    channel_type: str = "vip"
+    channel_type: Literal["vip", "atencion"] = "vip"
 
 
 class VipRecord(BaseModel):

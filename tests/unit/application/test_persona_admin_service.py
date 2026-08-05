@@ -346,6 +346,23 @@ async def test_get_current_persona_channel_scoped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unknown_channel_type_rejected() -> None:
+    """S5: an unknown channel_type raises ValueError instead of silently
+    resolving the VIP persona."""
+    store = _MemoryPersonaAdminStore()
+    service = _make_service(store)
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        await service.save_persona(OWNER_ID, _valid_catalog(), channel_type="bogus")
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        await service.restore(OWNER_ID, uuid4(), channel_type="bogus")
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        await service.list_versions(OWNER_ID, channel_type="bogus")
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        await service.get_current_persona(channel_type="bogus")
+    assert store.inserted == []
+
+
+@pytest.mark.asyncio
 async def test_on_change_called_after_save_and_restore() -> None:
     store = _MemoryPersonaAdminStore()
     calls: list[str] = []

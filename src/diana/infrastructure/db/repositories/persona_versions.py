@@ -143,7 +143,13 @@ class PersonaVersionRepo:
                 )
             )
             await session.commit()
-        return await self.get_by_id(persona_version_id)
+        record = await self.get_by_id(persona_version_id)
+        # The UPDATE is channel-scoped; a cross-channel id matched zero rows,
+        # so the re-fetch must verify the row actually belongs to this channel
+        # before returning it (get_by_id itself is not channel-filtered).
+        if record is None or record.channel_type != channel_type:
+            return None
+        return record
 
 
 __all__ = ["PersonaVersionRepo", "persona_version_orm_to_record"]
