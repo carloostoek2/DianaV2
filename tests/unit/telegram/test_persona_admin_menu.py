@@ -12,6 +12,7 @@ from diana.application.ports import PersonaVersionRecord
 from diana.cognitive.persona_catalog import get_persona_catalog
 from diana.telegram.handlers.menu import MenuSession, MenuSessionStore
 from diana.telegram.handlers.persona_admin import (
+    _current_channel,
     apply_persona_edit,
     dispatch_personalidad,
     handle_persona_edit_text,
@@ -525,6 +526,50 @@ async def test_bare_session_free_text_reshows_panel_root() -> None:
         for b in row
     ]
     assert encode_menu_persona("channel", "atencion") in datas
+
+
+@pytest.mark.asyncio
+async def test_bare_session_free_text_repersists_toggled_channel() -> None:
+    """R2-1: the no-section free-text re-show re-persists the session with the
+    toggled channel. on_menu_session_text pops it before the handler; without
+    the re-start the next tap would resolve the channel via _current_channel
+    (None → "vip") while the panel still shows atencion — a display/action
+    mismatch."""
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = AsyncMock()
+    msg.text = "texto suelto sin sección"
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    bot = _bot()
+    sessions = _sessions()
+
+    bare = MenuSession(
+        kind="persona_edit",
+        persona_section=None,  # bare session right after a channel toggle
+        persona_channel="atencion",
+        last_bot_message_id=1,
+        last_chat_id=42,
+    )
+    await handle_persona_edit_text(msg, bot, bare, service, sessions)
+
+    # panel root re-shown (R1-7 behavior preserved)
+    assert service.saved == []
+    bot.edit_message_text.assert_awaited_once()
+    kwargs = bot.edit_message_text.call_args.kwargs
+    assert kwargs["text"] == MENU_CATEGORY_TEXT["personalidad"]
+    datas = [
+        b.callback_data
+        for row in kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert encode_menu_persona("channel", "atencion") in datas
+
+    # session re-persisted with the toggled channel → next tap targets atencion
+    live = sessions.get(_OWNER_ID)
+    assert live is not None and live.kind == "persona_edit"
+    assert live.persona_channel == "atencion"
+    assert _current_channel(sessions, _OWNER_ID) == "atencion"
 
 
 @pytest.mark.asyncio

@@ -944,6 +944,10 @@ async def handle_persona_edit_text(
         # (e.g. right after a channel toggle). Typed free text has no target op,
         # so re-show the panel root for the active channel instead of a dead-end
         # invalid-op error on the next message.
+        # Re-persist the session with the channel: on_menu_session_text pops it
+        # before this handler runs, so without the re-start the next tap would
+        # resolve the channel via _current_channel → None → "vip" (mismatch).
+        sessions.start(message.from_user.id, "persona_edit", persona_channel=channel)
         await _edit_or_answer(
             bot,
             MENU_CATEGORY_TEXT["personalidad"],
