@@ -436,12 +436,19 @@ class TurnOrchestrator:
         chat_id: int,
         event: str,
         **extra: object,
-    ) -> None:
-        """Owner notify fail-soft: never mask the primary failure path."""
+    ) -> bool:
+        """Owner notify fail-soft: never mask the primary failure path.
+
+        Returns True when the DM was delivered, False when the send was
+        swallowed. Callers that gate side effects on delivery (e.g. the
+        payment-DM cooldown, O1) must act only on a True return.
+        """
         try:
             await self._admin.notify_info(message, chat_id=chat_id)
         except Exception:
             log_swallowed(logger, event, chat_id=chat_id, **extra)
+            return False
+        return True
 
     def _prune_payment_notify(self, now: datetime) -> None:
         """Drop per-chat payment cooldown entries older than the TTL (F7)."""
@@ -499,13 +506,15 @@ class TurnOrchestrator:
             return
         if not _detect_payment_intent(trace):
             return
-        self._last_payment_notify[turn_ctx.chat_id] = now
-        await self._safe_notify_info(
+        # O1: stamp the 20-min cooldown ONLY after a successful DM. A swallowed
+        # send must not consume the slot and hide the notice for 20 minutes.
+        if await self._safe_notify_info(
             ATENCION_PAYMENT_NOTICE.format(chat_id=turn_ctx.chat_id),
             chat_id=turn_ctx.chat_id,
             event="atencion_payment_intent_notified",
             turn_id=str(turn_id),
-        )
+        ):
+            self._last_payment_notify[turn_ctx.chat_id] = now
 
     async def _fail_director_typed(
         self,
