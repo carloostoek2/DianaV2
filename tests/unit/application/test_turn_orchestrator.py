@@ -2612,6 +2612,7 @@ async def test_atencion_payment_policy_trigger_notifies_owner() -> None:
     """REQ-ATN-12: retrieved datos_pago trigger → ONE informational DM."""
     g = _build(
         FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(
             {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
         ),
@@ -2631,6 +2632,7 @@ async def test_atencion_payment_confirm_intent_notifies_owner() -> None:
     """REQ-ATN-12: confirmar_entrega + payment topic → informational DM."""
     g = _build(
         FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(
             {
                 "comprehension": {
@@ -2666,6 +2668,7 @@ async def test_atencion_without_payment_signal_not_notified() -> None:
     """REQ-ATN-12: atencion turn without a payment signal stays silent."""
     g = _build(
         FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(
             {
                 "comprehension": {
@@ -2686,6 +2689,7 @@ async def test_atencion_payment_reader_failure_fail_soft() -> None:
     """REQ-ATN-12: trace read failure never breaks the turn flow."""
     g = _build(
         FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(None, error=True),
     )
     turn_id = await g["orch"].handle_vip_message(
@@ -2713,6 +2717,7 @@ async def test_atencion_payment_edit_skips_dm() -> None:
     """F4(a): edited atencion messages never fire the payment DM."""
     g = _build(
         FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(
             {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
         ),
@@ -2736,6 +2741,7 @@ async def test_atencion_payment_consult_doctrine_skips_dm() -> None:
     )
     g = _build(
         FakeDirector(decision),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(
             {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
         ),
@@ -2751,6 +2757,7 @@ async def test_atencion_payment_sandbox_skips_dm() -> None:
     """F16: sandboxed atencion chats never fire the payment DM."""
     g = _build(
         FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(
             {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
         ),
@@ -2767,6 +2774,7 @@ async def test_atencion_payment_cooldown_limits_dm_per_chat() -> None:
     """F4(b): a second payment signal within 20 min does not double-notify."""
     g = _build(
         FakeDirector(_payment_decision()),
+        feature_general_mode_enabled=True,
         trace_reader=_FakeTraceReader(
             {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
         ),
@@ -2779,6 +2787,23 @@ async def test_atencion_payment_cooldown_limits_dm_per_chat() -> None:
         _vip(vip_id=None, channel_type="atencion", chat_id=100, text="pago 2")
     )
     assert len(g["notifier"].infos) == 1  # cooldown holds
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_general_mode_off_skips_dm() -> None:
+    """O2: training mode (channel_type=atencion, general flag OFF) never fires the DM."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None and turn.status == "pending_approval"
+    assert g["notifier"].infos == []
 
 
 @pytest.mark.asyncio

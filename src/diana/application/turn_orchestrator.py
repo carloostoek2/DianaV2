@@ -468,10 +468,11 @@ class TurnOrchestrator:
     ) -> None:
         """REQ-ATN-12: informational DM to the owner on payment intent.
 
-        Runs only for the atencion channel and only when a ``trace_reader``
-        is injected. Reads the committed trace (already stored by the
-        Director), detects the payment signal deterministically, and sends
-        ONE fail-soft informational DM (A7). The turn flow is never altered.
+        Runs only for the atencion channel, only in general mode (O2), and
+        only when a ``trace_reader`` is injected. Reads the committed trace
+        (already stored by the Director), detects the payment signal
+        deterministically, and sends ONE fail-soft informational DM (A7).
+        The turn flow is never altered.
 
         Anti-amplification (F4): edited messages never notify (edits also do
         not count toward the daily limit), per-chat 20-min cooldown, and
@@ -480,6 +481,10 @@ class TurnOrchestrator:
         chats are skipped (F16).
         """
         if turn_ctx.channel_type != "atencion":
+            return
+        # O2: the payment DM only exists in general mode — training mode sets
+        # channel_type=atencion without the general flag (byte-identical flag-OFF).
+        if not self._feature_general_mode_enabled:
             return
         if incoming.is_edit:
             return
