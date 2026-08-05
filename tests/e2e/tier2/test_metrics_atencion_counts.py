@@ -136,3 +136,38 @@ async def test_count_atencion_turns_since_zero_in_future_window(session_factory)
     source = SqlMetricsDataSource(session_factory)
     count = await source.count_atencion_turns_since(_NOW + timedelta(days=365))
     assert count == 0
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_iter_week_traces_returns_only_vip_traces(session_factory) -> None:
+    """F12/O5: weekly VIP aggregation excludes atencion traces, keeps VIP ones."""
+    traces: list[object] = []
+    try:
+        vip = await _insert_turn_and_trace(
+            session_factory, chat_id=401, channel_type="vip"
+        )
+        traces.append(vip.id)
+        atencion = await _insert_turn_and_trace(
+            session_factory, chat_id=402, channel_type="atencion"
+        )
+        traces.append(atencion.id)
+        old_vip = await _insert_turn_and_trace(
+            session_factory,
+            chat_id=403,
+            channel_type="vip",
+            created_at=_NOW - timedelta(days=2),
+        )
+        traces.append(old_vip.id)
+
+        week_start = _NOW.date() - timedelta(days=7)
+        week_end = _NOW.date() + timedelta(days=1)
+        rows = await SqlMetricsDataSource(session_factory).iter_week_traces(
+            week_start, week_end
+        )
+        ids = {str(r["turn_id"]) for r in rows}
+        assert str(vip.id) in ids
+        assert str(old_vip.id) in ids
+        assert str(atencion.id) not in ids
+    finally:
+        await _cleanup(session_factory, turn_ids=traces, chat_ids=[])
