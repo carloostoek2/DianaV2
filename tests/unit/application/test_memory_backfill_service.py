@@ -96,8 +96,9 @@ class FakeEmbedder:
 
 
 class FakeNotifier:
-    def __init__(self) -> None:
+    def __init__(self, *, fail: bool = False) -> None:
         self.infos: list[str] = []
+        self._fail = fail
 
     async def notify_draft(self, payload: object) -> int | None:
         return None
@@ -106,6 +107,8 @@ class FakeNotifier:
         return None
 
     async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
+        if self._fail:
+            raise RuntimeError("fake notifier boom")
         self.infos.append(text)
 
     async def notify_doctrine(self, payload: object) -> int | None:
@@ -366,3 +369,29 @@ async def test_consolidation_dedups_exact_text_across_windows() -> None:
     rows = writer.replace_calls[0][1]
     assert len(rows) == 1  # normalized exact dup collapsed into one row
     assert rows[0].text == "Vive  en   Buenos Aires"  # first occurrence kept
+
+
+@pytest.mark.asyncio
+async def test_notifier_failure_does_not_break_report() -> None:
+    """Best-effort notification (pattern vip_history_seed): a notifier
+    exception must NOT abort the backfill or poison the ok report."""
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[HechoExtracted(seccion="identidad", texto="Vive en Buenos Aires")]
+            )
+        ]
+    )
+    notifier = FakeNotifier(fail=True)
+    svc, _, _, writer, _ = _build_service(
+        messages=[_msg("vip", "soy de buenos aires")],
+        llm=llm,
+        notifier=notifier,
+    )
+
+    report = await svc.generate_profile(uuid4(), chat_id=9)
+
+    assert report.status == "ok"
+    assert report.facts == 1
+    assert len(writer.replace_calls) == 1  # write happened despite notify failure
+    assert notifier.infos == []
