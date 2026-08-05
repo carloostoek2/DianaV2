@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -520,9 +521,10 @@ class PersonaVersion(Base):
 
     Each row stores a complete validated persona catalog dict
     (voz_configurada, persona_facts, voice_patterns, policies, schedule).
-    At most one row is active (enforced by the partial unique index
-    ``uq_persona_versions_active``). ``version=0, source='seed'`` represents
-    the static ``persona_diana.json`` catalog.
+    At most one row per channel is active (enforced by the partial unique
+    index ``uq_persona_versions_active`` over ``(channel_type, is_active)``).
+    ``channel_type`` is ``vip`` | ``atencion``; the version counter is a
+    global sequence shared across channels.
     """
 
     __tablename__ = "persona_versions"
@@ -530,6 +532,7 @@ class PersonaVersion(Base):
         Index("ix_persona_versions_created_at", text("created_at DESC")),
         Index(
             "uq_persona_versions_active",
+            "channel_type",
             "is_active",
             unique=True,
             postgresql_where=text("is_active"),
@@ -541,6 +544,9 @@ class PersonaVersion(Base):
         PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    channel_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'vip'")
+    )
     source: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     is_active: Mapped[bool] = mapped_column(
@@ -552,4 +558,21 @@ class PersonaVersion(Base):
     )
     applied_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True,
+    )
+
+
+class DailyMessageLimit(Base):
+    """Per-chat daily client-message counter (F4-02, atencion channel).
+
+    Keyed by ``(chat_id, fecha_local)`` so the count resets when the local day
+    (``America/Mexico_City``) changes. The increment/enforce logic is Item 2;
+    this item only creates the schema.
+    """
+
+    __tablename__ = "daily_message_limits"
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    fecha_local: Mapped[date] = mapped_column(Date, primary_key=True)
+    count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
     )

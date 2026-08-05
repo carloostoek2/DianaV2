@@ -32,6 +32,8 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "FEATURE_CALIBRATION_ENABLED",
         "FEATURE_ADVANCED_BEHAVIOR",
         "FEATURE_PERSONA_ADMIN_ENABLED",
+        # F4 feature flags
+        "FEATURE_GENERAL_MODE_ENABLED",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)

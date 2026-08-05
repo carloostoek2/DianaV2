@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     feature_advanced_behavior: bool = False
     feature_persona_admin_enabled: bool = False
 
+    # F4 general mode (non-VIP atencion channel) — env-driven, default off.
+    feature_general_mode_enabled: bool = False
+
     # Ops surface (Telegram process edge) — single-instance defaults.
     # health_host is loopback-only (SEC-HEALTH-01); no public bind via env.
     health_host: str = "127.0.0.1"
