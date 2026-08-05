@@ -105,6 +105,7 @@ def test_history_get_recent_desc_then_chronological() -> None:
 def test_turn_orm_to_record_maps_error() -> None:
     turn_id = uuid4()
     vip_id = uuid4()
+    created_at = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
     orm = SimpleNamespace(
         id=turn_id,
         chat_id=99,
@@ -114,6 +115,7 @@ def test_turn_orm_to_record_maps_error() -> None:
         superseded_by=None,
         error="analista_schema_invalido",
         channel_type="vip",
+        created_at=created_at,
     )
     rec = turn_orm_to_record(orm)  # type: ignore[arg-type]
     assert rec.id == turn_id
@@ -123,6 +125,8 @@ def test_turn_orm_to_record_maps_error() -> None:
     assert rec.trigger_message_id == 42
     assert rec.error == "analista_schema_invalido"
     assert rec.channel_type == "vip"
+    # F5 Pool 3: the post-turn extractor needs the turn's creation time (A3).
+    assert rec.created_at == created_at
 
 
 def test_turn_orm_to_record_error_none_when_absent() -> None:
@@ -136,10 +140,12 @@ def test_turn_orm_to_record_error_none_when_absent() -> None:
             superseded_by=None,
             error=None,
             channel_type="vip",
+            created_at=None,
         )  # type: ignore[arg-type]
     )
     assert rec.error is None
     assert rec.channel_type == "vip"
+    assert rec.created_at is None
 
 
 def test_infrastructure_has_no_aiogram_imports() -> None:

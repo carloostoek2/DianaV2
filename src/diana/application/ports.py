@@ -46,6 +46,10 @@ class TurnRecord(BaseModel):
     trigger_message_id: int | None = None
     superseded_by: UUID | None = None
     error: str | None = None
+    # F5 Pool 3: turn creation time — the post-turn extractor filters
+    # message_history to ``timestamp >= created_at`` (plan A3). Populated by
+    # the SQL store from the ORM row; None for in-memory/legacy callers.
+    created_at: datetime | None = None
 
 
 class ApprovalRecord(BaseModel):

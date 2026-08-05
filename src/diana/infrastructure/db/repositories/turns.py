@@ -38,6 +38,7 @@ def turn_orm_to_record(row: Turn) -> TurnRecord:
         superseded_by=row.superseded_by,
         error=row.error,
         channel_type=row.channel_type,
+        created_at=row.created_at,
     )
 
 
