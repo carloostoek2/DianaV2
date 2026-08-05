@@ -581,6 +581,82 @@ async def test_extraction_prompt_fences_transcript_as_data() -> None:
 
 
 @pytest.mark.asyncio
+async def test_notify_owner_uses_display_name_and_memoria_hint() -> None:
+    """F5 Pool 4: the perfil DM shows the VIP name (not the UUID) and adds
+    the /memoria hint when there are pending facts."""
+    from types import SimpleNamespace
+
+    class _NamedVips:
+        async def get_by_id(self, vip_id: UUID) -> Any:
+            return SimpleNamespace(
+                id=vip_id,
+                telegram_user_id=111,
+                display_name="María",
+            )
+
+    notifier = FakeNotifier()
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="sensible",
+                        texto="María menciona tratamiento médico.",
+                        confianza=0.9,
+                        sensible=True,
+                    )
+                ]
+            )
+        ]
+    )
+    svc, _, _, _, _ = _build_service(
+        messages=[_msg("vip", "m1")],
+        llm=llm,
+        notifier=notifier,
+        vips=_NamedVips(),
+    )
+
+    report = await svc.generate_profile(uuid4(), chat_id=111)
+
+    assert report.status == "ok"
+    assert notifier.infos, "expected an owner DM"
+    text = notifier.infos[-1]
+    assert "Perfil generado para María" in text
+    assert "/memoria" in text
+
+
+@pytest.mark.asyncio
+async def test_notify_owner_falls_back_to_uuid_without_vips() -> None:
+    """F5 Pool 4: without a VipReader the DM keeps the UUID (no crash)."""
+    notifier = FakeNotifier()
+    llm = FakeLLM(
+        [
+            WindowExtraction(
+                hechos=[
+                    HechoExtracted(
+                        seccion="preferencias",
+                        texto="prefiere horario nocturno",
+                        confianza=0.8,
+                        sensible=False,
+                    )
+                ]
+            )
+        ]
+    )
+    svc, _, _, _, _ = _build_service(
+        messages=[_msg("vip", "m1")],
+        llm=llm,
+        notifier=notifier,
+        vips=None,
+    )
+    vid = uuid4()
+    await svc.generate_profile(vid, chat_id=14)
+
+    assert notifier.infos
+    assert f"Perfil generado para {vid}" in notifier.infos[-1]
+
+
+@pytest.mark.asyncio
 async def test_empty_extraction_reports_without_writing_or_notifying() -> None:
     """Fix round (L1): zero facts across all windows → empty_extraction, no
     profile write and no owner DM."""

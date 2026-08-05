@@ -181,15 +181,55 @@ _CATEGORY_KEYBOARDS: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 
+# F5 Pool 4 (F5-06): status icons for the 🧠 Memoria section of the ficha.
+_MEMORY_STATUS_ICONS = {
+    "auto": "✅",
+    "approved": "✅",
+    "pending_owner": "⏳ pendiente",
+    "discarded": "🗑 descartado",
+}
+
+_MEMORY_SECTION_MAX = 50
+
+
+def _memory_section_lines(
+    memory_rows: list[dict], *, max_facts: int = _MEMORY_SECTION_MAX
+) -> tuple[list[str], int]:
+    """Render the 🧠 Memoria section; returns (lines, pending_count).
+
+    Empty rows → empty lines (no orphan header). Text comes from
+    ``content.texto`` (canonical) or ``content.fact``; the status icon
+    shows the owner the approval state of each fact.
+    """
+    if not memory_rows:
+        return [], 0
+    lines = ["\n🧠 Memoria:"]
+    pending = 0
+    for row in memory_rows[:max_facts]:
+        category = row.get("category") or "?"
+        content = row.get("content") or {}
+        texto = str(content.get("texto") or content.get("fact") or "")
+        status = row.get("status") or "auto"
+        if status == "pending_owner":
+            pending += 1
+        icon = _MEMORY_STATUS_ICONS.get(status, "✅")
+        lines.append(f"  • [{category}] {texto} · {icon}")
+    return lines, pending
+
+
 def _format_vip_profile(result: Any) -> str:
     """Format a ``ProfileAdminResult`` for display."""
     if result.status == "vip_not_found":
         return "VIP no encontrado."
-    if result.status == "profile_empty":
-        name = result.display_name or str(result.telegram_user_id)
+    name = result.display_name or str(result.telegram_user_id)
+    memory_lines, pending_count = _memory_section_lines(result.memory or [])
+    # F5 Pool 4 (F5-06): the manual ficha is NOT replaced — the semantic
+    # memory is an extra section. The "Sin datos todavia" empty card only
+    # applies when there is no manual data AND no memory either (the
+    # diagnosed "perfil generado pero no se ve nada" case is fixed here).
+    if result.status == "profile_empty" and not memory_lines:
         return f"Ficha de {name}\n\nSin datos todavia."
 
-    name = result.display_name or str(result.telegram_user_id)
     content = result.content or {}
     facts = content.get("facts", {})
     notes = content.get("notes", [])
@@ -211,6 +251,10 @@ def _format_vip_profile(result: Any) -> str:
                 date_str = note.get("date", "")
             prefix = f"({date_str}) " if date_str else ""
             lines.append(f"  {i}. {prefix}{text}")
+
+    lines.extend(memory_lines)
+    if pending_count > 0:
+        lines.append(f"\nHay {pending_count} hechos por aprobar — usá /memoria.")
 
     return "\n".join(lines)
 

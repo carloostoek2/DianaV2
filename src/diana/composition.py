@@ -642,6 +642,7 @@ def build_app(
         turns=turns,
         memories=memories_repo,
         vips=vips,
+        notifier=notifier,
         dedup_threshold=settings.backfill_dedup_threshold,
     )
     orchestrator = TurnOrchestrator(
@@ -731,6 +732,9 @@ def build_app(
         profiles=profiles_repo,
         vips=vips,
         owner_telegram_id=settings.owner_telegram_id,
+        # F5 Pool 4 (F5-06): semantic memory section of the ficha — only
+        # wired with the flag ON (flag OFF → None → no query, byte-identical).
+        memories=(memories_repo if settings.feature_memory_enabled else None),
     )
 
     # VIP DM history seed (Telethon personal session) — optional until env is set.
@@ -744,6 +748,7 @@ def build_app(
     # is built ALWAYS but gated by the flag (enqueue no-op + routers get None
     # when OFF → hidden button, inert actions).
     from diana.application.memory_backfill_service import MemoryBackfillService
+    from diana.application.memory_approval_service import MemoryApprovalService
     from diana.infrastructure.db.repositories.backfill_queue import (
         SqlBackfillQueueRepo,
     )
@@ -774,6 +779,15 @@ def build_app(
         max_attempts=3,
         wake=backfill_wake,
         clock=clock.now,
+    )
+
+    # F5 Pool 4 (F5-05): owner approval of pending_owner facts — built
+    # ALWAYS (pattern Pool 2), gated at the dispatcher (flag OFF → None →
+    # inert router, byte-identical). vips enriches the DM list with names.
+    memory_approval = MemoryApprovalService(
+        memories=memories_repo,
+        vips=vips,
+        owner_telegram_id=settings.owner_telegram_id,
     )
 
     from diana.application.draft_variants import DraftVariantService
@@ -822,6 +836,9 @@ def build_app(
         history=history,
         backfill_queue=(
             backfill_queue if settings.feature_memory_enabled else None
+        ),
+        memory_approval=(
+            memory_approval if settings.feature_memory_enabled else None
         ),
     )
 

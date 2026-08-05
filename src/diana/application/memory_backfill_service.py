@@ -807,10 +807,26 @@ class MemoryBackfillService:
         if self._notifier is None:
             return
         try:
-            await self._notifier.notify_info(
-                f"Perfil generado para {vip_id} — {facts} hechos, "
+            # F5 Pool 4: the DM shows the VIP's display_name (not the UUID);
+            # any resolution failure falls back to the UUID.
+            name = str(vip_id)
+            if self._vips is not None:
+                try:
+                    vip = await self._vips.get_by_id(vip_id)
+                    if vip is not None and getattr(vip, "display_name", None):
+                        name = str(vip.display_name)
+                except Exception:
+                    logger.debug(
+                        "memory_backfill_name_resolve_failed",
+                        extra={"vip_id": str(vip_id)},
+                    )
+            text = (
+                f"Perfil generado para {name} — {facts} hechos, "
                 f"{pending_owner} requieren tu aprobación"
             )
+            if pending_owner > 0:
+                text += "\nUsá /memoria para aprobar o descartar."
+            await self._notifier.notify_info(text)
         except Exception:
             logger.exception(
                 "memory_backfill_notify_failed",

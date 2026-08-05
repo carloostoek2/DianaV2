@@ -38,6 +38,10 @@ class ProfileAdminResult:
     display_name: str | None = None
     content: dict | None = None
     detail: str | None = None
+    # F5 Pool 4 (F5-06): the semantic memory rows (list_by_vip) shown as an
+    # extra section of the ficha. Default None keeps every existing
+    # constructor/tests byte-identical (A7).
+    memory: list[dict] | None = None
 
 
 class ProfileAdminService:
@@ -50,11 +54,16 @@ class ProfileAdminService:
         vips: VipStore,
         owner_telegram_id: int,
         clock: Callable[[], datetime] | None = None,
+        memories: Any | None = None,
     ) -> None:
         self._profiles = profiles
         self._vips = vips
         self._owner_telegram_id = owner_telegram_id
         self._clock = clock or (lambda: datetime.now(UTC))
+        # F5 Pool 4 (F5-06): optional semantic memory reader (MemoriesRepo).
+        # Wired only when feature_memory_enabled (flag OFF → None → no query,
+        # byte-identical).
+        self._memories = memories
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -102,6 +111,10 @@ class ProfileAdminService:
             return ProfileAdminResult(
                 status="vip_not_found", telegram_user_id=telegram_user_id
             )
+        # F5 Pool 4 (F5-06): semantic memory rows (only when wired — flag ON).
+        memory_rows: list[dict] | None = None
+        if self._memories is not None:
+            memory_rows = await self._memories.list_by_vip(vip.id)
         row = await self._profiles.get_by_vip_id(vip.id)
         content = None if row is None else row.get("content")
         if row is None or is_hollow_content(content):
@@ -110,6 +123,7 @@ class ProfileAdminService:
                 telegram_user_id=telegram_user_id,
                 display_name=vip.display_name,
                 content={"facts": {}, "notes": []},
+                memory=memory_rows,
             )
         # Prefer normalized schema for structured rows; keep legacy flat as-is.
         display: dict | None
@@ -126,6 +140,7 @@ class ProfileAdminService:
             telegram_user_id=telegram_user_id,
             display_name=vip.display_name,
             content=display,
+            memory=memory_rows,
         )
 
     async def set_fact(

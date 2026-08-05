@@ -51,7 +51,12 @@ from diana.application.memory_backfill_service import (
     VipReader,
     WindowExtraction,
 )
-from diana.application.ports import MemoryInsert, TurnRecord, TurnStore
+from diana.application.ports import (
+    MemoryInsert,
+    OwnerNotifierPort,
+    TurnRecord,
+    TurnStore,
+)
 
 logger = logging.getLogger("diana.application")
 
@@ -170,6 +175,7 @@ class MemoryExtractionService:
         turns: TurnStore,
         memories: MemoryFactsWriter,
         vips: VipReader | None = None,
+        notifier: OwnerNotifierPort | None = None,
         dedup_threshold: float = 0.85,
     ) -> None:
         self._enabled = bool(feature_memory_enabled)
@@ -179,6 +185,7 @@ class MemoryExtractionService:
         self._turns = turns
         self._memories = memories
         self._vips = vips
+        self._notifier = notifier
         self._dedup_threshold = max(0.0, min(1.0, float(dedup_threshold)))
 
     async def extract_post_turn(
@@ -414,6 +421,30 @@ class MemoryExtractionService:
 
         if rows:
             await self._memories.insert_facts(vip_id, rows=rows)
+        # F5 Pool 4: best-effort owner DM when this turn left pending facts
+        # (metadata-only logs; the DM itself may show the fact count).
+        if pending > 0 and self._notifier is not None:
+            try:
+                name = str(vip_id)
+                if self._vips is not None:
+                    try:
+                        vip = await self._vips.get_by_id(vip_id)
+                        if vip is not None and getattr(vip, "display_name", None):
+                            name = str(vip.display_name)
+                    except Exception:
+                        logger.debug(
+                            "memory_extraction_name_resolve_failed",
+                            extra={"vip_id": str(vip_id)},
+                        )
+                await self._notifier.notify_info(
+                    f"Nuevos hechos de {name} requieren tu aprobación "
+                    f"({pending}) — usá /memoria."
+                )
+            except Exception:
+                logger.exception(
+                    "memory_extraction_notify_failed",
+                    extra={"vip_id": str(vip_id), "pending": pending},
+                )
         logger.info(
             "memory_extraction_ok",
             extra={
