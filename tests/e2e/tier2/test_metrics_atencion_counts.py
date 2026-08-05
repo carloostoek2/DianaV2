@@ -4,11 +4,13 @@ Exercises the real-SQL counters that back the daily atencion metrics log:
 ``count_atencion_turns_since`` (pipeline_traces channel filter) and
 ``count_atencion_limit_reached_on`` (daily_message_limits cap > 20).
 
-Runs on the session-level migrated DB; rows written here are cleaned up so
-other tier2 tests are never polluted. Turn timestamps are placed ~30 days in
-the FUTURE relative to ``datetime.now(UTC)`` so traces left by other shared-DB
-tests (e.g. test_calibration_data atencion rows) can never fall inside this
-test's counting window.
+Runs on the session-level migrated DB; the ``pipeline_traces`` and
+``daily_message_limits`` rows written here are cleaned up so other tier2 tests
+are never polluted. The matching ``turns`` rows minted via SqlTurnStore are
+intentionally left behind (untracked — pre-existing, harmless). Turn
+timestamps are placed ~30 days in the FUTURE relative to ``datetime.now(UTC)``
+so traces left by other shared-DB tests (e.g. test_calibration_data atencion
+rows) can never fall inside this test's counting window.
 """
 
 from __future__ import annotations
@@ -103,7 +105,11 @@ async def test_count_atencion_turns_since_counts_only_atencion_channel(
 async def test_count_atencion_limit_reached_on_counts_capped_chats(
     session_factory,
 ) -> None:
-    """REQ-ATN-14: cap counter tallies chats past the 20-message cap (> 20)."""
+    """REQ-ATN-14: cap counter tallies chats past the 20-message cap (> 20).
+
+    Boundary row chat_id=304 sits exactly ON the cap (count=20) and must NOT be
+    counted — the assertion would fail if the semantics were ``>= 20`` (O4).
+    """
     try:
         async with session_factory() as sess:
             sess.add_all(
@@ -111,6 +117,7 @@ async def test_count_atencion_limit_reached_on_counts_capped_chats(
                     DailyMessageLimit(chat_id=301, fecha_local=_DAY, count=25),
                     DailyMessageLimit(chat_id=302, fecha_local=_DAY, count=5),
                     DailyMessageLimit(chat_id=303, fecha_local=_DAY, count=21),
+                    DailyMessageLimit(chat_id=304, fecha_local=_DAY, count=20),
                 ]
             )
             await sess.commit()
@@ -119,7 +126,7 @@ async def test_count_atencion_limit_reached_on_counts_capped_chats(
         assert await source.count_atencion_limit_reached_on(_DAY) == 2
         assert await source.count_atencion_limit_reached_on(_OTHER_DAY) == 0
     finally:
-        await _cleanup(session_factory, turn_ids=[], chat_ids=[301, 302, 303])
+        await _cleanup(session_factory, turn_ids=[], chat_ids=[301, 302, 303, 304])
 
 
 @pytest.mark.db
