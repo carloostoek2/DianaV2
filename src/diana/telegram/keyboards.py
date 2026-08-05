@@ -750,16 +750,29 @@ def menu_pause_duration_keyboard(user_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def menu_vip_profile_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Back to VIP detail after viewing profile/ficha."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔙 Volver al perfil", callback_data=encode_menu_vip(user_id)),
-                InlineKeyboardButton(text="🔙 Inicio", callback_data=encode_menu("root")),
-            ],
-        ]
-    )
+def menu_vip_profile_keyboard(
+    user_id: int, *, show_generate: bool = False
+) -> InlineKeyboardMarkup:
+    """Back to VIP detail after viewing profile/ficha.
+
+    With memory backfill wired (``show_generate=True``) the first row offers
+    "🔄 Generar perfil" (callback ``profile_generate``) — the ficha-triggered
+    enqueue of REQ-MEM-05. Default ``False`` keeps the output identical to the
+    pre-Pool-2 keyboard (back-compat).
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_generate:
+        rows.append([
+            InlineKeyboardButton(
+                text="🔄 Generar perfil",
+                callback_data=encode_menu_vip_action(user_id, "profile_generate"),
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(text="🔙 Volver al perfil", callback_data=encode_menu_vip(user_id)),
+        InlineKeyboardButton(text="🔙 Inicio", callback_data=encode_menu("root")),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def menu_back_keyboard(dest: str) -> InlineKeyboardMarkup:

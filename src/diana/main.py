@@ -17,6 +17,7 @@ from diana.composition import (
     run_app_startup_recovery,
 )
 from diana.config import Settings
+from diana.jobs.backfill import BackfillJob
 from diana.jobs.calibration import CalibrationJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
 from diana.jobs.metrics import MetricsJob
@@ -100,6 +101,16 @@ async def async_main() -> None:
     # F3 Pool 3: observational metrics always; calibration only if flag on.
     metrics_job = _setup_metrics_job(app)
     calibration_job = _setup_calibration_job(app)
+    # F5 Pool 2: backfill scheduler (flag-gated; recover_stale inside start()).
+    backfill_job = _setup_backfill_job(app)
+
+    # F5 Pool 2: enqueue missing VIP profiles at startup (before polling,
+    # NEVER during turn processing). Best-effort.
+    if app.backfill_queue is not None:
+        try:
+            await app.backfill_queue.enqueue_missing_vips()
+        except Exception:
+            logger.exception("backfill_missing_enqueue_failed")
 
     health = HealthServer(
         host=settings.health_host,
@@ -129,6 +140,7 @@ async def async_main() -> None:
             await health.stop()
     finally:
         # Stop new jobs first, then existing F2/F3 jobs.
+        await _cancel_job(backfill_job, "backfill_job")
         await _cancel_job(calibration_job, "calibration_job")
         await _cancel_job(metrics_job, "metrics_job")
         await _cancel_job(recontact_job, "recontact_job")
@@ -175,6 +187,30 @@ def _setup_recontact_job(app: AppContainer) -> asyncio.Task | None:
     job = RecontactJob(app.recontact, interval_seconds=3600)
     task = asyncio.create_task(job.start())
     logger.info("recontact_job_started", extra={"interval_seconds": 3600})
+    return task
+
+
+def _setup_backfill_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the VIP profile backfill scheduler when the memory flag is on.
+
+    ``BackfillJob.start()`` recovers stale ``processing`` jobs at boot and
+    then processes one unit (one transcript window) per cycle, sleeping
+    ``backfill_interval_sec`` between units. Flag OFF → job never starts.
+    """
+    if not app.settings.feature_memory_enabled or app.backfill_queue is None:
+        logger.info("backfill_job_skipped_flag_off")
+        return None
+
+    job = BackfillJob(
+        app.backfill_queue,
+        interval_seconds=app.settings.backfill_interval_sec,
+        wake=app.backfill_wake,
+    )
+    task = asyncio.create_task(job.start())
+    logger.info(
+        "backfill_job_started",
+        extra={"interval_seconds": app.settings.backfill_interval_sec},
+    )
     return task
 
 

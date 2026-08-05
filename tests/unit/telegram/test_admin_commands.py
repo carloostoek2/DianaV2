@@ -486,6 +486,31 @@ async def test_add_vip_schedules_history_seed(admin_ctx: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_add_vip_schedules_backfill_enqueue(admin_ctx: dict) -> None:
+    """On VIP allowlist add, the profile backfill is enqueued (fire-and-forget)."""
+    class _Queue:
+        def __init__(self) -> None:
+            self.scheduled: list[int] = []
+
+        def schedule_enqueue(self, telegram_user_id: int, **_: object) -> None:
+            self.scheduled.append(telegram_user_id)
+
+    g = admin_ctx
+    queue = _Queue()
+    status = await handle_admin_text(
+        text="/add_vip 777002",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        backfill_queue=queue,
+    )
+    assert status == "vip_added"
+    assert queue.scheduled == [777002]
+
+
+@pytest.mark.asyncio
 async def test_vip_fact_set_then_profile_ok(admin_ctx: dict) -> None:
     g = admin_ctx
     await _dispatch(g, "/add_vip 555 Alice")

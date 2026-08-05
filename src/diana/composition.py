@@ -5,6 +5,7 @@ May import all layers. Cognitive/application/behavior purity is unchanged.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.calibration_service import CalibrationService
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.metrics_service import MetricsAggregationService
+from diana.application.memory_backfill_queue import MemoryBackfillQueue
 from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.persona_catalog_provider import PersonaCatalogProvider
 from diana.application.promo_service import PromoService
@@ -288,6 +290,8 @@ class AppContainer:
     runtime_timers: SqlRuntimeTimerStore | None = None
     business_connections: SqlBusinessConnectionStore | None = None
     persona_admin: PersonaAdminService | None = None
+    backfill_queue: MemoryBackfillQueue | None = None
+    backfill_wake: asyncio.Event | None = None
 
 
 def build_app(
@@ -715,6 +719,44 @@ def build_app(
         settings, history=history, notifier=notifier
     )
 
+    # F5 Pool 2: backfill queue + scheduler (one window per cycle, interval-gated).
+    # The service wires the chat↔vip binding (vips), the semantic dedup reader
+    # and profile-presence (memories_repo) that Pool 1 left optional; the queue
+    # is built ALWAYS but gated by the flag (enqueue no-op + routers get None
+    # when OFF → hidden button, inert actions).
+    from diana.application.memory_backfill_service import MemoryBackfillService
+    from diana.infrastructure.db.repositories.backfill_queue import (
+        SqlBackfillQueueRepo,
+    )
+
+    backfill_service = MemoryBackfillService(
+        feature_memory_enabled=settings.feature_memory_enabled,
+        history=history,
+        llm=provider,
+        memories=memories_repo,
+        embedder=embedding_svc,
+        notifier=notifier,
+        vips=vips,
+        dedup=memories_repo,
+        profile_presence=memories_repo,
+        dedup_threshold=settings.backfill_dedup_threshold,
+        clock=clock.now,
+    )
+    backfill_wake = asyncio.Event()
+    backfill_queue = MemoryBackfillQueue(
+        enabled=settings.feature_memory_enabled,
+        store=SqlBackfillQueueRepo(sf),
+        backfill=backfill_service,
+        vips=vips,
+        history=history,
+        memories=memories_repo,
+        notifier=notifier,
+        window_size=200,
+        max_attempts=3,
+        wake=backfill_wake,
+        clock=clock.now,
+    )
+
     from diana.application.draft_variants import DraftVariantService
 
     draft_variants = DraftVariantService(
@@ -759,6 +801,9 @@ def build_app(
         history_seed=history_seed,
         draft_variants=draft_variants,
         history=history,
+        backfill_queue=(
+            backfill_queue if settings.feature_memory_enabled else None
+        ),
     )
 
     return AppContainer(
@@ -795,6 +840,8 @@ def build_app(
         turns=turns,
         runtime_timers=runtime_timers_store,
         business_connections=bc_store,
+        backfill_queue=backfill_queue,
+        backfill_wake=backfill_wake,
     )
 
 

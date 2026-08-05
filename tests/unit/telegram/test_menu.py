@@ -627,3 +627,109 @@ async def test_config_toggle_no_config_store_shows_unavailable() -> None:
     call_args = msg.edit_text.call_args
     assert call_args is not None
     assert "no disponible" in call_args[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# F5 Pool 2 — profile generation from the ficha (REQ-MEM-05)
+# ---------------------------------------------------------------------------
+
+
+class _BackfillQueueFake:
+    """Minimal schedule_enqueue spy (fire-and-forget contract)."""
+
+    def __init__(self) -> None:
+        self.scheduled: list[int] = []
+
+    def schedule_enqueue(self, telegram_user_id: int, **_: object) -> None:
+        self.scheduled.append(telegram_user_id)
+
+
+@pytest.mark.asyncio
+async def test_profile_generate_enqueues_backfill() -> None:
+    """'Generar perfil' from the ficha enqueues the VIP and acks without blocking."""
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    queue = _BackfillQueueFake()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "profile_generate", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+        backfill_queue=queue,
+    )
+    assert queue.scheduled == [123]
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "en cola" in call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_profile_generate_unavailable_without_queue() -> None:
+    """Flag OFF (queue=None): the action shows 'no disponible', nothing enqueued."""
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "profile_generate", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+        backfill_queue=None,
+    )
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "no disponible" in call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_register_confirm_enqueues_backfill() -> None:
+    """Registering a new VIP from the panel also enqueues its profile backfill."""
+    queue = _BackfillQueueFake()
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("register", "confirm", extra="777"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+        backfill_queue=queue,
+    )
+    assert queue.scheduled == [777]
+
+
+def test_profile_keyboard_show_generate_button() -> None:
+    """The ficha keyboard shows 'Generar perfil' only when the queue is wired."""
+    from diana.telegram.keyboards import menu_vip_profile_keyboard
+
+    with_generate = menu_vip_profile_keyboard(123, show_generate=True)
+    texts = [b.text for row in with_generate.inline_keyboard for b in row]
+    assert any("Generar perfil" in t for t in texts)
+
+    default = menu_vip_profile_keyboard(123)
+    default_texts = [b.text for row in default.inline_keyboard for b in row]
+    assert not any("Generar perfil" in t for t in default_texts)

@@ -111,6 +111,7 @@ def build_dispatcher(
     dedup_ttl_s: float = 300.0,
     bc_store: BusinessConnectionStore | None = None,
     history: object | None = None,
+    backfill_queue: object | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -204,6 +205,7 @@ def build_dispatcher(
             menu_sessions=menu_sessions,
             config_store=config_store,
             history_seed=history_seed,
+            backfill_queue=backfill_queue,
         )
     )
     root.include_router(
@@ -231,6 +233,7 @@ def build_dispatcher(
             sandbox=sandbox,  # type: ignore[arg-type]
             coordinator=coordinator,
             history_seed=history_seed,
+            backfill_queue=backfill_queue,
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))

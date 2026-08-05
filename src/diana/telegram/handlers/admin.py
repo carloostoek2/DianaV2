@@ -229,6 +229,7 @@ async def handle_admin_text(
     sandbox: SandboxService | None = None,
     coordinator: TurnCoordinator | None = None,
     history_seed: object | None = None,
+    backfill_queue: object | None = None,
 ) -> str:
     """Pure admin text dispatcher for unit tests. Returns honest status token."""
     if actor_id is None or actor_id != owner_telegram_id:
@@ -295,6 +296,9 @@ async def handle_admin_text(
         schedule = getattr(history_seed, "schedule_seed_for_new_vip", None)
         if callable(schedule):
             schedule(tg_id)
+        enqueue = getattr(backfill_queue, "schedule_enqueue", None)
+        if callable(enqueue):
+            enqueue(tg_id)
         return "vip_added"
 
     m_rm = _RM_RE.match(stripped)
@@ -434,6 +438,7 @@ def build_admin_router(
     sandbox: SandboxService | None = None,
     coordinator: TurnCoordinator | None = None,
     history_seed: object | None = None,
+    backfill_queue: object | None = None,
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
@@ -457,6 +462,7 @@ def build_admin_router(
             profile_admin=profile_admin,
             sandbox=sandbox,
             coordinator=coordinator,
+            backfill_queue=backfill_queue,
         )
 
     _SANDBOX_UX: dict[str, str] = {
