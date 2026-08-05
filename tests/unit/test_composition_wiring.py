@@ -65,7 +65,7 @@ def test_composition_orchestrator_receives_catalog_provider(_comp_src: str) -> N
     assert "from diana.application.persona_catalog_provider import PersonaCatalogProvider" in _comp_src
     assert "persona_catalog_provider = PersonaCatalogProvider(" in _comp_src
     # The SAME instance built for Director/retrievers is injected into the orch.
-    assert "persona_catalog_provider=catalog_provider" in _comp_src
+    assert "persona_catalog_provider=persona_catalog_provider" in _comp_src
 
 
 def test_composition_daily_limit_store_wired(_comp_src: str) -> None:
