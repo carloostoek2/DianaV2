@@ -71,22 +71,28 @@ class GrayZoneQueryRepo:
             return result.rowcount > 0
 
     async def expire_older_than(self, timeout_hours: int) -> list[GrayZoneQuery]:
-        """Mark open queries older than timeout_hours as expired. Returns expired rows."""
+        """Atomically expire open queries older than timeout_hours; return expired rows.
+
+        A single conditional UPDATE (``WHERE status = 'open'``) guards against
+        the TOCTOU where a concurrent ``dx:`` resolution commits ``resolved``
+        between a SELECT and the expiry write: only rows still open at
+        statement time are expired.
+        """
         async with self._sf() as session:
             # Compute cutoff in Python: PostgreSQL rejects bind params inside
             # INTERVAL literals (e.g. ``interval $1 hours`` → syntax error near $2).
             now = datetime.now(UTC)
             cutoff = now - timedelta(hours=int(timeout_hours))
             result = await session.execute(
-                select(GrayZoneQuery).where(
+                update(GrayZoneQuery)
+                .where(
                     GrayZoneQuery.status == "open",
                     GrayZoneQuery.created_at < cutoff,
                 )
+                .values(status="expired", resolved_at=now)
+                .returning(GrayZoneQuery)
             )
             rows = list(result.scalars().all())
-            for row in rows:
-                row.status = "expired"
-                row.resolved_at = now
             await session.commit()
             return rows
 

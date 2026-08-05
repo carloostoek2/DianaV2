@@ -243,18 +243,33 @@ class AdminService:
         record and the persisted gray zone query, reuses
         ``send_draft_for_approval`` to create the approval record and notify
         the owner, then transitions the turn ``GRAY_ZONE`` → ``PENDING_APPROVAL``.
+        The approval creation + transition run under the per-chat lock
+        (``coordinator.chat_scope``) so they serialize with the dx: handler,
+        the expiry job and owner callbacks.
 
         Fail-soft: returns False (with a log) when the turn is missing, the
-        query lacks a non-empty ``business_connection_id``, or the draft is
-        empty. If the transition raises ``TurnSupersededError``, the approval
-        already created is cancelled so no orphan approval is left behind.
-
-        Returns True when the supervised approval was created and the turn
-        transitioned to PENDING_APPROVAL.
+        query does not belong to the turn, the query lacks a non-empty
+        ``business_connection_id``, the draft is empty, or the turn is already
+        terminal. Returns True when a supervised approval is in place — created
+        now, or already existing (idempotent, no second approval/DM). If the
+        transition raises ``TurnSupersededError``, the approval just created is
+        cancelled (only while still ``waiting``) so no orphan approval is left
+        behind.
         """
         turn = await self._turns.get(turn_id)
         if turn is None:
             logger.info("gray_zone_delivery_missing_turn", extra={"turn_id": str(turn_id)})
+            return False
+
+        q_turn_id = getattr(query, "turn_id", None)
+        if q_turn_id is not None and str(q_turn_id) != str(turn_id):
+            logger.warning(
+                "gray_zone_delivery_turn_mismatch",
+                extra={
+                    "turn_id": str(turn_id),
+                    "query_turn_id": str(q_turn_id),
+                },
+            )
             return False
 
         bc = getattr(query, "business_connection_id", None) or ""
@@ -270,34 +285,63 @@ class AdminService:
             logger.info("gray_zone_delivery_empty_draft", extra={"turn_id": str(turn_id)})
             return False
 
-        incoming = IncomingTurn(
-            turn_id=turn_id,
-            chat_id=turn.chat_id,
-            vip_id=turn.vip_id,
-            text=getattr(query, "question", "") or "",
-            telegram_message_id=turn.trigger_message_id,
-            business_connection_id=bc,
-            channel_type=turn.channel_type,
-        )
-        decision = Decision(
-            action="approve",
-            reason="gray_zone_resolved_by_doctrine",
-            evaluation=EvaluationProfile(
-                naturalness=0.5, precision=0.5, doctrine=0.5,
-                consistency=0.5, safety=0.5, coverage=0.5, empathy=0.5,
-            ),
-            draft_text=draft,
-        )
-        await self.send_draft_for_approval(incoming, decision, turn_id)
-        try:
-            await self._coordinator.transition(turn_id, TurnStatus.PENDING_APPROVAL)
-        except TurnSupersededError:
-            await self._approvals.mark_status(turn_id, "cancelled")
-            logger.info(
-                "gray_zone_delivery_superseded",
-                extra={"turn_id": str(turn_id)},
+        async with self._coordinator.chat_scope(turn.chat_id):
+            fresh = await self._turns.get(turn_id)
+            if fresh is None:
+                logger.info(
+                    "gray_zone_delivery_missing_turn",
+                    extra={"turn_id": str(turn_id)},
+                )
+                return False
+            if is_turn_status_terminal(fresh.status):
+                logger.info(
+                    "gray_zone_delivery_terminal_skip",
+                    extra={"turn_id": str(turn_id), "status": fresh.status},
+                )
+                return False
+            existing = await self._approvals.get_by_turn(turn_id)
+            if existing is not None:
+                logger.info(
+                    "gray_zone_delivery_already_pending",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "approval_status": existing.status,
+                    },
+                )
+                return True
+
+            incoming = IncomingTurn(
+                turn_id=turn_id,
+                chat_id=fresh.chat_id,
+                vip_id=fresh.vip_id,
+                text=getattr(query, "question", "") or "",
+                telegram_message_id=fresh.trigger_message_id,
+                business_connection_id=bc,
+                channel_type=fresh.channel_type,
             )
-            return False
+            decision = Decision(
+                action="approve",
+                reason="gray_zone_resolved_by_doctrine",
+                evaluation=EvaluationProfile(
+                    naturalness=0.5, precision=0.5, doctrine=0.5,
+                    consistency=0.5, safety=0.5, coverage=0.5, empathy=0.5,
+                ),
+                draft_text=draft,
+            )
+            await self.send_draft_for_approval(incoming, decision, turn_id)
+            try:
+                await self._coordinator.transition(
+                    turn_id, TurnStatus.PENDING_APPROVAL
+                )
+            except TurnSupersededError:
+                approval = await self._approvals.get_by_turn(turn_id)
+                if approval is not None and approval.status == "waiting":
+                    await self._approvals.mark_status(turn_id, "cancelled")
+                logger.info(
+                    "gray_zone_delivery_superseded",
+                    extra={"turn_id": str(turn_id)},
+                )
+                return False
         logger.info(
             "gray_zone_supervised_delivery_created",
             extra={"turn_id": str(turn_id)},
