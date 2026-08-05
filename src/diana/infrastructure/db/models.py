@@ -312,6 +312,53 @@ class Memory(Base):
     )
 
 
+class BackfillQueue(Base):
+    """Persistent per-VIP memory backfill job (REQ-MEM-05, F5 Pool 2).
+
+    Durable queue: one job per VIP (partial unique index on active rows),
+    lifecycle ``pending → processing → done | failed``. ``window_index``
+    tracks the next transcript window to extract and ``state`` (jsonb)
+    carries the facts accumulated from previous windows, so a crash mid-run
+    is resumable (recover_stale requeues orphans on job start).
+    """
+
+    __tablename__ = "backfill_queue"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','processing','done','failed')",
+            name="ck_backfill_queue_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id", ondelete="CASCADE"), nullable=False,
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'")
+    )
+    window_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    state: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
 class Context(Base):
     """Chat-scoped context window (short-lived, expires)."""
 

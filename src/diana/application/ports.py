@@ -261,6 +261,30 @@ class VipRecord(BaseModel):
     auto_send: bool = False
 
 
+class BackfillJobRecord(BaseModel):
+    """Persistent backfill queue row shape (REQ-MEM-05, F5 Pool 2).
+
+    One row per VIP backfill job. ``window_index`` is the next transcript
+    window to extract and ``state`` carries the facts accumulated from
+    previous windows (crash-safe resumption). ``outcome`` is set on ``done``
+    (``ok`` | ``empty_history``); ``last_error`` traces the last failure.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    vip_id: UUID
+    chat_id: int
+    status: Literal["pending", "processing", "done", "failed"]
+    window_index: int = 0
+    state: dict[str, Any] = {}
+    attempts: int = 0
+    last_error: str | None = None
+    outcome: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 @runtime_checkable
 class VipStore(Protocol):
     """VIP allowlist store used by Auth middleware and admin commands."""
@@ -785,6 +809,7 @@ class MemoryInsert:
 
 __all__ = [
     "ApprovalRecord",
+    "BackfillJobRecord",
     "BehaviorCanceller",
     "BehaviorDeliverer",
     "BusinessConnectionRecord",
