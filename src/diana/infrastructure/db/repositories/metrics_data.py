@@ -14,6 +14,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import (
+    DailyMessageLimit,
     GrayZoneQuery,
     PipelineTrace,
     PromoExecution,
@@ -146,3 +147,33 @@ class SqlMetricsDataSource:
             unique_chats = int(unique or 0)
             repeat_count = max(0, sent_count - unique_chats)
             return sent_count, unique_chats, repeat_count
+
+    async def count_atencion_turns_since(self, since_utc: datetime) -> int:
+        """Count atencion pipeline_traces created at/after ``since_utc``."""
+        async with self._sf() as session:
+            result = await session.scalar(
+                select(func.count())
+                .select_from(PipelineTrace)
+                .where(
+                    and_(
+                        PipelineTrace.channel_type == "atencion",
+                        PipelineTrace.created_at >= since_utc,
+                    )
+                )
+            )
+            return int(result or 0)
+
+    async def count_atencion_limit_reached_on(self, fecha_local: date) -> int:
+        """Count chats that reached the 20-message cap on ``fecha_local``."""
+        async with self._sf() as session:
+            result = await session.scalar(
+                select(func.count())
+                .select_from(DailyMessageLimit)
+                .where(
+                    and_(
+                        DailyMessageLimit.fecha_local == fecha_local,
+                        DailyMessageLimit.count >= 20,
+                    )
+                )
+            )
+            return int(result or 0)

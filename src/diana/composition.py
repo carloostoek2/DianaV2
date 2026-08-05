@@ -279,6 +279,7 @@ class AppContainer:
     promo: PromoService | None = None
     calibration: CalibrationService | None = None
     metrics: MetricsAggregationService | None = None
+    metrics_data: SqlMetricsDataSource | None = None
     admin_metrics: AdminMetricsService | None = None
     profile_admin: ProfileAdminService | None = None
     runtime_thresholds: RuntimeThresholds | None = None
@@ -779,6 +780,7 @@ def build_app(
         promo=promo,
         calibration=calibration,
         metrics=metrics,
+        metrics_data=metrics_data,
         admin_metrics=admin_metrics,
         profile_admin=profile_admin,
         runtime_thresholds=runtime_thresholds,

@@ -10,10 +10,16 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
 from diana.application.metrics_service import MetricsAggregationService
+from diana.application.mexico_tz import cdmx_local_date
 
 logger = logging.getLogger("diana.jobs")
 
-__all__ = ["MetricsJob", "run_weekly_metrics", "METRICS_LAST_SUCCESS_WEEK_KEY"]
+__all__ = [
+    "AtencionCountsSource",
+    "MetricsJob",
+    "run_weekly_metrics",
+    "METRICS_LAST_SUCCESS_WEEK_KEY",
+]
 
 METRICS_LAST_SUCCESS_WEEK_KEY = "metrics.last_success_week"
 
@@ -22,6 +28,14 @@ class MetricsJobConfigStore(Protocol):
     async def get(self, key: str) -> object | None: ...
 
     async def set(self, key: str, value: object) -> None: ...
+
+
+class AtencionCountsSource(Protocol):
+    """Real-SQL counters for the daily atencion log (REQ-ATN-14)."""
+
+    async def count_atencion_turns_since(self, since_utc: datetime) -> int: ...
+
+    async def count_atencion_limit_reached_on(self, fecha_local: date) -> int: ...
 
 
 async def run_weekly_metrics(
@@ -94,14 +108,17 @@ class MetricsJob:
         interval_seconds: int = 3600,
         clock: Callable[[], datetime] | None = None,
         config: MetricsJobConfigStore | None = None,
+        atencion_counts: AtencionCountsSource | None = None,
     ) -> None:
         self._service = service
         self._interval = interval_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._config = config
+        self._atencion_counts = atencion_counts
         self._stop_event = asyncio.Event()
         self._last_success_week: date | None = None
         self._loaded_from_config = False
+        self._last_atencion_log_day: date | None = None
 
     async def _ensure_loaded(self) -> None:
         if self._loaded_from_config or self._config is None:
@@ -128,6 +145,37 @@ class MetricsJob:
                 extra={"week_start": week.isoformat()},
             )
 
+    async def _log_atencion_daily_counts(self) -> None:
+        """Log atencion turn / cap counters once per local calendar day.
+
+        Read-only and fail-soft: any source error is logged and swallowed, so
+        a DB hiccup never breaks the metrics loop (REQ-ATN-14).
+        """
+        if self._atencion_counts is None:
+            return
+        now = self._clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        fecha_local = cdmx_local_date(now)
+        if self._last_atencion_log_day is not None and self._last_atencion_log_day == fecha_local:
+            return
+        try:
+            since_utc = now - timedelta(days=1)
+            turns = await self._atencion_counts.count_atencion_turns_since(since_utc)
+            caps = await self._atencion_counts.count_atencion_limit_reached_on(fecha_local)
+        except Exception:
+            logger.exception("atencion_daily_metrics_failed")
+            return
+        self._last_atencion_log_day = fecha_local
+        logger.info(
+            "atencion_daily_metrics",
+            extra={
+                "fecha_local": fecha_local.isoformat(),
+                "atencion_turns_today": int(turns),
+                "limit_reached_chats_today": int(caps),
+            },
+        )
+
     async def start(self) -> None:
         """Run the metrics loop until stop() is called."""
         logger.info(
@@ -137,6 +185,7 @@ class MetricsJob:
         while not self._stop_event.is_set():
             t0 = time.monotonic()
             try:
+                await self._log_atencion_daily_counts()
                 await asyncio.wait_for(
                     self.maybe_run(),
                     timeout=self._interval,

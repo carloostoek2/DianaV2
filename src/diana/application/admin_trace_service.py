@@ -53,6 +53,7 @@ class TurnSummary:
     status: str = ""
     created_at: datetime | None = None
     correction_applied: bool = False
+    channel_type: str = "vip"
 
 
 @dataclass
@@ -74,6 +75,7 @@ class FullTrace:
     timings: dict | None = None
     error: str | None = None
     status: str | None = None
+    channel_type: str = "vip"
 
 
 @dataclass
@@ -259,8 +261,8 @@ class AdminTraceService:
             ts = self._relative(t.created_at)
             preview = t.message_preview
             lines.append(
-                f'{i}. [{sid}] {name} (chat {t.chat_id}): "{preview}" '
-                f"-> {t.decision} ({ts})"
+                f'{i}. [{sid}] {name} (chat {t.chat_id}, {t.channel_type}): '
+                f'"{preview}" -> {t.decision} ({ts})'
             )
         return "\n".join(lines)
 
@@ -288,6 +290,7 @@ class AdminTraceService:
                 f"Trace {sid}",
                 f"Date: {ts}",
                 f"Status: {status}",
+                f"Channel: {trace.channel_type}",
                 f"Original intent: {original}",
                 f'Draft: "{draft}..."',
                 f"Decision: {decision_action}",
@@ -411,6 +414,7 @@ def _row_to_summary(row: dict) -> TurnSummary:
         status=row.get("status", ""),
         created_at=row.get("created_at"),
         correction_applied=bool(row.get("correction_applied", False)),
+        channel_type=row.get("channel_type", "vip"),
     )
 
 
@@ -431,6 +435,7 @@ def _row_to_full_trace(row: dict) -> FullTrace:
         timings=row.get("timings"),
         error=row.get("error"),
         status=row.get("status"),
+        channel_type=row.get("channel_type", "vip"),
     )
 
 

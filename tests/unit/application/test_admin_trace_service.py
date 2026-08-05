@@ -378,7 +378,7 @@ class TestFormatTurnsListText:
         text = svc.format_turns_list_text(turns, page=0, total_pages=2)
         assert text.startswith("Recent turns (page 1/2):")
         assert (
-            '1. [abcdef12] Ana (chat 123): "hola precio" -> approve (hace 5 minutos)'
+            '1. [abcdef12] Ana (chat 123, vip): "hola precio" -> approve (hace 5 minutos)'
             in text
         )
 
@@ -463,8 +463,8 @@ class TestRenderTurnsPage:
         )
         view = await svc.render_turns_page(0, chat_id=1)
         assert view.empty is False
-        assert "(chat 1)" in view.text
-        assert "(chat 2)" not in view.text
+        assert "(chat 1, vip)" in view.text
+        assert "(chat 2" not in view.text
 
 
 class TestFormatTraceSummaryText:
@@ -487,10 +487,11 @@ class TestFormatTraceSummaryText:
         assert lines[0] == "Trace abcdef12"
         assert lines[1] == "Date: hace 5 minutos"
         assert lines[2] == "Status: delivered"
-        assert lines[3] == "Original intent: Hello world intent"
-        assert lines[4] == 'Draft: "Hi draft reply..."'
-        assert lines[5] == "Decision: approve"
-        assert lines[6] == "Total time: 150ms"
+        assert lines[3] == "Channel: vip"
+        assert lines[4] == "Original intent: Hello world intent"
+        assert lines[5] == 'Draft: "Hi draft reply..."'
+        assert lines[6] == "Decision: approve"
+        assert lines[7] == "Total time: 150ms"
         assert "Original:" not in text or "Original intent:" in text
         # Bare Original: label must not appear (canonical uses Original intent:)
         assert not any(line.startswith('Original: "') for line in lines)
@@ -713,3 +714,99 @@ class TestRenderStepDetail:
 
     async def test_render_not_found(self, svc: AdminTraceService) -> None:
         assert await svc.render_step_detail(uuid4(), "analyst") is None
+
+
+class TestChannelType:
+    """REQ-ATN-14: traces carry channel_type through DTOs and renderers."""
+
+    async def test_row_to_summary_keeps_atencion_channel(
+        self, svc: AdminTraceService, reader: FakeTraceabilityReader
+    ) -> None:
+        reader.seed_turns([
+            {
+                "turn_id": uuid4(),
+                "chat_id": 123,
+                "display_name": None,
+                "message_text": "hola",
+                "decision": "approve",
+                "status": "delivered",
+                "created_at": FROZEN_NOW - timedelta(minutes=1),
+                "correction_applied": False,
+                "channel_type": "atencion",
+            }
+        ])
+        (t,) = await svc.get_recent_turns()
+        assert t.channel_type == "atencion"
+
+    async def test_row_to_summary_defaults_channel_to_vip(
+        self, svc: AdminTraceService, reader: FakeTraceabilityReader
+    ) -> None:
+        """Backward compat: rows without channel_type are treated as vip."""
+        reader.seed_turns([
+            {
+                "turn_id": uuid4(),
+                "chat_id": 1,
+                "display_name": None,
+                "message_text": "hi",
+                "decision": "a",
+                "status": "d",
+                "created_at": FROZEN_NOW,
+                "correction_applied": False,
+            }
+        ])
+        (t,) = await svc.get_recent_turns()
+        assert t.channel_type == "vip"
+
+    def test_turns_list_renders_channel_type(self, svc: AdminTraceService) -> None:
+        turn_id = UUID("abcdef12-3456-7890-abcd-ef1234567890")
+        turns = [
+            TurnSummary(
+                turn_id=turn_id,
+                chat_id=123,
+                vip_name="Ana",
+                message_preview="hola precio",
+                decision="approve",
+                status="delivered",
+                created_at=FROZEN_NOW - timedelta(minutes=5),
+                channel_type="atencion",
+            )
+        ]
+        text = svc.format_turns_list_text(turns, page=0, total_pages=1)
+        assert "(chat 123, atencion)" in text
+        assert "vip)" not in text.split("atencion", 1)[0]
+
+    async def test_row_to_full_trace_keeps_channel_type(
+        self, svc: AdminTraceService, reader: FakeTraceabilityReader
+    ) -> None:
+        turn_id = uuid4()
+        reader.seed_trace(str(turn_id), {
+            "turn_id": turn_id,
+            "chat_id": 123,
+            "created_at": FROZEN_NOW,
+            "channel_type": "atencion",
+        })
+        trace = await svc.get_full_trace(turn_id)
+        assert trace is not None
+        assert trace.channel_type == "atencion"
+
+    def test_full_trace_defaults_channel_to_vip(self) -> None:
+        trace = FullTrace(turn_id=uuid4(), chat_id=1)
+        assert trace.channel_type == "vip"
+
+    def test_trace_summary_renders_channel_line(self, svc: AdminTraceService) -> None:
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=uuid4(),
+                chat_id=1,
+                created_at=FROZEN_NOW,
+                status="delivered",
+                channel_type="atencion",
+            )
+        )
+        assert "Channel: atencion" in text
+
+    def test_channel_line_defaults_to_vip(self, svc: AdminTraceService) -> None:
+        text = svc.format_trace_summary_text(
+            FullTrace(turn_id=uuid4(), chat_id=1, created_at=FROZEN_NOW)
+        )
+        assert "Channel: vip" in text

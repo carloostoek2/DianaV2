@@ -186,7 +186,12 @@ def _setup_metrics_job(app: AppContainer) -> asyncio.Task | None:
     from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
 
     config = SqlSystemConfigStore(app.session_factory)
-    job = MetricsJob(app.metrics, interval_seconds=3600, config=config)
+    job = MetricsJob(
+        app.metrics,
+        interval_seconds=3600,
+        config=config,
+        atencion_counts=app.metrics_data,
+    )
     task = asyncio.create_task(job.start())
     logger.info("metrics_job_started", extra={"interval_seconds": 3600})
     return task

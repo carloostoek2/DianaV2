@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -227,3 +228,101 @@ async def test_job_without_config_keeps_in_memory_behavior() -> None:
     out2 = await job.maybe_run()
     assert out2 is None
     assert len(svc.calls) == 1
+
+
+class FakeAtencionCounts:
+    """In-memory AtencionCountsSource (REQ-ATN-14 daily log)."""
+
+    def __init__(self, *, turns: int = 0, caps: int = 0, error: bool = False) -> None:
+        self.turns = turns
+        self.caps = caps
+        self.error = error
+        self.turns_calls: list[datetime] = []
+        self.caps_calls: list[date] = []
+
+    async def count_atencion_turns_since(self, since_utc: datetime) -> int:
+        self.turns_calls.append(since_utc)
+        if self.error:
+            raise RuntimeError("turns boom")
+        return self.turns
+
+    async def count_atencion_limit_reached_on(self, fecha_local: date) -> int:
+        self.caps_calls.append(fecha_local)
+        if self.error:
+            raise RuntimeError("caps boom")
+        return self.caps
+
+
+@pytest.mark.asyncio
+async def test_log_atencion_daily_counts_logs_once_per_local_day(caplog) -> None:
+    """REQ-ATN-14: counters read once and logged once per CDMX civil day."""
+    svc = FakeMetricsService()
+    counts = FakeAtencionCounts(turns=3, caps=1)
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+        atencion_counts=counts,  # type: ignore[arg-type]
+    )
+    with caplog.at_level(logging.INFO, logger="diana.jobs"):
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+
+    assert len(counts.turns_calls) == 1
+    assert len(counts.caps_calls) == 1
+    records = [r for r in caplog.records if r.getMessage() == "atencion_daily_metrics"]
+    assert len(records) == 1
+    assert records[0].__dict__["atencion_turns_today"] == 3
+    assert records[0].__dict__["limit_reached_chats_today"] == 1
+
+
+@pytest.mark.asyncio
+async def test_log_atencion_daily_counts_source_error_fail_soft(caplog) -> None:
+    """A source failure is swallowed; the metrics loop must not break."""
+    svc = FakeMetricsService()
+    counts = FakeAtencionCounts(error=True)
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+        atencion_counts=counts,  # type: ignore[arg-type]
+    )
+    with caplog.at_level(logging.WARNING, logger="diana.jobs"):
+        await job._log_atencion_daily_counts()  # noqa: SLF001
+
+    assert any(
+        r.getMessage() == "atencion_daily_metrics_failed" for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_log_atencion_daily_counts_without_source_is_noop() -> None:
+    """Backward compat: no atencion_counts wired → helper is a no-op."""
+    svc = FakeMetricsService()
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=3600,
+        clock=lambda: datetime(2026, 7, 20, 15, 0, tzinfo=UTC),
+    )
+    await job._log_atencion_daily_counts()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_job_start_logs_atencion_daily_counts() -> None:
+    """start() drives the daily atencion log each loop iteration."""
+    svc = FakeMetricsService()
+    counts = FakeAtencionCounts(turns=2, caps=1)
+    job = MetricsJob(
+        svc,  # type: ignore[arg-type]
+        interval_seconds=0.05,
+        clock=lambda: datetime(2026, 7, 20, 4, 0, tzinfo=UTC),
+        atencion_counts=counts,  # type: ignore[arg-type]
+    )
+
+    async def _stop_soon() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _stop_soon())
+    assert len(counts.turns_calls) == 1
+    assert len(counts.caps_calls) == 1

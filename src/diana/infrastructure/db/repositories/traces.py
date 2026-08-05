@@ -91,6 +91,7 @@ class SqlTraceStore:
             select(
                 PipelineTrace.turn_id,
                 PipelineTrace.chat_id,
+                PipelineTrace.channel_type,
                 PipelineTrace.created_at,
                 PipelineTrace.decision,
                 PipelineTrace.prompt_text.label("message_text"),
@@ -134,6 +135,7 @@ class SqlTraceStore:
             data: dict[str, Any] = {
                 "turn_id": pt.turn_id,
                 "chat_id": pt.chat_id,
+                "channel_type": pt.channel_type,
                 "vip_id": pt.vip_id,
                 "created_at": pt.created_at,
                 "comprehension": pt.comprehension,

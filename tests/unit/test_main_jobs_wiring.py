@@ -37,6 +37,11 @@ def test_main_metrics_job_starts_when_metrics_present(_main_src: str) -> None:
     assert "interval_seconds=3600" in _main_src
 
 
+def test_main_metrics_job_passes_atencion_counts(_main_src: str) -> None:
+    """REQ-ATN-14: MetricsJob receives the atencion counters source."""
+    assert "atencion_counts=app.metrics_data" in _main_src
+
+
 def test_main_calibration_job_gated_by_feature_flag(_main_src: str) -> None:
     """Calibration job starts only when feature_calibration_enabled and service set."""
     assert "feature_calibration_enabled" in _main_src
