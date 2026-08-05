@@ -161,11 +161,17 @@ Cada VIP tiene una **ficha** compuesta por secciones. Cada sección es una fila 
 ### REQ-MEM-05 — Disparo
 - Comando de la dueña en el DM: `/perfil <vip>` (o acción en el panel de VIP): genera/regenera el perfil de ese VIP bajo demanda.
 - Automático: al **registrar un VIP nuevo** (tras el seed de historial), se agenda el backfill.
-- Un job de "perfiles pendientes" (opcional, bajo demanda, NO en cada arranque): procesa VIPs con historial nuevo y sin perfil. Nunca corre durante el pipeline de turnos.
+- **Decisión de producto (2026-08-05)**: TODOS los VIPs se perfilan — no hay exclusión/opt-out por VIP. El historial completo se extrae y de ahí se arma el perfil (el contenido habitual son gustos/preferencias; los datos personales tipo teléfono/dirección son raros).
+- **Cuidado de la cuenta de Telegram (no oficial)**: el flujo de extracción replica el patrón de la v1 (`repos/diana/services/history_backfill.py`):
+  - Cola persistente de perfiles pendientes + lock global → **un VIP a la vez** (nunca extracciones concurrentes).
+  - **Timer entre VIPs**: `BACKFILL_INTERVAL_SEC` (v1 = 3600 s = 1 hora; configurable) entre el fin de un VIP y el inicio del siguiente.
+  - **Conversaciones largas partidas por turnos**: si el historial supera el tamaño de ventana, se procesa por turnos (200 msgs / 12K chars) y **al terminar la serie de turnos de un VIP se espera el intervalo antes del siguiente**.
+- Un job de "perfiles pendientes" (bajo demanda, NO en cada arranque de forma agresiva; puede encolar al arranque como v1 con `enqueue_missing_vips`): procesa VIPs con historial nuevo y sin perfil. Nunca corre durante el pipeline de turnos.
 
 ### REQ-MEM-06 — Costo y límites
-- El backfill es una operación puntual con costo de LLM (1+ llamadas por VIP según longitud). Se ejecuta bajo demanda o en cola de a uno (sin saturar).
-- `VIP_HISTORY_SEED_LIMIT` existente marca el tope de mensajes importados; el backfill usa lo que haya.
+- El backfill es una operación puntual con costo de LLM (1+ llamadas por VIP según longitud). Se ejecuta en **cola de a uno** (sin saturar).
+- `VIP_HISTORY_SEED_LIMIT` existente marca el tope de mensajes importados por el seed; el backfill del perfil usa **todo** el historial disponible en `message_history` (no re-extrae de Telegram).
+- El espaciado protege la cuenta (extracción Telethon) y acota el costo LLM del backfill.
 
 ---
 
