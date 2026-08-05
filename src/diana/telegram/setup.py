@@ -8,6 +8,7 @@ from typing import Any
 from aiogram import Dispatcher, Router
 
 from diana.application.admin_metrics_service import AdminMetricsService
+from diana.application.memory_approval_service import MemoryApprovalService
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
@@ -35,6 +36,7 @@ from diana.telegram.handlers.callbacks import (
     build_callback_router,
 )
 from diana.telegram.handlers.staging import build_staging_router
+from diana.telegram.handlers.memory_approval import build_memory_approval_router
 from diana.telegram.freeze_middleware import FreezeCheckMiddleware
 from diana.telegram.middlewares import F2_MIDDLEWARE_ORDER
 from diana.telegram.middlewares.auth import AuthMiddleware
@@ -112,6 +114,7 @@ def build_dispatcher(
     bc_store: BusinessConnectionStore | None = None,
     history: object | None = None,
     backfill_queue: object | None = None,
+    memory_approval: MemoryApprovalService | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -187,6 +190,15 @@ def build_dispatcher(
     root.include_router(
         build_staging_router(
             staging=staging,
+            owner_telegram_id=owner_telegram_id,
+        )
+    )
+    # Memory approval router (mp:/md: + /memoria) — AFTER staging, BEFORE
+    # the menu and the catch-all so mp:/md: are never swallowed (A1). The
+    # router is inert when memory_approval is None (flag OFF).
+    root.include_router(
+        build_memory_approval_router(
+            memory=memory_approval,
             owner_telegram_id=owner_telegram_id,
         )
     )

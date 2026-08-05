@@ -29,6 +29,11 @@ _ACTION_METRICS_BACK = "mx:b"
 # Staging queue (sp: promote, sd: discard) — ≤64 bytes
 _ACTION_STAGING_PROMOTE = "sp"
 _ACTION_STAGING_DISCARD = "sd"
+# Memory approval (mp: approve, md: discard) — F5 Pool 4, ≤64 bytes.
+# NOTE: the menu prefix is the literal "m:" (char 1 = ':'), so "mp:"/"md:"
+# never collide with the menu lambda (A1).
+_ACTION_MEMORY_APPROVE = "mp"
+_ACTION_MEMORY_DISCARD = "md"
 # Hierarchical owner menu (m:<category> or m:<category>:<action>) — ≤64 bytes
 _ACTION_MENU = "m"
 
@@ -511,6 +516,64 @@ def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="🗑 Descartar",
                     callback_data=encode_staging_discard(candidate_id),
+                ),
+            ]
+        ]
+    )
+
+
+# ---- Memory approval helpers (mp: approve / md: discard) — F5 Pool 4 ----
+
+
+def encode_memory_approve(fact_id: UUID) -> str:
+    """Build callback_data for approve: mp:<uuid> (≤64 bytes)."""
+    data = f"{_ACTION_MEMORY_APPROVE}:{fact_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_memory_discard(fact_id: UUID) -> str:
+    """Build callback_data for discard: md:<uuid> (≤64 bytes)."""
+    data = f"{_ACTION_MEMORY_DISCARD}:{fact_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_memory_approval_callback(data: str) -> tuple[str, UUID] | None:
+    """Parse memory approval callback into (approve|discard, fact_id) or None.
+
+    The payload carries ONLY the fact id (one UUID, 39 bytes ≤ 64): the
+    vip_id is resolved server-side from the row (BR-15, A2).
+    """
+    if not data or ":" not in data:
+        return None
+    code, raw_id = data.split(":", 1)
+    action = {
+        _ACTION_MEMORY_APPROVE: "approve",
+        _ACTION_MEMORY_DISCARD: "discard",
+    }.get(code)
+    if action is None:
+        return None
+    try:
+        return action, UUID(raw_id)
+    except ValueError:
+        return None
+
+
+def memory_pending_keyboard(fact_id: UUID) -> InlineKeyboardMarkup:
+    """Approve / Discard inline keyboard for one pending memory fact."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Aprobar",
+                    callback_data=encode_memory_approve(fact_id),
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Descartar",
+                    callback_data=encode_memory_discard(fact_id),
                 ),
             ]
         ]
