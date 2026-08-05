@@ -64,9 +64,17 @@ async def test_restore_swaps_active_version(session_factory) -> None:
     current = await service.get_current_persona()
     assert "regla e2e v2" not in current["voz_configurada"]["reglas_estilo"]
 
-    # exactly one active row persisted
+    # exactly one active row persisted per channel: the VIP swap never touches
+    # the atencion seed (which stays active on its own channel).
     versions = await service.list_versions(OWNER_ID)
     assert len([v for v in versions if v.is_active]) == 1
+    assert (
+        len([v for v in versions if v.is_active and v.channel_type == "vip"]) == 1
+    )
+    assert (
+        len([v for v in versions if v.is_active and v.channel_type == "atencion"])
+        == 1
+    )
 
 
 @pytest.mark.db

@@ -123,6 +123,11 @@ class _MemoryPersonaAdminStore:
         created_by: int | None = None,
         channel_type: str = "vip",
     ) -> PersonaVersionRecord:
+        # The ``uq_persona_versions_version`` index is GLOBAL (PLAN A2): a
+        # duplicate version number across ANY channel must fail, exactly like
+        # Postgres, so a per-channel counter bug cannot hide behind the fake.
+        if any(r.version == version for r in self.records):
+            raise type("IntegrityError", (Exception,), {})("version conflict")
         record = PersonaVersionRecord(
             id=uuid4(),
             version=version,
@@ -266,13 +271,13 @@ def test_activate_version_source_keeps_exists_guard() -> None:
 
 @pytest.mark.asyncio
 async def test_activation_scoped_by_channel() -> None:
-    """The same version number can be active per channel simultaneously."""
+    """One active row per channel; versions are GLOBAL (vip v1, atencion v2)."""
     store = _MemoryPersonaAdminStore()
     vip = await store.insert_version(
         version=1, source="db", payload={"a": 1}, created_by=1, channel_type="vip"
     )
     atencion = await store.insert_version(
-        version=1,
+        version=2,
         source="db",
         payload={"a": 2},
         created_by=1,
@@ -297,7 +302,7 @@ async def test_activation_cross_channel_id_is_noop() -> None:
         version=1, source="db", payload={"a": 1}, created_by=1, channel_type="vip"
     )
     atencion = await store.insert_version(
-        version=1,
+        version=2,
         source="db",
         payload={"a": 2},
         created_by=1,

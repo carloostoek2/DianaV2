@@ -171,9 +171,9 @@
   "schedule": {
     "timezone": "America/Mexico_City",
     "default_responses": [
-      "Pues aquí entre cosas jsjsjs y tú?",
-      "Ya ni sé jsjsj estoy con mil cosas!",
-      "En modo zombi tratando de recuperar el alma 😁"
+      "Estoy al pendiente de tus mensajes, dime en qué te ayudo.",
+      "Claro, con gusto te ayudo. ¿En qué puedo ayudarte hoy?",
+      "Aquí estoy para lo que necesites del servicio."
     ],
     "bloques": [
       {
@@ -186,7 +186,7 @@
         ],
         "inicio": "09:00",
         "fin": "12:00",
-        "actividad": "en el servicio social, en un instituto de adicciones"
+        "actividad": "atendiendo mensajes del negocio"
       },
       {
         "dias": [
@@ -197,7 +197,7 @@
         ],
         "inicio": "16:00",
         "fin": "21:00",
-        "actividad": "en las prácticas profesionales, en una casa hogar"
+        "actividad": "organizando contenido y preparando entregas"
       },
       {
         "dias": [
@@ -205,7 +205,7 @@
         ],
         "inicio": "17:00",
         "fin": "20:00",
-        "actividad": "en el diplomado de gamificación"
+        "actividad": "actualizando la información del catálogo"
       },
       {
         "dias": [
@@ -213,7 +213,7 @@
         ],
         "inicio": "08:00",
         "fin": "12:00",
-        "actividad": "en su clase de inglés"
+        "actividad": "revisando pedidos y confirmando entregas"
       },
       {
         "dias": [
@@ -221,7 +221,7 @@
         ],
         "inicio": "14:00",
         "fin": "20:00",
-        "actividad": "dando clases personalizadas a niños, en sus casas"
+        "actividad": "preparando el contenido de la semana"
       },
       {
         "dias": [
@@ -229,7 +229,7 @@
         ],
         "inicio": "00:00",
         "fin": "23:59",
-        "actividad": "con su hermana, la mayor parte del día"
+        "actividad": "en descanso, respondo al día siguiente"
       }
     ]
   }

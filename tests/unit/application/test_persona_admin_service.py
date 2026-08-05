@@ -41,6 +41,11 @@ class _MemoryPersonaAdminStore:
         created_by: int | None = None,
         channel_type: str = "vip",
     ) -> PersonaVersionRecord:
+        # GLOBAL unique version set (mirrors uq_persona_versions_version): a
+        # duplicate version across ANY channel must fail so a per-channel
+        # counter bug surfaces as a conflict instead of passing silently.
+        if any(r.version == version for r in self.records):
+            raise type("IntegrityError", (Exception,), {})("version conflict")
         record = PersonaVersionRecord(
             id=uuid4(),
             version=version,
@@ -299,14 +304,20 @@ async def test_list_versions_owner_returns_newest_first() -> None:
 
 @pytest.mark.asyncio
 async def test_save_persona_scoped_by_channel() -> None:
-    """Versions are numbered per channel and both can be active simultaneously."""
+    """GLOBAL version counter (PLAN A2) + one active row per channel.
+
+    vip and atencion share one counter (vip v1, atencion v2, ...) because
+    ``uq_persona_versions_version`` is a global unique index. The in-memory
+    store enforces the global-unique version set, so a per-channel counter
+    would fail this test with a version conflict.
+    """
     store = _MemoryPersonaAdminStore()
     service = _make_service(store)
     vip = await service.save_persona(OWNER_ID, _valid_catalog(), channel_type="vip")
     atencion = await service.save_persona(
         OWNER_ID, _valid_catalog(), channel_type="atencion"
     )
-    assert (vip.version, atencion.version) == (1, 1)
+    assert (vip.version, atencion.version) == (1, 2)  # global numbering
     assert vip.channel_type == "vip" and atencion.channel_type == "atencion"
     assert len([r for r in store.records if r.is_active]) == 2
     # list_versions scoped by channel returns only that channel's rows
@@ -315,7 +326,12 @@ async def test_save_persona_scoped_by_channel() -> None:
         OWNER_ID, channel_type="atencion"
     )
     assert [v.version for v in vip_versions] == [1]
-    assert [v.version for v in atencion_versions] == [1]
+    assert [v.version for v in atencion_versions] == [2]
+    # the global counter keeps advancing across channels
+    vip_again = await service.save_persona(
+        OWNER_ID, _valid_catalog(), channel_type="vip"
+    )
+    assert vip_again.version == 3
 
 
 @pytest.mark.asyncio

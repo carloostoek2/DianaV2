@@ -131,6 +131,63 @@ def test_018_channel_type_migration_source() -> None:
     assert "op.drop_index(\"uq_persona_versions_active\", table_name=\"persona_versions\")" in text
 
 
+def test_018_downgrade_removes_all_atencion_rows_before_index_recreate() -> None:
+    """B5: downgrade deactivates + deletes EVERY atencion row (seed and owner
+    saved) so the single-channel ``(is_active) WHERE is_active`` index recreate
+    cannot abort on a duplicate-active row."""
+    text = MIGRATION_018.read_text(encoding="utf-8")
+    downgrade = text.split("def downgrade")[1]
+    # Deactivate + delete ALL atencion rows (seed AND owner-saved) so the
+    # single-channel active index recreate below never hits a duplicate-active.
+    assert "UPDATE persona_versions SET is_active = false" in downgrade
+    assert "DELETE FROM persona_versions" in downgrade
+    assert "channel_type = 'atencion'" in downgrade
+    # the seed-only delete (previous bug) is gone
+    assert "source = 'seed'" not in downgrade
+
+
+def test_018_seed_matches_static_atencion_catalog() -> None:
+    """B6: the migration seed payload equals the packaged persona_atencion.json
+    catalog (single source of truth), so the two can never drift."""
+    import importlib.util
+    import sys
+
+    from diana.cognitive.persona_catalog import load_persona_atencion_catalog
+
+    spec = importlib.util.spec_from_file_location(
+        "migration_018", MIGRATION_018
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    try:
+        seed = module._load_atencion_seed()
+    finally:
+        sys.modules.pop("migration_018", None)
+    assert seed == load_persona_atencion_catalog()
+    # B3: neutral service tone — no leaked locations, personal routine or
+    # forced-laughter slang in the atencion schedule.
+    schedule = seed["schedule"]
+    for respuesta in schedule["default_responses"]:
+        low = respuesta.lower()
+        assert "jsjs" not in low
+        assert "mil cosas" not in low
+        assert "zombi" not in low
+    for bloque in schedule["bloques"]:
+        low = bloque["actividad"].lower()
+        for leaked in (
+            "instituto",
+            "casa hogar",
+            "clase de inglés",
+            "diplomado",
+            "su hermana",
+            "sus casas",
+            "niños",
+            "adicciones",
+        ):
+            assert leaked not in low, f"atencion schedule leaks {leaked!r}"
+
+
 def test_orm_persona_version_registered_with_schema() -> None:
     assert "persona_versions" in Base.metadata.tables
     columns = set(PersonaVersion.__table__.c.keys())

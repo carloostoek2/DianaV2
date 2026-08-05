@@ -95,7 +95,12 @@ class PersonaAdminService:
         """Validate the full catalog, persist it as a new active version."""
         self._assert_owner(actor_id)
         validated = validate_persona_catalog(dict(payload))
-        versions = await self._store.list_versions(channel_type=channel_type)
+        # GLOBAL version counter: ``uq_persona_versions_version`` is a unique
+        # index over ``version`` across every channel, so next_version must be
+        # computed from ALL versions (PLAN A2), not per channel — otherwise a
+        # fresh save collides with the atencion seed (version 1) and raises
+        # ``persona_version_conflict``. Only the activation swap is channel-scoped.
+        versions = await self._store.list_versions()
         next_version = max((v.version for v in versions), default=0) + 1
         try:
             record = await self._store.insert_version(
