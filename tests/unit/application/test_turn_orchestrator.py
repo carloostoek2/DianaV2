@@ -29,6 +29,7 @@ from diana.application.turn_orchestrator import (
     ATENCION_DAILY_LIMIT_CLOSE,
     ATENCION_PAYMENT_NOTICE,
     TurnOrchestrator,
+    _PAYMENT_NOTIFY_TTL,
     _detect_payment_intent,
 )
 from diana.behavior.engine import BehaviorEngine
@@ -3921,3 +3922,15 @@ async def test_atencion_real_seed_no_delivery_mode_demoted_by_ams_guard() -> Non
     )
     mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
     assert mode == "supervised"
+
+
+def test_prune_payment_notify_removes_only_stale_entries() -> None:
+    """F7/O6: pruning drops only entries older than the payment notify TTL."""
+    g = _build(FakeDirector(_payment_decision()))
+    orch = g["orch"]
+    now = datetime.now(UTC)
+    stale = now - _PAYMENT_NOTIFY_TTL - timedelta(minutes=1)
+    recent = now - timedelta(minutes=1)
+    orch._last_payment_notify = {111: stale, 222: recent}
+    orch._prune_payment_notify(now)
+    assert orch._last_payment_notify == {222: recent}
