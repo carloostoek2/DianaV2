@@ -776,10 +776,26 @@ def menu_back_keyboard(dest: str) -> InlineKeyboardMarkup:
 _PERSONA_BACK = "personalidad"
 
 
-def menu_personalidad_keyboard() -> InlineKeyboardMarkup:
-    """Sections of the Personalidad y reglas admin (back to root)."""
+def menu_personalidad_keyboard(active_channel: str = "vip") -> InlineKeyboardMarkup:
+    """Sections of the Personalidad y reglas admin (back to root).
+
+    Renders the channel selector row first (REQ-ATN-06); the active channel
+    is marked with a checkmark. Channel callbacks are ``m:personalidad:channel:<c>``.
+    """
+    vip_marker = " ✅" if active_channel == "vip" else ""
+    atn_marker = " ✅" if active_channel == "atencion" else ""
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"👑 VIP{vip_marker}",
+                    callback_data=encode_menu_persona("channel", "vip"),
+                ),
+                InlineKeyboardButton(
+                    text=f"💼 Atención{atn_marker}",
+                    callback_data=encode_menu_persona("channel", "atencion"),
+                ),
+            ],
             [InlineKeyboardButton(
                 text="📝 Cómo habla Diana",
                 callback_data=encode_menu_persona("persona"),

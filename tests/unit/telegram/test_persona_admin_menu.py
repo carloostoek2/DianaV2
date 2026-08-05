@@ -37,23 +37,36 @@ _OWNER_ID = 999
 
 
 class _FakePersonaAdmin:
-    """In-memory PersonaAdminService double."""
+    """In-memory PersonaAdminService double (channel_type-aware for REQ-ATN-06)."""
 
     def __init__(self, current: dict | None = None) -> None:
         self.current = current
+        self.channel_currents: dict[str, dict] = {}
         self.records: list[PersonaVersionRecord] = []
         self.saved: list[dict] = []
         self.version_counter = 0
+        self.last_channel_type: str | None = None
+        self.last_save_channel_type: str | None = None
+        self.last_restore_channel_type: str | None = None
+        self.last_list_channel_type: str | None = None
 
-    async def get_current_persona(self) -> dict | None:
-        return self.current
+    async def get_current_persona(self, channel_type: str = "vip") -> dict | None:
+        self.last_channel_type = channel_type
+        if channel_type in self.channel_currents:
+            return self.channel_currents[channel_type]
+        if channel_type == "vip":
+            return self.current
+        return None
 
-    async def save_persona(self, actor_id, payload: dict) -> PersonaVersionRecord:
+    async def save_persona(
+        self, actor_id, payload: dict, channel_type: str = "vip"
+    ) -> PersonaVersionRecord:
         import copy
 
         snapshot = copy.deepcopy(payload)
         self.version_counter += 1
         self.saved.append(snapshot)
+        self.last_save_channel_type = channel_type
         record = PersonaVersionRecord(
             id=uuid4(),
             version=self.version_counter,
@@ -64,17 +77,25 @@ class _FakePersonaAdmin:
         )
         self.records.append(record)
         self.current = snapshot
+        self.channel_currents[channel_type] = snapshot
         return record
 
-    async def list_versions(self, actor_id) -> list[PersonaVersionRecord]:
+    async def list_versions(
+        self, actor_id, channel_type: str | None = None
+    ) -> list[PersonaVersionRecord]:
+        self.last_list_channel_type = channel_type
         return list(reversed(self.records))
 
-    async def restore(self, actor_id, persona_version_id) -> PersonaVersionRecord | None:
+    async def restore(
+        self, actor_id, persona_version_id, channel_type: str = "vip"
+    ) -> PersonaVersionRecord | None:
         import copy
 
+        self.last_restore_channel_type = channel_type
         for record in self.records:
             if str(record.id) == str(persona_version_id):
                 self.current = copy.deepcopy(record.payload)
+                self.channel_currents[channel_type] = copy.deepcopy(record.payload)
                 return record
         return None
 
@@ -194,6 +215,16 @@ def test_apply_edit_schedule_blocks_defaults_timezone() -> None:
 # ---------------------------------------------------------------------------
 # Callbacks / keyboards
 # ---------------------------------------------------------------------------
+
+
+def test_personalidad_keyboard_channel_row() -> None:
+    """REQ-ATN-06: the channel selector row renders both channel callbacks."""
+    kb = menu_personalidad_keyboard()
+    datas = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert encode_menu_persona("channel", "vip") in datas
+    assert encode_menu_persona("channel", "atencion") in datas
+    # section rows are still present (backward compat)
+    assert encode_menu_persona("persona") in datas
 
 
 def test_encode_menu_persona_under_64_bytes_and_parse_roundtrip() -> None:
@@ -852,3 +883,194 @@ async def test_edit_wizard_prompt_shows_current_full_value() -> None:
 
     session = sessions.get(_OWNER_ID)
     assert session is not None and session.persona_section == "rule" and session.persona_target == "0"
+
+
+# ---------------------------------------------------------------------------
+# REQ-ATN-06 — channel selector (VIP | Atención)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_channel_selector_renders_both_channels() -> None:
+    """The channel toggle row marks the active channel with a checkmark."""
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = _msg()
+    await dispatch_personalidad(
+        msg, parsed=_parsed("channel", "vip"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=_sessions(),
+    )
+    kb = msg.edit_text.call_args.kwargs.get("reply_markup")
+    labels = [b.text for row in kb.inline_keyboard for b in row]
+    assert "👑 VIP ✅" in labels
+    assert any(label.startswith("💼 Atención") for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_channel_switch_sets_session() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    sessions = _sessions()
+    msg = _msg()
+    await dispatch_personalidad(
+        msg, parsed=_parsed("channel", "atencion"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    sess = sessions.get(_OWNER_ID)
+    assert sess is not None and sess.persona_channel == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_load_current_uses_session_channel() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    sessions = _sessions()
+    sessions.start(_OWNER_ID, "persona_edit", persona_channel="atencion")
+    msg = _msg()
+    await dispatch_personalidad(
+        msg, parsed=_parsed("persona"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert service.last_channel_type == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_save_persona_passes_channel_type() -> None:
+    from diana.cognitive.persona_catalog import get_persona_atencion_catalog
+
+    service = _FakePersonaAdmin()
+    service.channel_currents["atencion"] = get_persona_atencion_catalog()
+    sessions = _sessions()
+    sessions.start(_OWNER_ID, "persona_edit", persona_channel="atencion")
+    msg = _msg()
+    await dispatch_personalidad(
+        msg, parsed=_parsed("rule_del", "0"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert service.last_save_channel_type == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_restore_passes_channel_type() -> None:
+    from diana.cognitive.persona_catalog import get_persona_atencion_catalog
+
+    service = _FakePersonaAdmin()
+    v1 = await service.save_persona(
+        _OWNER_ID, get_persona_atencion_catalog(), channel_type="atencion"
+    )
+    sessions = _sessions()
+    sessions.start(_OWNER_ID, "persona_edit", persona_channel="atencion")
+    msg = _msg()
+    await dispatch_personalidad(
+        msg, parsed=_parsed("restore_ok", str(v1.id)), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert service.last_restore_channel_type == "atencion"
+    assert "restaurada" in str(msg.edit_text.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_list_versions_scoped_to_channel() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    sessions = _sessions()
+    sessions.start(_OWNER_ID, "persona_edit", persona_channel="atencion")
+    msg = _msg()
+    await dispatch_personalidad(
+        msg, parsed=_parsed("history"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert service.last_list_channel_type == "atencion"
+
+
+def test_default_channel_is_vip() -> None:
+    """Fresh / missing sessions resolve to vip (flag-OFF behavior identical)."""
+    from diana.telegram.handlers.persona_admin import _current_channel
+
+    assert _current_channel(_sessions(), _OWNER_ID) == "vip"
+    assert _current_channel(None, _OWNER_ID) == "vip"
+    # a session without persona_channel also resolves to vip
+    s = _sessions()
+    s.start(_OWNER_ID, "persona_edit", persona_section="rule")
+    assert _current_channel(s, _OWNER_ID) == "vip"
+
+
+@pytest.mark.asyncio
+async def test_atencion_round_trip() -> None:
+    """REQ-ATN-06: load → edit → save → list → restore for the atencion channel."""
+    from diana.cognitive.persona_catalog import get_persona_atencion_catalog
+
+    service = _FakePersonaAdmin()
+    sessions = _sessions()
+
+    # 1) switch to atencion → session carries the channel
+    await dispatch_personalidad(
+        _msg(), parsed=_parsed("channel", "atencion"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert sessions.get(_OWNER_ID).persona_channel == "atencion"
+
+    # 2) load current atencion (static seed fallback since no DB row yet)
+    msg2 = _msg()
+    await dispatch_personalidad(
+        msg2, parsed=_parsed("persona"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert service.last_channel_type == "atencion"
+    assert "Diana" in str(msg2.edit_text.call_args.args[0])
+
+    # 3) edit a rule via the wizard on atencion
+    sessions.start(
+        _OWNER_ID, "persona_edit",
+        persona_section="rule", persona_channel="atencion",
+    )
+    wmsg = AsyncMock()
+    wmsg.text = "Nueva regla de atención"
+    wmsg.from_user = AsyncMock()
+    wmsg.from_user.id = _OWNER_ID
+    wmsg.answer = AsyncMock()
+    wmsg.message_id = 5
+    wmsg.chat = AsyncMock()
+    wmsg.chat.id = 42
+    await handle_persona_edit_text(
+        wmsg, _bot(), sessions.get(_OWNER_ID), service, sessions
+    )
+    assert service.last_save_channel_type == "atencion"
+    assert service.channel_currents["atencion"]["voz_configurada"][
+        "reglas_estilo"
+    ][-1] == "Nueva regla de atención"
+
+    # 4) history lists versions scoped to atencion
+    msg4 = _msg()
+    await dispatch_personalidad(
+        msg4, parsed=_parsed("history"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert service.last_list_channel_type == "atencion"
+
+    # 5) restore the saved version on atencion
+    saved_id = service.records[-1].id
+    msg5 = _msg()
+    await dispatch_personalidad(
+        msg5, parsed=_parsed("restore_ok", str(saved_id)), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    assert service.last_restore_channel_type == "atencion"
+    assert "Nueva regla de atención" in service.channel_currents["atencion"][
+        "voz_configurada"
+    ]["reglas_estilo"]
+
+
+@pytest.mark.asyncio
+async def test_channel_switch_persists_across_wizard_start() -> None:
+    """The channel survives a wizard restart (carried into the new session)."""
+    service = _FakePersonaAdmin(_base_catalog())
+    sessions = _sessions()
+    await dispatch_personalidad(
+        _msg(), parsed=_parsed("channel", "atencion"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    msg = _msg()
+    await dispatch_personalidad(
+        msg, parsed=_parsed("rule_add"), actor_id=_OWNER_ID,
+        persona_admin=service, sessions=sessions,
+    )
+    sess = sessions.get(_OWNER_ID)
+    assert sess is not None and sess.persona_channel == "atencion"
+    assert sess.persona_section == "rule"

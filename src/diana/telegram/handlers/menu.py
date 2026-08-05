@@ -91,6 +91,7 @@ class MenuSession:
     sandbox_chat_id: int | None = None
     persona_section: str | None = None
     persona_target: str | None = None
+    persona_channel: str = "vip"
     last_bot_message_id: int | None = None
     last_chat_id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -146,6 +147,21 @@ class MenuSessionStore:
 
     def pop_pending_vip_name(self, owner_id: int) -> str | None:
         return self._pending_vip_names.pop(owner_id, None)
+
+
+def _menu_persona_channel(sessions: MenuSessionStore | None, actor_id: int | None) -> str:
+    """Active persona channel from the session (default ``"vip"``).
+
+    REQ-ATN-06: the personalidad panel shows whichever channel was last
+    selected; a fresh session (or no session) resolves to VIP, preserving
+    flag-OFF behavior.
+    """
+    if sessions is None or actor_id is None:
+        return "vip"
+    sess = sessions.get(actor_id)
+    if sess is None:
+        return "vip"
+    return getattr(sess, "persona_channel", "vip") or "vip"
 
 
 class HasActiveMenuSession(Filter):
@@ -420,7 +436,10 @@ def build_menu_router(
                 text = MENU_CATEGORY_TEXT.get(parsed.category)
                 if text is None:
                     return
-                await _show(msg, text, menu_personalidad_keyboard())
+                channel = _menu_persona_channel(sessions, actor_id)
+                await _show(
+                    msg, text, menu_personalidad_keyboard(active_channel=channel)
+                )
                 return
 
             build_kb = _CATEGORY_KEYBOARDS.get(parsed.category)

@@ -22,8 +22,12 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from diana.application.persona_admin_service import PersonaAdminService
-from diana.cognitive.persona_catalog import get_persona_catalog
+from diana.cognitive.persona_catalog import (
+    get_persona_atencion_catalog,
+    get_persona_catalog,
+)
 from diana.telegram.keyboards import (
+    MENU_CATEGORY_TEXT,
     encode_menu,
     encode_menu_persona,
     menu_back_keyboard,
@@ -168,10 +172,30 @@ def _split_topics(raw: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-async def load_current(persona_admin: PersonaAdminService) -> dict[str, Any]:
-    """Active DB catalog when flag on + active version; else the static catalog."""
-    catalog = await persona_admin.get_current_persona()
-    return catalog if catalog is not None else get_persona_catalog()
+def _current_channel(sessions: Any, actor_id: int) -> str:
+    """Active persona channel from the session (default ``"vip"``)."""
+    if sessions is None:
+        return "vip"
+    try:
+        sess = sessions.get(actor_id)
+        if sess is None:
+            return "vip"
+        return getattr(sess, "persona_channel", "vip") or "vip"
+    except Exception:
+        return "vip"
+
+
+async def load_current(
+    persona_admin: PersonaAdminService, channel_type: str = "vip"
+) -> dict[str, Any]:
+    """Active DB catalog when flag on + active version; else the channel's
+    static catalog (atencion → ``persona_atencion.json``, VIP → ``persona_diana.json``)."""
+    catalog = await persona_admin.get_current_persona(channel_type=channel_type)
+    if catalog is not None:
+        return catalog
+    if channel_type == "atencion":
+        return get_persona_atencion_catalog()
+    return get_persona_catalog()
 
 
 def _replace_item(
@@ -572,9 +596,29 @@ async def dispatch_personalidad(
 
     action = parsed.action or ""
     extra = parsed.extra
+    channel = _current_channel(sessions, actor_id)
+
+    if action == "channel" and extra in ("vip", "atencion"):
+        # REQ-ATN-06: switch the persona channel and re-render the panel root.
+        if sessions is not None:
+            sess = sessions.get(actor_id)
+            if sess is not None:
+                sess.persona_channel = extra
+            else:
+                sessions.start(actor_id, "persona_edit", persona_channel=extra)
+        logger.info(
+            "persona_channel_switched",
+            extra={"actor_id": actor_id, "channel_type": extra},
+        )
+        await _show(
+            message,
+            MENU_CATEGORY_TEXT["personalidad"],
+            menu_personalidad_keyboard(active_channel=extra),
+        )
+        return
 
     if action == "persona":
-        catalog = await load_current(persona_admin)
+        catalog = await load_current(persona_admin, channel_type=channel)
         persona = _truncate(
             (catalog.get("voz_configurada") or {}).get("persona", ""),
             3900,  # Telegram message-size safety only; not a display truncation
@@ -606,7 +650,7 @@ async def dispatch_personalidad(
         return
 
     if action == "timezone":
-        catalog = await load_current(persona_admin)
+        catalog = await load_current(persona_admin, channel_type=channel)
         tz = (catalog.get("schedule") or {}).get("timezone", "")
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -624,7 +668,9 @@ async def dispatch_personalidad(
 
     if action == "history":
         try:
-            versions = await persona_admin.list_versions(actor_id)
+            versions = await persona_admin.list_versions(
+                actor_id, channel_type=channel
+            )
         except Exception as exc:
             logger.warning(
                 "persona_history_failed",
@@ -675,7 +721,9 @@ async def dispatch_personalidad(
             await _show(message, "Versión inválida.", back)
             return
         try:
-            restored = await persona_admin.restore(actor_id, version_uuid)
+            restored = await persona_admin.restore(
+                actor_id, version_uuid, channel_type=channel
+            )
         except Exception as exc:
             logger.warning(
                 "persona_restore_failed",
@@ -700,7 +748,7 @@ async def dispatch_personalidad(
             "rules": "rules", "facts": "facts", "patterns": "patterns",
             "policies": "policies", "bloques": "bloques", "defaults": "defaults",
         }[action]
-        catalog = await load_current(persona_admin)
+        catalog = await load_current(persona_admin, channel_type=channel)
         raw_items = _section_items(catalog, section)
         # Item callbacks carry section|key so the detail view knows the context.
         # Cap at 40 rows: Telegram inline keyboards allow at most 100 buttons
@@ -752,7 +800,7 @@ async def dispatch_personalidad(
         if op is None:
             await _show(message, "Elemento inválido.", back)
             return
-        catalog = await load_current(persona_admin)
+        catalog = await load_current(persona_admin, channel_type=channel)
         detail = _item_detail(catalog, section, item_key)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -769,14 +817,16 @@ async def dispatch_personalidad(
     # ---- immediate deletes ----
     if action in ("rule_del", "fact_del", "pattern_del", "policy_del", "bloque_del", "default_del"):
         section = action[: -len("_del")]
-        catalog = await load_current(persona_admin)
+        catalog = await load_current(persona_admin, channel_type=channel)
         try:
             nuevo = apply_persona_edit(catalog, action, extra, None)
         except ValueError as exc:
             await _show(message, f"❌ No se pudo eliminar: {exc}", back)
             return
         try:
-            record = await persona_admin.save_persona(actor_id, nuevo)
+            record = await persona_admin.save_persona(
+                actor_id, nuevo, channel_type=channel
+            )
         except ValueError as exc:
             await _show(message, f"❌ No se guardó: {exc}", back)
             return
@@ -806,6 +856,7 @@ async def dispatch_personalidad(
             "persona_edit",
             persona_section=section,
             persona_target=extra,
+            persona_channel=channel,
             last_bot_message_id=message.message_id,
             last_chat_id=message.chat.id,
         )
@@ -815,7 +866,7 @@ async def dispatch_personalidad(
         # For EDIT actions, show the CURRENT full value so the owner can
         # review it before fine-tuning (product requirement: no truncation).
         if action.endswith("_edit") or action == "persona_edit" or action == "timezone_edit":
-            catalog = await load_current(persona_admin)
+            catalog = await load_current(persona_admin, channel_type=channel)
             current = _edit_current_value(catalog, section, extra)
             if current is not None:
                 prompt = f"{prompt}\n\n📄 Actual:\n{current}"
@@ -871,6 +922,7 @@ async def handle_persona_edit_text(
         return
     section = session.persona_section or ""
     extra = session.persona_target
+    channel = getattr(session, "persona_channel", "vip") or "vip"
     text = (message.text or "").strip()
 
     # The session section is the base op name (persona | rule | fact | pattern |
@@ -886,25 +938,29 @@ async def handle_persona_edit_text(
         return
     op = section
 
-    base = await load_current(persona_admin)
+    base = await load_current(persona_admin, channel_type=channel)
     try:
         nuevo = apply_persona_edit(base, op, extra, text)
     except ValueError as exc:
-        await _restart_persona_wizard(sessions, message, section, extra)
+        await _restart_persona_wizard(sessions, message, section, extra, channel)
         await _edit_or_answer(
             bot, f"❌ {exc}\n\nEnviame el texto corregido o usa /cancelar.",
             session=session, fallback=message, keyboard=None,
         )
         return
     try:
-        record = await persona_admin.save_persona(actor_id=message.from_user.id, payload=nuevo)
+        record = await persona_admin.save_persona(
+            actor_id=message.from_user.id,
+            payload=nuevo,
+            channel_type=channel,
+        )
     except Exception as exc:
         logger.warning(
             "persona_save_failed",
             extra={"actor_id": message.from_user.id, "error": type(exc).__name__},
             exc_info=True,
         )
-        await _restart_persona_wizard(sessions, message, section, extra)
+        await _restart_persona_wizard(sessions, message, section, extra, channel)
         await _edit_or_answer(
             bot, "❌ No se pudo guardar. Reenviame el texto o usa /cancelar.",
             session=session, fallback=message, keyboard=None,
@@ -922,6 +978,7 @@ async def _restart_persona_wizard(
     message: Message,
     section: str,
     extra: str | None,
+    channel: str = "vip",
 ) -> None:
     """Keep the wizard alive after an error so the owner can retry the text."""
     sessions.start(
@@ -929,6 +986,7 @@ async def _restart_persona_wizard(
         "persona_edit",
         persona_section=section,
         persona_target=extra,
+        persona_channel=channel,
         last_bot_message_id=message.message_id,
         last_chat_id=message.chat.id,
     )
