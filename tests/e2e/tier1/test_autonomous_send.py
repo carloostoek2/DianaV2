@@ -1,10 +1,16 @@
 """E2E: VIP message -> autonomous send -> auto-delivery."""
 
+from uuid import uuid4
+
 import pytest
 from diana.application.ports import VipInboundMessage
 from diana.cognitive.models import Decision, TurnStatus
 from tests.e2e.conftest import make_eval
 from tests.e2e.tier1.conftest import build_e2e
+
+# A real VIP id: autonomous send only applies to allowlisted VIPs (vip_id=None
+# is never autonomous — REQ-ATN-05 demotes it to supervised/approve).
+_VIP_ID = uuid4()
 
 
 @pytest.mark.asyncio
@@ -13,7 +19,7 @@ async def test_autonomous_send_delivers_without_owner_approval():
     decision = Decision(action="send", reason="autonomous ok", evaluation=make_eval(), draft_text="auto reply")
     g = build_e2e([decision], wire_autonomous=True, global_mode="autonomous", feature_autonomous_mode=True)
 
-    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip")
+    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip", vip_id=_VIP_ID)
     turn_id = await g["orch"].handle_vip_message(msg)
 
     stored = await g["turns"].get(turn_id)
@@ -28,7 +34,7 @@ async def test_autonomous_send_no_approval_record():
     decision = Decision(action="send", reason="ok", evaluation=make_eval(), draft_text="auto")
     g = build_e2e([decision], wire_autonomous=True, global_mode="autonomous", feature_autonomous_mode=True)
 
-    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip")
+    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip", vip_id=_VIP_ID)
     turn_id = await g["orch"].handle_vip_message(msg)
 
     approval = await g["approvals"].get_by_turn(turn_id)
@@ -56,7 +62,7 @@ async def test_send_without_behavior_wiring_marks_failed():
     g = build_e2e([decision], wire_autonomous=True, global_mode="autonomous", feature_autonomous_mode=True)
     g["orch"]._behavior = None  # Simulate missing behavior
 
-    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip")
+    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip", vip_id=_VIP_ID)
     turn_id = await g["orch"].handle_vip_message(msg)
 
     stored = await g["turns"].get(turn_id)
@@ -69,7 +75,7 @@ async def test_send_appends_owner_history():
     decision = Decision(action="send", reason="ok", evaluation=make_eval(), draft_text="auto reply")
     g = build_e2e([decision], wire_autonomous=True, global_mode="autonomous", feature_autonomous_mode=True)
 
-    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip")
+    msg = VipInboundMessage(chat_id=100, text="hola", telegram_message_id=1, business_connection_id="bc-vip", vip_id=_VIP_ID)
     turn_id = await g["orch"].handle_vip_message(msg)
 
     stored = await g["turns"].get(turn_id)
