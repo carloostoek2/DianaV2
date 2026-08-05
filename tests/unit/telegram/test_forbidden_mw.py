@@ -531,3 +531,130 @@ def test_atencion_explicit_content_seed_rules_present() -> None:
     assert "sin contenido explicito" in persona
     assert "intim" in persona  # covers "íntima" (persona) / "íntimo" (reglas)
     assert any("intimo" in r or "explicito" in r or "coqueta" in r for r in rules)
+
+
+# ---------------------------------------------------------------------------
+# F4 sales-flow exemption: commercial words must NOT escalate on atencion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_atencion_pago_does_not_escalate() -> None:
+    """F4: atencion + "pago" → exempt (buying vocabulary) → pipeline flows."""
+    g = _graph()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["pago", "transferencia", "reclamación"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=60,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="¿cómo hago el pago?",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, data)
+    assert result == "next"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+    assert g["notifier"].escalations == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_transferencia_does_not_escalate() -> None:
+    """F4: atencion + "transferencia" → exempt (buying vocabulary) → flows."""
+    g = _graph()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["pago", "transferencia", "reclamación"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=61,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="prefiero pagar por transferencia",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, event, data)
+    assert result == "next"
+    handler.assert_awaited_once()
+    assert g["escalations"].events == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_reclamacion_still_escalates() -> None:
+    """F4: atencion + "reclamación" → NOT exempt → deterministic escalation."""
+    g = _graph()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["pago", "transferencia", "reclamación"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=62,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Stranger"),
+        text="quiero hacer una reclamación",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "atencion"}
+    handler = AsyncMock(return_value="should-not-run")
+    result = await mw(handler, event, data)
+    assert result is None
+    handler.assert_not_awaited()
+    assert g["escalations"].events
+
+
+@pytest.mark.asyncio
+async def test_vip_pago_still_escalates() -> None:
+    """F4: the exemption is atencion-only — VIP "pago" still escalates."""
+    g = _graph()
+    vip = await g["vips"].add(222, display_name="Vip")
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["pago", "transferencia", "reclamación"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        feature_general_mode_enabled=True,
+    )
+    from aiogram.types import Chat, Message, User
+
+    event = Message(
+        message_id=63,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=222, is_bot=False, first_name="Vip"),
+        text="¿cómo hago el pago?",
+        business_connection_id="bc-1",
+    )
+    data: dict = {"business_connection_id": "bc-1", "channel_type": "vip"}
+    handler = AsyncMock(return_value="should-not-run")
+    result = await mw(handler, event, data)
+    assert result is None
+    handler.assert_not_awaited()
+    assert g["escalations"].events

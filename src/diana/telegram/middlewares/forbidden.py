@@ -65,6 +65,14 @@ def match_forbidden_keywords(text: str, keywords: list[str]) -> list[str]:
     return match_keywords(text, keywords)
 
 
+# F4: commercial vocabulary that must FLOW through the atencion pipeline
+# (payment/sales scripts: "pago", "transferencia" are the buying vocabulary).
+# Excluded from the forbidden check for the atencion channel ONLY — VIP
+# keeps the full list untouched (J.4 + forbidden keywords). "reclamación"
+# still escalates on both channels (a complaint is owner territory).
+ATENCION_COMMERCIAL_EXEMPT_KEYWORDS = frozenset({"pago", "transferencia"})
+
+
 class ForbiddenKeywordsMiddleware(BaseMiddleware):
     """On business VIP J.4/forbidden hit: deterministic escalate and stop pipeline.
 
@@ -157,7 +165,15 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
             # REQ-ATN-08: atencion non-VIP is scoped to forbidden-keyword
             # matching only (no J.4 classification); escalation mechanism is
             # identical to VIP. VIP path below keeps full J.4 untouched.
-            forbidden_hits = match_forbidden_keywords(text, self._keywords)
+            # F4: commercial words (pago/transferencia) are exempt for the
+            # atencion channel so the sales flow (payment scripts → owner DM
+            # on intent) is not short-circuited by the deterministic gate.
+            atencion_keywords = [
+                k
+                for k in self._keywords
+                if k not in ATENCION_COMMERCIAL_EXEMPT_KEYWORDS
+            ]
+            forbidden_hits = match_forbidden_keywords(text, atencion_keywords)
             if not forbidden_hits:
                 return await handler(event, data)
             j4 = None
