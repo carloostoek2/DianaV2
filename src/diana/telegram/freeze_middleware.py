@@ -56,6 +56,16 @@ class FreezeCheckMiddleware(BaseMiddleware):
         # F4 (A1): atencion chat freeze debounce, keyed by chat_id.
         self._last_chat_reminder: dict[int, datetime] = {}
 
+    def _prune_reminders(self, now: datetime) -> None:
+        """Drop stale debounce timestamps so the dicts stay bounded (F7)."""
+        cutoff = now - self._reminder_ttl
+        self._last_reminder = {
+            k: v for k, v in self._last_reminder.items() if v >= cutoff
+        }
+        self._last_chat_reminder = {
+            k: v for k, v in self._last_chat_reminder.items() if v >= cutoff
+        }
+
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
@@ -122,6 +132,7 @@ class FreezeCheckMiddleware(BaseMiddleware):
             return
 
         now = datetime.now(UTC)
+        self._prune_reminders(now)
         last = self._last_reminder.get(vip_id)
         if last is not None and now - last < self._reminder_ttl:
             return
@@ -213,6 +224,12 @@ class FreezeCheckMiddleware(BaseMiddleware):
         if freeze_until <= datetime.now(UTC):
             return await handler(event, data)
 
+        text = getattr(event, "text", None) or getattr(event, "caption", None) or ""
+        if text.lstrip().startswith("/"):
+            # Commands (e.g. /start) pass through the atencion freeze; only
+            # substantive messages are dropped while a query is open (F11).
+            return await handler(event, data)
+
         await self._maybe_notify_chat_freeze_reminder(event, query, chat_id)
         return None
 
@@ -230,6 +247,7 @@ class FreezeCheckMiddleware(BaseMiddleware):
             return  # edits are not new messages — don't re-nag
 
         now = datetime.now(UTC)
+        self._prune_reminders(now)
         last = self._last_chat_reminder.get(chat_id)
         if last is not None and now - last < self._reminder_ttl:
             return

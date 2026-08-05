@@ -673,6 +673,7 @@ def build_app(
         turns=turns,
         clock=clock,
         delivery_mode=settings.global_mode,
+        feature_general_mode_enabled=feature_general_mode_enabled,
     )
 
     # F3 Pool 3 — calibration / metrics / admin dashboard (glue only).

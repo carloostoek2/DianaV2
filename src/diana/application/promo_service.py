@@ -68,8 +68,10 @@ class PromoService:
         turns: TurnStore,
         clock: Clock,
         delivery_mode: DeliveryMode = "supervised",
+        feature_general_mode_enabled: bool = False,
     ) -> None:
         self._feature_promo_enabled = feature_promo_enabled
+        self._feature_general_mode_enabled = feature_general_mode_enabled
         self._triggers = triggers
         self._executions = executions
         self._config = config
@@ -173,6 +175,10 @@ class PromoService:
                 chat_id=chat_id,
                 status="promo_pending",
                 vip_id=None,
+                # Promo targets non-VIP business chats: under general mode the
+                # promo turn belongs to the atencion channel. Flag OFF keeps
+                # the legacy default (vip) byte-identical.
+                channel_type="atencion" if self._feature_general_mode_enabled else "vip",
             )
         )
         ctx = DeliveryContext(

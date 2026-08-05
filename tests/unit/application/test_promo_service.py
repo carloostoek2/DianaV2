@@ -169,6 +169,7 @@ def _svc(
     turns: InMemoryTurnStore | None = None,
     clock: ImmediateClock | None = None,
     delivery_mode: str = "supervised",
+    general_mode: bool = False,
 ) -> tuple[
     PromoService,
     FakeTriggerStore,
@@ -191,6 +192,7 @@ def _svc(
         turns=turn_store,
         clock=ck,
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
+        feature_general_mode_enabled=general_mode,
     )
     return svc, tstore, estore, beh, turn_store, ck
 
@@ -398,6 +400,34 @@ async def test_execute_first_send_delivers_original_and_records_sent() -> None:
     assert turn is not None
     assert turn.status == "delivered"
     assert turn.vip_id is None
+
+
+@pytest.mark.asyncio
+async def test_execute_general_mode_mints_atencion_channel_turn() -> None:
+    """F17: under general mode the promo turn is channel_type='atencion'."""
+    trig = _trigger(sequence=["a", "b"], repeat=None)
+    svc, _, _, beh, turns, _ = _svc(
+        triggers=FakeTriggerStore([trig]), general_mode=True
+    )
+    status = await svc.execute_promo(42, trig, business_connection_id="bc-1")
+    assert status == "sent"
+    turn_id = beh.calls[0]["turn_id"]
+    turn = await turns.get(turn_id)
+    assert turn is not None
+    assert turn.channel_type == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_execute_flag_off_keeps_legacy_vip_channel_turn() -> None:
+    """F17: general mode OFF keeps the legacy default (vip) byte-identical."""
+    trig = _trigger(sequence=["a", "b"], repeat=None)
+    svc, _, _, beh, turns, _ = _svc(triggers=FakeTriggerStore([trig]))
+    status = await svc.execute_promo(42, trig, business_connection_id="bc-1")
+    assert status == "sent"
+    turn_id = beh.calls[0]["turn_id"]
+    turn = await turns.get(turn_id)
+    assert turn is not None
+    assert turn.channel_type == "vip"
 
 
 @pytest.mark.asyncio

@@ -613,3 +613,128 @@ async def test_atencion_chat_edited_message_skips_reminder() -> None:
     assert result is None
     handler.assert_not_awaited()
     notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_command_passes_through_freeze() -> None:
+    """F11: a /-prefixed command (e.g. /start) is never dropped by the freeze."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=_future_freeze())
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1422, text="/start"), {})
+
+    assert result == "next"
+    handler.assert_awaited_once()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_freeze_until_none_passes() -> None:
+    """F13: open query without freeze_until never freezes the chat."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=None)
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1423), {})
+
+    assert result == "next"
+    handler.assert_awaited_once()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_naive_future_freeze_drops() -> None:
+    """F13: naive (tz-less) future freeze_until is normalized and enforced."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(
+        turn_id=uuid4(),
+        freeze_until=datetime.now(UTC) + timedelta(hours=1),
+    )
+    query.freeze_until = query.freeze_until.replace(tzinfo=None)  # naive
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1424), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_atencion_chat_no_gray_zone_service_passes() -> None:
+    """F13: gray_zone=None with general mode ON can never freeze (no-op)."""
+    vips = InMemoryVipStore()
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=None,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1425), {})
+
+    assert result == "next"
+    handler.assert_awaited_once()
+    notifier.notify_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_reminder_dict_prunes_stale_entries() -> None:
+    """F7: stale debounce timestamps are pruned so the dicts stay bounded."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(turn_id=uuid4(), freeze_until=_future_freeze())
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+        reminder_ttl_s=1200.0,
+    )
+    # Stale debounce timestamps (past TTL) for the current chat AND another.
+    stale = datetime.now(UTC) - timedelta(hours=2)
+    mw._last_chat_reminder[42] = stale  # noqa: SLF001
+    mw._last_chat_reminder[999] = stale  # noqa: SLF001
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1426), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    notifier.notify_doctrine.assert_awaited_once()
+    # The unrelated chat's stale entry was pruned; the current chat's is fresh.
+    assert 999 not in mw._last_chat_reminder  # noqa: SLF001
+    assert datetime.now(UTC) - mw._last_chat_reminder[42] < timedelta(minutes=1)  # noqa: SLF001
