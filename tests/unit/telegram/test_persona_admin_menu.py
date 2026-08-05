@@ -499,6 +499,22 @@ async def test_load_current_falls_back_to_static() -> None:
     assert catalog is get_persona_catalog()
 
 
+@pytest.mark.asyncio
+async def test_load_current_atencion_static_failure_falls_back_to_vip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1-4: a missing/corrupt persona_atencion.json must not crash load_current."""
+    import diana.telegram.handlers.persona_admin as persona_admin_mod
+
+    def _boom() -> dict:
+        raise FileNotFoundError("persona_atencion.json missing")
+
+    monkeypatch.setattr(persona_admin_mod, "get_persona_atencion_catalog", _boom)
+    service = _FakePersonaAdmin(None)  # no DB row → static fallback path
+    catalog = await load_current(service, channel_type="atencion")  # type: ignore[arg-type]
+    assert catalog is get_persona_catalog()
+
+
 def test_apply_edit_pattern_policy_positive() -> None:
     """Positive paths protect _parse_pattern/_parse_policy field mapping."""
     base = _base_catalog()

@@ -194,7 +194,11 @@ async def load_current(
     if catalog is not None:
         return catalog
     if channel_type == "atencion":
-        return get_persona_atencion_catalog()
+        try:
+            return get_persona_atencion_catalog()
+        except Exception:
+            # Missing/corrupt persona_atencion.json → VIP static (never crash a callback).
+            return get_persona_catalog()
     return get_persona_catalog()
 
 
