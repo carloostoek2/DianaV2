@@ -61,15 +61,24 @@ async def test_018_downgrade_reverses_with_owner_saved_atencion_row(
         _alembic("upgrade", "018_channel_type_atencion", db_url)
 
         # 3. Simulate a live DB: an active VIP row + an owner-saved active
-        #    atencion row (source='db'). The seed is already active at the
-        #    seed version (max+1 at migration time).
+        #    atencion row (source='db'). The seed is active at version 1 (max+1
+        #    computed at migration time over the GLOBAL counter). An owner save
+        #    replaces the seed as the active atencion row (deactivate seed →
+        #    insert owner row active), leaving exactly one active row per
+        #    channel — the exact B5 downgrade scenario.
         engine2 = create_async_engine(db_url)
         async with engine2.begin() as conn:
             await conn.execute(
                 text(
                     "INSERT INTO persona_versions "
                     "(channel_type, version, source, payload, is_active) "
-                    "VALUES ('vip', 1, 'db', '{}'::jsonb, true)"
+                    "VALUES ('vip', 2, 'db', '{}'::jsonb, true)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "UPDATE persona_versions SET is_active = false "
+                    "WHERE channel_type = 'atencion'"
                 )
             )
             await conn.execute(
@@ -84,18 +93,18 @@ async def test_018_downgrade_reverses_with_owner_saved_atencion_row(
         # 4. Downgrade must NOT abort on the duplicate-active row (B5).
         _alembic("downgrade", "017_persona_versions", db_url)
 
-        # 5. Assert the schema/seed deltas reversed.
+        # 5. Assert the schema/seed deltas reversed. The ``channel_type`` column
+        #    is gone, so atencion rows are verified via the total row count:
+        #    seed + VIP + owner-saved atencion (3 rows) collapse to the single
+        #    active VIP row.
         engine3 = create_async_engine(db_url)
         async with engine3.begin() as conn:
-            remaining = (
+            total = (
                 await conn.execute(
-                    text(
-                        "SELECT count(*) FROM persona_versions "
-                        "WHERE channel_type = 'atencion'"
-                    )
+                    text("SELECT count(*) FROM persona_versions")
                 )
             ).scalar_one()
-            assert remaining == 0
+            assert total == 1  # only the VIP row survived the downgrade
 
             has_column = (
                 await conn.execute(

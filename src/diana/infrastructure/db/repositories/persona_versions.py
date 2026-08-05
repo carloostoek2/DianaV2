@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import case, or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.ports import PersonaAdminStore, PersonaVersionRecord
@@ -112,8 +112,15 @@ class PersonaVersionRepo:
         Scoped to *channel_type*: a target id that does not exist (or belongs to
         another channel) is a no-op (returns None) — the swap only runs if the
         target row exists in this channel, so an unknown id never deactivates
-        the currently active version. The partial unique index is evaluated
-        after the statement, so the swap never observes two active rows.
+        the currently active version.
+
+        The swap is two statements in one transaction: a single UPDATE that
+        flips two rows in one go can transiently violate the partial unique
+        index ``uq_persona_versions_active`` (Postgres evaluates unique indexes
+        per-row during an UPDATE, so an inactive row that is activated while an
+        older row is still active raises a duplicate even though the swap is
+        atomic). Deactivating first, then activating, never observes two active
+        rows within a single statement.
         """
         exists = (
             select(PersonaVersion.id)
@@ -124,25 +131,31 @@ class PersonaVersionRepo:
             .exists()
         )
         async with self._sf() as session:
-            await session.execute(
-                update(PersonaVersion)
-                .where(
-                    or_(
+            async with session.begin():
+                # Step 1: clear the channel's active row(s) — except the target,
+                # which is either already the active row (stays) or inactive
+                # (step 2 activates it). This statement only flips rows to
+                # is_active=false, so it can never duplicate an active key.
+                await session.execute(
+                    update(PersonaVersion)
+                    .where(
                         (PersonaVersion.is_active.is_(True))
-                        & (PersonaVersion.channel_type == channel_type),
-                        PersonaVersion.id == persona_version_id,
+                        & (PersonaVersion.channel_type == channel_type)
+                        & (PersonaVersion.id != persona_version_id)
+                        & exists
                     )
-                    & exists
+                    .values(is_active=False)
                 )
-                .values(
-                    is_active=PersonaVersion.id == persona_version_id,
-                    applied_at=case(
-                        (PersonaVersion.id == persona_version_id, now),
-                        else_=PersonaVersion.applied_at,
-                    ),
+                # Step 2: activate the target (at most one active row now).
+                await session.execute(
+                    update(PersonaVersion)
+                    .where(
+                        (PersonaVersion.id == persona_version_id)
+                        & (PersonaVersion.channel_type == channel_type)
+                        & exists
+                    )
+                    .values(is_active=True, applied_at=now)
                 )
-            )
-            await session.commit()
         record = await self.get_by_id(persona_version_id)
         # The UPDATE is channel-scoped; a cross-channel id matched zero rows,
         # so the re-fetch must verify the row actually belongs to this channel
