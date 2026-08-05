@@ -172,9 +172,14 @@ def _split_topics(raw: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _current_channel(sessions: Any, actor_id: int) -> str:
-    """Active persona channel from the session (default ``"vip"``)."""
-    if sessions is None:
+def _current_channel(sessions: Any, actor_id: int | None) -> str:
+    """Active persona channel from the session (default ``"vip"``).
+
+    REQ-ATN-06: the personalidad panel shows whichever channel was last
+    selected; a fresh session (or no session) resolves to VIP, preserving
+    flag-OFF behavior.
+    """
+    if sessions is None or actor_id is None:
         return "vip"
     try:
         sess = sessions.get(actor_id)

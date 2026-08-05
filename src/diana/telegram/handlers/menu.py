@@ -29,6 +29,7 @@ from diana.application.sandbox import SandboxService
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.telegram.handlers.persona_admin import (
+    _current_channel,
     dispatch_personalidad,
     handle_persona_edit_text,
 )
@@ -149,21 +150,6 @@ class MenuSessionStore:
         return self._pending_vip_names.pop(owner_id, None)
 
 
-def _menu_persona_channel(sessions: MenuSessionStore | None, actor_id: int | None) -> str:
-    """Active persona channel from the session (default ``"vip"``).
-
-    REQ-ATN-06: the personalidad panel shows whichever channel was last
-    selected; a fresh session (or no session) resolves to VIP, preserving
-    flag-OFF behavior.
-    """
-    if sessions is None or actor_id is None:
-        return "vip"
-    sess = sessions.get(actor_id)
-    if sess is None:
-        return "vip"
-    return getattr(sess, "persona_channel", "vip") or "vip"
-
-
 class HasActiveMenuSession(Filter):
     """Aiogram filter: True when the owner has a live MenuSession."""
 
@@ -187,7 +173,6 @@ _CATEGORY_KEYBOARDS: dict[str, Any] = {
     "sandbox": menu_sandbox_keyboard,
     "metrics": menu_metrics_keyboard,
     "history": menu_history_keyboard,
-    "personalidad": menu_personalidad_keyboard,
 }
 
 
@@ -436,7 +421,7 @@ def build_menu_router(
                 text = MENU_CATEGORY_TEXT.get(parsed.category)
                 if text is None:
                     return
-                channel = _menu_persona_channel(sessions, actor_id)
+                channel = _current_channel(sessions, actor_id)
                 await _show(
                     msg, text, menu_personalidad_keyboard(active_channel=channel)
                 )
