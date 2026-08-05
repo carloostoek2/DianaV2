@@ -50,13 +50,18 @@ class AutonomousModeService:
         self._near_margin = near_margin
 
     async def is_autonomous_enabled(self, vip_id: UUID | None = None) -> bool:
-        """Return True iff L1 is on and global autonomous OR vip.auto_send."""
+        """Return True iff L1 is on and global autonomous OR vip.auto_send.
+
+        Anonymous / non-VIP (``vip_id=None``) is never autonomous, even under a
+        global autonomous mode: the None-guard must run before the global
+        early-return so atencion (``vip_id=None``) always demotes to supervised.
+        """
         if not self._feature_autonomous_mode:
+            return False
+        if vip_id is None:
             return False
         if self._global_mode == "autonomous":
             return True
-        if vip_id is None:
-            return False
         vip = await self._vip_store.get_by_id(vip_id)
         if vip is None:
             return False

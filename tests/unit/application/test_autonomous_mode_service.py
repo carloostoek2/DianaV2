@@ -84,10 +84,11 @@ async def test_l1_off_always_false_regardless_of_mode_or_vip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_l1_on_global_autonomous_true_for_any_vip_id() -> None:
+async def test_l1_on_global_autonomous_true_for_any_non_none_vip_id() -> None:
+    """Anonymous (vip_id=None) is NEVER autonomous, even under global autonomous."""
     svc, store, _ = _ams(feature=True, global_mode="autonomous")
     vip = await _seed_vip(store, auto_send=False)
-    assert await svc.is_autonomous_enabled(None) is True
+    assert await svc.is_autonomous_enabled(None) is False
     assert await svc.is_autonomous_enabled(vip.id) is True
     assert await svc.is_autonomous_enabled(uuid4()) is True
 

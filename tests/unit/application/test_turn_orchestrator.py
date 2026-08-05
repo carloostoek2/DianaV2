@@ -980,12 +980,17 @@ async def test_send_supersede_mid_flight_no_delivered_revive() -> None:
         delivery_mode="autonomous",
         clock=AsyncSleepClock(),
     )
+    vip_id = uuid4()
     first = asyncio.create_task(
-        g["orch"].handle_vip_message(_vip(text="msg A", telegram_message_id=11))
+        g["orch"].handle_vip_message(
+            _vip(text="msg A", telegram_message_id=11, vip_id=vip_id)
+        )
     )
     await asyncio.sleep(0.02)
     second = asyncio.create_task(
-        g["orch"].handle_vip_message(_vip(text="msg B", telegram_message_id=12))
+        g["orch"].handle_vip_message(
+            _vip(text="msg B", telegram_message_id=12, vip_id=vip_id)
+        )
     )
     turn_a, turn_b = await asyncio.gather(first, second)
     stored_a = await g["turns"].get(turn_a)
@@ -3437,6 +3442,37 @@ async def test_provider_none_uses_global() -> None:
     g = _build(
         FakeDirector(_mode_decision()),
         delivery_mode="supervised",
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
+    assert mode == "supervised"
+
+
+@pytest.mark.asyncio
+async def test_provider_returns_none_uses_global() -> None:
+    """Provider exists but get_catalog returns None (unknown channel, no
+    exception) → global mode, same as the exception-fallback path."""
+    provider = _FakeCatalogProvider({})  # unknown channel → None, no raise
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="fake_delivery",
+        persona_catalog_provider=provider,
+    )
+    mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
+    assert mode == "fake_delivery"
+
+
+@pytest.mark.asyncio
+async def test_atencion_real_seed_no_delivery_mode_demoted_by_ams_guard() -> None:
+    """Real atencion seed state (no delivery_mode key) + global autonomous:
+    the AMS vip_id=None guard demotes the channel to supervised (R1-1)."""
+    provider = _FakeCatalogProvider({"atencion": {}})  # real seed has no delivery_mode
+    g = _build(
+        FakeDirector(_mode_decision()),
+        delivery_mode="autonomous",
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        persona_catalog_provider=provider,
     )
     mode = await g["orch"]._resolve_effective_mode(None, "atencion")  # noqa: SLF001
     assert mode == "supervised"
