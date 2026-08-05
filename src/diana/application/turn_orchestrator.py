@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -71,22 +71,31 @@ ATENCION_PAYMENT_NOTICE = (
 # A2: topics that corroborate a confirmation-of-delivery payment intent.
 _PAYMENT_TOPICS = frozenset({"pago", "suscripcion", "contenido"})
 
+# F4: per-chat cooldown for the atencion payment DM (20 min), same TTL as
+# the freeze middleware reminders. Bounded dict — pruned on each use.
+_PAYMENT_NOTIFY_TTL = timedelta(minutes=20)
+
 
 def _detect_payment_intent(trace: dict | None) -> bool:
     """Deterministic payment-intent detection from the committed pipeline trace.
 
     Primary signal: the activated knowledge policy contains
-    ``Trigger: datos_pago``. Secondary signal: comprehension intent is
+    ``Trigger: datos_pago``. The production shape of ``knowledge.policy`` is
+    ``list[str]`` (PolicyRetriever.fetch persists a list); a bare ``str`` is
+    accepted defensively. Secondary signal: comprehension intent is
     ``confirmar_entrega`` (the only confirmation intent in the closed
     catalog) AND its topics intersect the payment vocabulary. Pure function —
     never raises, never touches IO.
     """
-    if not trace:
+    if not isinstance(trace, dict):
         return False
     retrieved = trace.get("retrieved") or {}
     if isinstance(retrieved, dict):
-        policy = retrieved.get("knowledge.policy")
-        if isinstance(policy, str) and "Trigger: datos_pago" in policy:
+        raw = retrieved.get("knowledge.policy")
+        policies = raw if isinstance(raw, list) else [raw]
+        if any(
+            isinstance(p, str) and "Trigger: datos_pago" in p for p in policies
+        ):
             return True
     comp = trace.get("comprehension") or {}
     if not isinstance(comp, dict):
@@ -94,7 +103,12 @@ def _detect_payment_intent(trace: dict | None) -> bool:
     intent = str(comp.get("intent") or "").strip().lower()
     if intent != "confirmar_entrega":
         return False
-    topics = {str(t).strip().lower() for t in (comp.get("topics") or [])}
+    topics_raw = comp.get("topics")
+    topics = (
+        {str(t).strip().lower() for t in topics_raw}
+        if isinstance(topics_raw, list)
+        else set()
+    )
     return bool(topics & _PAYMENT_TOPICS)
 
 
@@ -202,6 +216,8 @@ class TurnOrchestrator:
         self._turns = turns
         self._catalog_provider = persona_catalog_provider
         self._trace_reader = trace_reader
+        # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
+        self._last_payment_notify: dict[int, datetime] = {}
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
@@ -425,11 +441,21 @@ class TurnOrchestrator:
         except Exception:
             log_swallowed(logger, event, chat_id=chat_id, **extra)
 
+    def _prune_payment_notify(self, now: datetime) -> None:
+        """Drop per-chat payment cooldown entries older than the TTL (F7)."""
+        stale = now - _PAYMENT_NOTIFY_TTL
+        for chat_id in [
+            c for c, ts in self._last_payment_notify.items() if ts < stale
+        ]:
+            del self._last_payment_notify[chat_id]
+
     async def _maybe_notify_payment_intent(
         self,
         *,
         turn_id: UUID,
         turn_ctx: IncomingTurn,
+        incoming: VipInboundMessage,
+        decision: Decision,
     ) -> None:
         """REQ-ATN-12: informational DM to the owner on payment intent.
 
@@ -437,10 +463,27 @@ class TurnOrchestrator:
         is injected. Reads the committed trace (already stored by the
         Director), detects the payment signal deterministically, and sends
         ONE fail-soft informational DM (A7). The turn flow is never altered.
+
+        Anti-amplification (F4): edited messages never notify (edits also do
+        not count toward the daily limit), per-chat 20-min cooldown, and
+        ``consult_doctrine`` turns are skipped (the gray zone branch already
+        sends a doctrine DM — a payment DM would double-notify). Sandboxed
+        chats are skipped (F16).
         """
         if turn_ctx.channel_type != "atencion":
             return
+        if incoming.is_edit:
+            return
         if self._trace_reader is None:
+            return
+        if decision.action == "consult_doctrine":
+            return
+        if self._sandbox_active(turn_ctx.chat_id):
+            return
+        now = datetime.now(UTC)
+        self._prune_payment_notify(now)
+        last = self._last_payment_notify.get(turn_ctx.chat_id)
+        if last is not None and now - last < _PAYMENT_NOTIFY_TTL:
             return
         try:
             trace = await self._trace_reader.get_full_trace(turn_id)
@@ -454,6 +497,7 @@ class TurnOrchestrator:
             return
         if not _detect_payment_intent(trace):
             return
+        self._last_payment_notify[turn_ctx.chat_id] = now
         await self._safe_notify_info(
             ATENCION_PAYMENT_NOTICE.format(chat_id=turn_ctx.chat_id),
             chat_id=turn_ctx.chat_id,
@@ -1321,7 +1365,10 @@ class TurnOrchestrator:
         # REQ-ATN-12: informational payment notice for atencion (fail-soft,
         # never alters the supervised flow).
         await self._maybe_notify_payment_intent(
-            turn_id=turn_id, turn_ctx=turn_ctx
+            turn_id=turn_id,
+            turn_ctx=turn_ctx,
+            incoming=incoming,
+            decision=decision,
         )
 
         if decision.action == "approve":

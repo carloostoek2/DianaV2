@@ -2427,7 +2427,14 @@ def test_detect_payment_intent_pure() -> None:
     # empty / None → False
     assert _detect_payment_intent(None) is False
     assert _detect_payment_intent({}) is False
-    # primary signal: knowledge.policy contains the datos_pago trigger
+    # not a dict → False (never raises)
+    assert _detect_payment_intent("trace") is False
+    assert _detect_payment_intent(42) is False
+    # primary signal: knowledge.policy (production list[str]) has datos_pago
+    assert _detect_payment_intent(
+        {"retrieved": {"knowledge.policy": ["Trigger: datos_pago\nRegla: ..."]}}
+    ) is True
+    # defensive: a bare str policy is still detected
     assert _detect_payment_intent(
         {"retrieved": {"knowledge.policy": "Trigger: datos_pago\nRegla: ..."}}
     ) is True
@@ -2456,9 +2463,20 @@ def test_detect_payment_intent_pure() -> None:
             "comprehension": {"intent": "saludo", "topics": ["pago"]},
         }
     ) is False
-    # malformed shapes never raise
+    # malformed shapes never raise (F5/R1-8)
     assert _detect_payment_intent({"retrieved": None, "comprehension": None}) is False
     assert _detect_payment_intent({"retrieved": "string"}) is False
+    # topics None / not a list → no crash, falls back to False
+    assert _detect_payment_intent(
+        {"comprehension": {"intent": "confirmar_entrega", "topics": None}}
+    ) is False
+    assert _detect_payment_intent(
+        {"comprehension": {"intent": "confirmar_entrega", "topics": "pago"}}
+    ) is False
+    # policy not a string (non-list, non-str) → no crash, no primary signal
+    assert _detect_payment_intent(
+        {"retrieved": {"knowledge.policy": 42}}
+    ) is False
 
 
 def _payment_decision() -> Decision:
@@ -2476,7 +2494,7 @@ async def test_atencion_payment_policy_trigger_notifies_owner() -> None:
     g = _build(
         FakeDirector(_payment_decision()),
         trace_reader=_FakeTraceReader(
-            {"retrieved": {"knowledge.policy": "Trigger: datos_pago"}}
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
         ),
     )
     turn_id = await g["orch"].handle_vip_message(
@@ -2508,6 +2526,7 @@ async def test_atencion_payment_confirm_intent_notifies_owner() -> None:
     )
     expected = ATENCION_PAYMENT_NOTICE.format(chat_id=505)
     assert (expected, 505) in g["notifier"].infos
+    assert len(g["notifier"].infos) == 1
 
 
 @pytest.mark.asyncio
@@ -2516,7 +2535,7 @@ async def test_vip_payment_signal_not_notified() -> None:
     g = _build(
         FakeDirector(_payment_decision()),
         trace_reader=_FakeTraceReader(
-            {"retrieved": {"knowledge.policy": "Trigger: datos_pago"}}
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
         ),
     )
     await g["orch"].handle_vip_message(_vip(vip_id=uuid4(), chat_id=100))
@@ -2568,6 +2587,79 @@ async def test_atencion_payment_without_reader_is_noop() -> None:
     turn = await g["turns"].get(turn_id)
     assert turn is not None and turn.status == "pending_approval"
     assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_edit_skips_dm() -> None:
+    """F4(a): edited atencion messages never fire the payment DM."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100, is_edit=True)
+    )
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None and turn.status == "pending_approval"
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_consult_doctrine_skips_dm() -> None:
+    """F4(c): consult_doctrine turns already send a doctrine DM — no payment DM."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_sandbox_skips_dm() -> None:
+    """F16: sandboxed atencion chats never fire the payment DM."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+    )
+    g["orch"]._sandbox_active = lambda chat_id: chat_id == 100  # type: ignore[method-assign]
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100)
+    )
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_payment_cooldown_limits_dm_per_chat() -> None:
+    """F4(b): a second payment signal within 20 min does not double-notify."""
+    g = _build(
+        FakeDirector(_payment_decision()),
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100, text="pago 1")
+    )
+    assert len(g["notifier"].infos) == 1
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=100, text="pago 2")
+    )
+    assert len(g["notifier"].infos) == 1  # cooldown holds
 
 
 @pytest.mark.asyncio
