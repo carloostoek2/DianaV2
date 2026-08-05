@@ -68,6 +68,43 @@ def test_composition_orchestrator_receives_catalog_provider(_comp_src: str) -> N
     assert "persona_catalog_provider=persona_catalog_provider" in _comp_src
 
 
+def test_composition_orchestrator_catalog_provider_scoped_to_block(_comp_src: str) -> None:
+    """REQ-ATN-05: the kwarg is bound inside the TurnOrchestrator(...) call.
+
+    The file-wide match above also hits the registry/director call sites, so it
+    passed even when the orchestrator was NOT wired (arch-fix 47b2f7c). Scope to
+    the orchestrator block so a regression that drops ONLY this kwarg fails.
+    """
+    start = _comp_src.find("orchestrator = TurnOrchestrator(")
+    assert start != -1
+    block = _comp_src[start : start + 900]
+    assert "persona_catalog_provider=persona_catalog_provider" in block
+
+
+def test_build_app_binds_real_catalog_provider_into_orchestrator(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Binding smoke test: build_app actually RUNS and the orchestrator receives
+    the real PersonaCatalogProvider (guards the 47b2f7c NameError regression).
+    """
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:test-token-not-real")
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "999001")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://diana:diana@localhost:5432/diana"
+    )
+
+    from diana.application.persona_catalog_provider import PersonaCatalogProvider
+    from diana.composition import build_app
+    from diana.config import Settings
+
+    app = build_app(Settings())
+    assert isinstance(
+        app.orchestrator._catalog_provider,  # noqa: SLF001
+        PersonaCatalogProvider,
+    )
+
+
 def test_composition_daily_limit_store_wired(_comp_src: str) -> None:
     """F4-02: SqlDailyMessageLimitStore is built and injected into the orch."""
     assert (
