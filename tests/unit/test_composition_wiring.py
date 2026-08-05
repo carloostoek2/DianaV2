@@ -70,6 +70,13 @@ def test_composition_daily_limit_store_wired(_comp_src: str) -> None:
     assert "daily_message_limit_store=daily_message_limit_repo" in _comp_src
 
 
+def test_composition_orchestrator_receives_turns_store(_comp_src: str) -> None:
+    """F4-02: the SAME SqlTurnStore backing the status reader reaches the orch."""
+    assert "TurnStoreStatusReader(turns)" in _comp_src
+    assert "turns=turns" in _comp_src
+    assert "TurnOrchestrator(" in _comp_src
+
+
 def test_composition_load_feature_flags_removed(_comp_src: str) -> None:
     """load_feature_flags was removed per BUG-1 (option b)."""
     assert "def load_feature_flags" not in _comp_src

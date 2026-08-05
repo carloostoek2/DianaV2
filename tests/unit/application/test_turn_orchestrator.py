@@ -3071,6 +3071,60 @@ async def test_atencion_limit_close_marks_turn_failed_on_deliver_error() -> None
 
 
 @pytest.mark.asyncio
+async def test_atencion_limit_close_failed_result_marks_turn_failed() -> None:
+    """F4-02: a non-raising failed DeliveryResult still fails the minted turn.
+
+    Unlike the raising-deliverer path (``atencion_limit_close_failed``), a
+    deliverer that RETURNS ``DeliveryResult(success=False, error="boom")``
+    must transition the close turn to ``failed`` with the result's error —
+    and the best-effort close text is still sent once regardless of the
+    result.
+    """
+
+    class _FailedResultDeliverer:
+        def __init__(self) -> None:
+            self.texts: list[list[str]] = []
+            self.turn_ids: list[UUID] = []
+
+        async def deliver(
+            self, texts, ctx, turn_id, decision=None
+        ) -> object:
+            from diana.application.ports import DeliveryResult
+
+            self.texts.append(list(texts))
+            self.turn_ids.append(turn_id)
+            return DeliveryResult(success=False, error="boom")
+
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
+    turns = _RecordingTurnStore()
+    spy = _FailedResultDeliverer()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=spy,
+        turns=turns,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=21,
+        )
+    )
+    # Close turn minted (promo_pending), best-effort text still sent once.
+    assert turn_id == turns.created[0].id
+    assert turns.created[0].status == "promo_pending"
+    assert spy.texts == [[ATENCION_DAILY_LIMIT_CLOSE]]
+    assert spy.turn_ids == [turns.created[0].id]
+    # Non-raising failure → turn transitioned failed with result.error == "boom".
+    assert (await g["turns"].get(turn_id)).status == "failed"
+    assert turns.transitions == [(turn_id, "failed", "boom")]
+    assert g["director"].calls == []
+
+
+@pytest.mark.asyncio
 async def test_atencion_limit_store_error_processes_normally() -> None:
     """F4-02 (S2): a store outage fails open — the message still processes."""
     store = _RaisingDailyLimitStore()
