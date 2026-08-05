@@ -319,6 +319,46 @@ async def test_expiry_with_draft_admin_none_falls_back_to_escalated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_expiry_admin_none_escalate_failure_does_not_reopen() -> None:
+    """flag-OFF: escalate failure on admin=None keeps the legacy failure path.
+
+    The double-failure reopen is gated to supervised-delivery attempts, so the
+    admin=None path never mutates the query (byte-identical failure behavior).
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    notifier = FakeNotifier()
+    turn_id = uuid4()
+    query_id = uuid4()
+    coordinator.fail_on(turn_id)
+    gray_zone.add_result(
+        [
+            make_expired_item(
+                turn_id, draft="texto", business_connection_id="bc1",
+                query_id=query_id,
+            )
+        ]
+    )
+    job = GrayZoneExpirationJob(
+        gray_zone,
+        coordinator=coordinator,
+        notifier=notifier,
+        interval_seconds=0.05,
+    )
+
+    async def _run_and_stop() -> None:
+        await asyncio.sleep(0.12)
+        await job.stop()
+
+    await asyncio.gather(job.start(), _run_and_stop())
+
+    assert coordinator.transitions == [(turn_id, "escalated")]  # attempted
+    assert gray_zone.reopen_calls == []  # no supervised attempt → no reopen
+    assert notifier.info_calls
+    assert "1 failed" in notifier.info_calls[-1]
+
+
+@pytest.mark.asyncio
 async def test_expiry_supervised_error_does_not_break_loop() -> None:
     """A failing supervised delivery must not stop the remaining items."""
     gray_zone = FakeGrayZone()

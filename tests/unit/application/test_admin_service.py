@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -1057,7 +1058,9 @@ async def test_gray_zone_supervised_delivery_missing_turn(admin_graph: dict) -> 
 
 
 @pytest.mark.asyncio
-async def test_gray_zone_supervised_delivery_missing_bc(admin_graph: dict) -> None:
+async def test_gray_zone_supervised_delivery_missing_bc(
+    admin_graph: dict, caplog: pytest.LogCaptureFixture
+) -> None:
     """Legacy query without business_connection_id → False, no approval."""
     g = admin_graph
     turn_id = uuid4()
@@ -1065,12 +1068,17 @@ async def test_gray_zone_supervised_delivery_missing_bc(admin_graph: dict) -> No
         TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
     )
     query = _gray_zone_query(turn_id=turn_id, bc=None)
-    result = await g["admin"].create_supervised_delivery_from_gray_zone(
-        turn_id, query
-    )
+    with caplog.at_level(logging.WARNING, logger="diana.application"):
+        result = await g["admin"].create_supervised_delivery_from_gray_zone(
+            turn_id, query
+        )
     assert result is False
     assert await g["approvals"].get_by_turn(turn_id) is None
     assert len(g["notifier"].drafts) == 0
+    assert any(
+        "gray_zone_delivery_missing_bc" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio
