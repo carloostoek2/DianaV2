@@ -298,7 +298,7 @@ class GrayZoneService:
                 extra={
                     "query_id": str(row.id),
                     "vip_id": str(row.vip_id),
-                    "action": "escalate",
+                    "action": "expired",
                 },
             )
 

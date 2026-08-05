@@ -51,9 +51,11 @@ async def handle_doctrine_resolve_with_draft(
     ``admin.create_supervised_delivery_from_gray_zone`` creates a supervised
     PendingApproval with the query draft and transitions the turn to
     ``PENDING_APPROVAL``. With ``admin=None`` the behavior is legacy:
-    only ``confirm_and_apply`` (no approval creation, no transition).
+    only ``confirm_and_apply`` (no approval creation, no transition). If the
+    supervised delivery cannot be created, the turn is escalated as a
+    fallback so it never stays stuck in ``gray_zone``.
 
-    Returns status token: 'resolved', 'not_found', or 'error'.
+    Returns status token: 'resolved', 'escalated', 'not_found', or 'error'.
     """
     try:
         query = await gray_zone.get_open_query_by_turn_id(turn_id)
@@ -78,7 +80,32 @@ async def handle_doctrine_resolve_with_draft(
         # can be retried or expired later — safe but should be monitored.
         await gray_zone.confirm_and_apply(query.id, candidate.id)
         if admin is not None:
-            await admin.create_supervised_delivery_from_gray_zone(turn_id, query)
+            try:
+                created = await admin.create_supervised_delivery_from_gray_zone(
+                    turn_id, query
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_resolve_delivery_error",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+                created = False
+            if not created:
+                # Supervised delivery unavailable (e.g. legacy query without
+                # business_connection_id). The query is already closed, so
+                # escalate the turn — never leave it stuck in gray_zone.
+                try:
+                    await coordinator.transition(turn_id, "escalated")
+                except Exception:
+                    logger.exception(
+                        "doctrine_resolve_fallback_escalate_error",
+                        extra={"turn_id": str(turn_id)},
+                    )
+                logger.warning(
+                    "doctrine_resolve_delivery_fallback_escalated",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+                return "escalated"
         logger.info(
             "doctrine_resolved_with_draft",
             extra={

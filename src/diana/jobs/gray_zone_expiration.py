@@ -22,8 +22,12 @@ class GrayZoneExpirationJob:
     With ``admin`` injected, an expired query that still has a non-empty
     draft is converted into a supervised PendingApproval (via
     ``AdminService.create_supervised_delivery_from_gray_zone``) instead of
-    being silently escalated. Queries without a draft, or with ``admin=None``
-    (flag OFF), keep the legacy ``escalated`` behavior byte-identical.
+    being silently escalated. If the supervised delivery cannot be created
+    (missing ``business_connection_id``, missing turn, terminal turn, or an
+    unexpected error), the job falls back to the legacy ``escalated``
+    transition so no turn is ever left stuck in ``gray_zone``. Queries
+    without a draft, or with ``admin=None`` (flag OFF), keep the legacy
+    ``escalated`` behavior byte-identical.
 
     ``start()`` is one-shot — once it returns (after ``stop()`` is called),
     the instance cannot be restarted. Create a new instance if needed.
@@ -63,6 +67,9 @@ class GrayZoneExpirationJob:
                     timeout=self._interval,
                 )
                 if expired:
+                    delivery_count = 0
+                    escalated_count = 0
+                    failed_count = 0
                     for row in expired:
                         turn_id: UUID = (
                             row.turn_id
@@ -72,7 +79,7 @@ class GrayZoneExpirationJob:
                         draft = getattr(row, "draft", "") or ""
                         if draft.strip() and self._admin is not None:
                             try:
-                                await self._admin.create_supervised_delivery_from_gray_zone(
+                                created = await self._admin.create_supervised_delivery_from_gray_zone(
                                     turn_id, row
                                 )
                             except Exception:
@@ -80,28 +87,36 @@ class GrayZoneExpirationJob:
                                     "expiration_delivery_error",
                                     extra={"turn_id": str(turn_id)},
                                 )
-                        else:
-                            try:
-                                await self._coordinator.transition(
-                                    turn_id, "escalated"
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "expiration_escalate_error",
-                                    extra={"turn_id": str(turn_id)},
-                                )
+                                created = False
+                            if created:
+                                delivery_count += 1
+                                continue
+                            logger.warning(
+                                "expiration_delivery_fallback_escalate",
+                                extra={"turn_id": str(turn_id)},
+                            )
+                        try:
+                            await self._coordinator.transition(
+                                turn_id, "escalated"
+                            )
+                            escalated_count += 1
+                        except Exception:
+                            logger.exception(
+                                "expiration_escalate_error",
+                                extra={"turn_id": str(turn_id)},
+                            )
+                            failed_count += 1
 
                     try:
-                        delivery_count = sum(
-                            1 for row in expired
-                            if getattr(row, "draft", "").strip()
-                            and self._admin is not None
-                        )
-                        escalated_count = len(expired) - delivery_count
+                        parts = [
+                            f"{delivery_count} pending approval",
+                            f"{escalated_count} escalated",
+                        ]
+                        if failed_count:
+                            parts.append(f"{failed_count} failed")
                         await self._notifier.notify_info(
-                            f"Gray zone queries expired: {delivery_count} "
-                            f"pending approval, {escalated_count} escalated "
-                            f"({len(expired)} total)."
+                            f"Gray zone queries expired: "
+                            f"{', '.join(parts)} ({len(expired)} total)."
                         )
                     except Exception:
                         logger.exception("expiration_notify_error")
