@@ -639,6 +639,7 @@ def build_app(
         runtime_timers=runtime_timers_store,
         clock=clock,
         daily_message_limit_store=daily_message_limit_repo,
+        turns=turns,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).

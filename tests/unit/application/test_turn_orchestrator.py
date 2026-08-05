@@ -22,7 +22,7 @@ from diana.application.memory import (
     InMemoryTurnStore,
     InMemoryVipStore,
 )
-from diana.application.ports import VipInboundMessage
+from diana.application.ports import TurnRecord, VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import (
     ATENCION_DAILY_LIMIT_CLOSE,
@@ -161,8 +161,9 @@ def _build(
     delay_policy: FixedDelayPolicy | None = None,
     behavior_override: object | None = None,
     daily_limit: object | None = None,
+    turns: InMemoryTurnStore | None = None,
 ) -> dict:
-    turns = InMemoryTurnStore()
+    turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
     escalations = InMemoryEscalationStore()
@@ -221,6 +222,7 @@ def _build(
         feature_advanced_behavior=feature_advanced_behavior,
         delay_policy=delay_policy,
         daily_message_limit_store=daily_limit,
+        turns=turns,
     )
     return {
         "orch": orch,
@@ -1027,6 +1029,8 @@ class _CapturingDeliverer:
     def __init__(self) -> None:
         self.ctxs: list = []
         self.texts: list[list[str]] = []
+        self.turn_ids: list[UUID] = []
+        self.decisions: list = []
 
     async def deliver(
         self,
@@ -1039,6 +1043,8 @@ class _CapturingDeliverer:
 
         self.ctxs.append(ctx)
         self.texts.append(list(texts))
+        self.turn_ids.append(turn_id)
+        self.decisions.append(decision)
         return DeliveryResult(success=True, message_ids=[1])
 
 
@@ -2801,6 +2807,43 @@ class _MemoryDailyLimitStore:
         return self._counts[key]
 
 
+class _RaisingDailyLimitStore:
+    """DailyMessageLimitStore that fails on increment (store-outage probe)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, date]] = []
+
+    async def increment(self, chat_id: int, *, fecha_local: date) -> int:
+        self.calls.append((chat_id, fecha_local))
+        raise RuntimeError("daily_message_limits store unavailable")
+
+
+class _RecordingTurnStore(InMemoryTurnStore):
+    """TurnStore that records every minted TurnRecord (create/transition)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.created: list[TurnRecord] = []
+        self.transitions: list[tuple[UUID, str, str | None]] = []
+
+    async def create(self, turn: TurnRecord) -> TurnRecord:
+        self.created.append(turn)
+        return await super().create(turn)
+
+    async def transition(
+        self,
+        turn_id: UUID,
+        status: str,
+        *,
+        superseded_by: UUID | None = None,
+        error: str | None = None,
+    ) -> TurnRecord:
+        self.transitions.append((turn_id, status, error))
+        return await super().transition(
+            turn_id, status, superseded_by=superseded_by, error=error
+        )
+
+
 class FakeDayClock:
     """Mutable now()-clock to pin the CDMX civil date for limit tests."""
 
@@ -2846,7 +2889,104 @@ async def test_atencion_limit_20_processes_normally() -> None:
 
 @pytest.mark.asyncio
 async def test_atencion_limit_21_sends_closing_once() -> None:
-    """F4-02: message #21 closes with the fixed reply; no turn, no history."""
+    """F4-02: message #21 closes with the fixed reply via a REAL minted turn.
+
+    Mirrors PromoService.execute_promo: the close mints a promo_pending turn,
+    delivers direct-to-chat with skip_initial_delay=True, then transitions the
+    turn to delivered. No epoch bump / history write / pipeline for msg 21.
+    """
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
+    turns = _RecordingTurnStore()
+    spy = _CapturingDeliverer()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=spy,
+        turns=turns,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=21,
+        )
+    )
+    # A REAL turn was minted (non-terminal promo_pending) and returned.
+    assert turn_id == turns.created[0].id
+    assert turns.created[0].status == "promo_pending"
+    assert turns.created[0].vip_id is None
+    # Closing reply delivered exactly once, direct to chat, no supervised
+    # ~120 s initial wait (skip_initial_delay neutralizes the delay).
+    assert spy.texts == [[ATENCION_DAILY_LIMIT_CLOSE]]
+    assert spy.ctxs[0].chat_id == 100
+    assert spy.ctxs[0].business_connection_id == "bc-vip"
+    assert spy.ctxs[0].skip_initial_delay is True
+    assert spy.turn_ids == [turns.created[0].id]
+    # Success → turn transitioned to delivered (promo-style bookkeeping).
+    assert (await g["turns"].get(turn_id)).status == "delivered"
+    assert turns.transitions == [(turn_id, "delivered", None)]
+    # Over-limit message never bumps epoch, writes history, or runs pipeline.
+    assert g["coordinator"].current_vip_epoch(100) == 0
+    assert g["director"].calls == []
+    history_ids = [
+        row.get("telegram_message_id")
+        for row in g["history"]._messages.get(100, [])  # noqa: SLF001
+    ]
+    assert 21 not in history_ids
+    assert store.calls == [(100, date(2026, 8, 5))]
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_22_drops_silently() -> None:
+    """F4-02: message #22 drops with no closing reply, no turn minted."""
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 21})
+    spy = _CapturingDeliverer()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=spy,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=22,
+        )
+    )
+    assert spy.texts == []
+    assert g["director"].calls == []
+    # Synthetic uuid4 returned — no turn minted for the dropped message.
+    assert await g["turns"].get(turn_id) is None
+    assert store.calls == [(100, date(2026, 8, 5))]
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_close_skips_when_no_behavior() -> None:
+    """F4-02: closing reply skipped (no_sender_or_bc) when no sender wired."""
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
+    g = _build(FakeDirector(_limit_decision()), daily_limit=store)
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=21,
+        )
+    )
+    # No behavior → close skipped, synthetic turn returned, no crash.
+    assert isinstance(turn_id, UUID)
+    assert await g["turns"].get(turn_id) is None
+    assert g["director"].calls == []
+    assert store.calls == [(100, date(2026, 8, 5))]
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_close_skips_when_no_bc() -> None:
+    """F4-02: closing reply skipped when business_connection_id is empty."""
     store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
     spy = _CapturingDeliverer()
     g = _build(
@@ -2860,27 +3000,19 @@ async def test_atencion_limit_21_sends_closing_once() -> None:
         _vip(
             counts_toward_limit=True,
             channel_type="atencion",
+            business_connection_id=None,
             telegram_message_id=21,
         )
     )
-    # Closing reply delivered exactly once, straight to chat (no pipeline).
-    assert spy.texts == [[ATENCION_DAILY_LIMIT_CLOSE]]
-    assert spy.ctxs[0].chat_id == 100
-    assert spy.ctxs[0].business_connection_id == "bc-vip"
-    # No turn minted and no history write for the over-limit message.
+    assert spy.texts == []
     assert await g["turns"].get(turn_id) is None
-    history_ids = [
-        row.get("telegram_message_id")
-        for row in g["history"]._messages.get(100, [])  # noqa: SLF001
-    ]
-    assert 21 not in history_ids
     assert store.calls == [(100, date(2026, 8, 5))]
 
 
 @pytest.mark.asyncio
-async def test_atencion_limit_23_drops_silently() -> None:
-    """F4-02: message #23 drops with no closing reply and no turn."""
-    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 22})
+async def test_atencion_limit_close_no_turn_store_skips() -> None:
+    """F4-02: closing reply skipped (no_turn_store) when turns not wired."""
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
     spy = _CapturingDeliverer()
     g = _build(
         FakeDirector(_limit_decision()),
@@ -2888,16 +3020,72 @@ async def test_atencion_limit_23_drops_silently() -> None:
         wire_autonomous=True,
         behavior_override=spy,
     )
+    g["orch"]._turns = None  # noqa: SLF001
     g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(
         _vip(
             counts_toward_limit=True,
             channel_type="atencion",
-            telegram_message_id=23,
+            telegram_message_id=21,
         )
     )
     assert spy.texts == []
     assert await g["turns"].get(turn_id) is None
+    assert store.calls == [(100, date(2026, 8, 5))]
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_close_marks_turn_failed_on_deliver_error() -> None:
+    """F4-02: a raising deliverer fails the minted close turn, no crash."""
+
+    class _RaisingDeliverer:
+        async def deliver(
+            self, texts, ctx, turn_id, decision=None
+        ) -> object:
+            raise RuntimeError("send burst")
+
+    store = _MemoryDailyLimitStore(seed={(100, date(2026, 8, 5)): 20})
+    turns = _RecordingTurnStore()
+    g = _build(
+        FakeDirector(_limit_decision()),
+        daily_limit=store,
+        wire_autonomous=True,
+        behavior_override=_RaisingDeliverer(),
+        turns=turns,
+    )
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=21,
+        )
+    )
+    # Deliver raised → the minted turn is transitioned to failed, swallowed.
+    assert turn_id == turns.created[0].id
+    assert (await g["turns"].get(turn_id)).status == "failed"
+    assert turns.transitions == [
+        (turn_id, "failed", "atencion_limit_close_failed")
+    ]
+    assert g["director"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_atencion_limit_store_error_processes_normally() -> None:
+    """F4-02 (S2): a store outage fails open — the message still processes."""
+    store = _RaisingDailyLimitStore()
+    g = _build(FakeDirector(_limit_decision()), daily_limit=store)
+    g["orch"]._clock = FakeDayClock(_FIXED_DAY)  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(
+            counts_toward_limit=True,
+            channel_type="atencion",
+            telegram_message_id=9,
+        )
+    )
+    assert store.calls == [(100, date(2026, 8, 5))]
+    assert await g["turns"].get(turn_id) is not None
+    assert len(g["director"].calls) == 1
 
 
 @pytest.mark.asyncio

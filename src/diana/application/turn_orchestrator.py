@@ -25,6 +25,8 @@ from diana.application.ports import (
     MessageHistoryWriter,
     RuntimeTimerRecord,
     RuntimeTimerStore,
+    TurnRecord,
+    TurnStore,
     VipInboundMessage,
     VipStore,
 )
@@ -138,6 +140,7 @@ class TurnOrchestrator:
         runtime_timers: RuntimeTimerStore | None = None,
         clock: object | None = None,
         daily_message_limit_store: object | None = None,
+        turns: TurnStore | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -157,6 +160,7 @@ class TurnOrchestrator:
         self._runtime_timers = runtime_timers
         self._clock = clock
         self._daily_limit = daily_message_limit_store
+        self._turns = turns
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
@@ -190,22 +194,40 @@ class TurnOrchestrator:
             and self._daily_limit is not None
         )
 
-    async def _enforce_daily_limit(self, incoming: VipInboundMessage) -> str:
-        """Return "proceed" | "closed" | "dropped" after the atomic increment."""
+    async def _enforce_daily_limit(
+        self, incoming: VipInboundMessage
+    ) -> tuple[str, UUID | None]:
+        """Return ``(outcome, close_turn_id)`` after the atomic increment.
+
+        outcome is "proceed" | "closed" | "dropped"; ``close_turn_id`` is the
+        real minted turn for "closed" (None when the close was skipped), None
+        otherwise. Fails open on store error so a DB hiccup never drops a
+        legitimate message.
+        """
         now = (
             self._clock.now()  # type: ignore[union-attr]
             if self._clock is not None and hasattr(self._clock, "now")
             else datetime.now(UTC)
         )
         fecha_local = cdmx_local_date(now)
-        count = await self._daily_limit.increment(  # type: ignore[union-attr]
-            incoming.chat_id, fecha_local=fecha_local
-        )
+        try:
+            count = await self._daily_limit.increment(  # type: ignore[union-attr]
+                incoming.chat_id, fecha_local=fecha_local
+            )
+        except Exception:
+            logger.exception(
+                "atencion_limit_check_failed",
+                extra={
+                    "chat_id": incoming.chat_id,
+                    "fecha_local": fecha_local.isoformat(),
+                },
+            )
+            return "proceed", None
         if count <= 20:
-            return "proceed"
+            return "proceed", None
         if count == 21:
-            await self._send_atencion_limit_close(incoming)
-            return "closed"
+            close_id = await self._send_atencion_limit_close(incoming)
+            return "closed", close_id
         logger.info(
             "atencion_limit_dropped",
             extra={
@@ -214,17 +236,40 @@ class TurnOrchestrator:
                 "count": count,
             },
         )
-        return "dropped"
+        return "dropped", None
 
-    async def _send_atencion_limit_close(self, incoming: VipInboundMessage) -> None:
-        """Best-effort direct-to-chat closing reply; never supervised/LLM."""
+    async def _send_atencion_limit_close(
+        self, incoming: VipInboundMessage
+    ) -> UUID | None:
+        """Best-effort direct-to-chat closing reply; never supervised/LLM.
+
+        Mirrors ``PromoService.execute_promo``: mints a REAL turn with a
+        non-terminal status (``promo_pending``) so the delivery path satisfies
+        both the ``pending_deliveries.turn_id`` FK and the engine's
+        TurnStatusReader liveness gate — a synthetic uuid4 aborts the send in
+        production. Returns the close turn id (None when skipped).
+        """
         bc = incoming.business_connection_id
         if self._behavior is None or not bc or not str(bc).strip():
             logger.info(
                 "atencion_limit_close_skipped",
                 extra={"chat_id": incoming.chat_id, "reason": "no_sender_or_bc"},
             )
-            return
+            return None
+        if self._turns is None:
+            logger.info(
+                "atencion_limit_close_skipped",
+                extra={"chat_id": incoming.chat_id, "reason": "no_turn_store"},
+            )
+            return None
+        turn = await self._turns.create(
+            TurnRecord(
+                id=uuid4(),
+                chat_id=incoming.chat_id,
+                status=TurnStatus.PROMO_PENDING.value,
+                vip_id=None,
+            )
+        )
         ctx = DeliveryContext(
             chat_id=incoming.chat_id,
             business_connection_id=str(bc),
@@ -232,19 +277,37 @@ class TurnOrchestrator:
             mode=self._delivery_mode,
             is_frozen=False,
             telegram_message_id=incoming.telegram_message_id,
+            skip_initial_delay=True,
         )
         try:
-            await self._behavior.deliver(
+            result = await self._behavior.deliver(
                 [ATENCION_DAILY_LIMIT_CLOSE],
                 ctx,
-                uuid4(),
+                turn.id,
                 decision=None,
             )
         except Exception:
+            await self._turns.transition(
+                turn.id,
+                TurnStatus.FAILED.value,
+                error="atencion_limit_close_failed",
+            )
             logger.exception(
                 "atencion_limit_close_failed",
-                extra={"chat_id": incoming.chat_id},
+                extra={"chat_id": incoming.chat_id, "turn_id": str(turn.id)},
             )
+            return turn.id
+        status = (
+            TurnStatus.DELIVERED.value
+            if result.success
+            else TurnStatus.FAILED.value
+        )
+        await self._turns.transition(
+            turn.id,
+            status,
+            error=None if result.success else result.error,
+        )
+        return turn.id
 
     async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
         if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
@@ -292,10 +355,14 @@ class TurnOrchestrator:
         # F4-02: enforce the atencion daily limit BEFORE any pipeline work
         # (epoch bump, durable history, mint, LLM). Over-limit messages never
         # write history, never advance the epoch, never enter the cognitive
-        # pipeline; a synthetic uuid4 is returned (business.py only logs it).
+        # pipeline. "closed" returns the real close turn id (minted by the
+        # closing-reply send); "dropped" returns a synthetic uuid4
+        # (business.py only logs it).
         if self._should_enforce_daily_limit(incoming):
-            outcome = await self._enforce_daily_limit(incoming)
-            if outcome != "proceed":
+            outcome, close_id = await self._enforce_daily_limit(incoming)
+            if outcome == "closed":
+                return close_id or uuid4()
+            if outcome == "dropped":
                 return uuid4()
         # Capture before any await so owner marks during pre-mint are visible.
         before_inbound = time.monotonic()
