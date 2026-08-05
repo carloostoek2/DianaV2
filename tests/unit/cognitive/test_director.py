@@ -1809,3 +1809,39 @@ async def test_persona_provider_non_list_rules_falls_back() -> None:
     prompt = trace.get(turn.turn_id, "prompt_text")
     assert "Live persona" in prompt
     assert "static rule" in prompt
+
+
+@pytest.mark.asyncio
+async def test_atencion_fallback_never_resolves_vip_persona() -> None:
+    """FIX-R2-7: with the catalog unavailable, an atencion turn resolves the
+    neutral service persona — never the boot VIP voice — while a VIP turn keeps
+    resolving the boot persona."""
+    class _NoneProvider:
+        async def get_catalog(self, channel_type: str = "vip") -> None:
+            return None
+
+    def _build() -> tuple[object, object]:
+        llm = FakeLLM(
+            structured_responses=[_comprehension(), _profile()],
+            text_responses=["draft"],
+        )
+        director, trace, _ = make_director(
+            llm,
+            persona="PERSONA-MARKER-ABC",
+            persona_catalog_provider=_NoneProvider(),
+        )
+        return director, trace
+
+    director, trace = _build()
+    atencion_turn = _turn(text="atencion-text-here")
+    atencion_turn.channel_type = "atencion"
+    await director.handle_turn(atencion_turn)
+    prompt = trace.get(atencion_turn.turn_id, "prompt_text")
+    assert "PERSONA-MARKER-ABC" not in prompt
+    assert "atención al cliente" in prompt
+
+    director, trace = _build()
+    vip_turn = _turn(text="vip-text-here")
+    await director.handle_turn(vip_turn)
+    prompt = trace.get(vip_turn.turn_id, "prompt_text")
+    assert "PERSONA-MARKER-ABC" in prompt

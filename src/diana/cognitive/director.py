@@ -73,6 +73,17 @@ _ROLE_TO_AUTOR: dict[str, str] = {
     "owner": "dueña",
 }
 
+# Channel-aware fallback for an atencion turn when the live catalog is
+# unavailable (missing/corrupt static file AND no active DB row) or the
+# ``voz_configurada`` slice is incomplete. The neutral service voice keeps the
+# channel-isolation invariant on the failure path — an atencion customer must
+# never resolve the boot VIP persona (FIX-R2-7).
+_NEUTRAL_ATENCION_PERSONA = (
+    "Eres la asistente de atención al cliente de este negocio. "
+    "Responde con tono profesional, amable y servicial."
+)
+_NEUTRAL_ATENCION_STYLE_RULES: list[str] = []
+
 logger = logging.getLogger("diana.cognitive")
 
 _DECISION_EMOJI: dict[str, str] = {
@@ -188,21 +199,40 @@ class CognitiveDirector:
         resolves, so the non-VIP service persona never leaks into the VIP flow
         (and vice versa). Falls back to the boot-time ``persona`` /
         ``style_rules`` when no provider is wired or the provider reports no
-        live catalog.
+        live catalog — **except** on the atencion channel, which falls back to
+        the neutral service voice instead (an atencion customer must never
+        resolve the boot VIP persona, even on the failure path).
 
         Note: under a concurrent owner save the catalog snapshot may vary
         intra-turn (retrievers refresh before this resolves). That is
         inherent to hot-reload; the next turn is always consistent.
         """
         if self._persona_catalog_provider is None:
+            if channel_type == "atencion":
+                return _NEUTRAL_ATENCION_PERSONA, _NEUTRAL_ATENCION_STYLE_RULES
             return self._persona, self._style_rules
         catalog = await self._persona_catalog_provider.get_catalog(channel_type)
         if catalog is None:
+            if channel_type == "atencion":
+                logger.warning(
+                    "persona_atencion_catalog_unavailable_fallback_neutral",
+                    extra={"channel_type": channel_type},
+                )
+                return _NEUTRAL_ATENCION_PERSONA, _NEUTRAL_ATENCION_STYLE_RULES
             return self._persona, self._style_rules
         voz = catalog.get("voz_configurada") or {}
-        persona = str(voz.get("persona") or self._persona)
-        rules = voz.get("reglas_estilo")
-        style_rules = list(rules) if isinstance(rules, list) and rules else self._style_rules
+        if channel_type == "atencion":
+            persona = str(voz.get("persona") or _NEUTRAL_ATENCION_PERSONA)
+            rules = voz.get("reglas_estilo")
+            style_rules = (
+                list(rules)
+                if isinstance(rules, list) and rules
+                else _NEUTRAL_ATENCION_STYLE_RULES
+            )
+        else:
+            persona = str(voz.get("persona") or self._persona)
+            rules = voz.get("reglas_estilo")
+            style_rules = list(rules) if isinstance(rules, list) and rules else self._style_rules
         return persona, style_rules
 
     async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
