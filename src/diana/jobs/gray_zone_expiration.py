@@ -89,13 +89,22 @@ class GrayZoneExpirationJob:
                                 # Lock contention with the dx: path or an owner
                                 # callback: the other holder may be creating an
                                 # approval for this very turn. Escalating would
-                                # terminalize it mid-flight — count as failed and
-                                # leave it for the next run instead.
+                                # terminalize it mid-flight — count as failed.
+                                # The row is already marked expired, so reopen
+                                # it: otherwise the turn stays stranded (the
+                                # next sweep only revisits open rows).
                                 logger.warning(
                                     "expiration_delivery_lock_timeout",
                                     extra={"turn_id": str(turn_id)},
                                 )
                                 failed_count += 1
+                                try:
+                                    await self._gray_zone.reopen_query(row.id)
+                                except Exception:
+                                    logger.exception(
+                                        "expiration_lock_timeout_reopen_error",
+                                        extra={"turn_id": str(turn_id)},
+                                    )
                                 continue
                             except Exception:
                                 logger.exception(

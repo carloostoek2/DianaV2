@@ -439,16 +439,23 @@ async def test_expiry_lock_timeout_is_failed_not_escalated() -> None:
     """ChatLockTimeoutError must NOT escalate (the lock holder may be mid-approval).
 
     Escalating a turn whose approval is being created by the dx: path would
-    leave a waiting orphan on an escalated turn — count as failed instead.
+    leave a waiting orphan on an escalated turn — count as failed and reopen
+    the query so a later run retries.
     """
     gray_zone = FakeGrayZone()
     coordinator = FakeCoordinator()
     notifier = FakeNotifier()
     admin = FakeAdmin()
     turn_id = uuid4()
+    query_id = uuid4()
     admin.lock_timeout_on(turn_id)
     gray_zone.add_result(
-        [make_expired_item(turn_id, draft="texto", business_connection_id="bc1")]
+        [
+            make_expired_item(
+                turn_id, draft="texto", business_connection_id="bc1",
+                query_id=query_id,
+            )
+        ]
     )
     job = GrayZoneExpirationJob(
         gray_zone,
@@ -466,7 +473,7 @@ async def test_expiry_lock_timeout_is_failed_not_escalated() -> None:
 
     assert len(admin.supervised_calls) == 1
     assert coordinator.transitions == []  # never escalated on lock contention
-    assert gray_zone.reopen_calls == []  # nothing closed to reopen
+    assert gray_zone.reopen_calls == [query_id]  # reopened for a later run
     assert notifier.info_calls
     assert "1 failed" in notifier.info_calls[-1]
 

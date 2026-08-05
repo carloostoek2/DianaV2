@@ -457,16 +457,18 @@ async def test_resolve_with_draft_delivery_error_falls_back_to_escalate() -> Non
 
 @pytest.mark.asyncio
 async def test_resolve_with_draft_lock_timeout_is_error_not_escalated() -> None:
-    """dx: ChatLockTimeoutError → 'error' (retryable), no escalate, no reopen.
+    """dx: ChatLockTimeoutError → 'error' (retryable), no escalate, query reopened.
 
     The lock holder (expiry job / owner callback) may be creating the
     approval for this very turn; escalating would terminalize it mid-flight.
+    The query is already closed by confirm_and_apply, so it is reopened to
+    keep the turn retryable.
     """
     gray_zone = FakeGrayZone()
     coordinator = FakeCoordinator()
     admin = FakeAdmin()
     turn_id = uuid4()
-    gray_zone.add_query(turn_id, draft="use-this-draft")
+    query = gray_zone.add_query(turn_id, draft="use-this-draft")
 
     async def _lock_timeout(turn_id_: UUID, query: object) -> bool:
         msg = "simulated lock contention"
@@ -482,7 +484,7 @@ async def test_resolve_with_draft_lock_timeout_is_error_not_escalated() -> None:
     )
     assert status == "error"
     assert coordinator.transitions == []
-    assert gray_zone.reopen_calls == []
+    assert gray_zone.reopen_calls == [query.id]
 
 
 @pytest.mark.asyncio

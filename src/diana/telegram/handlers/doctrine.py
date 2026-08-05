@@ -91,7 +91,16 @@ async def handle_doctrine_resolve_with_draft(
                 # Lock contention with the expiry job or an owner callback:
                 # the other holder may be creating the approval for this very
                 # turn. Escalating would terminalize it mid-flight — report a
-                # retryable error and leave the turn untouched.
+                # retryable error. The query is already closed by
+                # confirm_and_apply, so reopen it: otherwise the turn would be
+                # stranded in gray_zone with a query nothing ever revisits.
+                try:
+                    await gray_zone.reopen_query(query.id)
+                except Exception:
+                    logger.exception(
+                        "doctrine_resolve_lock_timeout_reopen_error",
+                        extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                    )
                 logger.warning(
                     "doctrine_resolve_delivery_lock_timeout",
                     extra={"turn_id": str(turn_id), "query_id": str(query.id)},

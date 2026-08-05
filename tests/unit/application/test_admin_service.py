@@ -1213,6 +1213,38 @@ async def test_gray_zone_supervised_delivery_existing_non_waiting_approval(
     assert approval.status == "cancelled"  # untouched
 
 
+@pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_transition_error_cancels_approval(
+    admin_graph: dict,
+) -> None:
+    """Non-TurnSupersededError transition failure → approval cancelled, re-raises.
+
+    A transient DB error on the PENDING_APPROVAL transition must not leave a
+    live waiting approval that the callers' fallback-escalate would then
+    orphan on an escalated turn.
+    """
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=42, status="gray_zone")
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    async def _boom_transition(_turn_id: object, _status: object) -> object:
+        msg = "simulated transition failure"
+        raise RuntimeError(msg)
+
+    g["coordinator"].transition = _boom_transition  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="simulated transition failure"):
+        await g["admin"].create_supervised_delivery_from_gray_zone(
+            turn_id, query
+        )
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.status == "cancelled"
+
+
 # --- Item4 Task4: advanced behavior builder wiring ---
 
 

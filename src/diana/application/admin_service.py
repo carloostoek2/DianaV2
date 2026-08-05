@@ -254,10 +254,10 @@ class AdminService:
         now, or already ``waiting`` (idempotent, no second approval/DM). If
         ``send_draft_for_approval`` fails after persisting the approval, the
         just-created approval is cancelled before the exception re-raises, so
-        callers' fallback-escalate never leaves a waiting orphan behind. If the
-        transition raises ``TurnSupersededError``, the approval just created is
-        cancelled (only while still ``waiting``) so no orphan approval is left
-        behind.
+        callers' fallback-escalate never leaves a waiting orphan behind. If
+        the transition fails (``TurnSupersededError`` or any other error), the
+        approval just created is cancelled (only while still ``waiting``) so
+        no orphan approval is left behind.
         """
         turn = await self._turns.get(turn_id)
         if turn is None:
@@ -350,34 +350,49 @@ class AdminService:
                 # BEFORE the owner DM; if the DM (or anything after persist)
                 # fails, cancel the just-created approval so the caller's
                 # fallback-escalate never leaves a waiting orphan behind.
-                approval = await self._approvals.get_by_turn(turn_id)
-                if approval is not None and approval.status == "waiting":
-                    try:
-                        await self._approvals.mark_status(turn_id, "cancelled")
-                    except Exception:
-                        logger.exception(
-                            "gray_zone_delivery_cancel_after_notify_error",
-                            extra={"turn_id": str(turn_id)},
-                        )
+                await self._cancel_waiting_approval(turn_id)
                 raise
             try:
                 await self._coordinator.transition(
                     turn_id, TurnStatus.PENDING_APPROVAL
                 )
             except TurnSupersededError:
-                approval = await self._approvals.get_by_turn(turn_id)
-                if approval is not None and approval.status == "waiting":
-                    await self._approvals.mark_status(turn_id, "cancelled")
+                await self._cancel_waiting_approval(turn_id)
                 logger.info(
                     "gray_zone_delivery_superseded",
                     extra={"turn_id": str(turn_id)},
                 )
                 return False
+            except Exception:
+                # Any other transition failure (e.g. transient DB error) must
+                # not leave a live waiting approval that callers would then
+                # escalate over — cancel and re-raise.
+                await self._cancel_waiting_approval(turn_id)
+                raise
         logger.info(
             "gray_zone_supervised_delivery_created",
             extra={"turn_id": str(turn_id)},
         )
         return True
+
+    async def _cancel_waiting_approval(self, turn_id: UUID) -> None:
+        """Best-effort cancel of a waiting approval (no-op when none/live)."""
+        try:
+            approval = await self._approvals.get_by_turn(turn_id)
+        except Exception:
+            logger.exception(
+                "gray_zone_delivery_cancel_lookup_error",
+                extra={"turn_id": str(turn_id)},
+            )
+            return
+        if approval is not None and approval.status == "waiting":
+            try:
+                await self._approvals.mark_status(turn_id, "cancelled")
+            except Exception:
+                logger.exception(
+                    "gray_zone_delivery_cancel_error",
+                    extra={"turn_id": str(turn_id)},
+                )
 
     async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
         """Thin wrapper for operator/info notifications (e.g. Analyst schema fail)."""
