@@ -85,6 +85,9 @@ from diana.infrastructure.db.repositories.recontact_schedules import (
 )
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
 from diana.infrastructure.db.repositories.persona_versions import PersonaVersionRepo
+from diana.infrastructure.db.repositories.daily_message_limits import (
+    SqlDailyMessageLimitStore,
+)
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore
@@ -516,6 +519,7 @@ def build_app(
     # with the flag off the provider falls back to the static catalog and the
     # pipeline behaves exactly as before.
     persona_version_repo = PersonaVersionRepo(sf)
+    daily_message_limit_repo = SqlDailyMessageLimitStore(sf)
     persona_admin_service = PersonaAdminService(
         payload_store=persona_version_repo,
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
@@ -634,6 +638,7 @@ def build_app(
         delay_policy=policy,
         runtime_timers=runtime_timers_store,
         clock=clock,
+        daily_message_limit_store=daily_message_limit_repo,
     )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).

@@ -60,6 +60,16 @@ def test_composition_orchestrator_receives_autonomous_deps(_comp_src: str) -> No
     assert "delivery_mode=" in _comp_src
 
 
+def test_composition_daily_limit_store_wired(_comp_src: str) -> None:
+    """F4-02: SqlDailyMessageLimitStore is built and injected into the orch."""
+    assert (
+        "from diana.infrastructure.db.repositories.daily_message_limits import ("
+        in _comp_src
+    )
+    assert "daily_message_limit_repo = SqlDailyMessageLimitStore(sf)" in _comp_src
+    assert "daily_message_limit_store=daily_message_limit_repo" in _comp_src
+
+
 def test_composition_load_feature_flags_removed(_comp_src: str) -> None:
     """load_feature_flags was removed per BUG-1 (option b)."""
     assert "def load_feature_flags" not in _comp_src
