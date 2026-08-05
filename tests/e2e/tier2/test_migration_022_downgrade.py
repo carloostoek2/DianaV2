@@ -94,7 +94,7 @@ async def test_022_downgrade_reverses_schema_and_preserves_rows(
                         "INSERT INTO memories "
                         "(vip_id, embedding, content, category, confidence, "
                         " status, source_turn_id) "
-                        "VALUES (:vip, :emb::vector, :content::jsonb, "
+                        "VALUES (:vip, CAST(:emb AS vector), CAST(:content AS jsonb), "
                         "        'sensible', 0.9, 'pending_owner', "
                         "        '00000000-0000-0000-0000-000000000001')"
                     ),
@@ -108,7 +108,7 @@ async def test_022_downgrade_reverses_schema_and_preserves_rows(
                     text(
                         "INSERT INTO memories "
                         "(vip_id, embedding, content, category, confidence) "
-                        "VALUES (:vip, :emb::vector, :content::jsonb, "
+                        "VALUES (:vip, CAST(:emb AS vector), CAST(:content AS jsonb), "
                         "        'identidad', 0.8)"
                     ),
                     {

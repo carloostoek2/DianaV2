@@ -1,5 +1,8 @@
 """E2E: MessageHistory SQL repository."""
+from datetime import UTC, datetime
+
 import pytest
+
 from diana.infrastructure.db.repositories.history import SqlMessageHistoryRepo
 
 
@@ -33,3 +36,36 @@ async def test_get_recent_empty_chat(session_factory):
     repo = SqlMessageHistoryRepo(session_factory)
     recent = await repo.get_recent(chat_id=999, limit=5)
     assert recent == []
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_all_returns_all_chronological(session_factory):
+    repo = SqlMessageHistoryRepo(session_factory)
+    base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=UTC)
+    # Append out of chronological order on purpose: list_all must sort oldest first.
+    await repo.append(
+        chat_id=400, role="vip", text="tercero",
+        telegram_message_id=3, timestamp=base.replace(hour=12),
+    )
+    await repo.append(
+        chat_id=400, role="owner", text="primero",
+        telegram_message_id=1, timestamp=base.replace(hour=10),
+    )
+    await repo.append(
+        chat_id=400, role="vip", text="segundo",
+        telegram_message_id=2, timestamp=base.replace(hour=11),
+    )
+
+    all_msgs = await repo.list_all(chat_id=400, page_size=2)
+    assert len(all_msgs) == 3
+    assert [m["text"] for m in all_msgs] == ["primero", "segundo", "tercero"]
+    assert [m["role"] for m in all_msgs] == ["owner", "vip", "vip"]
+    assert all("timestamp" in m for m in all_msgs)
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_all_empty_chat(session_factory):
+    repo = SqlMessageHistoryRepo(session_factory)
+    assert await repo.list_all(chat_id=998, page_size=2) == []
