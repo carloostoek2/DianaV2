@@ -25,9 +25,11 @@ _WEEKDAY_ES = (
 
 # Fallbacks mirrored from cognitive/registry.py schedule parsing — only used
 # for defensive rebuilds when a live catalog slice lacks a key (validation
-# normally guarantees both are present).
+# normally guarantees both are present). Channel-neutral: the same fallback is
+# reachable from an atencion turn (provider returning None), so it must not
+# carry VIP-flavored slang (B3 style rules).
 _DEFAULT_SCHEDULE_TZ = "America/Mexico_City"
-_DEFAULT_SCHEDULE_RESPONSES = ["Pues aquí entre cosas jsjsjs y tú?"]
+_DEFAULT_SCHEDULE_RESPONSES = ["Estoy al pendiente de tus mensajes."]
 
 
 class ScheduleRetriever:

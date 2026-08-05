@@ -129,11 +129,14 @@ class PolicyRetriever:
         if has_db:
             try:
                 embedding = await self._embed.embed(turn.text)
-                vip_segment: str | None = None
+                # Channel-scope the DB path: an atencion turn may only load
+                # ``scope='all'`` rows (never a VIP-scoped policy); a VIP turn
+                # keeps the unfiltered lookup (scope=None).
+                db_scope = "all" if turn.channel_type == "atencion" else None
                 rows = await self._repo.find_active_by_similarity(
                     embedding,
                     threshold=DEFAULT_POLICY_THRESHOLD,
-                    scope=vip_segment,
+                    scope=db_scope,
                     limit=DEFAULT_POLICY_LIMIT,
                 )
                 for row in rows or []:

@@ -294,4 +294,5 @@ async def test_schedule_refresh_missing_keys_uses_defaults() -> None:
     result = await retriever.fetch(_turn(), _comprehension())
     assert result["tipo"] == "respuesta_libre"
     # missing keys fall back to the retriever's mirrored default response
-    assert result["respuesta_sugerida"] == "Pues aquí entre cosas jsjsjs y tú?"
+    # (FIX-R2-3: channel-neutral, no VIP slang)
+    assert result["respuesta_sugerida"] == "Estoy al pendiente de tus mensajes."

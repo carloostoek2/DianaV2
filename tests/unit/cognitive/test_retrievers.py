@@ -1099,3 +1099,72 @@ async def test_policy_provider_none_falls_back_to_static() -> None:
     )
     result = await retriever.fetch(_turn(), c)
     assert result == ["Trigger: s1 | Rule: static rule"]
+
+
+@pytest.mark.asyncio
+async def test_schedule_fallback_is_channel_neutral_for_atencion() -> None:
+    """FIX-R2-3: the unpopulated-channel fallback must not carry VIP slang.
+
+    A provider returning None (stub/misconfigured wiring) leaves the atencion
+    channel with the defensive ``_DEFAULT_SCHEDULE_RESPONSES`` fallback, which
+    must be neutral — never the coqueta "jsjsjs" style B3 removed from
+    ``persona_atencion.json``.
+    """
+    from diana.cognitive.retrievers.schedule import ScheduleRetriever
+
+    class _FixedClock:
+        def now(self) -> datetime:
+            return datetime(2026, 7, 22, 23, 0, tzinfo=UTC)  # Wednesday
+
+    class _FixedRng:
+        def choice(self, seq: list[str]) -> str:
+            return seq[0]
+
+    provider = _FakeProvider(None)
+    retriever = ScheduleRetriever(
+        [],
+        [],
+        "America/Mexico_City",
+        _FixedClock(),
+        rng=_FixedRng(),
+        persona_catalog_provider=provider,  # type: ignore[arg-type]
+    )
+    atencion_turn = _turn()
+    atencion_turn.channel_type = "atencion"
+    result = await retriever.fetch(atencion_turn, _comprehension())
+    assert result is not None and result["tipo"] == "respuesta_libre"
+    assert "jsjsjs" not in result["respuesta_sugerida"]
+    assert "jsjs" not in result["respuesta_sugerida"]
+
+
+@pytest.mark.asyncio
+async def test_policy_db_path_channel_scopes_atencion_to_all() -> None:
+    """FIX-R2-4: the PolicyRetriever DB path is channel-scoped.
+
+    An atencion turn must request ``scope="all"`` (never load a VIP-scoped
+    policy row); a VIP turn keeps the unfiltered lookup (``scope=None``).
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    def _side_effect(*args, **kwargs):
+        # Simulate the SQL filter: scope="all" → only scope='all' rows;
+        # scope=None → unfiltered (returns the VIP-scoped row).
+        scope = kwargs.get("scope")
+        row = {"trigger_description": "vip only", "rule": "VIP-scoped rule"}
+        return [] if scope == "all" else [row]
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(side_effect=_side_effect)
+    retriever = PolicyRetriever(embedding_service=embed, repo=repo)
+
+    atencion_turn = _turn()
+    atencion_turn.channel_type = "atencion"
+    result = await retriever.fetch(atencion_turn, _comprehension())
+    assert result == []
+    assert repo.find_active_by_similarity.await_args.kwargs.get("scope") == "all"
+
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result == ["Trigger: vip only | Rule: VIP-scoped rule"]
+    assert repo.find_active_by_similarity.await_args.kwargs.get("scope") is None
