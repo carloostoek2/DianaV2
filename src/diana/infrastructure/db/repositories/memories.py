@@ -258,20 +258,24 @@ class MemoriesRepo:
         threshold: float = 0.85,
         category: str | None = None,
     ) -> list[dict]:
-        """Facts of ``vip_id`` semantically close to ``embedding`` — ALL statuses.
+        """Facts of ``vip_id`` semantically close to ``embedding`` — non-discarded.
 
         REQ-MEM-08 / A5: the post-turn dedup compares against every non-
-        ``perfil`` row of the VIP (``auto``/``pending_owner``/``approved``/
-        ``discarded``), unlike ``find_similar_surviving`` (Pool 2 backfill
-        contract: only approved/discarded). The incremental insert never
-        deletes, so a duplicate of a previous ``auto`` fact (backfill or an
-        earlier turn) must be discarded here. Returns up to 5 closest rows
-        ordered by cosine distance, as plain dicts.
+        ``perfil`` row of the VIP that the owner has NOT discarded
+        (``auto``/``pending_owner``/``approved``), unlike
+        ``find_similar_surviving`` (Pool 2 backfill contract: only
+        approved/discarded). A discarded fact must never suppress a later
+        correct fact, so ``discarded`` rows are excluded from the dedup set.
+        The incremental insert never deletes, so a duplicate of a previous
+        ``auto`` fact (backfill or an earlier turn) must be discarded here.
+        Returns up to 5 closest rows ordered by cosine distance, as plain
+        dicts.
         """
         stmt = (
             select(Memory)
             .where(
                 Memory.vip_id == vip_id,
+                Memory.status.in_(("auto", "pending_owner", "approved")),
                 Memory.category != "perfil",
                 Memory.embedding.cosine_distance(embedding) < 1 - threshold,
             )

@@ -126,19 +126,48 @@ class SqlMessageHistoryRepo:
             rows = list(result.scalars().all())
             return rows_to_recent_messages(rows, limit=limit)
 
-    async def list_all(self, chat_id: int, *, page_size: int = 500) -> list[dict]:
-        """Read the complete chat history, chronological (oldest first).
+    async def list_all(
+        self,
+        chat_id: int,
+        *,
+        page_size: int = 500,
+        since: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Read chat history chronological (oldest first).
 
         Paginated in ``page_size`` chunks for backfill of long histories
         (F5-08); same dict shape as ``rows_to_recent_messages``
-        (role/text/telegram_message_id/timestamp). A single query suffices for
-        today's volumes, but the loop avoids assuming one.
+        (role/text/telegram_message_id/timestamp). With ``since`` only rows
+        at/after that instant are returned. With ``limit`` the read is
+        BOUNDED — the post-turn extraction must never materialize a whole
+        chat: only the newest ``limit`` matching rows are fetched in one DESC
+        query (skips the O(total) keyset walk).
 
         Fix round (M3): keyset pagination on ``(timestamp, id)`` instead of
         OFFSET — if the chat receives messages while the backfill runs, no
         page shifts under the cursor, so rows are neither skipped nor
         duplicated across pages.
         """
+        if limit is not None:
+            if limit <= 0:
+                return []
+            async with self._sf() as session:
+                query = (
+                    select(MessageHistory)
+                    .where(MessageHistory.chat_id == chat_id)
+                    .order_by(
+                        MessageHistory.timestamp.desc(),
+                        MessageHistory.id.desc(),
+                    )
+                    .limit(limit)
+                )
+                if since is not None:
+                    query = query.where(MessageHistory.timestamp >= since)
+                result = await session.execute(query)
+                rows = list(result.scalars().all())
+                return rows_to_recent_messages(rows, limit=limit)
+
         out: list[dict] = []
         last_ts: datetime | None = None
         last_id: int | None = None
@@ -150,6 +179,8 @@ class SqlMessageHistoryRepo:
                     .order_by(MessageHistory.timestamp.asc(), MessageHistory.id.asc())
                     .limit(page_size)
                 )
+                if since is not None:
+                    query = query.where(MessageHistory.timestamp >= since)
                 if last_ts is not None:
                     query = query.where(
                         tuple_(MessageHistory.timestamp, MessageHistory.id)

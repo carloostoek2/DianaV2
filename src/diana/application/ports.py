@@ -50,6 +50,13 @@ class TurnRecord(BaseModel):
     # message_history to ``timestamp >= created_at`` (plan A3). Populated by
     # the SQL store from the ORM row; None for in-memory/legacy callers.
     created_at: datetime | None = None
+    # Fix round (R2): per-turn terminal/finalize timestamp — the last
+    # transition time (DELIVERED / escalated / failed). The post-turn
+    # extractor uses it as THIS turn's own delivery/finalize UPPER bound so
+    # it never scans owner rows globally. Populated by the SQL store from the
+    # ORM row; None for in-memory/legacy callers (the extractor then falls
+    # back to the owner-row scan — documented residual case).
+    updated_at: datetime | None = None
 
 
 class ApprovalRecord(BaseModel):

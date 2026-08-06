@@ -618,8 +618,12 @@ def build_app(
         # Must inject the coordinator itself, not the unbound method.
         status_sink=coordinator,
         # H4: prior intents + pure guard for pregunta_repetida early-exit.
+        # DECISION DE PRODUCTO (2026-08-05): la escalación por preguntas
+        # repetidas está DESACTIVADA — el bot responde siempre por el flujo
+        # normal; el guard queda sin conexión (None) para reactivarlo basta
+        # reponer RepetitionGuard(threshold=3).
         recent_intents=traces,
-        repetition_guard=RepetitionGuard(threshold=3),
+        repetition_guard=None,
         template_gate=template_gate,
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
@@ -673,6 +677,15 @@ def build_app(
             memory_extraction if settings.feature_memory_enabled else None
         ),
     )
+
+    # REQ-MEM-07: supervised-approved turns must run the SAME post-turn
+    # learning + memory extraction as the autonomous path. AdminService is
+    # built BEFORE the orchestrator (line ~503), so the hook is injected via a
+    # setter now that the orchestrator exists. ``_maybe_post_turn`` is wired
+    # unconditionally — it internally skips sandbox, runs the learning hook and
+    # no-ops the memory extraction when the flag is OFF (memory_extraction=None,
+    # A8), matching the autonomous-path behaviour byte-for-byte.
+    admin.set_post_turn_hook(orchestrator._maybe_post_turn)
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
     forbidden_keywords: list[str] = []

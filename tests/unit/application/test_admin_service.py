@@ -31,7 +31,12 @@ from diana.behavior.fake import (
     ImmediateClock,
     SequenceTurnStatusReader,
 )
-from diana.cognitive.models import Decision, EvaluationProfile, IncomingTurn
+from diana.cognitive.models import (
+    Decision,
+    EvaluationProfile,
+    IncomingTurn,
+    is_turn_status_terminal,
+)
 
 OWNER_ID = 999001
 OTHER_USER = 111
@@ -98,6 +103,40 @@ def _real_staging(
     return service, staging_repo
 
 
+class _PersistThenRaiseStore(InMemoryTurnStore):
+    """R4 fault injection: persists a terminal transition, then raises.
+
+    Mirrors a store that commits the row then loses the connection — the turn
+    is already terminal (the read-back gate in the post-turn hook sees
+    DELIVERED / FAILED / ESCALATED), but the transition call raised, so the
+    happy-path hook site would be skipped without the R4 fix.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.arm: bool = False
+        self._disarmed: bool = False
+
+    async def transition(
+        self,
+        turn_id,
+        status,
+        *,
+        superseded_by=None,
+        error=None,
+    ):
+        result = await super().transition(
+            turn_id,
+            status,
+            superseded_by=superseded_by,
+            error=error,
+        )
+        if self.arm and not self._disarmed and is_turn_status_terminal(result.status):
+            self._disarmed = True
+            raise RuntimeError("simulated persist-then-raise")
+        return result
+
+
 def _eval() -> EvaluationProfile:
     return EvaluationProfile(
         naturalness=0.9,
@@ -127,10 +166,11 @@ def _admin_graph(
     delivery_mode: str = "supervised",
     staging: object | None = None,
     history: object | None = None,
+    turns: InMemoryTurnStore | None = None,
 ) -> dict:
     from diana.application.memory import InMemoryVipStore
 
-    turns = InMemoryTurnStore()
+    turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
     escalations = InMemoryEscalationStore()
@@ -243,6 +283,258 @@ async def test_handle_approve_delivers_and_marks_delivered(admin_graph: dict) ->
     appr = await g["approvals"].get_by_turn(turn.id)
     assert appr is not None and appr.status == "approved"
     assert g["traces"].get_delivery_result(turn.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_runs_post_turn_hook_on_delivered(admin_graph: dict) -> None:
+    """REQ-MEM-07: a supervised-approved delivery runs the post-turn hook
+    (learning + memory extraction) ONCE, AFTER the turn is confirmed DELIVERED
+    and OUTSIDE the chat lock — parity with the autonomous path."""
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    decision = _decision(draft="send me")
+    await g["admin"].send_draft_for_approval(_incoming(turn.id), decision, turn.id)
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+
+    assert result is not None and result.success is True
+    assert hook.await_count == 1
+    called_args = hook.await_args.args
+    assert called_args[0] == turn.id
+    assert called_args[1] == 42
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_runs_hook_even_if_bookkeeping_raises() -> None:
+    """R2: once the turn is confirmed DELIVERED, the post-turn hook ALWAYS
+    runs even if the post-transition bookkeeping (set_delivery_result) raises
+    — the failure is swallowed (logged) and never strands learning + memory
+    extraction."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    notifier = FakeOwnerNotifier()
+
+    class BoomTraceStore(InMemoryTraceReaderWriter):
+        async def set_delivery_result(self, turn_id: UUID, result: dict) -> None:
+            raise RuntimeError("trace_down")
+
+    traces = BoomTraceStore()
+    behavior = BehaviorEngine(
+        FakeTelegramActuator(),
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    hook = AsyncMock()
+    admin.set_post_turn_hook(hook)
+    turn = await coordinator.begin_turn(chat_id=42, trigger_message_id=7)
+    await admin.send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="send me"), turn.id
+    )
+    await coordinator.transition(turn.id, "pending_approval")
+    result = await admin.handle_approve(turn.id, actor_id=OWNER_ID)
+
+    # Delivery is NOT affected by the swallowed bookkeeping failure.
+    assert result is not None and result.success is True
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == "delivered"
+    # The hook still ran despite the bookkeeping failure.
+    assert hook.await_count == 1
+    called_args = hook.await_args.args
+    assert called_args[0] == turn.id
+    assert called_args[1] == 42
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_runs_post_turn_hook_on_delivery_failure() -> None:
+    """REQ-MEM-07 (R3): a permanent delivery failure marks the turn FAILED — a
+    terminal, extractable outcome — so the post-turn hook runs ONCE, exactly
+    like the autonomous path. The supervised path is no longer asymmetric:
+    the same VIP conversation is learned whether it was approved or failed."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    notifier = FakeOwnerNotifier()
+
+    class BoomActuator(FakeTelegramActuator):
+        async def send_message(
+            self,
+            chat_id: int,
+            text: str,
+            *,
+            business_connection_id: str,
+            parse_mode: str | None = None,
+        ) -> int:
+            raise RuntimeError("telegram_down")
+
+    behavior = BehaviorEngine(
+        BoomActuator(),
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
+        max_send_attempts=3,
+    )
+    coordinator = TurnCoordinator(turns, approvals, behavior)
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=OWNER_ID,
+    )
+    hook = AsyncMock()
+    admin.set_post_turn_hook(hook)
+    turn = await coordinator.begin_turn(chat_id=42, trigger_message_id=7)
+    await admin.send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="fail me"), turn.id
+    )
+    await coordinator.transition(turn.id, "pending_approval")
+    result = await admin.handle_approve(turn.id, actor_id=OWNER_ID)
+
+    assert result is not None and result.success is False
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == "failed"
+    assert hook.await_count == 1
+    called_args = hook.await_args.args
+    assert called_args[0] == turn.id
+    assert called_args[1] == 42
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_runs_post_turn_hook_on_frozen_vip() -> None:
+    """R3: vip_frozen marks the turn FAILED — a terminal, extractable outcome —
+    so the post-turn hook fires ONCE (best-effort, outside the chat lock),
+    mirroring the autonomous path's own vip_frozen hook call."""
+    from datetime import UTC, datetime, timedelta
+
+    from diana.application.memory import InMemoryVipStore
+
+    store = InMemoryVipStore()
+    vip = await store.add(43002, display_name="FrozenHookVIP")
+    await store.freeze_vip(vip.id, datetime.now(UTC) + timedelta(hours=2))
+    g = _admin_graph(vip_store=store)
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, vip_id=vip.id),
+        _decision(draft="should not send"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.success is False
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status == "failed"
+    assert hook.await_count == 1
+    called_args = hook.await_args.args
+    assert called_args[0] == turn.id
+    assert called_args[1] == 42
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_skips_post_turn_hook_when_superseded() -> None:
+    """R3 exactly-once: resolving a SUPERSEDED (terminal but NON-extractable)
+    turn is a no-op — the post-turn hook NEVER fires (REQ-MEM-07 deliberately
+    excludes superseded turns from learning)."""
+    g = _admin_graph()
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    a = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(a.id), _decision(draft="old"), a.id
+    )
+    await g["coordinator"].transition(a.id, "pending_approval")
+    await g["coordinator"].begin_turn(chat_id=42)  # supersede A
+    result = await g["admin"].handle_approve(a.id, actor_id=OWNER_ID)
+    assert result is None
+    assert hook.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_skips_post_turn_hook_on_reopened_cancel() -> None:
+    """R4 exactly-once: a cancelled (reopened-waiting) supervised delivery is NOT
+    a terminal outcome — the turn stays pending_approval and the post-turn hook
+    NEVER fires."""
+    from diana.application.ports import DeliveryResult
+
+    class _CancelledDeliverer:
+        async def deliver(self, texts, ctx, turn_id, decision=None) -> DeliveryResult:
+            return DeliveryResult(
+                success=False, cancelled=True, error="mid_send_cancelled"
+            )
+
+    g = _admin_graph(behavior_override=_CancelledDeliverer())
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="x"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    assert result is not None and result.cancelled is True
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert hook.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_vip_frozen_persist_then_raise_fires_hook() -> None:
+    """R4: the vip_frozen branch marks the turn FAILED — a terminal, extractable
+    outcome. A mark_failed that persists then raises must still fire the
+    post-turn hook: the ``finally`` keyed on ``failed_here`` fires it (read-back
+    gated) before the persistence error propagates."""
+    from datetime import UTC, datetime, timedelta
+
+    from diana.application.memory import InMemoryVipStore
+
+    vip_store = InMemoryVipStore()
+    vip = await vip_store.add(43003, display_name="FrozenPersistVIP")
+    await vip_store.freeze_vip(vip.id, datetime.now(UTC) + timedelta(hours=2))
+    turns = _PersistThenRaiseStore()
+    turns.arm = True
+    g = _admin_graph(turns=turns, vip_store=vip_store)
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, vip_id=vip.id),
+        _decision(draft="should not send"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    with pytest.raises(RuntimeError, match="simulated persist-then-raise"):
+        await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == "failed"
+    assert hook.await_count == 1
+    called_args = hook.await_args.args
+    assert called_args[0] == turn.id
+    assert called_args[1] == 42
 
 
 @pytest.mark.asyncio

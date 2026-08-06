@@ -8,8 +8,9 @@ insert. Fakes mirror the Pool 1 backfill test doubles.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -19,6 +20,7 @@ import zlib
 from diana.application.memory_extraction_service import (
     MemoryExtractionService,
     PostTurnExtractionReport,
+    _WINDOW_PROBE_LIMIT,
 )
 from diana.application.memory_backfill_service import (
     HechoExtracted,
@@ -89,13 +91,41 @@ class FakeLLM:
 
 
 class FakeHistory:
+    """HistoryReader double honoring the bounded-read kwargs.
+
+    ``list_all`` now supports the same optional ``since`` (lower bound) and
+    ``limit`` (newest-N) kwargs as the SQL repo, so tests exercise the bounded
+    fetch exactly as production does.
+    """
+
     def __init__(self, messages: list[dict] | None = None) -> None:
         self.messages = list(messages or [])
-        self.calls: list[tuple[int, int]] = []
+        self.calls: list[tuple[int, datetime | None, int | None]] = []
 
-    async def list_all(self, chat_id: int, *, page_size: int = 500) -> list[dict]:
-        self.calls.append((chat_id, page_size))
-        return list(self.messages)
+    async def list_all(
+        self,
+        chat_id: int,
+        *,
+        page_size: int = 500,
+        since: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        self.calls.append((chat_id, since, limit))
+        msgs = list(self.messages)
+        if since is not None:
+            since_dt = MemoryExtractionService._normalize_utc(since)
+            msgs = [
+                m
+                for m in msgs
+                if (ts := MemoryExtractionService._parse_timestamp(
+                    m.get("timestamp")
+                ))
+                is not None
+                and ts >= since_dt
+            ]
+        if limit is not None:
+            msgs = msgs[-limit:] if limit > 0 else []
+        return msgs
 
     async def count(self, chat_id: int) -> int:
         return len(self.messages)
@@ -637,6 +667,89 @@ async def test_trigger_message_before_mint_is_extracted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_window_probe_uses_time_bounded_since() -> None:
+    """R2: the lower-bound probe is a TIME-bounded slice (``ts >= created_at
+    - margin``), NOT only the newest-N rows — so a trigger that has fallen out
+    of the newest ``_WINDOW_MAX_MESSAGES`` is still found."""
+    turn = _turn(
+        created_at=datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC),
+    )
+    history = FakeHistory(
+        _turn_msgs("hola diana", role="vip", at="2026-08-05T12:01:00+00:00")
+    )
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    memories = FakeMemories()
+    svc = _service(
+        llm=llm,
+        history=history,
+        memories=memories,
+        turns=FakeTurns([turn]),
+    )
+    await svc.extract_post_turn(turn.id, CHAT_ID)
+    # call[0] = lower-bound probe: time-bounded AND count-capped (R3) — it
+    # only locates the trigger row, never materializes the 15-minute slice.
+    probe = history.calls[0]
+    assert probe[1] == datetime(2026, 8, 5, 11, 45, 0, tzinfo=UTC)  # 12:00 - 15min
+    assert probe[2] == _WINDOW_PROBE_LIMIT
+    # call[1] = window fetch: bounded newest-N.
+    window = history.calls[1]
+    assert window[2] == 200
+
+
+@pytest.mark.asyncio
+async def test_window_probe_reprobes_uncapped_when_trigger_missed() -> None:
+    """R4: when the count-capped probe drops the trigger (≥probe rows are
+    strictly newer within the slice — heavy owner-correction session / burst),
+    the extractor re-probes the FULL time slice so the trigger is always
+    located — never silently falling back to ``turn.created_at`` and
+    recreating the M1 "single-message turn extracts nothing" degradation."""
+    turn = _turn(
+        created_at=datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC),
+        trigger_message_id=900,
+    )
+    base = datetime(2026, 8, 5, 11, 59, 30, tzinfo=UTC)
+    msgs = [
+        {
+            "role": "vip",
+            "text": "trigger",
+            "timestamp": "2026-08-05T11:59:00+00:00",
+            "telegram_message_id": 900,
+        }
+    ] + [
+        {
+            "role": "vip",
+            "text": f"m{i}",
+            "timestamp": (base + timedelta(seconds=i)).isoformat(),
+            "telegram_message_id": 1000 + i,
+        }
+        for i in range(205)
+    ]
+    history = FakeHistory(msgs)
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    svc = _service(
+        llm=llm,
+        history=history,
+        memories=FakeMemories(),
+        turns=FakeTurns([turn]),
+    )
+    report = await svc.extract_post_turn(turn.id, CHAT_ID)
+    assert report.status == "ok"
+    # call[0] = bounded probe (misses the trigger: 205 strictly-newer rows
+    # exceed the 200-row cap), call[1] = uncapped re-probe of the whole slice,
+    # call[2] = the window fetch.
+    assert len(history.calls) == 3
+    probe = history.calls[0]
+    assert probe[2] == _WINDOW_PROBE_LIMIT
+    reprobe = history.calls[1]
+    assert reprobe[1] == datetime(2026, 8, 5, 11, 45, 0, tzinfo=UTC)
+    assert reprobe[2] is None  # uncapped — the trigger is guaranteed in-slice
+    window = history.calls[2]
+    assert window[2] == 200
+    # The trigger's own timestamp (not created_at) is the resolved lower bound.
+    assert window[1] == datetime(2026, 8, 5, 11, 59, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
 async def test_superseded_turn_never_extracts() -> None:
     """S-MED: a superseded (cancelled) turn is terminal in the coordinator but
     must NOT trigger extraction — no LLM call, no inserts, no memory written
@@ -830,6 +943,123 @@ def test_window_since_falls_back_to_created_at() -> None:
     assert MemoryExtractionService._window_since(_turn(trigger_message_id=None), []) == _TURN_START
     turn_with_unknown_trigger = _turn(trigger_message_id=424242)
     assert MemoryExtractionService._window_since(turn_with_unknown_trigger, []) == _TURN_START
+
+
+def test_window_until_newest_owner_timestamp() -> None:
+    """S-MED FALLBACK (R2 residual): WITHOUT a per-turn finalize timestamp
+    (legacy/in-memory turns) the bound is the newest OWNER row — which can
+    anchor at a CONCURRENT next turn's draft; no owner row → None (no upper
+    bound). The primary R2 path (finalize_at) is covered by the tests below."""
+    f = MemoryExtractionService._window_until
+    msgs = [
+        {"role": "vip", "text": "pregunta", "timestamp": "2026-08-05T12:01:00+00:00", "telegram_message_id": 1},
+        {"role": "owner", "text": "respuesta 1", "timestamp": "2026-08-05T12:02:00+00:00", "telegram_message_id": 2},
+        {"role": "vip", "text": "siguiente turno", "timestamp": "2026-08-05T12:30:00+00:00", "telegram_message_id": 3},
+        {"role": "owner", "text": "respuesta 2", "timestamp": "2026-08-05T12:31:00+00:00", "telegram_message_id": 4},
+    ]
+    assert f(msgs) == datetime(2026, 8, 5, 12, 31, 0, tzinfo=UTC)
+    # No owner rows → no upper bound.
+    assert f([{"role": "vip", "text": "x", "timestamp": "2026-08-05T12:01:00+00:00", "telegram_message_id": 1}]) is None
+    # Untimestamped owner rows never set the bound.
+    assert f([{"role": "owner", "text": "x", "timestamp": None, "telegram_message_id": 1}]) is None
+
+
+def test_window_until_uses_turn_finalize_time() -> None:
+    """R2/R4 primary: with a per-turn finalize timestamp, the bound is THIS
+    turn's OWN DELIVERED/finalize time (+ grace) FLOORED by the newest owner
+    row actually read in the fetched msgs. R4: the grace alone could exclude
+    the turn's own draft when the app↔DB clock gap exceeds it, so the draft's
+    own row timestamp (newest owner row in the fetch at hook time) anchors the
+    bound — under-inclusion is impossible. The residual case (a NEXT turn's
+    draft inside the envelope) stays the documented theoretical contamination."""
+    f = MemoryExtractionService._window_until
+    msgs = [
+        {"role": "vip", "text": "pregunta", "timestamp": "2026-08-05T12:01:00+00:00", "telegram_message_id": 1},
+        {"role": "owner", "text": "respuesta 1", "timestamp": "2026-08-05T12:02:30+00:00", "telegram_message_id": 2},
+    ]
+    finalize = datetime(2026, 8, 5, 12, 2, 0, tzinfo=UTC)  # app-side DELIVERED stamp
+    bound = f(msgs, finalize_at=finalize)
+    # R4: the draft row's own DB timestamp (12:02:30 — inserted across a
+    # separate session, 0.5s past the 1s grace) anchors the bound, so the
+    # turn's own draft is never excluded by a slow/remote Postgres or NTP skew.
+    assert bound == datetime(2026, 8, 5, 12, 2, 30, tzinfo=UTC)
+    out = MemoryExtractionService._filter_turn_messages(
+        msgs,
+        datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC),
+        until=bound,
+    )
+    assert [m["text"] for m in out] == ["pregunta", "respuesta 1"]
+
+
+def test_window_until_finalize_grace_dominates_older_draft() -> None:
+    """R4: when the newest owner row is OLDER than ``finalize + grace`` (draft
+    inserted inside the grace), the finalize envelope still wins — the R4
+    owner-row floor only extends the bound, never shrinks it."""
+    f = MemoryExtractionService._window_until
+    msgs = [
+        {"role": "owner", "text": "respuesta", "timestamp": "2026-08-05T12:02:00+00:00", "telegram_message_id": 2},
+    ]
+    finalize = datetime(2026, 8, 5, 12, 2, 0, tzinfo=UTC)
+    bound = f(msgs, finalize_at=finalize)
+    assert bound == finalize + timedelta(seconds=1)
+
+
+def test_window_until_finalize_time_never_unbounded() -> None:
+    """R2: when the turn HAS a finalize timestamp, no owner row in the set can
+    produce ``None`` (unbounded) — the finalize envelope is a real bound."""
+    f = MemoryExtractionService._window_until
+    msgs = [
+        {"role": "vip", "text": "solo pregunta", "timestamp": "2026-08-05T12:01:00+00:00", "telegram_message_id": 1},
+    ]
+    finalize = datetime(2026, 8, 5, 12, 2, 0, tzinfo=UTC)
+    assert f(msgs, finalize_at=finalize) == finalize + timedelta(seconds=1)
+
+
+def test_window_since_fallback_is_observable(caplog: pytest.LogCaptureFixture) -> None:
+    """R2: falling back to ``turn.created_at`` (trigger not found) is logged as
+    a distinct event, never silent — the M1 degradation is observable."""
+    turn = _turn(trigger_message_id=424242)
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        MemoryExtractionService._window_since(turn, [])
+    assert "window_since_fallback" in caplog.text
+
+
+def test_filter_turn_messages_until_upper_bound() -> None:
+    """S-MED: messages AFTER the delivery/finalize time (a concurrent NEXT
+    turn) are OUT of the window even when they pass the lower bound."""
+    f = MemoryExtractionService._filter_turn_messages
+    since = datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC)
+    until = datetime(2026, 8, 5, 12, 5, 0, tzinfo=UTC)
+    msgs = [
+        {"role": "vip", "text": "trigger", "timestamp": "2026-08-05T12:01:00+00:00", "telegram_message_id": 1},
+        {"role": "owner", "text": "respuesta", "timestamp": "2026-08-05T12:03:00+00:00", "telegram_message_id": 2},
+        {"role": "vip", "text": "siguiente turno", "timestamp": "2026-08-05T12:06:00+00:00", "telegram_message_id": 3},
+    ]
+    out = f(msgs, since, until=until)
+    assert [m["text"] for m in out] == ["trigger", "respuesta"]
+    # until=None keeps the pre-existing behaviour (lower bound + role filter).
+    out_none = f(msgs, since)
+    assert [m["text"] for m in out_none] == ["trigger", "respuesta", "siguiente turno"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_known_facts_exclude_discarded_statuses() -> None:
+    """S-dedup: the \"do not repeat\" summary only lists auto/pending_owner/
+    approved facts — a discarded fact must never appear (the owner rejected
+    it), and the semantic dedup uses the same set."""
+    turn = _turn()
+    history = FakeHistory(_turn_msgs("me gusta el trato cercano", role="vip"))
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    known = [
+        {"category": "identidad", "content": {"texto": "Facto aprobado"}},
+        {"category": "comercial", "content": {"texto": "Facto descartado"}},
+    ]
+    memories = FakeMemories(known=known)
+    svc = _service(llm=llm, history=history, memories=memories, turns=FakeTurns([turn]))
+    await svc.extract_post_turn(turn.id, CHAT_ID)
+    # list_by_vip is asked for the non-discarded statuses only.
+    assert memories.list_calls
+    assert memories.list_calls[0][1] == ("auto", "pending_owner", "approved")
 
 
 def test_cap_transcript_drops_oldest_lines() -> None:

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from typing import Any
 from uuid import UUID, uuid4
 
+from diana.application.observability import log_swallowed
 from diana.application.ports import (
     ApprovalRecord,
     BehaviorDeliverer,
@@ -29,6 +31,9 @@ from diana.application.ports import (
 )
 from diana.application.draft_variants import ensure_versions
 from diana.application.escalation_labels import tipo_from_reason
+from diana.application.memory_extraction_service import (
+    _POST_TURN_EXTRACTABLE_STATUSES,  # noqa: PLC2701 — extraction gate, single source (R3)
+)
 from diana.application.owner_history import append_owner_delivery_history
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
@@ -130,6 +135,7 @@ class AdminService:
         sandbox: Any | None = None,
         staging: StagingService | None = None,
         history: MessageHistoryWriter | None = None,
+        post_turn: Callable[[UUID, int], Awaitable[None]] | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -146,6 +152,19 @@ class AdminService:
         self._sandbox = sandbox
         self._staging = staging
         self._history = history
+        self._post_turn = post_turn
+
+    def set_post_turn_hook(
+        self,
+        hook: Callable[[UUID, int], Awaitable[None]] | None,
+    ) -> None:
+        """Wire the post-turn learning + memory extraction hook (REQ-MEM-07).
+
+        AdminService is built BEFORE TurnOrchestrator in composition.py, so the
+        orchestrator's ``_maybe_post_turn`` is injected after the fact via this
+        setter. None disables the hook (tests / flag off).
+        """
+        self._post_turn = hook
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -629,23 +648,43 @@ class AdminService:
             return False
         chat_id = turn.chat_id
 
-        async with self._coordinator.chat_scope(chat_id):
-            turn = await self._turns.get(turn_id)
-            if turn is None or is_turn_status_terminal(turn.status):
-                logger.info(
-                    "owner_escalate_terminal_noop",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "status": None if turn is None else turn.status,
-                    },
-                )
-                return False
+        escalated_here = False
+        try:
+            async with self._coordinator.chat_scope(chat_id):
+                turn = await self._turns.get(turn_id)
+                if turn is None or is_turn_status_terminal(turn.status):
+                    logger.info(
+                        "owner_escalate_terminal_noop",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "status": None if turn is None else turn.status,
+                        },
+                    )
+                    return False
 
-            approval = await self._approvals.get_by_turn(turn_id)
-            if approval is not None and approval.status in {"waiting", "claimed"}:
-                await self._approvals.mark_status(turn_id, "cancelled")
+                approval = await self._approvals.get_by_turn(turn_id)
+                if approval is not None and approval.status in {"waiting", "claimed"}:
+                    await self._approvals.mark_status(turn_id, "cancelled")
 
-            await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
+                # R4: eligibility BEFORE the transition — an ESCALATED
+                # transition that persists-then-raises must still fire the
+                # post-turn hook (the read-back gate below decides whether the
+                # turn is actually extractable).
+                escalated_here = True
+                await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
+        finally:
+            # REQ-MEM-07 parity with the autonomous path: an owner-escalated turn
+            # is ESCALATED — a terminal, extractable outcome. Fire the post-turn
+            # hook best-effort OUTSIDE the chat lock (the ``with`` exited) —
+            # never blocks the callback; a failure is swallowed and logged. R4:
+            # fired from the ``finally`` so a soft persistence error in the
+            # transition cannot strand extraction of the now-ESCALATED turn. The
+            # terminal no-op paths return before ``escalated_here`` is set, so
+            # the hook runs only when THIS call made the turn escalated
+            # (exactly once); ``_trigger_post_turn_terminal`` read-backs the
+            # persisted status (exactly-once guard).
+            if escalated_here and self._post_turn is not None:
+                await self._trigger_post_turn_terminal(turn_id, chat_id)
 
         await self._notifier.notify_info(
             f"Turn {turn_id} escalated/discarded by owner",
@@ -709,25 +748,44 @@ class AdminService:
         # Fail closed: no deliver when frozen; mark turn failed + cancel claim.
         is_frozen = await self._is_vip_frozen(claimed.vip_id)
         if is_frozen:
-            async with self._coordinator.chat_scope(chat_id):
-                turn_after = await self._turns.get(turn_id)
-                if turn_after is not None and not is_turn_status_terminal(
-                    turn_after.status
-                ):
-                    await self._approvals.mark_status(turn_id, "cancelled")
-                    await self._coordinator.mark_failed(
-                        turn_id, error="vip_frozen"
-                    )
-                    try:
-                        await self._notifier.notify_info(
-                            f"Turn {turn_id} failed: vip_frozen",
-                            chat_id=chat_id,
+            failed_here = False
+            try:
+                async with self._coordinator.chat_scope(chat_id):
+                    turn_after = await self._turns.get(turn_id)
+                    if turn_after is not None and not is_turn_status_terminal(
+                        turn_after.status
+                    ):
+                        await self._approvals.mark_status(turn_id, "cancelled")
+                        # R4: eligibility BEFORE the transition — a FAILED
+                        # transition that persists-then-raises must still fire
+                        # the post-turn hook (the read-back gate below decides
+                        # whether the turn is actually extractable).
+                        failed_here = True
+                        await self._coordinator.mark_failed(
+                            turn_id, error="vip_frozen"
                         )
-                    except Exception:
-                        logger.exception(
-                            "owner_notify_failed_after_vip_frozen",
-                            extra={"turn_id": str(turn_id)},
-                        )
+                        try:
+                            await self._notifier.notify_info(
+                                f"Turn {turn_id} failed: vip_frozen",
+                                chat_id=chat_id,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "owner_notify_failed_after_vip_frozen",
+                                extra={"turn_id": str(turn_id)},
+                            )
+            finally:
+                # Fix round (R3): vip_frozen marks the turn FAILED — a terminal,
+                # extractable outcome (REQ-MEM-07), so the post-turn hook fires
+                # best-effort OUTSIDE the chat lock, mirroring the autonomous
+                # path. R4: fired from the ``finally`` so a soft persistence
+                # error in ``mark_failed`` cannot strand extraction of the
+                # now-FAILED turn. Gated on ``failed_here``: when the turn was
+                # already terminal at re-read (a concurrent branch owns the
+                # hook), do NOT double-run; ``_trigger_post_turn_terminal``
+                # read-backs the persisted status (exactly-once guard).
+                if failed_here and self._post_turn is not None:
+                    await self._trigger_post_turn_terminal(turn_id, chat_id)
             logger.info(
                 "admin_deliver_vip_frozen",
                 extra={
@@ -770,92 +828,187 @@ class AdminService:
             decision=decision_dump,
         )
 
-        async with self._coordinator.chat_scope(chat_id):
-            turn_after = await self._turns.get(turn_id)
-            if turn_after is None or is_turn_status_terminal(turn_after.status):
-                # Superseded or otherwise terminal mid-flight — do not revive.
-                await self._approvals.mark_status(turn_id, "cancelled")
-                logger.info(
-                    "admin_resolve_aborted_terminal_after_deliver",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "status": None if turn_after is None else turn_after.status,
-                        "deliver_success": result.success,
-                    },
-                )
-                return None if not result.cancelled else result
+        # Fix round (R2/R3): the post-turn hook fires from a ``finally`` keyed
+        # on ``post_turn_eligible`` — whether THIS block made the turn terminal
+        # in an extractable status (delivered / failed, REQ-MEM-07). The flag
+        # is set BEFORE the transition, so a transition that persists then
+        # raises still fires; the ``finally`` read-backs the persisted status
+        # via ``_trigger_post_turn_terminal``, which skips non-extractable
+        # statuses and never double-runs when another branch (e.g. a concurrent
+        # owner escalate on the terminal-abort path) already fired for the turn.
+        post_turn_eligible = False
+        try:
+            async with self._coordinator.chat_scope(chat_id):
+                turn_after = await self._turns.get(turn_id)
+                if turn_after is None or is_turn_status_terminal(turn_after.status):
+                    # Superseded or otherwise terminal mid-flight — do not revive.
+                    await self._approvals.mark_status(turn_id, "cancelled")
+                    logger.info(
+                        "admin_resolve_aborted_terminal_after_deliver",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "status": None if turn_after is None else turn_after.status,
+                            "deliver_success": result.success,
+                        },
+                    )
+                    return None if not result.cancelled else result
 
-            if result.success:
-                approval_status = (
-                    "corrected" if corrected_text is not None else "approved"
-                )
-                await self._approvals.mark_status(turn_id, approval_status)
-                await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
-                await self._traces.set_delivery_result(
-                    turn_id, result.to_trace_dict()
-                )
-                # H7.2: append delivered outbound text for HistoryRetriever (owner→dueña).
-                # Skip durable history when sandbox is active (should_persist false).
-                # Multi-segment: one owner row per message_id when texts align.
-                if self._history is not None:
-                    if (
-                        self._sandbox is not None
-                        and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
-                    ):
-                        logger.info(
-                            "owner_history_skipped_sandbox",
-                            extra={
-                                "turn_id": str(turn_id),
-                                "chat_id": chat_id,
-                            },
+                if result.success:
+                    approval_status = (
+                        "corrected" if corrected_text is not None else "approved"
+                    )
+                    await self._approvals.mark_status(turn_id, approval_status)
+                    # R3: mark eligible BEFORE the transition (see above).
+                    post_turn_eligible = True
+                    await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
+                    # Fix round (R2): bookkeeping AFTER the confirmed transition
+                    # is best-effort — a failure here must never fail the
+                    # already-completed delivery nor strand the post-turn hook.
+                    try:
+                        await self._traces.set_delivery_result(
+                            turn_id, result.to_trace_dict()
                         )
-                    else:
-                        await append_owner_delivery_history(
-                            self._history,
-                            chat_id,
-                            result=result,
-                            fallback_text=text,
-                            turn_id=turn_id,
+                        # H7.2: append delivered outbound text for HistoryRetriever (owner→dueña).
+                        # Skip durable history when sandbox is active (should_persist false).
+                        # Multi-segment: one owner row per message_id when texts align.
+                        if self._history is not None:
+                            if (
+                                self._sandbox is not None
+                                and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
+                            ):
+                                logger.info(
+                                    "owner_history_skipped_sandbox",
+                                    extra={
+                                        "turn_id": str(turn_id),
+                                        "chat_id": chat_id,
+                                    },
+                                )
+                            else:
+                                await append_owner_delivery_history(
+                                    self._history,
+                                    chat_id,
+                                    result=result,
+                                    fallback_text=text,
+                                    turn_id=turn_id,
+                                )
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "admin_delivery_bookkeeping_failed",
+                            turn_id=str(turn_id),
+                            chat_id=chat_id,
                         )
-                logger.info(
-                    "admin_delivered",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "chat_id": claimed.chat_id,
-                        "mode": approval_status,
-                    },
-                )
-            elif result.cancelled:
-                # Live turn + cancel (rare) — reopen waiting for owner retry.
-                await self._approvals.mark_status(turn_id, "waiting")
-                logger.info(
-                    "admin_deliver_cancelled_reopened",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "error": result.error,
-                    },
-                )
-            else:
-                # I.5 permanent deliver failure after retries — do not silent-wait.
-                await self._approvals.mark_status(turn_id, "cancelled")
-                await self._coordinator.mark_failed(
-                    turn_id, error=result.error or "delivery_failed"
-                )
-                await self._notifier.notify_info(
-                    f"Turn {turn_id} failed: delivery_failed ({result.error})",
-                    chat_id=claimed.chat_id,
-                )
-                await self._traces.set_delivery_result(
-                    turn_id, result.to_trace_dict()
-                )
-                logger.info(
-                    "admin_deliver_failed",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "error": result.error,
-                    },
-                )
+                    logger.info(
+                        "admin_delivered",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "chat_id": claimed.chat_id,
+                            "mode": approval_status,
+                        },
+                    )
+                elif result.cancelled:
+                    # Live turn + cancel (rare) — reopen waiting for owner retry.
+                    await self._approvals.mark_status(turn_id, "waiting")
+                    logger.info(
+                        "admin_deliver_cancelled_reopened",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "error": result.error,
+                        },
+                    )
+                else:
+                    # I.5 permanent deliver failure after retries — do not silent-wait.
+                    await self._approvals.mark_status(turn_id, "cancelled")
+                    # R3: a permanent failure is FAILED — an extractable terminal
+                    # outcome (REQ-MEM-07); mark eligible BEFORE mark_failed so a
+                    # persisted-then-raised transition still fires the hook.
+                    post_turn_eligible = True
+                    await self._coordinator.mark_failed(
+                        turn_id, error=result.error or "delivery_failed"
+                    )
+                    await self._notifier.notify_info(
+                        f"Turn {turn_id} failed: delivery_failed ({result.error})",
+                        chat_id=claimed.chat_id,
+                    )
+                    await self._traces.set_delivery_result(
+                        turn_id, result.to_trace_dict()
+                    )
+                    logger.info(
+                        "admin_deliver_failed",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "error": result.error,
+                        },
+                    )
+        finally:
+            # REQ-MEM-07 parity with the autonomous path: run post-turn
+            # learning + memory extraction AFTER the turn is confirmed terminal
+            # in an extractable status and OUTSIDE the chat lock. Best-effort
+            # strict (R1) — a failure never propagates to the already-completed
+            # supervised delivery. ``_trigger_post_turn_terminal`` read-backs
+            # the persisted status (closing the commit-then-refresh gap) and
+            # skips when it is no longer extractable (exactly-once guard).
+            if post_turn_eligible and self._post_turn is not None:
+                await self._trigger_post_turn_terminal(turn_id, chat_id)
         return result
+
+    async def _trigger_post_turn(self, turn_id: UUID, chat_id: int) -> None:
+        """Best-effort post-turn hook after a confirmed supervised delivery.
+
+        Mirrors the orchestrator's ``_maybe_post_turn`` (which the hook points
+        to): sandbox skip, learning and flag-gated memory extraction are all
+        handled inside. This wrapper only guarantees the completed delivery is
+        never affected by a hook failure.
+        """
+        try:
+            await self._post_turn(turn_id, chat_id)
+        except Exception:
+            log_swallowed(
+                logger,
+                "post_turn_hook_error",
+                turn_id=str(turn_id),
+                chat_id=chat_id,
+            )
+
+    async def _trigger_post_turn_terminal(
+        self, turn_id: UUID, chat_id: int
+    ) -> None:
+        """Best-effort post-turn hook after a supervised terminal outcome.
+
+        Like ``_trigger_post_turn`` but read-backs the turn's persisted status
+        and fires ONLY when it is still in the extractable set (delivered /
+        escalated / failed, REQ-MEM-07). The read-back closes the
+        commit-then-refresh gap (a row persisted DELIVERED/FAILED while the
+        in-block flag was never assigned) and guards the exactly-once invariant
+        — a turn that ended non-extractable (e.g. superseded) never runs, and a
+        concurrent branch that already fired for the same terminal turn is not
+        re-fired. The read itself is best-effort: on failure the hook still
+        fires (the caller already confirmed it made the turn terminal), so the
+        completed turn's learning + memory extraction are never stranded.
+        """
+        try:
+            turn = await self._turns.get(turn_id)
+            if (
+                turn is not None
+                and turn.status not in _POST_TURN_EXTRACTABLE_STATUSES
+            ):
+                logger.info(
+                    "post_turn_skipped_status",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": chat_id,
+                        "status": turn.status,
+                    },
+                )
+                return
+        except Exception:
+            log_swallowed(
+                logger,
+                "post_turn_status_readback_failed",
+                turn_id=str(turn_id),
+                chat_id=chat_id,
+            )
+        await self._trigger_post_turn(turn_id, chat_id)
 
     async def _is_vip_frozen(self, vip_id: UUID | None) -> bool:
         """True if vip_store says frozen_until > now(UTC). Missing store/id → False."""

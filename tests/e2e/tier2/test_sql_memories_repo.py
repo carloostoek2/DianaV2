@@ -600,10 +600,11 @@ async def test_list_by_vip_orders_and_filters(session_factory):
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_find_similar_facts_threshold_category_and_all_statuses(session_factory):
-    """A5: post-turn dedup compares against ALL non-perfil rows of the VIP
-    (auto/pending_owner/approved/discarded) — unlike find_similar_surviving
-    (Pool 2: only approved/discarded). Category filter and orthogonal vector
-    behave like the Pool 2 contract."""
+    """A5: post-turn dedup compares against every non-perfil row of the VIP
+    that the owner has NOT discarded (auto/pending_owner/approved) — a
+    discarded fact must never suppress a later correct fact. Unlike
+    find_similar_surviving (Pool 2: only approved/discarded). Category filter
+    and orthogonal vector behave like the Pool 2 contract."""
     repo = MemoriesRepo(session_factory)
     vip_id = await _create_vip(session_factory, 512)
 
@@ -657,12 +658,11 @@ async def test_find_similar_facts_threshold_category_and_all_statuses(session_fa
     )
 
     hits_a = await repo.find_similar_facts(vip_id, _EMBEDDING_384, threshold=0.85)
-    assert len(hits_a) == 4
+    assert len(hits_a) == 3
     assert {h["status"] for h in hits_a} == {
         "auto",
         "pending_owner",
         "approved",
-        "discarded",
     }
     assert all(h["category"] != "perfil" for h in hits_a)
 

@@ -16,7 +16,12 @@ from diana.application.memory import (
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
-from diana.cognitive.models import Decision, EvaluationProfile, IncomingTurn
+from diana.cognitive.models import (
+    Decision,
+    EvaluationProfile,
+    IncomingTurn,
+    is_turn_status_terminal,
+)
 
 OWNER_ID = 999001
 OTHER_USER = 111
@@ -43,9 +48,42 @@ def _decision(draft: str = "hola") -> Decision:
     )
 
 
-@pytest.fixture
-def admin_graph() -> dict:
-    turns = InMemoryTurnStore()
+class _PersistThenRaiseStore(InMemoryTurnStore):
+    """R4 fault injection: persists a terminal transition, then raises.
+
+    Mirrors a store that commits the row then loses the connection — the turn
+    is already terminal (the read-back gate in the post-turn hook sees
+    ESCALATED / DELIVERED / FAILED), but the transition call raised, so the
+    happy-path hook site would be skipped without the R4 fix.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.arm: bool = False
+        self._disarmed: bool = False
+
+    async def transition(
+        self,
+        turn_id,
+        status,
+        *,
+        superseded_by=None,
+        error=None,
+    ):
+        result = await super().transition(
+            turn_id,
+            status,
+            superseded_by=superseded_by,
+            error=error,
+        )
+        if self.arm and not self._disarmed and is_turn_status_terminal(result.status):
+            self._disarmed = True
+            raise RuntimeError("simulated persist-then-raise")
+        return result
+
+
+def _build_admin_graph(*, turns: InMemoryTurnStore | None = None) -> dict:
+    turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
     escalations = InMemoryEscalationStore()
@@ -78,6 +116,11 @@ def admin_graph() -> dict:
         "actuator": actuator,
         "owner_id": OWNER_ID,
     }
+
+
+@pytest.fixture
+def admin_graph() -> dict:
+    return _build_admin_graph()
 
 
 def _incoming(turn_id, **kw) -> IncomingTurn:
@@ -139,3 +182,72 @@ async def test_owner_escalate_terminal_is_noop(admin_graph: dict) -> None:
     stored = await g["turns"].get(turn.id)
     assert stored is not None and stored.status == "escalated"
     assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_owner_escalate_runs_post_turn_hook_once(admin_graph: dict) -> None:
+    """REQ-MEM-07 (R3): owner escalate ends the turn in ESCALATED — a terminal,
+    extractable outcome — so the post-turn hook runs ONCE (best-effort, outside
+    the chat lock), mirroring the autonomous path."""
+    from unittest.mock import AsyncMock
+
+    g = admin_graph
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    applied = await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    assert applied is True
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status == "escalated"
+    assert hook.await_count == 1
+    called_args = hook.await_args.args
+    assert called_args[0] == turn.id
+    assert called_args[1] == 42
+
+
+@pytest.mark.asyncio
+async def test_owner_escalate_terminal_noop_skips_hook(admin_graph: dict) -> None:
+    """R3 exactly-once: escalating an ALREADY-escalated turn is a no-op — the
+    hook does NOT fire again (the path that escalated the turn owns the hook)."""
+    from unittest.mock import AsyncMock
+
+    g = admin_graph
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, "escalated")
+    applied = await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    assert applied is False
+    assert hook.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_owner_escalate_persist_then_raise_still_fires_hook() -> None:
+    """R4: an ESCALATED transition inside ``handle_owner_escalate`` that persists
+    then raises must still fire the post-turn hook — the ``finally`` keyed on
+    ``escalated_here`` fires it OUTSIDE the chat lock (read-back gated), and the
+    ESCALATED turn is extracted exactly once."""
+    from unittest.mock import AsyncMock
+
+    turns = _PersistThenRaiseStore()
+    turns.arm = True
+    g = _build_admin_graph(turns=turns)
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    with pytest.raises(RuntimeError, match="simulated persist-then-raise"):
+        await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == "escalated"
+    assert hook.await_count == 1
+    called_args = hook.await_args.args
+    assert called_args[0] == turn.id
+    assert called_args[1] == 42

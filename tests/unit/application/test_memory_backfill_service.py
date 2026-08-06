@@ -791,6 +791,31 @@ async def test_extract_window_returns_window_and_total() -> None:
 
 
 @pytest.mark.asyncio
+async def test_extract_window_caps_accumulated_summary_in_prompt() -> None:
+    """Fix round (S-prompt): the 'already extracted' summary fed to the LLM is
+    capped to the most-recent N facts, so the prompt does not grow unboundedly
+    on long runs. Dedup semantics are untouched (the FULL list still reaches
+    finalize_profile via the queue state)."""
+    llm = FakeLLM(
+        [WindowExtraction(hechos=[HechoExtracted(seccion="preferencias", texto="nuevo")])]
+    )
+    messages = [_msg("vip", f"msg {i}") for i in range(450)]
+    svc, _, _, _, _ = _build_service(messages=messages, llm=llm)
+
+    already = [
+        HechoExtracted(seccion="identidad", texto=f"hecho viejo {i}")
+        for i in range(60)
+    ]
+    res = await svc.extract_window(uuid4(), chat_id=71, window_index=1, already=already)
+
+    assert res.failed is False
+    assert [h.texto for h in res.hechos] == ["nuevo"]
+    user_content = llm.calls[0][1]["content"]
+    assert "hecho viejo 59" in user_content  # most-recent fact shown
+    assert "hecho viejo 0" not in user_content  # oldest 10 dropped from prompt
+
+
+@pytest.mark.asyncio
 async def test_extract_window_empty_history_flag() -> None:
     svc, _, llm, _, _ = _build_service(messages=[])
     res = await svc.extract_window(uuid4(), chat_id=32, window_index=0)
@@ -1150,3 +1175,44 @@ async def test_sensitive_terms_expanded_clinical_financial() -> None:
     for r in writer.replace_calls[0][1]:
         assert r.status == "pending_owner"
         assert r.approved_by is None
+
+
+def test_sensitive_terms_word_boundary_no_commercial_collisions() -> None:
+    """Fix round (S-terms): matching is word-boundary and the terms that
+    collide with normal commercial vocabulary are curated out — "tener en
+    cuenta", "operación de venta", "relación calidad-precio", "en pareja" and
+    "impresión"/"expresión" (inside-word) must NOT force pending_owner."""
+    f = MemoryBackfillService._is_sensitive_text
+    non_sensitive = [
+        "lo tengo en cuenta para la próxima compra",
+        "tener en cuenta la oferta",
+        "una operación de venta exitosa",
+        "la relación calidad-precio es excelente",
+        "venían en pareja los dos productos",
+        "la impresión general fue buena",
+        "la expresión corporal",
+        "te mando saludos",
+    ]
+    for text in non_sensitive:
+        assert f(text) is False, text
+    # The same domains still hit as standalone words.
+    assert f("pagó la deuda") is True
+    assert f("tiene una cuenta bancaria") is False  # "cuenta" alone is not enough
+
+
+def test_sensitive_terms_new_clinical_financial_vocabulary() -> None:
+    """Fix round (S-terms): the backstop now covers the expanded clinical and
+    financial vocabulary — an LLM misclassification of those facts is upgraded
+    to pending_owner."""
+    f = MemoryBackfillService._is_sensitive_text
+    sensitive = [
+        "le detectaron cáncer",
+        "va al hospital los martes",
+        "tiene episodios de ansiedad",
+        "toma medicaciones nuevas",
+        "cobra su salario en efectivo",
+        "recibe su nómina por banco",
+        "paga una renta alta",
+    ]
+    for text in sensitive:
+        assert f(text) is True, text

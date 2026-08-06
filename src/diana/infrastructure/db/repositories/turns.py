@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -39,6 +40,7 @@ def turn_orm_to_record(row: Turn) -> TurnRecord:
         error=row.error,
         channel_type=row.channel_type,
         created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 
@@ -109,6 +111,10 @@ class SqlTurnStore:
             if not changed:
                 return turn_orm_to_record(row)
             row.status = effective
+            # Fix round (R2): per-turn finalize timestamp — the post-turn
+            # extractor uses the last transition time (DELIVERED/escalated/
+            # failed) as THIS turn's own delivery/finalize upper bound.
+            row.updated_at = datetime.now(UTC)
             if superseded_by is not None:
                 row.superseded_by = superseded_by
             if error is not None:

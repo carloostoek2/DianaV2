@@ -45,6 +45,7 @@ from diana.cognitive.models import (
     Decision,
     EvaluationProfile,
     IncomingTurn,
+    is_turn_status_terminal,
 )
 from diana.cognitive.planner import Planner
 from diana.cognitive.ports import TRACE_KEYS
@@ -1204,11 +1205,6 @@ async def test_director_exception_marks_failed_and_reraises() -> None:
         await g["orch"].handle_vip_message(_vip())
     non_term = await g["turns"].list_non_terminal(100)
     assert non_term == []
-    # Exactly one turn and it is failed with error text
-    # (scan via a second begin would supersede — load by director call)
-    # Director never returned; turn was minted before fail.
-    assert g["actuator"].send_count() == 0
-    assert g["learning"].calls == []
     failed_ids = [
         t.id
         for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
@@ -1219,8 +1215,118 @@ async def test_director_exception_marks_failed_and_reraises() -> None:
     assert failed is not None
     assert failed.status == "failed"
     assert failed.error == "llm down"
+    # Director never returned; turn was minted before fail.
+    assert g["actuator"].send_count() == 0
+    # R4: the bare-except mark-failed-then-raise site fires the post-turn hook
+    # in a finally — the FAILED (extractable) turn still runs learning + memory
+    # extraction exactly once, despite the re-raise.
+    assert g["learning"].calls == [failed_ids[0]]
     # Generic director errors do not use the Analyst schema-fail notify path.
     assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_missing_bc_marks_failed_and_fires_post_turn_hook() -> None:
+    """R4: the bc-None mark-failed-then-raise site fires the post-turn hook in
+    a finally — the FAILED (extractable) turn is extracted exactly once despite
+    the re-raise (previously the hook was stranded: the path never reached the
+    normal hook site)."""
+    g = _build(FakeDirector(Decision(action="approve", reason="ok", evaluation=_eval())))
+    with pytest.raises(ValueError, match="business_connection_id is required"):
+        await g["orch"].handle_vip_message(_vip(business_connection_id=None))
+    failed_ids = [
+        t.id
+        for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await g["turns"].get(failed_ids[0])
+    assert failed is not None and failed.status == "failed"
+    assert g["learning"].calls == [failed_ids[0]]
+
+
+@pytest.mark.asyncio
+async def test_unexpected_f2_action_marks_failed_and_fires_post_turn_hook() -> None:
+    """R4: the unexpected-F2 mark-failed-then-raise site fires the post-turn hook
+    in a finally — the FAILED (extractable) turn is extracted exactly once
+    despite the re-raise."""
+    # ``Decision.action`` is a Pydantic Literal — build without validation so
+    # the orchestrator sees the unexpected-F2 failure path at runtime.
+    decision = Decision.model_construct(
+        action="bogus",
+        reason="?",
+        evaluation=_eval(),
+        draft_text="x",
+    )
+    g = _build(FakeDirector(decision))
+    with pytest.raises(ValueError, match="unexpected F2 action"):
+        await g["orch"].handle_vip_message(_vip())
+    failed_ids = [
+        t.id
+        for t in g["turns"]._turns.values()  # noqa: SLF001 — test assertion
+        if t.chat_id == 100
+    ]
+    assert len(failed_ids) == 1
+    failed = await g["turns"].get(failed_ids[0])
+    assert failed is not None and failed.status == "failed"
+    assert g["learning"].calls == [failed_ids[0]]
+
+
+@pytest.mark.asyncio
+async def test_escalate_persist_then_raise_still_fires_hook() -> None:
+    """R4: an ESCALATED transition inside ``_apply_decision_after_director``
+    that persists then raises must still fire the post-turn hook — the
+    except-on-exception fires it (read-back gated) before re-raising, and the
+    ESCALATED turn is extracted exactly once."""
+    decision = Decision(
+        action="escalate",
+        reason="direct",
+        evaluation=_eval(),
+        draft_text="",
+    )
+    store = _PersistThenRaiseStore()
+    store.arm = True
+    g = _build(FakeDirector(decision), turns=store)
+    with pytest.raises(RuntimeError, match="simulated persist-then-raise"):
+        await g["orch"].handle_vip_message(_vip())
+    escalated_ids = [
+        t.id for t in store._turns.values() if t.status == "escalated"  # noqa: SLF001
+    ]
+    assert len(escalated_ids) == 1
+    assert g["learning"].calls == escalated_ids
+
+
+@pytest.mark.asyncio
+async def test_autonomous_finalize_persist_then_raise_still_fires_hook() -> None:
+    """R4: a DELIVERED transition inside ``_finalize_autonomous_delivery`` that
+    persists then raises must still fire the post-turn hook — the caller's
+    ``finally`` (keyed on the mutable holder set before the transition) fires it
+    OUTSIDE the chat lock, and the DELIVERED turn is extracted exactly once."""
+    spy = _CapturingDeliverer()
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    store = _PersistThenRaiseStore()
+    store.arm = True
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        behavior_override=spy,
+        turns=store,
+    )
+    with pytest.raises(RuntimeError, match="simulated persist-then-raise"):
+        await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    delivered_ids = [
+        t.id for t in store._turns.values() if t.status == "delivered"  # noqa: SLF001
+    ]
+    assert len(delivered_ids) == 1
+    assert g["learning"].calls == delivered_ids
 
 
 # --- Item4 Task4: advanced behavior builder wiring ---
@@ -1249,6 +1355,40 @@ class _CapturingDeliverer:
         self.turn_ids.append(turn_id)
         self.decisions.append(decision)
         return DeliveryResult(success=True, message_ids=[1])
+
+
+class _PersistThenRaiseStore(InMemoryTurnStore):
+    """R4 fault injection: persists a terminal transition, then raises.
+
+    Mirrors a store that commits the row then loses the connection — the turn
+    is already terminal (the read-back gate in the post-turn hook sees
+    DELIVERED / FAILED / ESCALATED), but the transition call raised, so the
+    happy-path hook site would be skipped without the R4 fix.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.arm: bool = False
+        self._disarmed: bool = False
+
+    async def transition(
+        self,
+        turn_id: UUID,
+        status: object,
+        *,
+        superseded_by: UUID | None = None,
+        error: str | None = None,
+    ) -> TurnRecord:
+        result = await super().transition(  # type: ignore[arg-type]
+            turn_id,
+            status,  # type: ignore[arg-type]
+            superseded_by=superseded_by,
+            error=error,
+        )
+        if self.arm and not self._disarmed and is_turn_status_terminal(result.status):
+            self._disarmed = True
+            raise RuntimeError("simulated persist-then-raise")
+        return result
 
 
 @pytest.mark.asyncio

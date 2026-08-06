@@ -27,6 +27,19 @@ def test_composition_gray_zone_wired_to_orchestrator(_comp_src: str) -> None:
     assert "feature_gray_zone_enabled=feature_gray_zone_enabled" in _comp_src
 
 
+def test_composition_supervised_post_turn_hook_wired(_comp_src: str) -> None:
+    """REQ-MEM-07: AdminService (built before the orchestrator) receives the
+    orchestrator's _maybe_post_turn via the setter once the orchestrator
+    exists, so supervised-approved deliveries run post-turn learning +
+    memory extraction like the autonomous path."""
+    assert "admin.set_post_turn_hook(orchestrator._maybe_post_turn)" in _comp_src
+    # The setter call must come AFTER the orchestrator construction.
+    orch_start = _comp_src.find("orchestrator = TurnOrchestrator(")
+    hook_pos = _comp_src.find("admin.set_post_turn_hook(")
+    assert orch_start != -1 and hook_pos != -1
+    assert hook_pos > orch_start
+
+
 def test_composition_gray_zone_service_conditional(_comp_src: str) -> None:
     """GrayZoneService is only created when feature_gray_zone_enabled is True."""
     assert "if feature_gray_zone_enabled:" in _comp_src
@@ -419,12 +432,13 @@ def test_composition_profiles_repo_wired(_comp_src: str) -> None:
         sandbox_block = _comp_src[sandbox_idx : sandbox_idx + 200]
         assert "profile" not in sandbox_block.lower()
 
-def test_composition_repetition_guard_wired(_comp_src: str) -> None:
-    """H4/H5: Director receives recent_intents=traces + RepetitionGuard(3)."""
-    assert "from diana.cognitive.repetition_guard import RepetitionGuard" in _comp_src
+def test_composition_repetition_guard_disabled(_comp_src: str) -> None:
+    """H4 (decisión de producto 2026-08-05): la escalación por preguntas
+    repetidas está DESACTIVADA — repetition_guard=None; el Director sigue
+    recibiendo recent_intents=traces (inocuo, para reactivar el guard)."""
     assert "recent_intents=traces" in _comp_src
-    assert "RepetitionGuard(threshold=3)" in _comp_src
-    assert "repetition_guard=RepetitionGuard(threshold=3)" in _comp_src
+    assert "repetition_guard=None" in _comp_src
+    assert "repetition_guard=RepetitionGuard" not in _comp_src
 
 
 def test_composition_template_gate_wired(_comp_src: str) -> None:

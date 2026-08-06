@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -73,44 +74,81 @@ _SECTIONS = ("identidad", "preferencias", "comercial", "limites", "sensible")
 # message can be ~4K chars; 200 long messages would blow the model context).
 _LINE_MAX_CHARS = 400
 _WINDOW_MAX_CHARS = 12_000
+# Fix round (S-prompt): the accumulating \"already extracted\" summary fed to
+# each window prompt is capped to the most-recent N facts so prompt growth
+# stays bounded on long runs. Dedup correctness is untouched — the FULL list
+# still accumulates in the queue state and reaches ``finalize_profile``.
+_ALREADY_MAX_FACTS = 50
 
 # Fix round (F2, SEC-INJ-02): the LLM sensitivity classification is the FIRST
 # line of defense but it runs over untrusted chat text. This code-side
 # heuristic is the fail-closed backstop: any hit forces ``pending_owner``
 # regardless of what the model said (salud / dinero / ubicación / relaciones).
+# Fix round (S-terms): the vocabulary is expanded to common clinical and
+# financial terms (cáncer, hospital, salario, nómina, ...) and the terms that
+# collide with normal commercial vocabulary are curated out — e.g. "cuenta"
+# must NOT flag "tener en cuenta", "operación" flags "operación de venta",
+# "relación" flags "relación calidad-precio", "pareja" flags "en pareja".
 _SENSITIVE_TERMS = (
     # salud / enfermedad / medicación
     "salud",
     "enfermedad",
     "medicación",
+    "medicaciones",  # plural drops the accent (ó → o)
     "medicamento",
     "diabetes",
     "presión",
+    "presiones",  # plural drops the accent (ó → o)
     "tratamiento",
-    "operación",
     "embarazo",
-    # dinero / sueldo / pago / cuenta
+    # salud — expanded clinical vocabulary (S-terms)
+    "cáncer",
+    "depresión",
+    "depresiones",  # plural drops the accent (ó → o)
+    "ansiedad",
+    "psicólogo",
+    "hospital",
+    "sangre",
+    "droga",
+    "aborto",
+    "suicidio",
+    # dinero / sueldo / pago
     "dinero",
     "sueldo",
     "pago",
-    "cuenta",
     "deuda",
     "tarjeta",
     "alquiler",
     "saldo",
     "ingresos",
+    # dinero — expanded financial vocabulary (S-terms)
+    "salario",
+    "renta",
+    "nómina",
     # dirección / ubicación / vive en
     "dirección",
+    "direcciones",  # plural drops the accent (ó → o)
     "ubicación",
+    "ubicaciones",  # plural drops the accent (ó → o)
     "vive en",
     # identidad / documentos
     "dni",
     "cédula",
-    # esposo / esposa / pareja / relación
+    # esposo / esposa (relaciones)
     "esposo",
     "esposa",
-    "pareja",
-    "relación",
+)
+
+# Word-boundary matcher: a term only hits as a standalone word/phrase, never
+# inside a larger word ("presión" != "impresión", "dni" != "adni"). The
+# optional ``(?:s|es)?`` keeps common Spanish plurals covered
+# ("deudas", "medicaciones", "hospitales") without losing the word-boundary
+# property. Combined with the curated list above, commercial idioms like
+# "tener en cuenta" no longer force ``pending_owner``.
+_TERM_RE = re.compile(
+    "|".join(
+        rf"(?<!\w){re.escape(t)}(?:s|es)?(?!\w)" for t in _SENSITIVE_TERMS
+    )
 )
 
 _SYSTEM_EXTRACTOR = (
@@ -150,7 +188,14 @@ _WINDOW_TEMPLATE = (
 class HistoryReader(Protocol):
     """Full chronological history reader (backfill source)."""
 
-    async def list_all(self, chat_id: int, *, page_size: int = 500) -> list[dict]: ...
+    async def list_all(
+        self,
+        chat_id: int,
+        *,
+        page_size: int = 500,
+        since: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[dict]: ...
 
     # Fix round (L6/F7): cheap row count for the queue's step estimator —
     # the caller never materializes the full history just for "~N pasos".
@@ -419,9 +464,15 @@ class MemoryBackfillService:
         if window_index >= total_windows:
             return WindowExtractionResult([], total_windows)
 
+        # Fix round (S-prompt): cap the accumulating summary to the most
+        # recent ``_ALREADY_MAX_FACTS`` facts (``already`` is oldest-first
+        # across windows, so the newest are at the end) — prompt growth stays
+        # bounded on long runs. Dedup semantics unchanged: the FULL list is
+        # still carried in the queue state and reaches ``finalize_profile``.
+        already_recent = (already or [])[-_ALREADY_MAX_FACTS:]
         already_strs = [
             f"[{h.seccion}] {h.texto}"
-            for h in (already or [])
+            for h in already_recent
             if h.texto and h.texto.strip()
         ]
         try:
@@ -685,9 +736,14 @@ class MemoryBackfillService:
         exact location, relationships). The LLM classification may only be
         *upgraded* by this check, never downgraded — a hit forces the fact to
         ``pending_owner`` regardless of what the model said.
+
+        Fix round (S-terms): matching is word-boundary (a term never matches
+        inside a larger word) so normal commercial vocabulary — "tener en
+        cuenta", "operación de venta", "relación calidad-precio" — does not
+        false-positive to ``pending_owner``.
         """
         norm = " ".join((text or "").casefold().split())
-        return any(term in norm for term in _SENSITIVE_TERMS)
+        return bool(_TERM_RE.search(norm))
 
     @staticmethod
     def _consolidate(hechos: list[HechoExtracted]) -> list[HechoExtracted]:

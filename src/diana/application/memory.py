@@ -87,6 +87,9 @@ class InMemoryTurnStore:
 
         data = rec.model_dump()
         data["status"] = new_status
+        # Fix round (R2): mirror SqlTurnStore — the last transition time is
+        # the per-turn finalize timestamp used as the extraction upper bound.
+        data["updated_at"] = datetime.now(UTC)
         if superseded_by is not None:
             data["superseded_by"] = superseded_by
         if error is not None:

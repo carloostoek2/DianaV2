@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -74,6 +74,39 @@ _SUMMARY_MAX_FACTS = 50
 # MemoryBackfillService._build_transcript (Pool 1, single source).
 _WINDOW_MAX_CHARS = 12_000
 _WINDOW_MAX_MESSAGES = 200
+# Fix round (R2): lower-bound PROBE is time-bounded, not just newest-N. The
+# trigger is appended to message_history right BEFORE the turn mint, so
+# ``turn.created_at`` is always ≥ the trigger row; probing rows with
+# ``ts >= created_at - margin`` is a tight envelope that ALWAYS contains the
+# trigger no matter how many LATER rows exist — scanning only the newest
+# ``_WINDOW_MAX_MESSAGES`` rows silently missed the trigger on long exchanges
+# (200+ later rows) and recreated the M1 "single-message turn extracts
+# nothing" degradation.
+_WINDOW_SINCE_PROBE_MARGIN = timedelta(minutes=15)
+# Fix round (R3): count cap for the lower-bound probe. The probe exists ONLY
+# to locate the trigger row (the newest VIP message appended right before the
+# turn mint); a DESC-limited read of the time slice usually contains it while
+# keeping the time-margin containment semantics — a high-volume chat pays
+# O(probe) per terminal turn, not O(15-minute slice).
+# Fix round (R4): the cap is raised to the full window budget (200). A DESC
+# newest-N probe still DROPS the trigger when ≥N rows are strictly newer than
+# it within the slice (heavy owner-correction session / burst); containing the
+# trigger reliably is the probe's whole reason to exist, so the cap matches the
+# window read AND a trigger-miss re-probes the uncapped time slice (R4).
+_WINDOW_PROBE_LIMIT = _WINDOW_MAX_MESSAGES
+# Fix round (R2/R3/R4): UPPER bound grace. The bound is THIS turn's own
+# finalize timestamp (``turn.updated_at`` at DELIVERED) + the grace, FLOORED
+# by the newest owner row actually read in the fetch (R4). The grace absorbs
+# the sub-second gap between the DELIVERED transition and the owner-draft
+# history append (same chat-lock block); R4 additionally anchors on the
+# draft's own row timestamp so a gap larger than the grace (slow/remote
+# Postgres, NTP skew) can never exclude the turn's own draft. It is NOT meant
+# to cover the next turn: the post-turn hook runs immediately after delivery,
+# so a next trigger landing inside the envelope is the documented residual
+# leak window — bounded, vs. the pre-fix unbounded owner-scan/None. R3: the
+# grace is tightened to 1s (the minimal envelope; the R4 owner-row floor
+# covers the rest).
+_WINDOW_UNTIL_GRACE = timedelta(seconds=1)
 # Turns whose completed conversation is safe to learn from (REQ-MEM-07,
 # fix round S-MED): SUPERSEDED (cancelled by a newer message) is terminal
 # but deliberately excluded — the VIP never saw the reply nor approved it.
@@ -267,7 +300,6 @@ class MemoryExtractionService:
                     status="failed", turn_id=turn_id, vip_id=vip_id
                 )
 
-        all_msgs = await self._history.list_all(chat_id)
         # Fix round (M1): the window starts at the TRIGGER message, not at
         # ``turn.created_at`` — the orchestrator appends the trigger to
         # message_history BEFORE minting the turn, so its timestamp is always
@@ -276,9 +308,82 @@ class MemoryExtractionService:
         # nothing). The trigger IS the first message of the turn; its own
         # timestamp is the exact lower bound. ``_window_since`` falls back to
         # ``created_at`` when the trigger is unknown/not persisted.
-        since = self._window_since(turn, all_msgs)
+        # Fix round (S-MED bounded read): NEVER materialize the full chat on
+        # a terminal turn — fetch only a bounded slice for the lower-bound
+        # probe plus the newest ``_WINDOW_MAX_MESSAGES`` rows for the window
+        # itself, so extraction cost is O(window), not O(chat).
+        # Fix round (R2): the lower-bound probe is TIME-bounded, not only
+        # newest-N. The trigger is appended right BEFORE the turn mint, so
+        # ``turn.created_at`` is always ≥ the trigger row; probing rows with
+        # ``ts >= created_at - margin`` always contains the trigger no matter
+        # how many later rows exist. Legacy/in-memory turns without a
+        # created_at fall back to the newest-N probe (no time anchor).
+        if turn.created_at is not None:
+            # Fix round (R3): the time-bounded probe is COUNT-BOUNDED too. It
+            # only needs to locate the trigger row, which is usually among the
+            # newest ``_WINDOW_PROBE_LIMIT`` rows of the slice (the trigger is
+            # appended right before the turn mint) — never materialize the
+            # whole 15-minute slice on every terminal turn.
+            probe = await self._history.list_all(
+                chat_id,
+                since=MemoryExtractionService._normalize_utc(
+                    turn.created_at - _WINDOW_SINCE_PROBE_MARGIN
+                ),
+                limit=_WINDOW_PROBE_LIMIT,
+            )
+        else:
+            probe = await self._history.list_all(
+                chat_id, limit=_WINDOW_MAX_MESSAGES
+            )
+        # Fix round (R4): a count-capped DESC probe can still DROP the trigger
+        # when ≥_WINDOW_PROBE_LIMIT rows are strictly newer than it within the
+        # slice (heavy owner-correction session / burst). That miss silently
+        # falls back to ``turn.created_at`` (strictly later than the trigger)
+        # and recreates the M1 "single-message turn extracts nothing"
+        # degradation. Make containment reliable: when the trigger is NOT found
+        # in the bounded probe, re-probe the FULL time slice (uncapped) — the
+        # trigger is guaranteed inside ``[created_at - margin, created_at]``
+        # (appended right before the mint), so the unbounded slice always
+        # contains it. The whole slice is never materialized on the happy path.
+        if (
+            turn.created_at is not None
+            and turn.trigger_message_id is not None
+            and MemoryExtractionService._trigger_timestamp(
+                probe, turn.trigger_message_id
+            )
+            is None
+        ):
+            logger.info(
+                "window_probe_trigger_miss",
+                extra={
+                    "turn_id": str(turn_id),
+                    "trigger_message_id": turn.trigger_message_id,
+                    "probe_messages": len(probe),
+                },
+            )
+            probe = await self._history.list_all(
+                chat_id,
+                since=MemoryExtractionService._normalize_utc(
+                    turn.created_at - _WINDOW_SINCE_PROBE_MARGIN
+                ),
+            )
+        since = self._window_since(turn, probe)
+        msgs = await self._history.list_all(
+            chat_id, since=since, limit=_WINDOW_MAX_MESSAGES
+        )
+        # Fix round (R2 upper bound): anchor the window at THIS turn's OWN
+        # finalize time (``turn.updated_at`` at DELIVERED/escalated/failed)
+        # instead of scanning owner rows globally — a global scan could anchor
+        # at a CONCURRENT next turn's draft (S-MED (b)) and returned ``None``
+        # (unbounded) when this turn wrote no owner row (S-MED (a)). Falls
+        # back to the owner-row scan only when the turn has no per-turn
+        # timestamp (legacy/in-memory — documented residual case).
+        until = self._window_until(
+            msgs,
+            finalize_at=turn.updated_at,
+        )
         msgs = self._filter_turn_messages(
-            all_msgs, since, max_messages=_WINDOW_MAX_MESSAGES
+            msgs, since, until=until, max_messages=_WINDOW_MAX_MESSAGES
         )
         if not msgs:
             logger.info(
@@ -292,12 +397,18 @@ class MemoryExtractionService:
         lines = MemoryBackfillService._build_transcript(msgs)
         lines = self._cap_transcript(lines)
 
-        known = await self._memories.list_by_vip(vip_id)
+        known = await self._memories.list_by_vip(
+            vip_id, statuses=("auto", "pending_owner", "approved")
+        )
         # Fix round (L3): the \"do not repeat\" summary must show the MOST
         # RECENT facts — the ones most likely to repeat in the current turn.
         # ``list_by_vip`` is oldest-first (A4 contract), so slice from the
         # end; with more than ``limit`` facts the slice is still far newer
         # than the oldest 50 (semantic dedup remains the real guard).
+        # Fix round (S-dedup): ``discarded`` facts are excluded — the owner
+        # rejected them, so a later correct fact must NOT be suppressed by a
+        # row the owner already discarded. Dedup runs against
+        # auto/pending_owner/approved only (same set as ``find_similar_facts``).
         recent_known = (
             known[-_SUMMARY_MAX_FACTS:]
             if len(known) > _SUMMARY_MAX_FACTS
@@ -499,6 +610,28 @@ class MemoryExtractionService:
         return None
 
     @staticmethod
+    def _trigger_timestamp(
+        msgs: list[dict], trigger_id: int | None
+    ) -> datetime | None:
+        """Timestamp of the trigger row in ``msgs``, or None when missing.
+
+        Shared by ``_window_since`` (lower-bound resolution) and the R4
+        re-probe decision (``_extract``): the trigger's own row timestamp IS
+        the exact lower bound (M1), and a bounded probe that missed it must be
+        re-read uncapped. Returns the first row matching ``telegram_message_id``
+        when its timestamp parses; None when the id is unknown, the row is
+        absent, or the timestamp is unparseable (callers decide fallback).
+        """
+        if trigger_id is None:
+            return None
+        for m in msgs:
+            if m.get("telegram_message_id") == trigger_id:
+                return MemoryExtractionService._parse_timestamp(
+                    m.get("timestamp")
+                )
+        return None
+
+    @staticmethod
     def _window_since(turn: TurnRecord, msgs: list[dict]) -> datetime | None:
         """Lower bound of the turn window (fix round M1).
 
@@ -513,38 +646,121 @@ class MemoryExtractionService:
         absent from the history (recovery-created turns, sandbox-skipped or
         purged rows).
         """
-        trigger_id = turn.trigger_message_id
-        if trigger_id is not None:
-            for m in msgs:
-                if m.get("telegram_message_id") == trigger_id:
-                    ts = MemoryExtractionService._parse_timestamp(
-                        m.get("timestamp")
-                    )
-                    if ts is not None:
-                        return ts
-                    break
-        return turn.created_at
+        trigger_ts = MemoryExtractionService._trigger_timestamp(
+            msgs, turn.trigger_message_id
+        )
+        if trigger_ts is not None:
+            return trigger_ts
+        # Fix round (R2): NEVER silent. ``turn.created_at`` is strictly LATER
+        # than the trigger timestamp, so this fallback recreates the M1
+        # "single-message turn extracts nothing" degradation; log it as a
+        # distinct observable event so the miss is never hidden. (The time
+        # -bounded probe makes this path rare — R4 re-probes the uncapped slice
+        # before ever reaching it — the log stays the safety net.)
+        logger.info(
+            "window_since_fallback",
+            extra={
+                "trigger_message_id": turn.trigger_message_id,
+                "probe_messages": len(msgs),
+                "created_at": (
+                    turn.created_at.isoformat()
+                    if turn.created_at is not None
+                    else None
+                ),
+            },
+        )
+        return (
+            MemoryExtractionService._normalize_utc(turn.created_at)
+            if turn.created_at is not None
+            else None
+        )
+
+    @staticmethod
+    def _window_until(
+        msgs: list[dict],
+        *,
+        finalize_at: datetime | None = None,
+    ) -> datetime | None:
+        """Upper bound of the turn window (fix rounds R2/R3/R4).
+
+        Primary — THIS turn's own delivery/finalize time: when ``finalize_at``
+        is given (``turn.updated_at`` at DELIVERED/escalated/failed), the
+        bound is ``finalize_at + _WINDOW_UNTIL_GRACE``. The grace absorbs the
+        sub-second gap between the DELIVERED transition and the owner-draft
+        history append (same chat-lock block), so the turn's own draft stays
+        in the window WITHOUT scanning owner rows globally. This fixes both
+        S-MED edge cases: (a) no owner row ever yields ``None`` (unbounded)
+        — the finalize envelope is a real bound; (b) the bound can no longer
+        anchor at a CONCURRENT next turn's draft — it is THIS turn's own time.
+
+        Fix round (R4): the grace alone can UNDER-include the turn's OWN
+        draft. ``updated_at`` is stamped at the DELIVERED transition with the
+        app-side clock, but the owner-draft row is INSERTed after it across a
+        separate DB session; when that gap exceeds ``_WINDOW_UNTIL_GRACE``
+        (slow/remote Postgres, NTP skew between app and DB hosts), the draft
+        — the newest, most informative row — is excluded, deterministically
+        and permanently (the ``None``-fallback owner-row scan below never runs
+        for SQL turns). So the bound is additionally anchored at the newest
+        OWNER row actually read in the fetched ``msgs``:
+        ``max(finalize_at + grace, newest_owner_ts)``. At hook time the fetch
+        runs immediately after this turn's delivery and before the next turn
+        is delivered, so the newest owner row within the ``since``-bounded
+        fetch IS this turn's own draft — under-inclusion is impossible. The
+        residual next-turn-trigger contamination (a concurrent owner action
+        landing inside the envelope before the hook reads) stays the
+        documented theoretical case.
+
+        Fallback — residual, legacy/in-memory turns without a per-turn
+        timestamp: newest OWNER row in ``msgs`` (the pre-fix behavior,
+        documented residual). ``None`` only when no owner row exists at all
+        (genuinely unbounded; the message cap still applies).
+        """
+        newest: datetime | None = None
+        for m in msgs:
+            if m.get("role") != "owner":
+                continue
+            ts = MemoryExtractionService._parse_timestamp(m.get("timestamp"))
+            if ts is not None and (newest is None or ts > newest):
+                newest = ts
+        if finalize_at is not None:
+            bound = (
+                MemoryExtractionService._normalize_utc(finalize_at)
+                + _WINDOW_UNTIL_GRACE
+            )
+            # R4: the newest owner row read in the fetch can never be excluded
+            # — its own timestamp is the floor the envelope must cover.
+            if newest is not None and newest > bound:
+                return newest
+            return bound
+        return newest
 
     @staticmethod
     def _filter_turn_messages(
         msgs: list[dict],
         since: datetime | None,
         *,
+        until: datetime | None = None,
         max_messages: int | None = None,
     ) -> list[dict]:
         """Keep vip/owner messages of the turn window (A3, M1-fixed).
 
         Window: ``role in (vip, owner)`` AND ``timestamp >= since`` (the
-        trigger's timestamp — M1 — or ``turn.created_at`` as fallback).
-        Messages WITHOUT a valid timestamp are OUT of the window (fail-closed,
-        SEC audit F4): an untimestamped row must not leak into every later
-        turn. All timestamps are normalized to UTC-aware before comparing
-        (L7). With ``max_messages`` only the NEWEST messages of the window
-        are kept — the window is bounded (S-MED cap).
+        trigger's timestamp — M1 — or ``turn.created_at`` as fallback) AND
+        ``timestamp <= until`` (the delivery/finalize time — S-MED upper
+        bound). Messages WITHOUT a valid timestamp are OUT of the window
+        (fail-closed, SEC audit F4): an untimestamped row must not leak into
+        every later turn. All timestamps are normalized to UTC-aware before
+        comparing (L7). With ``max_messages`` only the NEWEST messages of the
+        window are kept — the window is bounded (S-MED cap).
         """
         since_norm = (
             MemoryExtractionService._normalize_utc(since)
             if since is not None
+            else None
+        )
+        until_norm = (
+            MemoryExtractionService._normalize_utc(until)
+            if until is not None
             else None
         )
         out: list[dict] = []
@@ -555,6 +771,8 @@ class MemoryExtractionService:
             if ts is None:
                 continue
             if since_norm is not None and ts < since_norm:
+                continue
+            if until_norm is not None and ts > until_norm:
                 continue
             out.append(m)
         if max_messages and len(out) > max_messages:

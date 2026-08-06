@@ -13,6 +13,9 @@ from uuid import UUID, uuid4
 from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.gray_zone_service import GrayZoneService
+from diana.application.memory_extraction_service import (
+    _POST_TURN_EXTRACTABLE_STATUSES,  # noqa: PLC2701 — extraction gate, single source (R4)
+)
 from diana.application.mexico_tz import cdmx_local_date
 from diana.application.observability import log_swallowed
 from diana.application.owner_history import append_owner_delivery_history
@@ -452,6 +455,65 @@ class TurnOrchestrator:
                         chat_id=chat_id,
                     )
 
+    async def _maybe_post_turn_guarded(
+        self, turn_id: UUID, chat_id: int
+    ) -> None:
+        """Best-effort post-turn hook wrapper (never masks the caller).
+
+        ``_maybe_post_turn`` swallows memory-extraction failures but leaves the
+        LEARNING step unwrapped — a failure there inside a ``finally``/``except``
+        would mask the original terminal-path exception. This wrapper guarantees
+        the hook itself never propagates (R4, best-effort strict R1).
+        """
+        try:
+            await self._maybe_post_turn(turn_id, chat_id)
+        except Exception:
+            log_swallowed(
+                logger,
+                "post_turn_hook_error",
+                turn_id=str(turn_id),
+                chat_id=chat_id,
+            )
+
+    async def _maybe_post_turn_terminal(
+        self, turn_id: UUID, chat_id: int
+    ) -> None:
+        """Best-effort post-turn hook gated on the persisted extractable status.
+
+        Mirrors ``AdminService._trigger_post_turn_terminal`` (REQ-MEM-07): read-
+        backs the turn's persisted status and fires the hook ONLY when it is
+        still in the extractable set (delivered / escalated / failed). The read-
+        back closes the persist-then-raise gap — a row persisted DELIVERED /
+        FAILED / ESCALATED while the in-block flag was never assigned still runs,
+        and a turn that ended non-extractable (e.g. superseded) never runs. The
+        read itself is best-effort: on failure the hook still fires (the caller
+        already confirmed it made the turn terminal), so the completed turn's
+        learning + memory extraction are never stranded.
+        """
+        try:
+            turn = await self._coordinator.get_turn(turn_id)
+            if (
+                turn is not None
+                and turn.status not in _POST_TURN_EXTRACTABLE_STATUSES
+            ):
+                logger.info(
+                    "post_turn_skipped_status",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": chat_id,
+                        "status": turn.status,
+                    },
+                )
+                return
+        except Exception:
+            log_swallowed(
+                logger,
+                "post_turn_status_readback_failed",
+                turn_id=str(turn_id),
+                chat_id=chat_id,
+            )
+        await self._maybe_post_turn_guarded(turn_id, chat_id)
+
     async def _safe_notify_info(
         self,
         message: str,
@@ -570,8 +632,19 @@ class TurnOrchestrator:
         error: str,
         notify_event: str,
     ) -> None:
-        """mark_failed then fail-soft owner notify (typed director errors)."""
-        await self._coordinator.mark_failed(turn_id, error=error)
+        """mark_failed then fail-soft owner notify (typed director errors).
+
+        R4: the post-turn hook fires on the happy path from the caller
+        (``pending_deliver is None`` in ``_run_after_pre_delay``). If
+        ``mark_failed`` persists then raises, that normal-path hook is skipped
+        by the propagating exception — so fire it here (best-effort, read-back
+        gated) before re-raising, never double-firing on the happy path.
+        """
+        try:
+            await self._coordinator.mark_failed(turn_id, error=error)
+        except Exception:
+            await self._maybe_post_turn_terminal(turn_id, chat_id)
+            raise
         await self._safe_notify_info(
             f"Turn {turn_id} failed: {error}",
             chat_id=chat_id,
@@ -960,9 +1033,16 @@ class TurnOrchestrator:
             async with self._coordinator.chat_scope(chat_id):
                 live = await self._coordinator.get_turn(turn_id)
                 if live is not None and not is_turn_status_terminal(live.status):
-                    await self._coordinator.mark_failed(
-                        turn_id, error="vip_frozen"
-                    )
+                    try:
+                        await self._coordinator.mark_failed(
+                            turn_id, error="vip_frozen"
+                        )
+                    except Exception:
+                        # R4: persist-then-raise in mark_failed skips the
+                        # normal-path hook below — fire it here (read-back gated)
+                        # before re-raising, never double-firing on the happy path.
+                        await self._maybe_post_turn_terminal(turn_id, chat_id)
+                        raise
                     await self._safe_notify_info(
                         f"Turn {turn_id} failed: vip_frozen",
                         chat_id=chat_id,
@@ -986,9 +1066,16 @@ class TurnOrchestrator:
             async with self._coordinator.chat_scope(chat_id):
                 live = await self._coordinator.get_turn(turn_id)
                 if live is not None and not is_turn_status_terminal(live.status):
-                    await self._coordinator.mark_failed(
-                        turn_id, error="autonomous_behavior_not_wired"
-                    )
+                    try:
+                        await self._coordinator.mark_failed(
+                            turn_id, error="autonomous_behavior_not_wired"
+                        )
+                    except Exception:
+                        # R4: persist-then-raise in mark_failed skips the
+                        # normal-path hook below — fire it here (read-back gated)
+                        # before re-raising, never double-firing on the happy path.
+                        await self._maybe_post_turn_terminal(turn_id, chat_id)
+                        raise
             await self._maybe_post_turn(turn_id, chat_id)
             logger.error(
                 "autonomous_behavior_not_wired",
@@ -1015,10 +1102,27 @@ class TurnOrchestrator:
             turn_id,
             decision=pending_deliver.decision,
         )
-        async with self._coordinator.chat_scope(chat_id):
-            delivered = await self._finalize_autonomous_delivery(
-                turn_id, chat_id, result, text=pending_deliver.text
-            )
+        # R4: mutable holder — set BEFORE each terminal transition inside
+        # ``_finalize_autonomous_delivery`` so a persisted-then-raised
+        # transition still fires the post-turn hook from the ``finally`` below
+        # (outside the chat lock); the read-back gate guards exactly-once.
+        post_turn_state: list[bool] = [False]
+        try:
+            async with self._coordinator.chat_scope(chat_id):
+                delivered = await self._finalize_autonomous_delivery(
+                    turn_id,
+                    chat_id,
+                    result,
+                    text=pending_deliver.text,
+                    post_turn_state=post_turn_state,
+                )
+        finally:
+            # REQ-MEM-07 parity with the supervised path: run post-turn learning
+            # + memory extraction AFTER the turn is confirmed terminal in an
+            # extractable status and OUTSIDE the chat lock. Best-effort strict
+            # (R1) — a failure never propagates to the already-completed send.
+            if post_turn_state[0]:
+                await self._maybe_post_turn_terminal(turn_id, chat_id)
 
         # Near-threshold notify only when finalize confirmed DELIVERED
         # (not raw actuator success — mid-flight supersede must not notify).
@@ -1032,7 +1136,6 @@ class TurnOrchestrator:
                 pending_deliver.decision.evaluation,
             )
 
-        await self._maybe_post_turn(turn_id, chat_id)
         logger.info(
             "vip_message_handled",
             extra={
@@ -1235,9 +1338,19 @@ class TurnOrchestrator:
                     channel_type=incoming.channel_type,
                 )
                 turn_id = record.id
-            await self._coordinator.mark_failed(
-                turn_id, error="business_connection_id is required"
-            )
+            try:
+                await self._coordinator.mark_failed(
+                    turn_id, error="business_connection_id is required"
+                )
+            finally:
+                # R4: this path ALWAYS raises BEFORE the normal hook site, but
+                # the turn is FAILED — a terminal, extractable outcome. Fire the
+                # post-turn hook best-effort in the finally so a persisted-then-
+                # raised mark_failed cannot strand extraction; the read-back gate
+                # skips non-extractable statuses.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
             raise ValueError("business_connection_id is required")
 
         if turn_id is None:
@@ -1350,7 +1463,17 @@ class TurnOrchestrator:
                     },
                 )
                 return turn_id, None
-            await self._coordinator.mark_failed(turn_id, error=str(exc))
+            try:
+                await self._coordinator.mark_failed(turn_id, error=str(exc))
+            finally:
+                # R4: persist-then-raise in mark_failed (or the raise below) —
+                # the turn is FAILED, a terminal extractable outcome, but this
+                # path raises before the normal hook site. Fire best-effort here
+                # so extraction is never stranded; the read-back gate skips
+                # non-extractable statuses.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
             logger.exception(
                 "director_failed",
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
@@ -1637,8 +1760,23 @@ class TurnOrchestrator:
                 )
                 # CRITICAL: never call behavior.deliver — VIP is frozen
         elif decision.action == "escalate":
-            await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
-            await self._admin.notify_escalation(turn_ctx, decision, turn_id)
+            try:
+                await self._coordinator.transition(
+                    turn_id, TurnStatus.ESCALATED
+                )
+                await self._admin.notify_escalation(
+                    turn_ctx, decision, turn_id
+                )
+            except Exception:
+                # R4: an ESCALATED transition that persists-then-raises (or a
+                # notify failure after it) must still fire the post-turn hook —
+                # the normal-path hook (pending_deliver is None) only runs when
+                # no exception propagates. The read-back gate decides
+                # extractability and guards exactly-once.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
         elif decision.action == "send":
             job = await self._prepare_autonomous_send(
                 turn_id=turn_id,
@@ -1657,9 +1795,17 @@ class TurnOrchestrator:
                     "chat_id": incoming.chat_id,
                 },
             )
-            await self._coordinator.mark_failed(
-                turn_id, error=f"unexpected F2 action: {decision.action!r}"
-            )
+            try:
+                await self._coordinator.mark_failed(
+                    turn_id, error=f"unexpected F2 action: {decision.action!r}"
+                )
+            finally:
+                # R4: persist-then-raise in mark_failed (or the raise below) —
+                # the turn is FAILED, a terminal extractable outcome, but this
+                # path raises before the normal hook site. Fire best-effort here.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
             raise ValueError(f"unexpected F2 action: {decision.action!r}")
 
         logger.info(
@@ -1689,9 +1835,18 @@ class TurnOrchestrator:
                     "chat_id": incoming.chat_id,
                 },
             )
-            await self._coordinator.mark_failed(
-                turn_id, error="autonomous_not_wired"
-            )
+            try:
+                await self._coordinator.mark_failed(
+                    turn_id, error="autonomous_not_wired"
+                )
+            except Exception:
+                # R4: persist-then-raise in mark_failed skips the normal-path
+                # hook (pending_deliver is None) — fire it here (read-back
+                # gated) before re-raising; the happy path fires exactly once.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
             return None
 
         enabled = await self._autonomous_mode.is_autonomous_enabled(
@@ -1729,7 +1884,16 @@ class TurnOrchestrator:
                     "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
                 },
             )
-            await self._coordinator.mark_failed(turn_id, error="vip_frozen")
+            try:
+                await self._coordinator.mark_failed(turn_id, error="vip_frozen")
+            except Exception:
+                # R4: persist-then-raise in mark_failed skips the normal-path
+                # hook (pending_deliver is None) — fire it here (read-back
+                # gated) before re-raising; the happy path fires exactly once.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
             await self._safe_notify_info(
                 f"Turn {turn_id} failed: vip_frozen",
                 chat_id=incoming.chat_id,
@@ -1744,7 +1908,16 @@ class TurnOrchestrator:
                 "autonomous_empty_draft",
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
             )
-            await self._coordinator.mark_failed(turn_id, error="empty_draft")
+            try:
+                await self._coordinator.mark_failed(turn_id, error="empty_draft")
+            except Exception:
+                # R4: persist-then-raise in mark_failed skips the normal-path
+                # hook (pending_deliver is None) — fire it here (read-back
+                # gated) before re-raising; the happy path fires exactly once.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
             await self._safe_notify_info(
                 f"Turn {turn_id} failed: empty_draft",
                 chat_id=incoming.chat_id,
@@ -1758,9 +1931,18 @@ class TurnOrchestrator:
                 "autonomous_behavior_not_wired",
                 extra={"turn_id": str(turn_id)},
             )
-            await self._coordinator.mark_failed(
-                turn_id, error="autonomous_behavior_not_wired"
-            )
+            try:
+                await self._coordinator.mark_failed(
+                    turn_id, error="autonomous_behavior_not_wired"
+                )
+            except Exception:
+                # R4: persist-then-raise in mark_failed skips the normal-path
+                # hook (pending_deliver is None) — fire it here (read-back
+                # gated) before re-raising; the happy path fires exactly once.
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
             return None
 
         # is_frozen=False: prepare only builds a job when VIP is not frozen.
@@ -1806,11 +1988,16 @@ class TurnOrchestrator:
         chat_id: int,
         result: DeliveryResult,
         text: str,
+        post_turn_state: list[bool] | None = None,
     ) -> bool:
         """Post-deliver terminal check under chat lock (Admin I.5 parity, no approval).
 
         Returns True only when the turn was transitioned to DELIVERED.
         Not a SQL CAS / claim token — single-process lock + terminal latch.
+
+        R4: ``post_turn_state`` (mutable holder from the caller's ``finally``)
+        is set to True BEFORE each terminal transition so a persisted-then-raised
+        transition still fires the post-turn hook (best-effort, read-back gated).
         """
         turn_after = await self._coordinator.get_turn(turn_id)
         if turn_after is None or is_turn_status_terminal(turn_after.status):
@@ -1825,6 +2012,11 @@ class TurnOrchestrator:
             return False
 
         if result.success:
+            # R4: eligibility BEFORE the transition — a DELIVERED transition
+            # that persists-then-raises must still fire the post-turn hook (the
+            # read-back gate decides whether the turn is actually extractable).
+            if post_turn_state is not None:
+                post_turn_state[0] = True
             await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
             if self._traces is not None:
                 await self._traces.set_delivery_result(
@@ -1856,6 +2048,10 @@ class TurnOrchestrator:
             return True
 
         if result.cancelled:
+            # R4: eligibility BEFORE the transition — a FAILED transition that
+            # persists-then-raises must still fire the post-turn hook.
+            if post_turn_state is not None:
+                post_turn_state[0] = True
             await self._coordinator.mark_failed(
                 turn_id, error=result.error or "delivery_cancelled"
             )
@@ -1873,6 +2069,10 @@ class TurnOrchestrator:
             return False
 
         # Permanent deliver failure (I.5).
+        # R4: eligibility BEFORE the transition — a FAILED transition that
+        # persists-then-raises must still fire the post-turn hook.
+        if post_turn_state is not None:
+            post_turn_state[0] = True
         await self._coordinator.mark_failed(
             turn_id, error=result.error or "delivery_failed"
         )
