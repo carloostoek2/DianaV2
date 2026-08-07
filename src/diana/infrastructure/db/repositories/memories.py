@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -246,6 +247,38 @@ class MemoriesRepo:
         )
         if statuses is not None:
             stmt = stmt.where(Memory.status.in_(statuses))
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return [memory_to_dict(row) for row in result.scalars().all()]
+
+    async def list_by_vip_since(
+        self,
+        vip_id: UUID,
+        *,
+        since: datetime | None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Visible fact rows of vip_id created after ``since``, oldest first (A9).
+
+        Fase 1 ``new_episodic_facts`` source for the profile synthesis: only
+        rows the retriever may see (``auto``/``approved`` — pending_owner /
+        discarded never feed the profile, quality + anti-contamination) and
+        never the ``category='perfil'`` panel card. ``since=None`` returns
+        every visible fact of the VIP (first synthesis). Additive method — the
+        retriever's behavior is unchanged.
+        """
+        stmt = (
+            select(Memory)
+            .where(
+                Memory.vip_id == vip_id,
+                Memory.category != "perfil",
+                Memory.status.in_(_VISIBLE_STATUSES),
+            )
+            .order_by(Memory.created_at.asc(), Memory.id.asc())
+            .limit(limit)
+        )
+        if since is not None:
+            stmt = stmt.where(Memory.created_at >= since)
         async with self._sf() as session:
             result = await session.execute(stmt)
             return [memory_to_dict(row) for row in result.scalars().all()]

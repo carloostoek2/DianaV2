@@ -194,6 +194,14 @@ class MemoryFactsWriter(Protocol):
         self, vip_id: UUID, *, rows: list[MemoryInsert]
     ) -> int: ...
 
+    async def list_by_vip_since(
+        self,
+        vip_id: UUID,
+        *,
+        since: datetime | None,
+        limit: int = 200,
+    ) -> list[dict]: ...
+
 
 class MemoryExtractionService:
     """Post-turn incremental extractor (F5-04 / REQ-MEM-07-08)."""

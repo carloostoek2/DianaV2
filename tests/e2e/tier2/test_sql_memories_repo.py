@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -594,6 +595,94 @@ async def test_list_by_vip_orders_and_filters(session_factory):
 
     # The limit is honored.
     limited = await repo.list_by_vip(vip_id, limit=1)
+    assert [r["category"] for r in limited] == ["identidad"]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_by_vip_since_filters_visible_since_and_excludes_perfil(
+    session_factory,
+):
+    """A9: list_by_vip_since returns only auto/approved non-perfil rows created
+    at/after ``since``, oldest first — pending_owner/discarded never feed the
+    profile synthesis."""
+    repo = MemoriesRepo(session_factory)
+    # NOTE: 531 — 512/513/514 are used by test_find_similar_facts and the
+    # insert_facts tests; the session DB accumulates rows across tests.
+    vip_id = await _create_vip(session_factory, 531)
+
+    await repo.replace_vip_profile(
+        vip_id,
+        rows=[
+            MemoryInsert(
+                category="identidad",
+                text="Vive en Buenos Aires",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="approved",
+                approved_by="owner",
+            ),
+            MemoryInsert(
+                category="preferencias",
+                text="Le gusta el tono juguetón",
+                embedding=_EMBEDDING_384,
+                confidence=0.9,
+                status="auto",
+                approved_by="auto",
+            ),
+            MemoryInsert(
+                category="sensible",
+                text="Problema de salud",
+                embedding=_EMBEDDING_384,
+                confidence=0.7,
+                status="pending_owner",
+                approved_by=None,
+            ),
+            MemoryInsert(
+                category="comercial",
+                text="Mencionó un producto",
+                embedding=_EMBEDDING_384,
+                confidence=0.6,
+                status="discarded",
+                approved_by="owner",
+            ),
+        ],
+        perfil={"vip_id": str(vip_id), "secciones": {}},
+        perfil_embedding=_EMBEDDING_384,
+    )
+    # Age the rows deterministically: identidad = 3d ago, others = now.
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "UPDATE memories SET created_at = now() - interval '3 days' "
+                "WHERE vip_id = :vip AND category = 'identidad'"
+            ),
+            {"vip": vip_id},
+        )
+        await session.commit()
+
+    # since = 2 days ago → only the row created within the last 2 days is
+    # "new" (A9 semantics: facts created AT/AFTER last_synthesized_at).
+    two_days = datetime.now(UTC) - timedelta(days=2)
+    rows = await repo.list_by_vip_since(vip_id, since=two_days)
+    assert [r["category"] for r in rows] == ["preferencias"]
+    assert [r["status"] for r in rows] == ["auto"]
+
+    # since = 4 days ago → both visible rows are new; pending_owner/discarded/
+    # perfil never appear.
+    four_days = datetime.now(UTC) - timedelta(days=4)
+    both = await repo.list_by_vip_since(vip_id, since=four_days)
+    assert [r["category"] for r in both] == ["identidad", "preferencias"]
+    assert [r["status"] for r in both] == ["approved", "auto"]
+
+    # since=None → ALL visible non-perfil rows, oldest first.
+    all_rows = await repo.list_by_vip_since(vip_id, since=None)
+    assert [r["category"] for r in all_rows] == ["identidad", "preferencias"]
+    assert [r["status"] for r in all_rows] == ["approved", "auto"]
+    assert all(r["category"] != "perfil" for r in all_rows)
+
+    # The limit is honored.
+    limited = await repo.list_by_vip_since(vip_id, since=None, limit=1)
     assert [r["category"] for r in limited] == ["identidad"]
 
 

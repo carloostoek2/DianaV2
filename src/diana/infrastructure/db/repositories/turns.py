@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.ports import TurnRecord
@@ -93,6 +93,51 @@ class SqlTurnStore:
                 for r in rows
                 if not is_terminal_status(r.status)
             ]
+
+    async def count_messages_since(
+        self, vip_id: UUID, *, since: datetime | None
+    ) -> int:
+        """Turns of the VIP in the 'vip' channel with created_at > since (or all).
+
+        Fase 1 profile-synthesis activity source (A2): a message is one turn
+        and an edit never creates a new turn, so ``turns`` is an exact counter
+        without TTL sub-counting (``pipeline_traces`` and ``message_history``
+        were rejected in the impact analysis). ``since=None`` counts every
+        'vip' turn of the VIP (used when ``last_synthesized_at`` is unset).
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Turn)
+            .where(Turn.vip_id == vip_id, Turn.channel_type == "vip")
+        )
+        if since is not None:
+            stmt = stmt.where(Turn.created_at > since)
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return int(result.scalar_one())
+
+    async def list_vips_with_activity_older_than(
+        self, older_than: datetime, *, limit: int = 100
+    ) -> list[tuple[UUID, datetime]]:
+        """(vip_id, last_activity) for VIPs whose newest 'vip' turn predates older_than.
+
+        Fase 1 scan source (``scan_inactivity``): only VIPs whose most recent
+        'vip'-channel turn is OLDER than ``older_than`` are returned, newest
+        last-activity first, capped at ``limit``. VIPs without any turn are
+        never returned (no activity to close). The group-by needs the new
+        index ``ix_turns_vip_id_created_at`` (migration 025).
+        """
+        stmt = (
+            select(Turn.vip_id, func.max(Turn.created_at))
+            .where(Turn.channel_type == "vip", Turn.vip_id.is_not(None))
+            .group_by(Turn.vip_id)
+            .having(func.max(Turn.created_at) < older_than)
+            .order_by(func.max(Turn.created_at).desc())
+            .limit(limit)
+        )
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return [(row[0], row[1]) for row in result.all()]
 
     async def transition(
         self,
