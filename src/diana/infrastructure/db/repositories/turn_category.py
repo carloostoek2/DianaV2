@@ -31,6 +31,22 @@ class SqlTurnCategoryLogRepo:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
 
+    async def get_by_turn_id(self, turn_id: UUID) -> TurnCategoryLogRecord | None:
+        """Resolve the classification of ONE turn (turn_id is UNIQUE).
+
+        Fase 5 correction event: ``TrustBudgetService.record_correction`` maps a
+        ``turn_id`` back to its (vip_id, category) via this reader. ``None``
+        when the turn was never classified (pre-Fase-2 rows / no row).
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(TurnCategoryLog).where(TurnCategoryLog.turn_id == turn_id)
+            )
+            row = result.scalar_one_or_none()
+            return (
+                turn_category_log_orm_to_record(row) if row is not None else None
+            )
+
     async def insert(self, record: TurnCategoryLogRecord) -> TurnCategoryLogRecord:
         values: dict[str, object] = dict(
             turn_id=record.turn_id,

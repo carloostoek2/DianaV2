@@ -73,7 +73,7 @@ def test_turn_category_log_repo_surface() -> None:
     sig = inspect.signature(SqlTurnCategoryLogRepo.__init__)
     assert "session_factory" in sig.parameters
     repo = SqlTurnCategoryLogRepo(session_factory=object())  # type: ignore[arg-type]
-    for name in ("insert", "list_recent", "purge_expired"):
+    for name in ("insert", "get_by_turn_id", "list_recent", "purge_expired"):
         assert inspect.iscoroutinefunction(getattr(repo, name)), name
 
 
@@ -86,6 +86,12 @@ class _MemoryTurnCategoryLogStore:
     async def insert(self, record: TurnCategoryLogRecord) -> TurnCategoryLogRecord:
         self.rows.append(record)
         return record
+
+    async def get_by_turn_id(self, turn_id) -> TurnCategoryLogRecord | None:
+        for row in self.rows:
+            if row.turn_id == turn_id:
+                return row
+        return None
 
     async def list_recent(self, chat_id: int, limit: int = 20) -> list[TurnCategoryLogRecord]:
         matches = [r for r in self.rows if r.chat_id == chat_id]
@@ -218,3 +224,29 @@ async def test_insert_none_shadow_columns() -> None:
     # NULL-able columns accept explicit None (unlike id/created_at).
     assert row.would_autonomous is None  # type: ignore[attr-defined]
     assert row.confidence is None  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_memory_store_get_by_turn_id_semantics() -> None:
+    """Fase 5: get_by_turn_id resolves the row (turn_id is UNIQUE) or None."""
+    store = _MemoryTurnCategoryLogStore()
+    turn = uuid4()
+    rec = _record(turn_id=turn, category="fatico", vip_id=uuid4())
+    await store.insert(rec)
+
+    found = await store.get_by_turn_id(turn)
+    assert found is not None
+    assert found.turn_id == turn
+    assert found.category == "fatico"
+    assert await store.get_by_turn_id(uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_memory_store_get_by_turn_id_atencion_vip_none() -> None:
+    """Fase 5 (A2): a non-VIP (atencion) row resolves with vip_id=None."""
+    store = _MemoryTurnCategoryLogStore()
+    turn = uuid4()
+    await store.insert(_record(turn_id=turn, category="informativo", vip_id=None))
+    found = await store.get_by_turn_id(turn)
+    assert found is not None
+    assert found.vip_id is None
