@@ -676,3 +676,216 @@ class AtencionCycle(Base):
         DateTime(timezone=True), nullable=True
     )
     close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class VipProfile(Base):
+    """LLM-synthesized per-VIP profile (Fase 1 writer).
+
+    DISTINTO de ``profiles`` (tabla vector, memories.py) y de ``/vip_profile``
+    (comando legacy admin que opera sobre esa tabla vector). ``synthesis_trigger``
+    vocab: volume | session_close | strong_signal | emotional_signal (Text + CHECK,
+    never a native PG enum). Fase 0 = schema-only (no writer yet).
+    """
+
+    __tablename__ = "vip_profile"
+    __table_args__ = (
+        CheckConstraint(
+            "synthesis_trigger IS NULL OR synthesis_trigger IN "
+            "('volume','session_close','strong_signal','emotional_signal')",
+            name="ck_vip_profile_synthesis_trigger",
+        ),
+    )
+
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id"), primary_key=True,
+    )
+    stable_traits: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    recent_trend: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    sensitivities: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    last_synthesized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    synthesis_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class VipProfileHistory(Base):
+    """Snapshot of each prior synthesized profile version (drift audit, Fase 1)."""
+
+    __tablename__ = "vip_profile_history"
+    __table_args__ = (
+        Index(
+            "ix_vip_profile_history_vip_id_created_at",
+            "vip_id",
+            text("created_at DESC"),
+        ),
+        Index("ix_vip_profile_history_created_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id", ondelete="CASCADE"), nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    profile_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    diff_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class VipMoodState(Base):
+    """Current 3-axis mood vector per VIP (Fase 3 writer; schema-only here)."""
+
+    __tablename__ = "vip_mood_state"
+
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id", ondelete="CASCADE"), primary_key=True,
+    )
+    axis_playful_serious: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=text("0")
+    )
+    axis_warm_distant: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=text("0")
+    )
+    axis_energy: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=text("0")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class VipTrustBudget(Base):
+    """Trust score per (VIP, turn_category) (Fase 5 writer; schema-only here).
+
+    ``turn_category`` vocab: fatico | informativo | emocional | sensible
+    (Text + CHECK, never a native PG enum). ``trust_score`` in [0, 1].
+    """
+
+    __tablename__ = "vip_trust_budget"
+    __table_args__ = (
+        CheckConstraint(
+            "turn_category IN ('fatico','informativo','emocional','sensible')",
+            name="ck_vip_trust_budget_turn_category",
+        ),
+    )
+
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id", ondelete="CASCADE"), primary_key=True,
+    )
+    turn_category: Mapped[str] = mapped_column(Text, primary_key=True)
+    trust_score: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default=text("0.0")
+    )
+    correction_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    autonomous_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    last_correction_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class TurnCategoryLog(Base):
+    """Per-turn category classification (Fase 2 writer; schema-only here).
+
+    ``category`` vocab: fatico | informativo | emocional | sensible
+    (Text + CHECK). One row per turn (unique ``turn_id``).
+    """
+
+    __tablename__ = "turn_category_log"
+    __table_args__ = (
+        CheckConstraint(
+            "category IN ('fatico','informativo','emocional','sensible')",
+            name="ck_turn_category_log_category",
+        ),
+        Index(
+            "ix_turn_category_log_chat_id_created_at",
+            "chat_id",
+            text("created_at DESC"),
+        ),
+        Index("ix_turn_category_log_created_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    turn_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("turns.id"), nullable=False, unique=True,
+    )
+    vip_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id"), nullable=True,
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class EmotionalSignalLog(Base):
+    """Emotional signal per turn (componente transversal, Fase 0 writer: detector).
+
+    ``signal_type`` vocab: vulnerabilidad | angustia | revelacion_de_vida |
+    ruptura_de_patron (Text + CHECK). ``pipeline_would_have_escalated`` is NULL
+    for fast-lane turns that skipped the Decider (Fase 2).
+    """
+
+    __tablename__ = "emotional_signal_log"
+    __table_args__ = (
+        CheckConstraint(
+            "signal_type IN "
+            "('vulnerabilidad','angustia','revelacion_de_vida','ruptura_de_patron')",
+            name="ck_emotional_signal_log_signal_type",
+        ),
+        Index(
+            "ix_emotional_signal_log_vip_id_created_at",
+            "vip_id",
+            text("created_at DESC"),
+        ),
+        Index("ix_emotional_signal_log_created_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    vip_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id"), nullable=True,
+    )
+    turn_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("turns.id"), nullable=False, unique=True,
+    )
+    signal_type: Mapped[str] = mapped_column(Text, nullable=False)
+    intensity: Mapped[float] = mapped_column(Float, nullable=False)
+    should_trigger_synthesis: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    should_escalate_to_owner: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # NULL for fast-lane turns without a Decider — Fase 2.
+    pipeline_would_have_escalated: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )

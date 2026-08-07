@@ -48,10 +48,10 @@ SEED_KEYS = frozenset(
 )
 
 
-def test_orm_exposes_exactly_twenty_six_tables() -> None:
-    """8 F1 + 8 F2 knowledge + 3 F3 proactivity + owner_marks + business_connections + runtime_timers + persona_versions + daily_message_limits + atencion_cycles + backfill_queue = 26 total."""
+def test_orm_exposes_exactly_thirty_two_tables() -> None:
+    """8 F1 + 8 F2 + 3 F3 + owner_marks + business_connections + runtime_timers + persona_versions + daily_message_limits + atencion_cycles + backfill_queue + 6 evo-agente (Fase 0) = 32 total."""
     assert F1_TABLES.issubset(set(Base.metadata.tables.keys()))
-    assert len(Base.metadata.tables) == 26
+    assert len(Base.metadata.tables) == 32
 
 
 def test_pipeline_traces_turn_id_fk_targets_turns() -> None:
