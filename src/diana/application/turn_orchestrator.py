@@ -18,6 +18,7 @@ from diana.application.memory_extraction_service import (
 )
 from diana.application.mexico_tz import cdmx_local_date
 from diana.application.observability import log_swallowed
+from diana.application.mood_engine import MoodEngine, MoodState
 from diana.application.owner_history import append_owner_delivery_history
 from diana.application.ports import (
     AtencionCycleStore,
@@ -246,6 +247,10 @@ class TurnOrchestrator:
         self._turn_category_log = turn_category_log
         self._mood_engine = mood_engine
         self._vip_mood_state = vip_mood_state
+        # Per-VIP mood engines forked from the injected prototype with a stable
+        # seed per VIP (review round 1, S5) — deterministic bounded noise so the
+        # same conversation reproduces the same mood trace across restarts.
+        self._vip_mood_engines: dict[UUID, MoodEngine] = {}
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
 
@@ -671,15 +676,22 @@ class TurnOrchestrator:
             # Detector reclassification (spec transversal, Puntos de integración
             # 2): a signal above SYNTHESIS_THRESHOLD pulls the turn out of the
             # fast-lane (escalation-candidate → sensitive; otherwise emotional).
+            # EA-03 priority is preserved (review round 1, B1): an already
+            # classified ``sensible`` (hard rule) is NEVER degraded — the
+            # signal only ADDS sensibility/escalation, it never downgrades it.
             final_category = classification.category
             if (
                 signal is not None
                 and signal.signal_detected
                 and signal.should_trigger_synthesis
             ):
-                final_category = (
-                    "sensible" if signal.should_escalate_to_owner else "emocional"
-                )
+                if (
+                    signal.should_escalate_to_owner
+                    or classification.category == "sensible"
+                ):
+                    final_category = "sensible"
+                else:
+                    final_category = "emocional"
             # Fast-lane shadow decision (EA-02(1) + EA-03), independent of the
             # ``feature_phatic_autonomy`` flag — the flag only gates the hook.
             would_autonomous = (
@@ -692,6 +704,11 @@ class TurnOrchestrator:
                     vip_id=incoming.vip_id,
                     chat_id=chat_id,
                     category=final_category,
+                    # ``confidence`` is the classifier's confidence on its
+                    # PRE-reclassification category (documented semantics,
+                    # review round 1 nit). After a detector reclassification the
+                    # persisted ``category`` is authoritative and
+                    # ``would_autonomous`` is the fast-lane decision.
                     confidence=classification.confidence,
                     would_autonomous=would_autonomous,
                 )
@@ -712,7 +729,11 @@ class TurnOrchestrator:
             )
 
     async def _run_mood_engine(
-        self, turn_id: UUID, chat_id: int, incoming: VipInboundMessage
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        incoming: VipInboundMessage,
+        vip_epoch: int | None = None,
     ) -> None:
         """Shadow mood hook: never propagates, flag-gated, best-effort.
 
@@ -722,11 +743,12 @@ class TurnOrchestrator:
         mood→tone distance WITHOUT applying it (variant selection is Fase 5).
         VIP turns only (``incoming.vip_id`` None → no-op).
 
-        Unlike the classifier, the stale-epoch gate is omitted: the mood upsert
-        is idempotent per VIP (a single row is rewritten), so a superseded
-        turn's signal is harmless — mood is a moving average, not an event log.
-        The terminal read-back gate IS kept so an aborted turn never nudges the
-        mood.
+        Read-back gates mirror the classifier/detector (review round 1, B2):
+        terminal AND stale-epoch turns are never upserted — a superseded turn's
+        signal must not nudge the mood even though the upsert is idempotent per
+        VIP (idempotency is not data quality). Noise is deterministic per VIP
+        (S5): the injected prototype engine is forked with a stable seed derived
+        from the VIP id.
         """
         if self._mood_engine is None or self._vip_mood_state is None:
             return
@@ -742,26 +764,41 @@ class TurnOrchestrator:
             turn = await self._coordinator.get_turn(turn_id)
             if turn is not None and is_turn_status_terminal(turn.status):
                 return
+            if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
+                chat_id, vip_epoch
+            ):
+                return
+            engine = self._mood_engine
+            if self._vip_mood_engines is not None:
+                per_vip = self._vip_mood_engines.get(incoming.vip_id)
+                if per_vip is None:
+                    per_vip = engine.fork(seed=int(incoming.vip_id))
+                    self._vip_mood_engines[incoming.vip_id] = per_vip
+                engine = per_vip
             comprehension = trace["comprehension"]
-            signal = self._mood_engine.signal_from_comprehension(comprehension)
+            signal = engine.signal_from_comprehension(comprehension)
             current = await self._vip_mood_state.get_by_vip(incoming.vip_id)
-            updated = self._mood_engine.update(current, signal)
+            updated = engine.update(current, signal)
+            # The repo stamps ``updated_at`` server-side (``func.now()``) — the
+            # hook omits it (review round 1 nit).
             await self._vip_mood_state.upsert(
                 VipMoodStateRecord(
                     vip_id=incoming.vip_id,
                     axis_playful_serious=updated.axis_playful_serious,
                     axis_warm_distant=updated.axis_warm_distant,
                     axis_energy=updated.axis_energy,
-                    updated_at=datetime.now(UTC),
                 )
             )
+            # 3.3 shadow: distance between the PRE-update mood and the turn's
+            # tone point (review round 1, S3) — measures tone deviation from
+            # where the mood already was, not from where it just landed.
             emotion = (
                 comprehension.get("emotion")
                 if isinstance(comprehension, dict)
-                else None
+                else getattr(comprehension, "emotion", None)
             )
-            tone_distance = self._mood_engine.tone_distance(
-                updated, emotion or "neutral"
+            tone_distance = engine.tone_distance(
+                current or MoodState(0.0, 0.0, 0.0), emotion or "neutral"
             )
             logger.info(
                 "mood_updated",
@@ -1815,7 +1852,9 @@ class TurnOrchestrator:
         await self._run_turn_classifier(
             turn_id, incoming.chat_id, incoming, signal, vip_epoch
         )
-        await self._run_mood_engine(turn_id, incoming.chat_id, incoming)
+        await self._run_mood_engine(
+            turn_id, incoming.chat_id, incoming, vip_epoch
+        )
         await self._run_profile_synthesis_trigger(
             turn_id, incoming.chat_id, incoming, signal
         )

@@ -523,7 +523,11 @@ class VipProfileHistoryRecord(BaseModel):
 
 
 class VipMoodStateRecord(BaseModel):
-    """vip_mood_state row shape — 3-axis mood vector per VIP (Fase 3 writer)."""
+    """vip_mood_state row shape — 3-axis mood vector per VIP (Fase 3 writer).
+
+    ``updated_at`` is optional because the repo ``upsert`` stamps ``func.now()``
+    server-side (review round 1 nit) — the hook omits it; the DB fills it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -531,7 +535,7 @@ class VipMoodStateRecord(BaseModel):
     axis_playful_serious: float
     axis_warm_distant: float
     axis_energy: float
-    updated_at: datetime
+    updated_at: datetime | None = None
 
 
 class VipTrustBudgetRecord(BaseModel):
@@ -566,9 +570,13 @@ class TurnCategoryLogRecord(BaseModel):
     category: TurnCategory
     chat_id: int
     vip_id: UUID | None = None
-    # Fase 2 shadow measurement (migración 026): ``would_autonomous`` (True =
-    # the fast-lane would have auto-sent) and ``confidence`` (modo "no estoy
-    # seguro" = below classifier_confidence_min). NULL = pre-Fase-2 rows.
+    # Fase 2 shadow measurement (migración 026). ``would_autonomous`` is a
+    # SHADOW proxy — "the fast-lane WOULD have auto-sent in shadow" (F2
+    # measurement), NOT a promise of real auto-send; it ignores vip_trust_budget
+    # (EA-01) and the EA-02(3) draft-safety check, both Fase 5. ``confidence``
+    # is the classifier's confidence on its PRE-reclassification category
+    # (modo "no estoy seguro" = below classifier_confidence_min). NULL =
+    # pre-Fase-2 rows.
     would_autonomous: bool | None = None
     confidence: float | None = None
     created_at: datetime | None = None

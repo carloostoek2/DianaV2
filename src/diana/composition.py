@@ -1142,6 +1142,14 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
                 "phatic_classifier_thresholds_loaded",
                 extra={"confidence_min": classifier._confidence_min},  # noqa: SLF001
             )
+    else:
+        # Review round 1 nit: a ``phatic_classifier`` config (if any) is not
+        # applied when the feature is OFF — surface it so a misconfig is not
+        # silently dropped (no DB read on the non-wired path).
+        logger.info(
+            "phatic_classifier_thresholds_skipped",
+            extra={"reason": "turn_classifier not wired (feature_phatic_autonomy off)"},
+        )
 
     # Evo-Agente Fase 3: manual override of the mood-engine thresholds from
     # system_config key ``mood_engine`` (same pattern). Never auto-calibrated.
@@ -1162,6 +1170,12 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
                     "noise": mood._noise,  # noqa: SLF001
                 },
             )
+    else:
+        # Review round 1 nit: same skip visibility for the ``mood_engine`` key.
+        logger.info(
+            "mood_engine_thresholds_skipped",
+            extra={"reason": "mood_engine not wired (feature_mood_engine off)"},
+        )
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:

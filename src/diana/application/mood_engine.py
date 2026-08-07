@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from diana.application.ports import VipMoodStateRecord
 from diana.cognitive.models import Comprehension
 
 logger = logging.getLogger("diana.application")
@@ -165,8 +166,41 @@ class MoodEngine:
             return MoodSignal(0.0, 0.0, 0.0)
         return MoodSignal(delta[0], delta[1], delta[2])
 
-    def update(self, current: MoodState | None, signal: MoodSignal) -> MoodState:
-        """Moving average with return to base + bounded noise; clamp [-1, 1]."""
+    def fork(self, *, seed: int | None = None) -> MoodEngine:
+        """Return a new engine with the same (possibly overridden) parameters.
+
+        Review round 1 (S5): the orchestrator forks one engine per VIP with a
+        stable ``seed`` derived from the VIP id, so the bounded noise is
+        deterministic per VIP (F3 "ejes estables" — the same conversation
+        reproduces the same mood trace across restarts/replicas). The prototype
+        keeps its parameters, so a manual ``apply_overrides`` at boot is
+        inherited by every per-VIP fork.
+        """
+        return MoodEngine(
+            return_rate=self._return_rate,
+            signal_weight=self._signal_weight,
+            axis_weights=dict(self._axis_weights),
+            noise=self._noise,
+            seed=seed,
+        )
+
+    def update(
+        self,
+        current: MoodState | VipMoodStateRecord | None,
+        signal: MoodSignal,
+    ) -> MoodState:
+        """Moving average with return to base + bounded noise; clamp [-1, 1].
+
+        ``current`` may be a :class:`MoodState` (pure) or a persisted
+        :class:`VipMoodStateRecord` — both expose the three axis attributes
+        (normalized by duck-typed attribute access; review round 1, S1).
+
+        Review round 1 (S14): noise is drawn ONLY when the turn's signal is
+        non-neutral (any axis delta != 0). An all-neutral conversation (every
+        signal ``(0,0,0)``) then decays to base deterministically instead of
+        accumulating the stationary random walk that would make the axes
+        erratic — the F3 "ejes estables" concern.
+        """
         if current is None:
             base = (0.0, 0.0, 0.0)
         else:
@@ -176,9 +210,12 @@ class MoodEngine:
                 current.axis_energy,
             )
         deltas = (signal.d_playful, signal.d_warm, signal.d_energy)
+        has_signal = any(d != 0.0 for d in deltas)
         values: list[float] = []
         for i, name in enumerate(AXIS_NAMES):
-            noise_draw = self._rng.uniform(-self._noise, self._noise)
+            noise_draw = (
+                self._rng.uniform(-self._noise, self._noise) if has_signal else 0.0
+            )
             v = (
                 base[i] * (1.0 - self._return_rate)
                 + deltas[i] * self._signal_weight * self._axis_weights[name]
@@ -187,11 +224,15 @@ class MoodEngine:
             values.append(max(-1.0, min(1.0, v)))
         return MoodState(values[0], values[1], values[2])
 
-    def tone_distance(self, mood: MoodState, emotion: str) -> float:
+    def tone_distance(
+        self, mood: MoodState | VipMoodStateRecord, emotion: str
+    ) -> float:
         """Euclidean distance between the mood vector and the emotion's tone point.
 
         Shadow 3.3 connection: logged, never applied to variant selection.
-        An unknown/absent emotion falls back to the neutral tone point.
+        Accepts a :class:`MoodState` or a persisted :class:`VipMoodStateRecord`
+        (review round 1, S1). An unknown/absent emotion falls back to the
+        neutral tone point.
         """
         key = emotion.strip().lower() if isinstance(emotion, str) else "neutral"
         target = _EMOTION_SIGNAL.get(key, _EMOTION_SIGNAL["neutral"])

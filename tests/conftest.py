@@ -42,7 +42,7 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "PROFILE_SYNTHESIS_INACTIVITY_MINUTES",
         "PROFILE_SYNTHESIS_SCAN_INTERVAL_SECONDS",
         "PROFILE_SYNTHESIS_CONFIDENCE_MIN",
-        # Evo-Agente Fase 2 (phetic shadow) + Fase 3 (mood shadow) flags/thresholds
+        # Evo-Agente Fase 2 (phatic shadow) + Fase 3 (mood shadow) flags/thresholds
         "FEATURE_PHATIC_AUTONOMY",
         "CLASSIFIER_CONFIDENCE_MIN",
         "PHATIC_TRUST_MIN",

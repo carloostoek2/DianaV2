@@ -840,9 +840,12 @@ class TurnCategoryLog(Base):
     )
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     category: Mapped[str] = mapped_column(Text, nullable=False)
-    # Fase 2 shadow measurement (migración 026): NULL by default. Columns only —
-    # the CHECK ``ck_turn_category_log_category`` is NOT extended ("no estoy
-    # seguro" is expressed via confidence < classifier_confidence_min).
+    # Fase 2 shadow measurement (migración 026). ``would_autonomous`` is a
+    # SHADOW proxy — "the fast-lane WOULD have auto-sent in shadow" (F2
+    # measurement), NOT a promise of real auto-send; it ignores vip_trust_budget
+    # (EA-01) and the EA-02(3) draft-safety check, both Fase 5. NULL by default.
+    # Columns only — the CHECK ``ck_turn_category_log_category`` is NOT extended
+    # ("no estoy seguro" is expressed via confidence < classifier_confidence_min).
     would_autonomous: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

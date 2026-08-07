@@ -52,22 +52,10 @@ _SENSITIVE_EMOTIONS = frozenset({"molesta", "triste"})
 _NEUTRAL_POSITIVE = frozenset({"neutral", "positiva"})
 _EMOTIONAL_TOPICS = frozenset({"tema_pesado", "duelo"})
 
-# Text cues for the "no estoy seguro" ambiguity check (phatic greeting that
-# also carries an emotional load, e.g. "qué haces... es que no sé si contarte").
-_GREETING_TERMS = (
-    "hola",
-    "buenas",
-    "que tal",
-    "qué tal",
-    "como estas",
-    "cómo estás",
-    "hey",
-    "buenos dias",
-    "buenas tardes",
-    "buenas noches",
-    "qué haces",
-    "que haces",
-)
+# Text cues for the "no estoy seguro" ambiguity check. The check runs ONLY in
+# the phatic branch (intent already confirmed), so the phatic condition is
+# established by the branch — an emotional-text term alone makes the turn
+# ambiguous (review round 1, S2). Covers saludar/agradecer/despedirse alike.
 _EMOTIONAL_TEXT_TERMS = (
     "no sé",
     "contarte",
@@ -228,18 +216,22 @@ class TurnClassifier:
 
     @staticmethod
     def _text_ambiguous(text: str) -> bool:
-        """A phatic greeting that ALSO carries emotional load → "no estoy seguro".
+        """Phatic turn whose TEXT also carries emotional load → "no estoy seguro".
 
-        True when the text matches both a greeting term and an emotional-text
-        term (e.g. "qué haces... es que no sé si contarte algo"). Empty/None
-        text is never ambiguous (falls to the short-text branch).
+        Called ONLY inside the phatic branch (intent already confirmed as
+        ``saludar`` / ``agradecer`` / ``despedirse``), so the phatic condition is
+        already established by the branch. Any emotional-text term therefore
+        signals a mixed message (e.g. "qué haces... es que no sé si contarte
+        algo" or "gracias... es que no sé si contarte algo") and the turn is
+        pulled out of the fast-lane (review round 1: S2 — the check used to
+        require a greeting term, leaving ``agradecer``/``despedirse`` turns with
+        emotional load at fático 1.0). Empty/None text is never ambiguous
+        (falls to the short-text branch).
         """
         if not text:
             return False
         lower = text.lower()
-        has_greeting = any(t in lower for t in _GREETING_TERMS)
-        has_emotional = any(t in lower for t in _EMOTIONAL_TEXT_TERMS)
-        return has_greeting and has_emotional
+        return any(t in lower for t in _EMOTIONAL_TEXT_TERMS)
 
 
 __all__ = [
