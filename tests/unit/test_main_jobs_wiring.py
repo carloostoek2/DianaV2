@@ -94,3 +94,25 @@ def test_main_shutdown_cancels_new_jobs_first(_main_src: str) -> None:
     assert "_cancel_job(" in finally_block
     # Shared cancel helper must actually cancel the task.
     assert "task.cancel()" in _main_src
+
+
+def test_main_imports_profile_synthesis_job(_main_src: str) -> None:
+    assert (
+        "from diana.jobs.profile_synthesis_job import ProfileSynthesisJob"
+        in _main_src
+    )
+
+
+def test_main_defines_profile_synthesis_setup(_main_src: str) -> None:
+    assert "def _setup_profile_synthesis_job(" in _main_src
+
+
+def test_main_starts_profile_synthesis_job(_main_src: str) -> None:
+    assert "profile_synthesis_job = _setup_profile_synthesis_job(app)" in _main_src
+
+
+def test_main_cancels_profile_synthesis_job(_main_src: str) -> None:
+    finally_idx = _main_src.find("finally:")
+    assert finally_idx != -1
+    finally_block = _main_src[finally_idx:]
+    assert "profile_synthesis_job" in finally_block

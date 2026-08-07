@@ -621,3 +621,32 @@ def test_composition_emotional_detector_flag_gated(_comp_src: str) -> None:
 def test_composition_app_container_has_emotional_detector_field(_comp_src: str) -> None:
     """AppContainer exposes emotional_detector (wired to load_runtime_thresholds)."""
     assert "emotional_detector: EmotionalSignalDetector | None = None" in _comp_src
+
+
+def test_composition_profile_synthesis_wired_to_orchestrator(
+    _comp_src: str,
+) -> None:
+    """Orchestrator receives the profile-synthesis trigger (flag-gated, A8)."""
+    assert "profile_synthesis_trigger=" in _comp_src
+    assert "if settings.feature_profile_synthesis_enabled" in _comp_src
+
+
+def test_composition_builds_synthesis_service_flag_gated(_comp_src: str) -> None:
+    """The synthesis service + trigger are built ONLY under the flag (A8)."""
+    assert "profile_synthesis_service = ProfileSynthesisService(" in _comp_src
+    assert "profile_synthesis_trigger = ProfileSynthesisTriggerService(" in _comp_src
+    assert "if settings.feature_profile_synthesis_enabled:" in _comp_src
+
+
+def test_composition_app_container_has_synthesis_fields(_comp_src: str) -> None:
+    """AppContainer exposes the two synthesis objects (None when flag off)."""
+    assert "profile_synthesis_trigger: ProfileSynthesisTriggerService | None = None" in _comp_src
+    assert "profile_synthesis_service: ProfileSynthesisService | None = None" in _comp_src
+
+
+def test_composition_load_runtime_thresholds_reads_profile_synthesis(
+    _comp_src: str,
+) -> None:
+    """Boot hydrate reads system_config key ``profile_synthesis`` (manual override)."""
+    assert 'store.get("profile_synthesis")' in _comp_src
+    assert "profile_synthesis_thresholds_loaded" in _comp_src

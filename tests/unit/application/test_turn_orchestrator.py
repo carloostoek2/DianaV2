@@ -23,7 +23,11 @@ from diana.application.memory import (
     InMemoryTurnStore,
     InMemoryVipStore,
 )
-from diana.application.ports import TurnRecord, VipInboundMessage
+from diana.application.ports import (
+    EmotionalSignalRecord,
+    TurnRecord,
+    VipInboundMessage,
+)
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import (
     ATENCION_DAILY_LIMIT_CLOSE,
@@ -215,6 +219,7 @@ def _build(
     memory_extraction: object | None = None,
     emotional_detector: object | None = None,
     emotional_signal_log: object | None = None,
+    profile_synthesis_trigger: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -283,6 +288,7 @@ def _build(
         memory_extraction=memory_extraction,
         emotional_detector=emotional_detector,
         emotional_signal_log=emotional_signal_log,
+        profile_synthesis_trigger=profile_synthesis_trigger,
     )
     return {
         "orch": orch,
@@ -304,6 +310,7 @@ def _build(
         "atencion_cycles": atencion_cycles,
         "emotional_detector": emotional_detector,
         "emotional_signal_log": emotional_signal_log,
+        "profile_synthesis_trigger": profile_synthesis_trigger,
     }
 
 
@@ -4655,3 +4662,138 @@ async def test_emotional_detector_real_detector_pipeline_escalation() -> None:
     assert sig.signal_type == "angustia"
     assert sig.pipeline_would_have_escalated is True
     assert sig.should_escalate_to_owner is True
+
+
+# ---------------------------------------------------------------------------
+# Evo-Agente Fase 1: profile-synthesis trigger hook (single call-site, A4)
+# ---------------------------------------------------------------------------
+
+
+class _FakeProfileSynthesisTrigger:
+    """Injected trigger: records evaluate_and_maybe_enqueue calls; may raise."""
+
+    def __init__(self, exc: Exception | None = None) -> None:
+        self._exc = exc
+        self.calls: list[tuple] = []
+
+    async def evaluate_and_maybe_enqueue(self, vip_id, *, text=None, signal=None):
+        self.calls.append((vip_id, text, signal))
+        if self._exc is not None:
+            raise self._exc
+        return "volume"
+
+
+@pytest.mark.asyncio
+async def test_profile_synthesis_trigger_not_called_flag_off() -> None:
+    """Flag OFF → trigger None → hook no-op, turn byte-identical."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    trigger = _FakeProfileSynthesisTrigger()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": None}
+        ),
+        emotional_detector=_FakeEmotionalDetector(_signal_detected()),
+        emotional_signal_log=_FakeEmotionalSignalLog(),
+        # no profile_synthesis_trigger → None → hook early-returns
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert trigger.calls == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_profile_synthesis_trigger_enqueues_on_emotional_signal() -> None:
+    """Detector returns a signal → the trigger is called with it; routing unchanged."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    trigger = _FakeProfileSynthesisTrigger()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        profile_synthesis_trigger=trigger,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    # The trigger was called with the signal + the message text.
+    assert len(trigger.calls) == 1
+    called_vip, text, signal = trigger.calls[0]
+    assert called_vip == vip_id
+    assert text == "hola diana"
+    assert signal is not None and signal.should_trigger_synthesis is True
+    # The emotional detector also wrote its row (unchanged behavior).
+    assert len(signal_log.inserted) == 1
+    # Decision routing unchanged.
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_profile_synthesis_trigger_enqueues_on_volume_or_strong() -> None:
+    """No emotional signal → trigger called with signal=None and the text."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(
+        EmotionalSignalRecord(
+            signal_detected=False,
+            signal_type=None,
+            intensity=0.0,
+            should_trigger_synthesis=False,
+            should_escalate_to_owner=False,
+            pipeline_would_have_escalated=False,
+        )
+    )
+    signal_log = _FakeEmotionalSignalLog()
+    trigger = _FakeProfileSynthesisTrigger()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        profile_synthesis_trigger=trigger,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert len(trigger.calls) == 1
+    called_vip, text, signal = trigger.calls[0]
+    assert called_vip == vip_id
+    assert text == "hola diana"  # volume/strong-signal share the text
+    assert signal is None  # no signal to pass through
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_profile_synthesis_trigger_error_does_not_break_turn() -> None:
+    """Trigger raising → the turn still completes its normal route."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    trigger = _FakeProfileSynthesisTrigger(exc=RuntimeError("trigger boom"))
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": None}
+        ),
+        profile_synthesis_trigger=trigger,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert len(trigger.calls) == 1  # the trigger DID run and raised
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"

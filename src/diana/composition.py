@@ -43,6 +43,10 @@ from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.emotional_signal_detector import EmotionalSignalDetector
+from diana.application.profile_synthesis_service import ProfileSynthesisService
+from diana.application.profile_synthesis_trigger_service import (
+    ProfileSynthesisTriggerService,
+)
 from diana.application.ports import TurnStore
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.ports import DelayPolicy
@@ -309,6 +313,9 @@ class AppContainer:
     backfill_wake: asyncio.Event | None = None
     # Evo-Agente Fase 0: shadow emotional detector (None when flag off).
     emotional_detector: EmotionalSignalDetector | None = None
+    # Evo-Agente Fase 1: profile-synthesis trigger + service (None when flag off).
+    profile_synthesis_trigger: ProfileSynthesisTriggerService | None = None
+    profile_synthesis_service: ProfileSynthesisService | None = None
     # Evo-Agente Fase 0 repos exposed for the AgentDataPurgeJob (TTL by table).
     vip_profile_history_repo: SqlVipProfileHistoryRepo | None = None
     turn_category_log_repo: SqlTurnCategoryLogRepo | None = None
@@ -682,6 +689,29 @@ def build_app(
     # Evo-Agente Fase 0: build the detector ALWAYS (pure constants); flag OFF
     # → emotional_detector=None → the orchestrator hook is a no-op (A8).
     detector = EmotionalSignalDetector()
+    # Evo-Agente Fase 1 (A8): build the synthesis trigger + service ONLY when
+    # the flag is on — flag OFF → both None → orchestrator hook and job no-op
+    # (byte-identical to Fase 0). The staging repo is built here when the
+    # synthesis flag is on but no staging/gray-zone feature created it (the
+    # Fase 1 corrections source needs it).
+    profile_synthesis_trigger: ProfileSynthesisTriggerService | None = None
+    profile_synthesis_service: ProfileSynthesisService | None = None
+    if settings.feature_profile_synthesis_enabled:
+        if staging_repo is None:
+            staging_repo = StagingCandidateRepo(sf)
+        profile_synthesis_service = ProfileSynthesisService(
+            llm=provider,
+            profile_store=vip_profile_repo,
+            memories=memories_repo,
+            corrections=staging_repo,
+            confidence_min=settings.profile_synthesis_confidence_min,
+        )
+        profile_synthesis_trigger = ProfileSynthesisTriggerService(
+            profile_reader=vip_profile_repo,
+            activity=turns,
+            volume_threshold=settings.profile_synthesis_volume_threshold,
+            inactivity_minutes=settings.profile_synthesis_inactivity_minutes,
+        )
     orchestrator = TurnOrchestrator(
         coordinator=coordinator,
         director=director,
@@ -713,6 +743,11 @@ def build_app(
             detector if settings.feature_emotional_detector_enabled else None
         ),
         emotional_signal_log=emotional_signal_repo,
+        profile_synthesis_trigger=(
+            profile_synthesis_trigger
+            if settings.feature_profile_synthesis_enabled
+            else None
+        ),
     )
 
     # REQ-MEM-07: supervised-approved turns must run the SAME post-turn
@@ -931,6 +966,8 @@ def build_app(
         emotional_detector=(
             detector if settings.feature_emotional_detector_enabled else None
         ),
+        profile_synthesis_trigger=profile_synthesis_trigger,
+        profile_synthesis_service=profile_synthesis_service,
         vip_profile_history_repo=vip_profile_history_repo,
         turn_category_log_repo=turn_category_log_repo,
         emotional_signal_log_repo=emotional_signal_repo,
@@ -1016,6 +1053,33 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
                     "synthesis_threshold": detector.synthesis_threshold,
                     "escalate_threshold": detector.escalate_threshold,
                     "min_baseline_turns": detector.min_baseline_turns,
+                },
+            )
+
+    # Evo-Agente Fase 1: manual override of the profile-synthesis thresholds
+    # from system_config key ``profile_synthesis`` (same best-effort pattern as
+    # the detector). Both wired (flag on) → apply; either None → no-op without
+    # any DB I/O on the non-wired path. A transient DB error must not break
+    # boot. Override is manual ONLY — never auto-calibrated.
+    trigger = getattr(app, "profile_synthesis_trigger", None)
+    service = getattr(app, "profile_synthesis_service", None)
+    if trigger is not None and service is not None:
+        try:
+            cfg = await store.get("profile_synthesis")
+        except Exception:
+            logger.exception("profile_synthesis_thresholds_read_failed")
+            cfg = None
+        if isinstance(cfg, dict):
+            trigger.apply_overrides(cfg)
+            service.apply_overrides(cfg)
+            logger.info(
+                "profile_synthesis_thresholds_loaded",
+                extra={
+                    "volume_threshold": getattr(trigger, "_volume_threshold", None),
+                    "inactivity_minutes": getattr(
+                        trigger, "_inactivity_minutes", None
+                    ),
+                    "confidence_min": getattr(service, "_confidence_min", None),
                 },
             )
 

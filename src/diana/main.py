@@ -22,6 +22,7 @@ from diana.jobs.backfill import BackfillJob
 from diana.jobs.calibration import CalibrationJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
 from diana.jobs.metrics import MetricsJob
+from diana.jobs.profile_synthesis_job import ProfileSynthesisJob
 from diana.jobs.recontact import RecontactJob
 from diana.jobs.trace_purge import TracePurgeJob
 from diana.telegram.health import HealthServer
@@ -103,6 +104,8 @@ async def async_main() -> None:
     # F3 Pool 3: observational metrics always; calibration only if flag on.
     metrics_job = _setup_metrics_job(app)
     calibration_job = _setup_calibration_job(app)
+    # Evo-Agente Fase 1: profile-synthesis cycle (scan + drain + synthesize).
+    profile_synthesis_job = _setup_profile_synthesis_job(app)
     # F5 Pool 2: backfill scheduler (flag-gated; recover_stale inside start()).
     backfill_job = _setup_backfill_job(app)
 
@@ -143,6 +146,7 @@ async def async_main() -> None:
     finally:
         # Stop new jobs first, then existing F2/F3 jobs.
         await _cancel_job(backfill_job, "backfill_job")
+        await _cancel_job(profile_synthesis_job, "profile_synthesis_job")
         await _cancel_job(calibration_job, "calibration_job")
         await _cancel_job(metrics_job, "metrics_job")
         await _cancel_job(recontact_job, "recontact_job")
@@ -266,6 +270,35 @@ def _setup_calibration_job(app: AppContainer) -> asyncio.Task | None:
     job = CalibrationJob(app.calibration, interval_seconds=3600)
     task = asyncio.create_task(job.start())
     logger.info("calibration_job_started", extra={"interval_seconds": 3600})
+    return task
+
+
+def _setup_profile_synthesis_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the Fase 1 profile-synthesis job only when the flag is on.
+
+    The job wraps the trigger (scan_inactivity) + synthesis service
+    (drain + synthesize); it is created only when both are wired (A8). Flag OFF
+    → skip without starting any task.
+    """
+    if (
+        not app.settings.feature_profile_synthesis_enabled
+        or app.profile_synthesis_service is None
+    ):
+        logger.info("profile_synthesis_job_skipped_flag_off")
+        return None
+
+    job = ProfileSynthesisJob(
+        app.profile_synthesis_trigger,
+        app.profile_synthesis_service,
+        interval_seconds=app.settings.profile_synthesis_scan_interval_seconds,
+    )
+    task = asyncio.create_task(job.start())
+    logger.info(
+        "profile_synthesis_job_started",
+        extra={
+            "interval_seconds": app.settings.profile_synthesis_scan_interval_seconds
+        },
+    )
     return task
 
 

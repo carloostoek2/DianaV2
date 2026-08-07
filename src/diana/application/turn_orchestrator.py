@@ -26,6 +26,7 @@ from diana.application.ports import (
     DeliveryMode,
     DeliveryResult,
     DeliveryResultWriter,
+    EmotionalSignalRecord,
     MessageHistoryWriter,
     RuntimeTimerRecord,
     RuntimeTimerStore,
@@ -203,6 +204,7 @@ class TurnOrchestrator:
         memory_extraction: object | None = None,
         emotional_detector: object | None = None,
         emotional_signal_log: object | None = None,
+        profile_synthesis_trigger: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -230,6 +232,7 @@ class TurnOrchestrator:
         self._memory_extraction = memory_extraction
         self._emotional_detector = emotional_detector
         self._emotional_signal_log = emotional_signal_log
+        self._profile_synthesis_trigger = profile_synthesis_trigger
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
 
@@ -485,7 +488,7 @@ class TurnOrchestrator:
         chat_id: int,
         decision: Decision | None,
         vip_epoch: int | None = None,
-    ) -> None:
+    ) -> EmotionalSignalRecord | None:
         """Shadow detector hook: never propagates, flag-gated, writes
         emotional_signal_log only. Best-effort (pattern _maybe_post_turn_guarded).
 
@@ -495,10 +498,13 @@ class TurnOrchestrator:
         on the decision pipeline (shadow-only). Both deps are ``object | None``
         (flag OFF → detector is None → no-op).
 
-        ``vip_epoch`` closes the deterministic stale-epoch gap: a turn whose
-        VIP epoch advanced since it was minted (a newer message superseded it
-        via ``supersede_chat``) is never logged, even when the read-back below
-        is not yet terminal.
+        Returns the detected :class:`EmotionalSignalRecord` (or None) so the
+        profile-synthesis trigger can reuse it without a re-read (A4/A12): the
+        emotional signal is evaluated in the SAME turn (immediate, spec
+        transversal §Puntos de integración 1). ``vip_epoch`` closes the
+        deterministic stale-epoch gap: a turn whose VIP epoch advanced since
+        it was minted (a newer message superseded it via ``supersede_chat``)
+        is never logged, even when the read-back below is not yet terminal.
         """
         if self._emotional_detector is None or self._emotional_signal_log is None:
             return
@@ -555,10 +561,49 @@ class TurnOrchestrator:
                         "intensity": signal.intensity,
                     },
                 )
+            return signal if signal.signal_detected else None
         except Exception:
             log_swallowed(
                 logger,
                 "emotional_detector_error",
+                turn_id=str(turn_id),
+                chat_id=chat_id,
+            )
+            return None
+
+    async def _run_profile_synthesis_trigger(
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        incoming: VipInboundMessage,
+        signal: EmotionalSignalRecord | None,
+    ) -> None:
+        """Profile-synthesis trigger hook: never propagates, flag-gated (A4).
+
+        Runs at the SINGLE call-site right after ``_run_emotional_detector``
+        (``_handle_vip_message_locked``), where ``incoming.text`` (needed for
+        the strong-signal heuristic) and ``incoming.vip_id`` are available. The
+        emotional signal is passed through for immediate evaluation; volume and
+        strong-signal share the same hook; ``session_close`` (inactivity) is
+        left to the periodic scan job. ``_maybe_post_turn`` has no message text
+        — evaluating there would require an extra query per turn (A4).
+
+        Flag OFF → trigger is None → no-op. Any error is swallowed (pattern
+        ``_maybe_post_turn_guarded``): a synthesis trigger failure must never
+        break the turn.
+        """
+        if self._profile_synthesis_trigger is None:
+            return
+        try:
+            await self._profile_synthesis_trigger.evaluate_and_maybe_enqueue(
+                incoming.vip_id,
+                text=incoming.text,
+                signal=signal,
+            )
+        except Exception:
+            log_swallowed(
+                logger,
+                "profile_synthesis_trigger_error",
                 turn_id=str(turn_id),
                 chat_id=chat_id,
             )
@@ -1576,8 +1621,20 @@ class TurnOrchestrator:
         # TurnSupersededError cannot originate from it. ``vip_epoch`` is passed
         # so the hook can skip turns that are about to be superseded by the
         # ``_apply_decision_after_director`` epoch check below (round 2).
-        await self._run_emotional_detector(
+        #
+        # Evo-Agente Fase 1 (A4): the profile-synthesis trigger runs at this
+        # SINGLE call-site, right after the detector — the only place where
+        # incoming.text (strong-signal) and incoming.vip_id are both available
+        # for every VIP turn (supervised AND autonomous both pass here; the
+        # autonomous send / supervised approval happen downstream). The
+        # detector's signal is passed through so ``should_trigger_synthesis``
+        # is evaluated in the same turn (immediate). ``_maybe_post_turn`` has
+        # no message text → it is NOT the call-site. Both hooks are guarded.
+        signal = await self._run_emotional_detector(
             turn_id, incoming.chat_id, decision, vip_epoch
+        )
+        await self._run_profile_synthesis_trigger(
+            turn_id, incoming.chat_id, incoming, signal
         )
 
         # Route decision + transitions: owner/VIP cancel may raise on status_sink
