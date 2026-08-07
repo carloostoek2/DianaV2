@@ -38,3 +38,4 @@ build/
 
 # Agent tooling local cache (skill registry, etc.)
 .atl/
+reasonix.toml
