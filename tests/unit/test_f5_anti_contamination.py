@@ -98,3 +98,55 @@ async def test_memory_retriever_scopes_to_own_vip() -> None:
     repo.find_by_vip_and_similarity.assert_awaited_once_with(
         vip_a, ANY, threshold=0.75, limit=5
     )
+
+
+# ---------------------------------------------------------------------------
+# EA-05 (SPEC-EVOLUCION-AGENTE): profile synthesis never contaminates examples
+# ---------------------------------------------------------------------------
+
+
+def test_profile_synthesis_never_feeds_examples_bank() -> None:
+    """EA-05: the Fase 1 synthesis/profile modules never reach the examples bank
+    or the examples retriever. The synthesized profile is shadow-only: only
+    ``recent_trend`` (Fase 2) and mood (Fase 3) will ever feed generation.
+    Structural scan (F5 style) — prevents drift when Fase 2 wires recent_trend
+    into the context."""
+    synthesis_files = (
+        "application/profile_synthesis_service.py",
+        "application/profile_synthesis_trigger_service.py",
+        "application/strong_signal_heuristics.py",
+        "infrastructure/db/repositories/vip_profile.py",
+    )
+    examples_tokens = (
+        "retrievers.examples",
+        "repositories.examples",
+        "examples_bank",
+        "ExamplesRepo",
+        "from diana.cognitive.retrievers import examples",
+    )
+    hits: list[str] = []
+    root = Path(diana.__file__).resolve().parent
+    for rel in synthesis_files:
+        text = (root / rel).read_text(encoding="utf-8")
+        for token in examples_tokens:
+            if token in text:
+                hits.append(f"{Path(rel).name}:{token}")
+    assert hits == [], f"Profile synthesis touching examples bank: {hits}"
+
+
+def test_examples_never_reads_profile_fields() -> None:
+    """EA-05 reverse: the examples bank / examples retriever never reference
+    ``stable_traits`` or ``sensitivities`` (the profile is not generation
+    context, so its fields must not leak into the example layer)."""
+    forbidden = ("stable_traits", "sensitivities")
+    hits: list[str] = []
+    root = Path(diana.__file__).resolve().parent
+    for pkg in ("learning", "cognitive/retrievers", "infrastructure/db/repositories"):
+        for path in _walk(pkg):
+            if "examples" not in path.name:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for token in forbidden:
+                if token in text:
+                    hits.append(f"{path.name}:{token}")
+    assert hits == [], f"Examples layer reading profile fields: {hits}"
