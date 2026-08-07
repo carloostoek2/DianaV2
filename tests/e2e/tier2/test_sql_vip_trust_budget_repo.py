@@ -17,10 +17,11 @@ from uuid import uuid4
 
 import pytest
 
-from diana.application.ports import TurnCategoryLogRecord
+from diana.application.ports import TurnCategoryLogRecord, TurnRecord
 from diana.infrastructure.db.repositories.turn_category import (
     SqlTurnCategoryLogRepo,
 )
+from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vip_trust_budget import (
     SqlVipTrustBudgetRepo,
 )
@@ -122,6 +123,11 @@ async def test_get_by_turn_id_resolves_classification(session_factory) -> None:
     repo = SqlTurnCategoryLogRepo(session_factory)
     vip = await _create_vip(session_factory, 9505)
     turn_id = uuid4()
+
+    # turn_category_log.turn_id FK -> turns.id: create the real turn row first.
+    await SqlTurnStore(session_factory).create(
+        TurnRecord(id=turn_id, chat_id=100, status="received", vip_id=vip.id)
+    )
 
     await repo.insert(
         TurnCategoryLogRecord(
