@@ -213,6 +213,8 @@ def _build(
     trace_reader: object | None = None,
     atencion_cycles: object | None = None,
     memory_extraction: object | None = None,
+    emotional_detector: object | None = None,
+    emotional_signal_log: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -279,6 +281,8 @@ def _build(
         trace_reader=trace_reader,
         atencion_cycles=atencion_cycles,
         memory_extraction=memory_extraction,
+        emotional_detector=emotional_detector,
+        emotional_signal_log=emotional_signal_log,
     )
     return {
         "orch": orch,
@@ -298,6 +302,8 @@ def _build(
         "vip_store": vips,
         "ams": ams,
         "atencion_cycles": atencion_cycles,
+        "emotional_detector": emotional_detector,
+        "emotional_signal_log": emotional_signal_log,
     }
 
 
@@ -4340,3 +4346,156 @@ def test_prune_payment_notify_removes_only_stale_entries() -> None:
     orch._last_payment_notify = {111: stale, 222: recent}
     orch._prune_payment_notify(now)
     assert orch._last_payment_notify == {222: recent}
+
+
+# --- Evo-Agente: emotional detector shadow hook ---------------------------------
+
+
+class _FakeEmotionalTraceReader:
+    """Trace reader for the detector hook: full trace + recent comprehension."""
+
+    def __init__(self, trace: dict | None, baseline: list[dict] | None = None) -> None:
+        self._trace = trace
+        self.baseline = baseline or []
+        self.get_full_calls: list[object] = []
+        self.get_baseline_calls: list[tuple] = []
+
+    async def get_full_trace(self, turn_id):
+        self.get_full_calls.append(turn_id)
+        return self._trace
+
+    async def get_recent_comprehension(self, chat_id, *, limit=5, exclude_turn_id=None):
+        self.get_baseline_calls.append((chat_id, limit, exclude_turn_id))
+        return self.baseline
+
+
+class _FakeEmotionalDetector:
+    """Injected detector: returns the configured signal; records detect() calls."""
+
+    def __init__(self, signal: object | Exception, min_baseline_turns: int = 5) -> None:
+        self._signal = signal
+        self.min_baseline_turns = min_baseline_turns
+        self.calls: list[tuple] = []
+
+    def detect(self, comprehension, baseline, decision_action):
+        self.calls.append((comprehension, baseline, decision_action))
+        if isinstance(self._signal, Exception):
+            raise self._signal
+        return self._signal
+
+
+class _FakeEmotionalSignalLog:
+    """In-memory emotional_signal_log writer for the hook."""
+
+    def __init__(self) -> None:
+        self.inserted: list[tuple] = []
+
+    async def insert(self, *, turn_id, vip_id, signal):
+        self.inserted.append((turn_id, vip_id, signal))
+
+
+def _signal_detected(signal_type: str = "angustia") -> object:
+    from diana.application.ports import EmotionalSignalRecord
+
+    return EmotionalSignalRecord(
+        signal_detected=True,
+        signal_type=signal_type,
+        intensity=0.85,
+        should_trigger_synthesis=True,
+        should_escalate_to_owner=True,
+        pipeline_would_have_escalated=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_not_called_flag_off() -> None:
+    """Flag OFF → emotional_detector None → hook no-op, turn flows normally."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": None}
+        ),
+        # no emotional_detector → None → hook early-returns
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    assert detector.calls == []
+    assert signal_log.inserted == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_writes_signal_after_turn() -> None:
+    """Flag ON + signal → insert with correct turn_id; decision routing unchanged."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    trace = {"comprehension": {"emotion": "triste"}, "vip_id": None}
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(trace),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    # Detector ran after handle_turn with the trace comprehension.
+    assert len(detector.calls) == 1
+    assert detector.calls[0][0] == {"emotion": "triste"}
+    assert detector.calls[0][2] == "approve"
+    # Signal row written for the correct turn.
+    assert len(signal_log.inserted) == 1
+    assert signal_log.inserted[0][0] == turn_id
+    # Routing unchanged: same pending_approval outcome as without the detector.
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_error_does_not_break_turn() -> None:
+    """Detector raising → the turn still completes its normal route."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(RuntimeError("detector boom"))
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": None}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    assert signal_log.inserted == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_skipped_when_no_comprehension() -> None:
+    """Trace without comprehension → detector not called, no insert."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": None}),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    assert detector.calls == []
+    assert signal_log.inserted == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"

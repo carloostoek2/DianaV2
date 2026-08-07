@@ -201,6 +201,8 @@ class TurnOrchestrator:
         trace_reader: TraceReader | None = None,
         atencion_cycles: AtencionCycleStore | None = None,
         memory_extraction: object | None = None,
+        emotional_detector: object | None = None,
+        emotional_signal_log: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -226,6 +228,8 @@ class TurnOrchestrator:
         self._trace_reader = trace_reader
         self._atencion_cycles = atencion_cycles
         self._memory_extraction = memory_extraction
+        self._emotional_detector = emotional_detector
+        self._emotional_signal_log = emotional_signal_log
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
 
@@ -471,6 +475,54 @@ class TurnOrchestrator:
             log_swallowed(
                 logger,
                 "post_turn_hook_error",
+                turn_id=str(turn_id),
+                chat_id=chat_id,
+            )
+
+    async def _run_emotional_detector(
+        self, turn_id: UUID, chat_id: int, decision: Decision | None
+    ) -> None:
+        """Shadow detector hook: never propagates, flag-gated, writes
+        emotional_signal_log only. Best-effort (pattern _maybe_post_turn_guarded).
+
+        Reads comprehension from the committed pipeline trace, builds the
+        emotional baseline from prior turns of the chat, and — only when a
+        signal is detected — inserts one emotional_signal_log row. No effect
+        on the decision pipeline (shadow-only). Both deps are ``object | None``
+        (flag OFF → detector is None → no-op).
+        """
+        if self._emotional_detector is None or self._emotional_signal_log is None:
+            return
+        trace_reader = self._trace_reader
+        if trace_reader is None:
+            return
+        try:
+            trace = await trace_reader.get_full_trace(turn_id)
+            if trace is None or not trace.get("comprehension"):
+                return
+            min_turns = getattr(
+                self._emotional_detector, "min_baseline_turns", 5
+            )
+            baseline = await trace_reader.get_recent_comprehension(
+                chat_id,
+                limit=min_turns,
+                exclude_turn_id=turn_id,
+            )
+            signal = self._emotional_detector.detect(
+                trace["comprehension"],
+                baseline,
+                decision.action if decision is not None else None,
+            )
+            if signal.signal_detected:
+                await self._emotional_signal_log.insert(
+                    turn_id=turn_id,
+                    vip_id=trace.get("vip_id"),
+                    signal=signal,
+                )
+        except Exception:
+            log_swallowed(
+                logger,
+                "emotional_detector_error",
                 turn_id=str(turn_id),
                 chat_id=chat_id,
             )
@@ -1479,6 +1531,23 @@ class TurnOrchestrator:
                 extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
             )
             raise
+
+        # Evo-Agente: shadow emotional detector AFTER the Director produced a
+        # decision (needs decision.action for pipeline_would_have_escalated).
+        # Flag OFF → detector None → no-op. The method itself never propagates;
+        # this extra guard only protects against unexpected errors without
+        # masking TurnSupersededError from the normal path below.
+        try:
+            await self._run_emotional_detector(turn_id, incoming.chat_id, decision)
+        except TurnSupersededError:
+            raise
+        except Exception:
+            log_swallowed(
+                logger,
+                "emotional_detector_hook_error",
+                turn_id=str(turn_id),
+                chat_id=incoming.chat_id,
+            )
 
         # Route decision + transitions: owner/VIP cancel may raise on status_sink
         # when the Director stub never polled mid-pipeline (A2 clean abort).

@@ -42,6 +42,7 @@ from diana.application.sandbox_knowledge import SandboxKnowledgeAugmenter
 from diana.application.staging_service import StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
+from diana.application.emotional_signal_detector import EmotionalSignalDetector
 from diana.application.ports import TurnStore
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.ports import DelayPolicy
@@ -91,6 +92,20 @@ from diana.infrastructure.db.repositories.daily_message_limits import (
     SqlDailyMessageLimitStore,
 )
 from diana.infrastructure.db.repositories.atencion_cycles import SqlAtencionCycleStore
+from diana.infrastructure.db.repositories.emotional_signal import (
+    SqlEmotionalSignalLogRepo,
+)
+from diana.infrastructure.db.repositories.turn_category import (
+    SqlTurnCategoryLogRepo,
+)
+from diana.infrastructure.db.repositories.vip_mood_state import SqlVipMoodStateRepo
+from diana.infrastructure.db.repositories.vip_profile import SqlVipProfileRepo
+from diana.infrastructure.db.repositories.vip_profile_history import (
+    SqlVipProfileHistoryRepo,
+)
+from diana.infrastructure.db.repositories.vip_trust_budget import (
+    SqlVipTrustBudgetRepo,
+)
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore
@@ -292,6 +307,8 @@ class AppContainer:
     persona_admin: PersonaAdminService | None = None
     backfill_queue: MemoryBackfillQueue | None = None
     backfill_wake: asyncio.Event | None = None
+    # Evo-Agente Fase 0: shadow emotional detector (None when flag off).
+    emotional_detector: EmotionalSignalDetector | None = None
 
 
 def build_app(
@@ -317,6 +334,15 @@ def build_app(
     admin_trace = AdminTraceService(traces=traces, trace_ttl_days=settings.trace_ttl_days)
     vips = SqlVipStore(sf)
     config_store = SqlSystemConfigStore(sf)
+
+    # Evo-Agente Fase 0: repos for the agent-evolution tables (schema-first).
+    # Wired here because the detector (shadow writer) and the purge job need them.
+    vip_profile_repo = SqlVipProfileRepo(sf)
+    vip_profile_history_repo = SqlVipProfileHistoryRepo(sf)
+    vip_mood_state_repo = SqlVipMoodStateRepo(sf)
+    vip_trust_budget_repo = SqlVipTrustBudgetRepo(sf)
+    turn_category_log_repo = SqlTurnCategoryLogRepo(sf)
+    emotional_signal_repo = SqlEmotionalSignalLogRepo(sf)
 
     token = settings.telegram_bot_token.get_secret_value()
     bot_inst = bot or Bot(token=token)
@@ -649,6 +675,9 @@ def build_app(
         notifier=notifier,
         dedup_threshold=settings.backfill_dedup_threshold,
     )
+    # Evo-Agente Fase 0: build the detector ALWAYS (pure constants); flag OFF
+    # → emotional_detector=None → the orchestrator hook is a no-op (A8).
+    detector = EmotionalSignalDetector()
     orchestrator = TurnOrchestrator(
         coordinator=coordinator,
         director=director,
@@ -676,6 +705,10 @@ def build_app(
         memory_extraction=(
             memory_extraction if settings.feature_memory_enabled else None
         ),
+        emotional_detector=(
+            detector if settings.feature_emotional_detector_enabled else None
+        ),
+        emotional_signal_log=emotional_signal_repo,
     )
 
     # REQ-MEM-07: supervised-approved turns must run the SAME post-turn
@@ -891,6 +924,9 @@ def build_app(
         business_connections=bc_store,
         backfill_queue=backfill_queue,
         backfill_wake=backfill_wake,
+        emotional_detector=(
+            detector if settings.feature_emotional_detector_enabled else None
+        ),
     )
 
 
@@ -914,15 +950,36 @@ async def load_forbidden_keywords(app: AppContainer) -> list[str]:
 
 
 async def load_runtime_thresholds(app: AppContainer) -> None:
-    """Hydrate RuntimeThresholds from system_config at boot (R2 residual).
+    """Hydrate RuntimeThresholds + emotional detector thresholds at boot (R2 residual).
 
     Calibration writes DB + live holder; boot must re-read DB so mins survive restart.
     Missing keys leave pure DEFAULT_* / safety from RuntimeThresholds defaults.
+
+    The emotional detector override is independent of the RuntimeThresholds
+    holder: it is applied whenever ``app.emotional_detector`` is wired (manual
+    override only, never auto-calibrated).
     """
+    store = SqlSystemConfigStore(app.session_factory)
+
+    # Evo-Agente Fase 0: manual override of the detector thresholds from
+    # system_config key ``emotional_detector``. Detector None (flag off) → no-op.
+    detector = getattr(app, "emotional_detector", None)
+    if detector is not None:
+        cfg = await store.get("emotional_detector")
+        if isinstance(cfg, dict):
+            detector.apply_overrides(cfg)
+            logger.info(
+                "emotional_detector_thresholds_loaded",
+                extra={
+                    "synthesis_threshold": detector.synthesis_threshold,
+                    "escalate_threshold": detector.escalate_threshold,
+                    "min_baseline_turns": detector.min_baseline_turns,
+                },
+            )
+
     holder = app.runtime_thresholds
     if holder is None:
         return
-    store = SqlSystemConfigStore(app.session_factory)
     auto = await store.get_autonomous_thresholds()
     if auto:
         holder.replace_autonomous(auto)
