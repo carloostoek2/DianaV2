@@ -461,7 +461,29 @@ def build_callback_router(
                     )
                 return
             if status == "escalated":
-                await query.answer("Escalado al superior")
+                if query.message:
+                    try:
+                        original = query.message.text or query.message.caption or ""
+                        await query.message.edit_text(
+                            f"⚠️ <b>Escalado</b>\n\n{original}",
+                            reply_markup=None,
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        logger.exception("Error al editar mensaje escalado")
+                try:
+                    await query.answer("Escalado al superior")
+                except TelegramBadRequest as exc:
+                    # Delivery outlasted Telegram's callback answer window
+                    # ("query is too old"); the edit above already gave feedback.
+                    logger.debug(
+                        "owner_callback_answer_stale",
+                        extra={
+                            "callback_data": data,
+                            "actor_id": actor_id,
+                            "reason": getattr(exc, "message", str(exc)),
+                        },
+                    )
                 return
             if status == "stale":
                 await query.answer(

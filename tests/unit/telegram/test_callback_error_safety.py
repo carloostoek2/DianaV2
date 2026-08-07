@@ -91,6 +91,50 @@ async def test_standard_owner_callback_answer_failure_swallowed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_escalate_callback_edits_draft_message() -> None:
+    """Escalate mirrors approve: prepend legend and drop the draft buttons."""
+    turn_id = uuid4()
+    admin = MagicMock()
+    admin.handle_owner_escalate = AsyncMock(return_value=True)
+    router = build_callback_router(
+        admin=admin,
+        correct_sessions=CorrectSessionStore(),
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+    msg = Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="<b>Propuesta de respuesta</b> — borrador 1/1",
+    )
+    object.__setattr__(msg, "edit_text", AsyncMock(return_value=True))
+    cq = CallbackQuery(
+        id="cq-esc",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_callback("escalate", turn_id),
+        message=msg,
+    )
+    object.__setattr__(cq, "answer", AsyncMock(return_value=True))
+
+    await on_callback(cq)
+
+    admin.handle_owner_escalate.assert_awaited_once_with(
+        turn_id, actor_id=OWNER
+    )
+    msg.edit_text.assert_awaited_once()
+    args, kwargs = msg.edit_text.await_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert text.startswith("⚠️ <b>Escalado</b>\n\n")
+    assert "Propuesta de respuesta" in text
+    assert kwargs.get("reply_markup") is None
+    assert kwargs.get("parse_mode") == "HTML"
+    cq.answer.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_awaiting_correct_followup_failure_does_not_reanswer() -> None:
     """Follow-up message.answer fault must not attempt a second query.answer."""
     turn_id = uuid4()
