@@ -83,6 +83,12 @@ _PAYMENT_TOPICS = frozenset({"pago", "suscripcion", "contenido"})
 # the freeze middleware reminders. Bounded dict — pruned on each use.
 _PAYMENT_NOTIFY_TTL = timedelta(minutes=20)
 
+# Evo-Agente Fase 3: defensive hard cap for the per-VIP mood-engine cache. The
+# cache is structurally bounded — one tiny ``MoodEngine`` fork per VIP and the
+# VIP space is the allowlist (bounded cardinality) — so this ceiling is
+# defense-in-depth only, mirroring ``_prune_payment_notify`` (review round 2).
+_VIP_MOOD_ENGINE_CACHE_MAX = 1024
+
 
 def _detect_payment_intent(trace: dict | None) -> bool:
     """Deterministic payment-intent detection from the committed pipeline trace.
@@ -250,6 +256,10 @@ class TurnOrchestrator:
         # Per-VIP mood engines forked from the injected prototype with a stable
         # seed per VIP (review round 1, S5) — deterministic bounded noise so the
         # same conversation reproduces the same mood trace across restarts.
+        # Bounded, pruned (review round 2): one tiny engine per VIP and the VIP
+        # space is the allowlist (bounded cardinality) — the cache cannot grow
+        # beyond the allowlist size; ``_cap_mood_engines`` keeps a hard cap as
+        # defense-in-depth, same convention as ``_prune_payment_notify``.
         self._vip_mood_engines: dict[UUID, MoodEngine] = {}
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
@@ -774,6 +784,7 @@ class TurnOrchestrator:
                 if per_vip is None:
                     per_vip = engine.fork(seed=int(incoming.vip_id))
                     self._vip_mood_engines[incoming.vip_id] = per_vip
+                    self._cap_mood_engines()
                 engine = per_vip
             comprehension = trace["comprehension"]
             signal = engine.signal_from_comprehension(comprehension)
@@ -884,6 +895,17 @@ class TurnOrchestrator:
             c for c, ts in self._last_payment_notify.items() if ts < stale
         ]:
             del self._last_payment_notify[chat_id]
+
+    def _cap_mood_engines(self) -> None:
+        """Keep the per-VIP mood-engine cache bounded (review round 2).
+
+        The cache is structurally bounded already — one tiny ``MoodEngine`` fork
+        per VIP and the VIP space is the allowlist (bounded cardinality) — so
+        this is a defensive hard cap (FIFO eviction of the oldest-inserted
+        entry), mirroring ``_prune_payment_notify``.
+        """
+        while len(self._vip_mood_engines) > _VIP_MOOD_ENGINE_CACHE_MAX:
+            self._vip_mood_engines.pop(next(iter(self._vip_mood_engines)))
 
     async def _maybe_notify_payment_intent(
         self,

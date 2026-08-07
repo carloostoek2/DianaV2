@@ -38,6 +38,7 @@ from diana.application.turn_orchestrator import (
     ATENCION_PAYMENT_NOTICE,
     TurnOrchestrator,
     _PAYMENT_NOTIFY_TTL,
+    _VIP_MOOD_ENGINE_CACHE_MAX,
     _detect_payment_intent,
 )
 from diana.behavior.engine import BehaviorEngine
@@ -5126,6 +5127,49 @@ async def test_detector_reclassifies_to_sensitive_never_fastlane() -> None:
 
 
 @pytest.mark.asyncio
+async def test_signal_detected_no_synthesis_keeps_phatic() -> None:
+    """R2 suggestion: a detected signal BELOW the synthesis threshold
+    (``should_trigger_synthesis=False`` — the detector's branch when
+    ``intensity < synthesis_threshold``, emotional_signal_detector._build) does
+    NOT reclassify: the confident fático stays fático and ``would_autonomous``
+    is computed correctly. Without this pin a regression that drops the
+    ``should_trigger_synthesis`` guard would reclassify a confident phatic turn
+    and distort F2 without the suite noticing."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    signal = EmotionalSignalRecord(
+        signal_detected=True,
+        signal_type="revelacion_de_vida",
+        intensity=0.5,
+        should_trigger_synthesis=False,
+        should_escalate_to_owner=False,
+        pipeline_would_have_escalated=False,
+    )
+    detector = _FakeEmotionalDetector(signal)
+    signal_log = _FakeEmotionalSignalLog()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    rec = cat_log.inserted[0]
+    assert rec.turn_id == turn_id
+    assert rec.category == "fatico"  # NOT reclassified
+    assert rec.would_autonomous is True  # confident fático stays fast-lane
+    assert len(signal_log.inserted) == 1  # detector still writes exactly one row
+
+
+@pytest.mark.asyncio
 async def test_sensitive_never_autonomous() -> None:
     """EA-03: a classifier-produced sensitive is never fast-lane."""
     decision = Decision(
@@ -5576,3 +5620,28 @@ async def test_mood_engine_per_vip_deterministic_seed() -> None:
     first = await run_once()
     second = await run_once()
     assert first == second
+
+
+@pytest.mark.asyncio
+async def test_vip_mood_engines_cache_capped() -> None:
+    """R2 nit: the per-VIP mood-engine cache stays bounded — the defensive cap
+    evicts oldest-inserted entries (FIFO) once it exceeds the max, mirroring
+    ``_prune_payment_notify``. Entries are tiny MoodEngine forks and the VIP
+    space is the allowlist (bounded cardinality), so the cap is the safety net."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    g = _build(
+        FakeDirector(decision),
+        mood_engine=_FakeMoodEngine(),
+        vip_mood_state=_FakeVipMoodState(),
+    )
+    orch = g["orch"]
+    assert orch._vip_mood_engines == {}  # noqa: SLF001
+    # Pre-fill beyond the cap; the prune keeps only the most recently inserted.
+    keys = [uuid4() for _ in range(_VIP_MOOD_ENGINE_CACHE_MAX + 5)]
+    for k in keys:
+        orch._vip_mood_engines[k] = MoodEngine(noise=0.05)  # noqa: SLF001
+    orch._cap_mood_engines()
+    assert len(orch._vip_mood_engines) == _VIP_MOOD_ENGINE_CACHE_MAX
+    assert set(orch._vip_mood_engines) == set(keys[5:])  # FIFO: oldest evicted
