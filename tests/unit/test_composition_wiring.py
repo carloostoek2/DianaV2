@@ -609,10 +609,12 @@ def test_composition_emotional_detector_flag_gated(_comp_src: str) -> None:
     but injected into the orchestrator only when the flag is ON — flag OFF →
     emotional_detector=None → the hook is a no-op (byte-identical)."""
     assert "detector = EmotionalSignalDetector()" in _comp_src
+    # Split the flag-gated expression so the assertion is NOT whitespace-exact
+    # (review round 1 nit: unify with the single-line wiring style).
+    assert "emotional_detector=(" in _comp_src
     assert (
-        "emotional_detector=(\n"
-        "            detector if settings.feature_emotional_detector_enabled else None\n"
-        "        )" in _comp_src
+        "detector if settings.feature_emotional_detector_enabled else None"
+        in _comp_src
     )
     # The shadow writer repo is wired unconditionally (the hook needs it).
     assert "emotional_signal_log=emotional_signal_repo" in _comp_src
@@ -654,11 +656,9 @@ def test_composition_load_runtime_thresholds_reads_profile_synthesis(
 
 def test_composition_turn_classifier_wired_flag_gated(_comp_src: str) -> None:
     """Evo-Agente A8: the classifier is injected flag-gated into the orchestrator."""
-    assert (
-        "turn_classifier=(\n"
-        "            classifier if settings.feature_phatic_autonomy else None\n"
-        "        )" in _comp_src
-    )
+    # Split the flag-gated expression (review round 1 nit — not whitespace-exact).
+    assert "turn_classifier=(" in _comp_src
+    assert "classifier if settings.feature_phatic_autonomy else None" in _comp_src
     # The shadow writer repo is wired unconditionally (the hook needs it).
     assert "turn_category_log=turn_category_log_repo" in _comp_src
 

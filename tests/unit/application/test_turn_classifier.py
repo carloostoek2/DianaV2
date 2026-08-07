@@ -142,6 +142,36 @@ def test_no_estoy_seguro_ambiguo(clf: TurnClassifier) -> None:
     assert not clf.is_confident(c)
 
 
+def test_no_estoy_seguro_agradecer_con_carga(clf: TurnClassifier) -> None:
+    """S2: un agradecer con carga emocional NO queda fático 1.0."""
+    c = clf.classify(
+        "gracias... es que no sé si contarte algo",
+        _comp(intent="agradecer"),
+    )
+    assert c.category == "fatico"
+    assert c.confidence == 0.3
+    assert not clf.is_confident(c)
+
+
+def test_no_estoy_seguro_despedirse_con_carga(clf: TurnClassifier) -> None:
+    """S2: un despedirse con carga emocional tampoco queda fático 1.0."""
+    c = clf.classify(
+        "nos vemos... tengo miedo de contarte esto",
+        _comp(intent="despedirse"),
+    )
+    assert c.category == "fatico"
+    assert c.confidence == 0.3
+    assert not clf.is_confident(c)
+
+
+def test_phatic_texto_muy_corto(clf: TurnClassifier) -> None:
+    """S10: branch texto_muy_corto — phatic intent + text <= 2 chars → 0.5."""
+    c = clf.classify("ok", _comp(intent="saludar"))
+    assert c.category == "fatico"
+    assert c.confidence == 0.5
+    assert not clf.is_confident(c)
+
+
 def test_no_estoy_seguro_texto_corto(clf: TurnClassifier) -> None:
     """Texto muy corto sin intent → fallback informativo 0.5 (< min)."""
     c = clf.classify("ok", _comp(intent="otro"))
@@ -164,6 +194,19 @@ def test_comprehension_dict_input(clf: TurnClassifier) -> None:
     )
     assert c.category == "fatico"
     assert c.confidence == 1.0
+
+
+def test_comprehension_partial_dict_falls_back(clf: TurnClassifier) -> None:
+    """S11: partial dict (no emotion/urgency/risk) → safe fallback, never fast-lane.
+
+    Without emotion/urgency/risk the phatic/informational branches cannot fire,
+    so a saludo-like partial comprehension falls to informativo 0.5 — pinned
+    here so a regression that classifies partial input as a confident fático
+    (inflating F2) would fail."""
+    c = clf.classify("hola", {"intent": "saludar"})
+    assert c.category == "informativo"
+    assert c.confidence == 0.5
+    assert not clf.is_confident(c)
 
 
 def test_apply_overrides(clf: TurnClassifier) -> None:

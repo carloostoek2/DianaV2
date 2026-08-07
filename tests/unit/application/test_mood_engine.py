@@ -6,6 +6,7 @@ No DB, no LLM, no aiogram — pure math over a ``Comprehension`` + state.
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -18,6 +19,7 @@ from diana.application.mood_engine import (
     MoodSignal,
     MoodState,
 )
+from diana.application.ports import VipMoodStateRecord
 
 
 def _engine(**kw) -> MoodEngine:
@@ -202,6 +204,82 @@ def test_defaults_match_module_constants() -> None:
     assert engine.return_rate == MOOD_RETURN_RATE
     assert engine.signal_weight == MOOD_SIGNAL_WEIGHT
     assert engine.noise == MOOD_NOISE
+
+
+def test_update_accepts_vip_mood_state_record() -> None:
+    """S1: update normalizes a persisted VipMoodStateRecord like a MoodState."""
+    engine = _engine()  # return_rate 0.1, signal_weight 0.5, noise 0
+    current = VipMoodStateRecord(
+        vip_id=uuid4(),
+        axis_playful_serious=0.5,
+        axis_warm_distant=-0.3,
+        axis_energy=0.2,
+        updated_at=None,
+    )
+    state = engine.update(current, MoodSignal(0.4, 0.2, 0.0))
+    # Same formula as test_update_from_existing_state over a MoodState.
+    assert state.axis_playful_serious == pytest.approx(0.5 * 0.9 + 0.4 * 0.5)
+    assert state.axis_warm_distant == pytest.approx(-0.3 * 0.9 + 0.2 * 0.5)
+    assert state.axis_energy == pytest.approx(0.2 * 0.9)
+
+
+def test_tone_distance_accepts_vip_mood_state_record() -> None:
+    """S1: tone_distance normalizes a persisted VipMoodStateRecord."""
+    engine = _engine()
+    triste = VipMoodStateRecord(
+        vip_id=uuid4(),
+        axis_playful_serious=-0.4,
+        axis_warm_distant=-0.4,
+        axis_energy=-0.4,
+        updated_at=None,
+    )
+    assert engine.tone_distance(triste, "triste") == pytest.approx(0.0)
+
+
+def test_fork_preserves_params_and_seed_determinism() -> None:
+    """S5: fork() keeps the (possibly overridden) params; two forks with the
+    same seed produce identical sequences (stable per-VIP noise)."""
+    prototype = MoodEngine(
+        return_rate=0.1,
+        signal_weight=0.5,
+        axis_weights={"playful": 2.0, "warm": 1.0, "energy": 1.0},
+        noise=0.05,
+    )
+    prototype.apply_overrides({"return_rate": 0.2})
+    forked = prototype.fork(seed=1234)
+    assert forked.return_rate == pytest.approx(0.2)
+    assert forked.signal_weight == pytest.approx(0.5)
+    assert forked.noise == pytest.approx(0.05)
+    assert forked.axis_weights == prototype.axis_weights
+
+    a = prototype.fork(seed=1234)
+    b = prototype.fork(seed=1234)
+    signal = MoodSignal(0.4, 0.2, -0.1)
+    sa: MoodState | None = None
+    sb: MoodState | None = None
+    for _ in range(50):
+        sa = a.update(sa, signal)
+        sb = b.update(sb, signal)
+    assert sa == sb
+
+
+def test_no_noise_on_neutral_signal() -> None:
+    """S14: a neutral signal (all deltas 0) decays to base deterministically —
+    no noise draw, so all-neutral conversations never accumulate a random walk
+    (F3 "ejes estables")."""
+    engine = MoodEngine(return_rate=0.1, signal_weight=0.5, noise=0.05, seed=1)
+    # From base: neutral signal → exact (0, 0, 0), no jitter.
+    state = engine.update(None, MoodSignal(0.0, 0.0, 0.0))
+    assert (state.axis_playful_serious, state.axis_warm_distant, state.axis_energy) == (
+        pytest.approx(0.0),
+        pytest.approx(0.0),
+        pytest.approx(0.0),
+    )
+    # From a warm state: pure exponential decay (base * (1 - return_rate)).
+    state = engine.update(MoodState(0.8, 0.6, -0.4), MoodSignal(0.0, 0.0, 0.0))
+    assert state.axis_playful_serious == pytest.approx(0.8 * 0.9)
+    assert state.axis_warm_distant == pytest.approx(0.6 * 0.9)
+    assert state.axis_energy == pytest.approx(-0.4 * 0.9)
 
 
 def test_import_purity() -> None:

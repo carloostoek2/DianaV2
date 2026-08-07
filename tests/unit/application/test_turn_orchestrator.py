@@ -30,7 +30,7 @@ from diana.application.ports import (
     VipInboundMessage,
     VipMoodStateRecord,
 )
-from diana.application.mood_engine import MoodSignal, MoodState
+from diana.application.mood_engine import MoodEngine, MoodSignal, MoodState
 from diana.application.turn_classifier import TurnClassification
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import (
@@ -4477,6 +4477,7 @@ class _FakeMoodEngine:
         self._update_result = update_result or MoodState(0.5, -0.3, 0.2)
         self.signal_calls: list[object] = []
         self.update_calls: list[tuple] = []
+        self.tone_calls: list[tuple] = []
 
     def signal_from_comprehension(self, comprehension):
         self.signal_calls.append(comprehension)
@@ -4491,7 +4492,13 @@ class _FakeMoodEngine:
         return self._update_result
 
     def tone_distance(self, mood, emotion) -> float:
+        self.tone_calls.append((mood, emotion))
         return 0.1234
+
+    def fork(self, *, seed: int | None = None):
+        """The hook forks per-VIP for deterministic noise; the fake is a
+        single-value stub, so it returns itself."""
+        return self
 
 
 def _classification(
@@ -5243,3 +5250,329 @@ async def test_non_vip_turn_skipped() -> None:
     assert mood_state.upsert_calls == []
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "pending_approval"
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 fixes (B1, B2, S3, S5, S6, S8, S9)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sensitive_not_degraded_by_non_escalating_signal() -> None:
+    """B1: an already-classified sensible is NEVER degraded to emotional by a
+    non-escalating detector signal (the signal only ADDS sensibility/escalation)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    signal = EmotionalSignalRecord(
+        signal_detected=True,
+        signal_type="revelacion_de_vida",
+        intensity=0.5,
+        should_trigger_synthesis=True,
+        should_escalate_to_owner=False,
+        pipeline_would_have_escalated=False,
+    )
+    detector = _FakeEmotionalDetector(signal)
+    signal_log = _FakeEmotionalSignalLog()
+    classifier = _FakeTurnClassifier(_classification("sensible", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    rec = cat_log.inserted[0]
+    assert rec.turn_id == turn_id
+    assert rec.category == "sensible"
+    assert rec.would_autonomous is False
+    assert len(signal_log.inserted) == 1  # detector still writes exactly one row
+
+
+@pytest.mark.asyncio
+async def test_mood_engine_skipped_when_epoch_stale() -> None:
+    """B2: a non-terminal turn whose VIP epoch is stale never nudges the mood.
+
+    The upsert being idempotent per VIP does NOT justify nudging the mood with a
+    superseded turn's signal — the stale-epoch gate mirrors the classifier."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine()
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    stale_epoch = g["coordinator"].bump_vip_epoch(100)
+    g["coordinator"].bump_vip_epoch(100)
+    assert not g["coordinator"].is_vip_epoch_current(100, stale_epoch)
+    # Non-terminal turn: the epoch being stale is what makes it about to be
+    # superseded (the terminal read-back cannot see that yet).
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["orch"]._run_mood_engine(turn_id, 100, _vip(vip_id=vip_id), stale_epoch)
+    assert mood_engine.signal_calls == []
+    assert mood_state.upsert_calls == []
+
+
+@pytest.mark.asyncio
+async def test_mood_engine_skipped_when_turn_already_terminal() -> None:
+    """S6: a terminal turn never nudges the mood (read-back gate)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine()
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="superseded"))
+    await g["orch"]._run_mood_engine(turn_id, 100, _vip(vip_id=vip_id))
+    assert mood_engine.signal_calls == []
+    assert mood_state.upsert_calls == []
+
+
+@pytest.mark.asyncio
+async def test_mood_engine_skipped_when_no_comprehension() -> None:
+    """S6: no comprehension in the trace → no mood upsert."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine()
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": None}),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    await g["orch"]._run_mood_engine(uuid4(), 100, _vip(vip_id=vip_id))
+    assert mood_engine.signal_calls == []
+    assert mood_state.upsert_calls == []
+
+
+@pytest.mark.asyncio
+async def test_turn_classifier_skipped_when_turn_already_terminal() -> None:
+    """S6: a terminal turn never gets a turn_category_log row."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="superseded"))
+    await g["orch"]._run_turn_classifier(
+        turn_id, 100, _vip(vip_id=vip_id), None
+    )
+    assert classifier.calls == []
+    assert cat_log.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_turn_classifier_skipped_when_epoch_stale() -> None:
+    """S6: a stale-epoch turn never gets a turn_category_log row."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    stale_epoch = g["coordinator"].bump_vip_epoch(100)
+    g["coordinator"].bump_vip_epoch(100)
+    assert not g["coordinator"].is_vip_epoch_current(100, stale_epoch)
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["orch"]._run_turn_classifier(
+        turn_id, 100, _vip(vip_id=vip_id), None, stale_epoch
+    )
+    assert classifier.calls == []
+    assert cat_log.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_turn_classifier_skipped_when_no_comprehension() -> None:
+    """S6: no comprehension in the trace → no turn_category_log row."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": None}),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    await g["orch"]._run_turn_classifier(
+        uuid4(), 100, _vip(vip_id=vip_id), None
+    )
+    assert classifier.calls == []
+    assert cat_log.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_phatic_not_confident_not_autonomous() -> None:
+    """S8: a fático no-confident (0.3) → would_autonomous=False at hook level
+    (the classifier gate and the is_confident check are both exercised)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("fatico", 0.3))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    rec = cat_log.inserted[0]
+    assert rec.turn_id == turn_id
+    assert rec.category == "fatico"
+    assert rec.confidence == 0.3
+    assert rec.would_autonomous is False
+
+
+@pytest.mark.asyncio
+async def test_mood_engine_continuity_across_two_turns() -> None:
+    """S9: moving-average continuity — the 2nd update receives the 1st result
+    as ``current`` (the fake repo stores the upserted row, and the hook reads it
+    back before the next update)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine(update_result=MoodState(0.5, -0.3, 0.2))
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "positiva"}, "vip_id": str(vip_id)}
+        ),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    incoming = _vip(vip_id=vip_id)
+    await g["orch"]._run_mood_engine(uuid4(), 100, incoming)
+    await g["orch"]._run_mood_engine(uuid4(), 100, incoming)
+    assert len(mood_engine.signal_calls) == 2
+    assert len(mood_engine.update_calls) == 2
+    # First update ran from base (no prior state).
+    assert mood_engine.update_calls[0][0] is None
+    # Second update received the FIRST result (stored by the fake repo) as current.
+    second_current = mood_engine.update_calls[1][0]
+    assert second_current is not None
+    assert second_current.axis_playful_serious == 0.5
+    assert second_current.axis_warm_distant == -0.3
+    assert second_current.axis_energy == 0.2
+
+
+@pytest.mark.asyncio
+async def test_mood_tone_distance_uses_pre_update_state() -> None:
+    """S3: tone_distance is measured against the PRE-update mood (current), not
+    the just-computed ``updated`` state — tone deviation from where the mood
+    already was."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine(update_result=MoodState(0.5, -0.3, 0.2))
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    # Pre-existing mood distinct from the update result.
+    mood_state.rows[vip_id] = VipMoodStateRecord(
+        vip_id=vip_id,
+        axis_playful_serious=0.9,
+        axis_warm_distant=0.9,
+        axis_energy=0.9,
+        updated_at=None,
+    )
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    await g["orch"]._run_mood_engine(uuid4(), 100, _vip(vip_id=vip_id))
+    assert len(mood_engine.tone_calls) == 1
+    measured = mood_engine.tone_calls[0][0]
+    assert measured.axis_playful_serious == 0.9
+    assert measured.axis_warm_distant == 0.9
+    assert measured.axis_energy == 0.9
+
+
+@pytest.mark.asyncio
+async def test_mood_engine_per_vip_deterministic_seed() -> None:
+    """S5: two separately-built orchestrators (each with an UNSEEDED prototype
+    mood engine) reproduce the SAME mood for the same VIP — the hook forks a
+    stable per-VIP seed, so the bounded noise is deterministic (F3 stable axes).
+    Without the fork this fails: two ``random.Random(None)`` diverge."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    vip_id = uuid4()
+
+    async def run_once() -> tuple[float, float, float]:
+        mood_engine = MoodEngine(return_rate=0.1, signal_weight=0.5, noise=0.05)
+        mood_state = _FakeVipMoodState()
+        g = _build(
+            FakeDirector(decision),
+            trace_reader=_FakeEmotionalTraceReader(
+                {"comprehension": {"emotion": "positiva"}, "vip_id": str(vip_id)}
+            ),
+            mood_engine=mood_engine,
+            vip_mood_state=mood_state,
+        )
+        await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+        rec = mood_state.upsert_calls[-1]
+        return (
+            rec.axis_playful_serious,
+            rec.axis_warm_distant,
+            rec.axis_energy,
+        )
+
+    first = await run_once()
+    second = await run_once()
+    assert first == second

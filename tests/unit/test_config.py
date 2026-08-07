@@ -272,6 +272,33 @@ def test_settings_feature_flag_defaults_are_false(
     assert settings.feature_persona_admin_enabled is False
     # F4
     assert settings.feature_general_mode_enabled is False
+    # Evo-Agente Fase 2/3
+    assert settings.feature_phatic_autonomy is False
+    assert settings.feature_mood_engine is False
+
+
+def test_settings_evo_agente_fase_2_3_threshold_defaults(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S7: pin the Fase 2/3 shadow thresholds — a flip (e.g. an accidental
+    feature_phatic_autonomy default True) must be caught by the suite."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    # Fase 2 — classifier (phatic_trust_min is RESERVED for Fase 5, not read).
+    assert settings.classifier_confidence_min == 0.7
+    assert settings.phatic_trust_min == 0.9
+    # Fase 3 — mood engine.
+    assert settings.mood_return_rate == 0.05
+    assert settings.mood_signal_weight == 0.3
+    assert settings.mood_axis_weights == {
+        "playful": 1.0,
+        "warm": 1.0,
+        "energy": 1.0,
+    }
+    assert settings.mood_noise == 0.05
 
 
 @pytest.mark.parametrize(
