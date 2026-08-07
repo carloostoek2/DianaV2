@@ -727,6 +727,15 @@ def test_composition_trust_budget_repo_exposed(_comp_src: str) -> None:
     assert "vip_trust_budget_repo=vip_trust_budget_repo" in _comp_src
 
 
+def test_composition_trust_budget_wired_flag_exposed(_comp_src: str) -> None:
+    """Review round 2 nit: the container must expose ``trust_budget_wired`` and
+    build_app must set it from ``settings.feature_trust_budget`` — otherwise
+    load_runtime_thresholds cannot tell the flag apart from the always-built
+    service object."""
+    assert "trust_budget_wired: bool = False" in _comp_src
+    assert "trust_budget_wired=settings.feature_trust_budget" in _comp_src
+
+
 def test_composition_load_runtime_thresholds_reads_trust(_comp_src: str) -> None:
     """Boot hydrate reads system_config key ``trust_budget`` (manual override)."""
     assert 'store.get("trust_budget")' in _comp_src

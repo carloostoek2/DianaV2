@@ -330,7 +330,11 @@ class AppContainer:
     vip_mood_state_repo: SqlVipMoodStateRepo | None = None
     # Evo-Agente Fase 5: trust-budget service (built ALWAYS — consumed by
     # admin/profile_admin/thresholds even when the flag is off) + its repo.
+    # ``trust_budget_wired`` mirrors ``settings.feature_trust_budget`` so the
+    # boot hydrate (load_runtime_thresholds) can tell the flag apart from the
+    # always-built service object (review round 2 nit).
     trust_budget: object | None = None
+    trust_budget_wired: bool = False
     vip_trust_budget_repo: SqlVipTrustBudgetRepo | None = None
 
 
@@ -1060,6 +1064,7 @@ def build_app(
         mood_engine=(mood if settings.feature_mood_engine else None),
         vip_mood_state_repo=vip_mood_state_repo,
         trust_budget=trust_budget_service,
+        trust_budget_wired=settings.feature_trust_budget,
         vip_trust_budget_repo=vip_trust_budget_repo,
     )
 
@@ -1237,7 +1242,14 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
     # never auto-calibrated.
     tb = getattr(app, "trust_budget", None)
     classifier_wired = getattr(app, "turn_classifier", None) is not None
-    if tb is not None and classifier_wired:
+    # Review round 2 nit: the container ALWAYS carries the service object, so
+    # ``tb is not None`` cannot tell the flag. ``trust_budget_wired`` (mirror
+    # of ``settings.feature_trust_budget``, set in build_app) is the
+    # authoritative gate: with the flag OFF no consumer (admin/orchestrator/
+    # profile_admin) holds the service, so neither the override nor a ``_loaded``
+    # log may fire.
+    trust_wired = bool(getattr(app, "trust_budget_wired", tb is not None))
+    if tb is not None and classifier_wired and trust_wired:
         try:
             cfg = await store.get("trust_budget")
         except Exception:
@@ -1256,15 +1268,14 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
                 },
             )
     elif tb is not None:
-        logger.info(
-            "trust_budget_thresholds_skipped",
-            extra={
-                "reason": (
-                    "trust_budget wired but turn_classifier off "
-                    "(feature_phatic_autonomy off) — mechanics inert"
-                )
-            },
-        )
+        if not trust_wired:
+            reason = "trust_budget not wired (feature_trust_budget off)"
+        else:
+            reason = (
+                "trust_budget wired but turn_classifier off "
+                "(feature_phatic_autonomy off) — mechanics inert"
+            )
+        logger.info("trust_budget_thresholds_skipped", extra={"reason": reason})
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:

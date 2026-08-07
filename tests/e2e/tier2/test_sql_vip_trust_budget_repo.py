@@ -60,6 +60,23 @@ async def test_increment_creates_row_with_clamped_seed(session_factory) -> None:
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_increment_insert_branch_seeds_clamped_to_1(session_factory) -> None:
+    """Review round 2 nit: the INSERT branch of the upsert clamps
+    ``initial + delta`` client-side to 1.0. A fresh (vip, category) with an
+    oversized delta must seed exactly 1.0 — with settings defaults this branch
+    never fires (0.2 + 0.05 = 0.25), so the oversized delta is the only way to
+    exercise it on real SQL (the fake unit store covers it too)."""
+    repo = SqlVipTrustBudgetRepo(session_factory)
+    vip = await _create_vip(session_factory, 9506)
+
+    rec = await repo.increment_autonomous(vip.id, "fatico", delta=9.0, initial=0.2)
+    assert rec.trust_score == pytest.approx(1.0)
+    assert rec.autonomous_count == 1
+    assert rec.correction_count == 0
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_decrement_on_existing_row(session_factory) -> None:
     repo = SqlVipTrustBudgetRepo(session_factory)
     vip = await _create_vip(session_factory, 9502)

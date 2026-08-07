@@ -99,6 +99,7 @@ async def test_load_runtime_thresholds_applies_trust_override(
         session_factory=object(),
         trust_budget=service,
         turn_classifier=object(),  # classification source wired (S8)
+        trust_budget_wired=True,  # feature_trust_budget on (round 2 nit)
     )
     fake = _FakeStore(
         trust_cfg={
@@ -132,6 +133,7 @@ async def test_load_runtime_thresholds_no_key_keeps_defaults(
         session_factory=object(),
         trust_budget=service,
         turn_classifier=object(),  # classification source wired (S8)
+        trust_budget_wired=True,  # feature_trust_budget on (round 2 nit)
     )
     fake = _FakeStore(trust_cfg=None)
     monkeypatch.setattr("diana.composition.SqlSystemConfigStore", lambda _sf: fake)
@@ -170,6 +172,7 @@ async def test_load_runtime_thresholds_db_error_does_not_break_boot(
         session_factory=object(),
         trust_budget=service,
         turn_classifier=object(),  # classification source wired (S8)
+        trust_budget_wired=True,  # feature_trust_budget on (round 2 nit)
     )
     monkeypatch.setattr(
         "diana.composition.SqlSystemConfigStore", lambda _sf: _BoomStore()
@@ -196,12 +199,49 @@ async def test_load_runtime_thresholds_skipped_when_classifier_off(
         session_factory=object(),
         trust_budget=service,
         turn_classifier=None,
+        trust_budget_wired=True,  # flag ON; the classifier (source) is what's off
     )
     fake = _FakeStore(trust_cfg={"threshold": 0.5, "increment": 0.5, "decrement": 0.1})
     monkeypatch.setattr("diana.composition.SqlSystemConfigStore", lambda _sf: fake)
     with caplog.at_level(logging.INFO, logger="diana.composition"):
         await load_runtime_thresholds(app)  # type: ignore[arg-type]
-    assert fake.get_called_keys == []
+    assert fake.get_called_keys == []  # classifier off → no reads at all
+    assert service._threshold == DEFAULT_TRUST_BUDGET_THRESHOLD  # noqa: SLF001
+    assert service._increment == DEFAULT_TRUST_BUDGET_INCREMENT  # noqa: SLF001
+    assert any(
+        "trust_budget_thresholds_skipped" in r.getMessage() for r in caplog.records
+    )
+    assert not any(
+        "trust_budget_thresholds_loaded" in r.getMessage() for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_runtime_thresholds_skipped_when_trust_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Round 2 nit: trust-OFF + classifier-ON (the trap combo). The container
+    ALWAYS carries the service object, so ``trust_budget_wired=False`` (mirror
+    of ``feature_trust_budget``) is what keeps the override + ``_loaded`` from
+    firing: no trust-key DB read, defaults untouched, and a
+    ``trust_budget_thresholds_skipped`` log with the flag-off reason instead of
+    a false ``_loaded``."""
+    import logging
+
+    service = _service()
+    app = SimpleNamespace(
+        runtime_thresholds=None,
+        session_factory=object(),
+        trust_budget=service,
+        turn_classifier=object(),  # classification source WIRED (the trap)
+        trust_budget_wired=False,  # feature_trust_budget off → not wired
+    )
+    fake = _FakeStore(trust_cfg={"threshold": 0.5, "increment": 0.5, "decrement": 0.1})
+    monkeypatch.setattr("diana.composition.SqlSystemConfigStore", lambda _sf: fake)
+    with caplog.at_level(logging.INFO, logger="diana.composition"):
+        await load_runtime_thresholds(app)  # type: ignore[arg-type]
+    assert "trust_budget" not in fake.get_called_keys  # 0 trust DB reads
     assert service._threshold == DEFAULT_TRUST_BUDGET_THRESHOLD  # noqa: SLF001
     assert service._increment == DEFAULT_TRUST_BUDGET_INCREMENT  # noqa: SLF001
     assert any(
