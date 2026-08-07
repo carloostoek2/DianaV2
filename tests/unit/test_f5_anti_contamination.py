@@ -150,6 +150,30 @@ def test_profile_synthesis_never_feeds_examples_bank() -> None:
     assert hits == [], f"Profile synthesis touching examples bank: {hits}"
 
 
+def test_classifier_and_mood_never_feed_examples_bank() -> None:
+    """EA-05 (Fase 2/3): the pure classifier and mood engine never reach the
+    examples bank and never expose stable_traits/sensitivities. Structural
+    scan (F5 style) — prevents drift when Fase 5 wires recent_trend/mood
+    into the fast-lane generation context."""
+    forbidden = (
+        "retrievers.examples",
+        "repositories.examples",
+        "examples_bank",
+        "ExamplesRepo",
+        "stable_traits",
+        "sensitivities",
+    )
+    hits: list[str] = []
+    root = Path(diana.__file__).resolve().parent
+    for rel in ("application/turn_classifier.py", "application/mood_engine.py"):
+        path = root / rel
+        text = path.read_text(encoding="utf-8")
+        for token in forbidden:
+            if token in text:
+                hits.append(f"{rel}:{token}")
+    assert hits == [], f"Classifier/mood touching examples or profile fields: {hits}"
+
+
 def test_examples_never_reads_profile_fields() -> None:
     """EA-05 reverse: the examples bank / examples retriever never reference
     ``stable_traits`` or ``sensitivities`` (the profile is not generation

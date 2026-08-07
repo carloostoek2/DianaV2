@@ -650,3 +650,42 @@ def test_composition_load_runtime_thresholds_reads_profile_synthesis(
     """Boot hydrate reads system_config key ``profile_synthesis`` (manual override)."""
     assert 'store.get("profile_synthesis")' in _comp_src
     assert "profile_synthesis_thresholds_loaded" in _comp_src
+
+
+def test_composition_turn_classifier_wired_flag_gated(_comp_src: str) -> None:
+    """Evo-Agente A8: the classifier is injected flag-gated into the orchestrator."""
+    assert (
+        "turn_classifier=(\n"
+        "            classifier if settings.feature_phatic_autonomy else None\n"
+        "        )" in _comp_src
+    )
+    # The shadow writer repo is wired unconditionally (the hook needs it).
+    assert "turn_category_log=turn_category_log_repo" in _comp_src
+
+
+def test_composition_mood_engine_wired_flag_gated(_comp_src: str) -> None:
+    """Evo-Agente A8: the mood engine is injected flag-gated into the orchestrator."""
+    assert "mood_engine=(mood if settings.feature_mood_engine else None)" in _comp_src
+    assert "vip_mood_state=vip_mood_state_repo" in _comp_src
+
+
+def test_composition_builds_pure_classifier_and_mood_always(_comp_src: str) -> None:
+    """Fase 2/3: the pure classifier + mood engine are built ALWAYS (A8)."""
+    assert "classifier = TurnClassifier(confidence_min=" in _comp_src
+    assert "mood = MoodEngine(" in _comp_src
+
+
+def test_composition_exposes_vip_mood_state_repo(_comp_src: str) -> None:
+    """AppContainer exposes vip_mood_state_repo for the mood hook."""
+    assert "vip_mood_state_repo=vip_mood_state_repo" in _comp_src
+    assert "vip_mood_state_repo: SqlVipMoodStateRepo | None = None" in _comp_src
+
+
+def test_composition_load_runtime_thresholds_reads_phatic_and_mood(
+    _comp_src: str,
+) -> None:
+    """Boot hydrate reads system_config keys ``phatic_classifier``/``mood_engine``."""
+    assert 'store.get("phatic_classifier")' in _comp_src
+    assert 'store.get("mood_engine")' in _comp_src
+    assert "phatic_classifier_thresholds_loaded" in _comp_src
+    assert "mood_engine_thresholds_loaded" in _comp_src

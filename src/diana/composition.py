@@ -24,6 +24,7 @@ from diana.application.calibration_service import CalibrationService
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.metrics_service import MetricsAggregationService
 from diana.application.memory_backfill_queue import MemoryBackfillQueue
+from diana.application.mood_engine import MoodEngine
 from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.persona_catalog_provider import PersonaCatalogProvider
 from diana.application.promo_service import PromoService
@@ -40,6 +41,7 @@ from diana.application.recovery_startup import (
 from diana.application.sandbox import SandboxService
 from diana.application.sandbox_knowledge import SandboxKnowledgeAugmenter
 from diana.application.staging_service import StagingService
+from diana.application.turn_classifier import TurnClassifier
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.emotional_signal_detector import EmotionalSignalDetector
@@ -320,6 +322,11 @@ class AppContainer:
     vip_profile_history_repo: SqlVipProfileHistoryRepo | None = None
     turn_category_log_repo: SqlTurnCategoryLogRepo | None = None
     emotional_signal_log_repo: SqlEmotionalSignalLogRepo | None = None
+    # Evo-Agente Fase 2/3: pure classifier + mood engine (None when flag off);
+    # vip_mood_state_repo exposed for the mood hook + future Fase 5 readers.
+    turn_classifier: object | None = None
+    mood_engine: object | None = None
+    vip_mood_state_repo: SqlVipMoodStateRepo | None = None
 
 
 def build_app(
@@ -689,6 +696,15 @@ def build_app(
     # Evo-Agente Fase 0: build the detector ALWAYS (pure constants); flag OFF
     # → emotional_detector=None → the orchestrator hook is a no-op (A8).
     detector = EmotionalSignalDetector()
+    # Evo-Agente Fase 2/3: pure classifier + mood engine built ALWAYS (A8);
+    # flag OFF → None injected → the orchestrator hooks are no-op (byte-identical).
+    classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)
+    mood = MoodEngine(
+        return_rate=settings.mood_return_rate,
+        signal_weight=settings.mood_signal_weight,
+        axis_weights=settings.mood_axis_weights,
+        noise=settings.mood_noise,
+    )
     # Evo-Agente Fase 1 (A8): build the synthesis trigger + service ONLY when
     # the flag is on — flag OFF → both None → orchestrator hook and job no-op
     # (byte-identical to Fase 0). The staging repo is built here when the
@@ -762,6 +778,12 @@ def build_app(
             if settings.feature_profile_synthesis_enabled
             else None
         ),
+        turn_classifier=(
+            classifier if settings.feature_phatic_autonomy else None
+        ),
+        turn_category_log=turn_category_log_repo,
+        mood_engine=(mood if settings.feature_mood_engine else None),
+        vip_mood_state=vip_mood_state_repo,
     )
 
     # REQ-MEM-07: supervised-approved turns must run the SAME post-turn
@@ -985,6 +1007,11 @@ def build_app(
         vip_profile_history_repo=vip_profile_history_repo,
         turn_category_log_repo=turn_category_log_repo,
         emotional_signal_log_repo=emotional_signal_repo,
+        turn_classifier=(
+            classifier if settings.feature_phatic_autonomy else None
+        ),
+        mood_engine=(mood if settings.feature_mood_engine else None),
+        vip_mood_state_repo=vip_mood_state_repo,
     )
 
 
@@ -1095,6 +1122,44 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
                     "volume_threshold": trigger._volume_threshold,  # noqa: SLF001
                     "inactivity_minutes": trigger._inactivity_minutes,  # noqa: SLF001
                     "confidence_min": service._confidence_min,  # noqa: SLF001
+                },
+            )
+
+    # Evo-Agente Fase 2: manual override of the classifier thresholds from
+    # system_config key ``phatic_classifier`` (same best-effort pattern).
+    # The classifier is always built but only WIRED (flag on) → override
+    # applies only when the phatic hook is active. Never auto-calibrated.
+    classifier = getattr(app, "turn_classifier", None)
+    if classifier is not None:
+        try:
+            cfg = await store.get("phatic_classifier")
+        except Exception:
+            logger.exception("phatic_classifier_thresholds_read_failed")
+            cfg = None
+        if isinstance(cfg, dict):
+            classifier.apply_overrides(cfg)
+            logger.info(
+                "phatic_classifier_thresholds_loaded",
+                extra={"confidence_min": classifier._confidence_min},  # noqa: SLF001
+            )
+
+    # Evo-Agente Fase 3: manual override of the mood-engine thresholds from
+    # system_config key ``mood_engine`` (same pattern). Never auto-calibrated.
+    mood = getattr(app, "mood_engine", None)
+    if mood is not None:
+        try:
+            cfg = await store.get("mood_engine")
+        except Exception:
+            logger.exception("mood_engine_thresholds_read_failed")
+            cfg = None
+        if isinstance(cfg, dict):
+            mood.apply_overrides(cfg)
+            logger.info(
+                "mood_engine_thresholds_loaded",
+                extra={
+                    "return_rate": mood._return_rate,  # noqa: SLF001
+                    "signal_weight": mood._signal_weight,  # noqa: SLF001
+                    "noise": mood._noise,  # noqa: SLF001
                 },
             )
 
