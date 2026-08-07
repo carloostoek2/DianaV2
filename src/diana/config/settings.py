@@ -96,6 +96,29 @@ class Settings(BaseSettings):
     # override manual por system_config clave `profile_synthesis`; NUNCA auto-calibrada.
     profile_synthesis_confidence_min: float = 0.6
 
+    # Evo-Agente Fase 2 (autonomía fática, shadow) — env-driven, default off.
+    feature_phatic_autonomy: bool = False
+    # Confidence mínima del clasificador para considerar un fático "seguro"
+    # (modo "no estoy seguro" = confidence < umbral → nunca fast-lane).
+    # Constante fija, override manual por system_config clave `phatic_classifier`;
+    # NUNCA auto-calibrada.
+    classifier_confidence_min: float = 0.7
+    # Umbral mínimo de trust por (VIP, categoría) para el carril rápido REAL.
+    # RESERVADO para Fase 5 (ítem 4) — este ítem NO lee vip_trust_budget (shadow).
+    phatic_trust_min: float = 0.9
+
+    # Evo-Agente Fase 3 (motor de mood, shadow) — env-driven, default off.
+    feature_mood_engine: bool = False
+    # Promedio móvil con retorno a base:
+    # nuevo = actual*(1 - return_rate) + señal*peso*peso_eje + ruido_acotado.
+    mood_return_rate: float = 0.05
+    mood_signal_weight: float = 0.3
+    # Peso por eje (escala la señal del turno por eje). Constantes fijas con
+    # override manual por system_config clave `mood_engine`; NUNCA auto-calibradas.
+    mood_axis_weights: dict[str, float] = {"playful": 1.0, "warm": 1.0, "energy": 1.0}
+    # Ruido acotado ±mood_noise (determinista con semilla en el motor para tests).
+    mood_noise: float = 0.05
+
     # Ops surface (Telegram process edge) — single-instance defaults.
     # health_host is loopback-only (SEC-HEALTH-01); no public bind via env.
     health_host: str = "127.0.0.1"

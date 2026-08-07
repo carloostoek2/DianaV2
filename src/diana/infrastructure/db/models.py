@@ -810,6 +810,9 @@ class TurnCategoryLog(Base):
 
     ``category`` vocab: fatico | informativo | emocional | sensible
     (Text + CHECK). One row per turn (unique ``turn_id``).
+
+    Fase 2 shadow writer: ``would_autonomous`` (fast-lane habría autoenviado)
+    y ``confidence`` (modo "no estoy seguro") NULL por defecto.
     """
 
     __tablename__ = "turn_category_log"
@@ -837,6 +840,11 @@ class TurnCategoryLog(Base):
     )
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     category: Mapped[str] = mapped_column(Text, nullable=False)
+    # Fase 2 shadow measurement (migración 026): NULL by default. Columns only —
+    # the CHECK ``ck_turn_category_log_category`` is NOT extended ("no estoy
+    # seguro" is expressed via confidence < classifier_confidence_min).
+    would_autonomous: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )

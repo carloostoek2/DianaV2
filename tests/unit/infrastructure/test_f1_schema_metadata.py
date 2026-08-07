@@ -79,6 +79,16 @@ _EVO_AGENTE_INDEXES = {
 }
 
 
+def test_turn_category_log_has_shadow_columns() -> None:
+    """Fase 2 (migración 026): the ORM exposes the two shadow columns that the
+    migration adds to ``turn_category_log`` — offline drift guard between the
+    model and the migration (columns, NOT tables — the count stays 32)."""
+    from diana.infrastructure.db.models import TurnCategoryLog
+
+    cols = set(TurnCategoryLog.__table__.columns.keys())
+    assert {"would_autonomous", "confidence"} <= cols
+
+
 def test_evo_agente_check_constraint_names() -> None:
     """The 4 vocabulary CHECK constraints exist by exact name in the ORM."""
     for table_name, expected in _EVO_AGENTE_CHECKS.items():
