@@ -100,3 +100,42 @@ async def test_memory_store_list_recent_limit() -> None:
     for _ in range(3):
         await store.insert(_record(chat_id=chat))
     assert len(await store.list_recent(chat, limit=2)) == 2
+
+
+@pytest.mark.asyncio
+async def test_memory_store_purge_zero_old_rows_preserves_everything() -> None:
+    """Terminal case: nothing older than the TTL → purge returns 0, keeps all."""
+    store = _MemoryTurnCategoryLogStore()
+    await store.insert(_record(created_at=_now()))
+    await store.insert(_record(created_at=_now() - timedelta(days=10)))
+    assert await store.purge_expired(ttl_days=90) == 0
+    assert len(store.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_repo_insert_omits_created_at_when_none() -> None:
+    """BUG fix: created_at=None must omit the column so server_default=now() runs."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    captured: dict[str, object] = {}
+    session = MagicMock()
+
+    def _capture(row: object) -> None:
+        captured["row"] = row
+
+    session.add.side_effect = _capture
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    repo = SqlTurnCategoryLogRepo(session_factory=factory)  # type: ignore[arg-type]
+    await repo.insert(_record(created_at=None))
+    row = captured["row"]
+    # ``created_at`` was NOT set on the ORM object → the column is omitted and
+    # the DB server_default (now()) fills it. An explicit NULL would violate
+    # the NOT NULL constraint.
+    assert "created_at" not in row.__dict__  # type: ignore[attr-defined]

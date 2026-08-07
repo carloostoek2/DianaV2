@@ -10,6 +10,8 @@ from diana.application.emotional_signal_detector import (
     BASELINE_WARM_RATIO_OPEN,
     ESCALATE_THRESHOLD,
     MIN_BASELINE_TURNS,
+    MIN_BASELINE_TURNS_MAX,
+    MIN_BASELINE_TURNS_MIN,
     SYNTHESIS_THRESHOLD,
     EmotionalSignalDetector,
 )
@@ -74,22 +76,49 @@ def test_vulnerabilidad_signal_by_intent() -> None:
         assert sig.should_escalate_to_owner is False
 
 
-def test_vulnerabilidad_signal_by_topic() -> None:
-    for topic in ("apertura", "honestidad", "conexion", "tema_pesado"):
+def test_vulnerabilidad_requires_personal_opening_intent() -> None:
+    """Spec contract: emotion {triste, ansiosa} AND a personal-opening intent.
+
+    Topics alone must NOT trigger vulnerabilidad (opening is behavioural, not
+    topical). A topical-only turn either falls through to revelacion_de_vida
+    (when a revelation topic matches) or produces no signal.
+    """
+    for intent in ("pedir_consejo", "contar_anecdota", "compartir_logro"):
+        sig = _detector().detect(
+            _comp(emotion="ansiosa", intent=intent), None, None
+        )
+        assert sig.signal_type == "vulnerabilidad", intent
+    # ansiosa + a revelation topic but NO opening intent → revelacion_de_vida.
+    for topic in ("conexion", "tema_pesado", "honestidad"):
         sig = _detector().detect(
             _comp(emotion="ansiosa", topics=[topic]), None, None
         )
-        assert sig.signal_type == "vulnerabilidad", topic
+        assert sig.signal_type == "revelacion_de_vida", topic
+    # ansiosa + a non-revelation topic + no opening intent → no signal.
+    sig = _detector().detect(
+        _comp(emotion="ansiosa", topics=["apertura"]), None, None
+    )
+    assert sig.signal_detected is False
 
 
 def test_vulnerabilidad_negative_no_opening() -> None:
-    """triste without a personal-opening intent/topic → no signal."""
+    """triste without a personal-opening intent → no signal."""
     sig = _detector().detect(
         _comp(emotion="triste", intent="saludar", topics=["saludo"]),
         None,
         None,
     )
     assert sig.signal_detected is False
+
+
+def test_topics_filters_non_string_tokens() -> None:
+    """None/ints in topics are analyst artifacts, never vocabulary tokens."""
+    sig = _detector().detect(
+        _comp(topics=["tema_pesado", None, 123]), None, None
+    )
+    assert sig.signal_type == "revelacion_de_vida"
+    sig2 = _detector().detect(_comp(topics=[None, 123]), None, None)
+    assert sig2.signal_detected is False
 
 
 def test_revelacion_de_vida_by_useful_tag() -> None:
@@ -221,8 +250,40 @@ def test_apply_overrides_invalid_config_does_not_crash() -> None:
     assert d.synthesis_threshold == SYNTHESIS_THRESHOLD
     assert d.escalate_threshold == ESCALATE_THRESHOLD
     d.apply_overrides(None)
+    # 0 clamps to the floor MIN_BASELINE_TURNS_MIN (1), not "keep the default".
     d.apply_overrides({"min_baseline_turns": 0})
-    assert d.min_baseline_turns == MIN_BASELINE_TURNS
+    assert d.min_baseline_turns == MIN_BASELINE_TURNS_MIN
+    # Negative values clamp to the floor too.
+    d.apply_overrides({"min_baseline_turns": -3})
+    assert d.min_baseline_turns == MIN_BASELINE_TURNS_MIN
+    # Oversized values clamp to the ceiling.
+    d.apply_overrides({"min_baseline_turns": 1_000_000})
+    assert d.min_baseline_turns == MIN_BASELINE_TURNS_MAX
+
+
+def test_apply_overrides_rejects_inverted_threshold_pair() -> None:
+    """escalate_threshold must stay strictly above synthesis_threshold."""
+    d = _detector()
+    # Inverted pair (synthesis 0.95, escalate 0.2) → rejected wholesale.
+    d.apply_overrides(
+        {"synthesis_threshold": 0.95, "escalate_threshold": 0.2}
+    )
+    assert d.synthesis_threshold == SYNTHESIS_THRESHOLD
+    assert d.escalate_threshold == ESCALATE_THRESHOLD
+    # Equal pair → rejected.
+    d.apply_overrides(
+        {"synthesis_threshold": 0.5, "escalate_threshold": 0.5}
+    )
+    assert d.synthesis_threshold == SYNTHESIS_THRESHOLD
+    # A synthesis raise that would exceed escalate → rejected as a pair.
+    d.apply_overrides({"synthesis_threshold": 0.9})
+    assert d.synthesis_threshold == SYNTHESIS_THRESHOLD
+    # Valid asymmetric pair still applies.
+    d.apply_overrides(
+        {"synthesis_threshold": 0.6, "escalate_threshold": 0.9}
+    )
+    assert d.synthesis_threshold == 0.6
+    assert d.escalate_threshold == 0.9
 
 
 def test_apply_overrides_min_baseline_turns() -> None:

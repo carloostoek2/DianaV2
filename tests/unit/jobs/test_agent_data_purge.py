@@ -84,3 +84,23 @@ async def test_pre_stopped_job_does_not_run() -> None:
     await job.start()
 
     assert a.ttl_calls == []
+
+
+@pytest.mark.asyncio
+async def test_double_start_does_not_run_parallel_loops() -> None:
+    """Anti-parallelism guard: a second start() while running is a no-op."""
+    a = FakePurgeStore("history")
+    # Long interval so the window only captures the first loop's first
+    # iteration — any parallel loop from the second start() would add a call.
+    job = AgentDataPurgeJob([(a, 90)], interval_seconds=5.0)
+    loop_handle = asyncio.ensure_future(job.start())
+
+    await asyncio.sleep(0.02)
+    # Second start must not spawn a second purge loop on the same stores.
+    await job.start()
+    await asyncio.sleep(0.03)
+    await job.stop()
+    await loop_handle
+
+    # Exactly ONE loop ran: a single first-iteration purge per store.
+    assert a.ttl_calls == [90], a.ttl_calls

@@ -114,3 +114,13 @@ async def test_memory_store_purge_expired_batches_total() -> None:
         )
     assert await store.purge_expired(ttl_days=90) == total
     assert len(store.rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_store_purge_zero_old_rows_preserves_everything() -> None:
+    """Terminal case: nothing older than the TTL → purge returns 0, keeps all."""
+    store = _MemoryVipProfileHistoryStore()
+    await store.insert(_record(version=1, created_at=_now()))
+    await store.insert(_record(version=2, created_at=_now() - timedelta(days=10)))
+    assert await store.purge_expired(ttl_days=90) == 0
+    assert len(store.rows) == 2

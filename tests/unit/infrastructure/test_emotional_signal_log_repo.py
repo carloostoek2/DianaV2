@@ -95,3 +95,27 @@ async def test_memory_store_purge_by_ttl() -> None:
     store.rows[0] = (store.rows[0][0], store.rows[0][1], store.rows[0][2], _now() - timedelta(days=200))
     assert await store.purge_expired(ttl_days=90) == 1
     assert len(store.rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_store_purge_zero_old_rows_preserves_everything() -> None:
+    """Terminal case: nothing older than the TTL → purge returns 0, keeps all."""
+    store = _MemoryEmotionalSignalStore()
+    await store.insert(turn_id=uuid4(), vip_id=uuid4(), signal=_signal())
+    await store.insert(turn_id=uuid4(), vip_id=uuid4(), signal=_signal())
+    assert await store.purge_expired(ttl_days=90) == 0
+    assert len(store.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_repo_insert_rejects_non_detected_signal() -> None:
+    """The repo enforces the write invariant: no row without a signal."""
+    repo = SqlEmotionalSignalLogRepo(session_factory=object())  # never reached
+    no_signal = EmotionalSignalRecord(
+        signal_detected=False,
+        signal_type=None,
+        intensity=0.0,
+        pipeline_would_have_escalated=None,
+    )
+    with pytest.raises(ValueError, match="non-detected"):
+        await repo.insert(turn_id=uuid4(), vip_id=None, signal=no_signal)

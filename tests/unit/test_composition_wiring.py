@@ -602,3 +602,22 @@ def test_composition_extraction_notifier_wired(_comp_src: str) -> None:
     assert start != -1
     block = _comp_src[start : start + 300]
     assert "notifier=notifier" in block
+
+
+def test_composition_emotional_detector_flag_gated(_comp_src: str) -> None:
+    """Evo-Agente A8: the emotional detector is built ALWAYS (pure constants),
+    but injected into the orchestrator only when the flag is ON — flag OFF →
+    emotional_detector=None → the hook is a no-op (byte-identical)."""
+    assert "detector = EmotionalSignalDetector()" in _comp_src
+    assert (
+        "emotional_detector=(\n"
+        "            detector if settings.feature_emotional_detector_enabled else None\n"
+        "        )" in _comp_src
+    )
+    # The shadow writer repo is wired unconditionally (the hook needs it).
+    assert "emotional_signal_log=emotional_signal_repo" in _comp_src
+
+
+def test_composition_app_container_has_emotional_detector_field(_comp_src: str) -> None:
+    """AppContainer exposes emotional_detector (wired to load_runtime_thresholds)."""
+    assert "emotional_detector: EmotionalSignalDetector | None = None" in _comp_src

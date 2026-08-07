@@ -88,3 +88,16 @@ async def test_memory_store_upsert_by_pair() -> None:
     await store.upsert(updated)
     assert (await store.get_by_vip_and_category(vip, "informativo")).trust_score == 0.6
     assert len(store.rows) == 1
+
+
+def test_trust_score_validated_to_unit_range() -> None:
+    """Spec documents trust_score as [0, 1]; the record enforces it."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _record(trust_score=1.5)
+    with pytest.raises(ValidationError):
+        _record(trust_score=-0.1)
+    # Inclusive bounds are accepted.
+    assert _record(trust_score=0.0).trust_score == 0.0
+    assert _record(trust_score=1.0).trust_score == 1.0

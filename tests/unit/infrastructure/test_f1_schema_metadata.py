@@ -54,6 +54,47 @@ def test_orm_exposes_exactly_thirty_two_tables() -> None:
     assert len(Base.metadata.tables) == 32
 
 
+# Evo-Agente Fase 0: pin the 4 CHECK constraints and 6 index names offline so a
+# rename in models.py / the 024 migration is caught by ``pytest tests/unit``.
+_EVO_AGENTE_CHECKS = {
+    "vip_profile": {"ck_vip_profile_synthesis_trigger"},
+    "vip_trust_budget": {"ck_vip_trust_budget_turn_category"},
+    "turn_category_log": {"ck_turn_category_log_category"},
+    "emotional_signal_log": {"ck_emotional_signal_log_signal_type"},
+}
+
+_EVO_AGENTE_INDEXES = {
+    "vip_profile_history": {
+        "ix_vip_profile_history_vip_id_created_at",
+        "ix_vip_profile_history_created_at",
+    },
+    "turn_category_log": {
+        "ix_turn_category_log_chat_id_created_at",
+        "ix_turn_category_log_created_at",
+    },
+    "emotional_signal_log": {
+        "ix_emotional_signal_log_vip_id_created_at",
+        "ix_emotional_signal_log_created_at",
+    },
+}
+
+
+def test_evo_agente_check_constraint_names() -> None:
+    """The 4 vocabulary CHECK constraints exist by exact name in the ORM."""
+    for table_name, expected in _EVO_AGENTE_CHECKS.items():
+        table = Base.metadata.tables[table_name]
+        names = {c.name for c in table.constraints if c.name}
+        assert expected.issubset(names), (table_name, names)
+
+
+def test_evo_agente_index_names() -> None:
+    """The 6 Fase 0 indexes exist by exact name in the ORM metadata."""
+    for table_name, expected in _EVO_AGENTE_INDEXES.items():
+        table = Base.metadata.tables[table_name]
+        names = {i.name for i in table.indexes}
+        assert expected.issubset(names), (table_name, names)
+
+
 def test_pipeline_traces_turn_id_fk_targets_turns() -> None:
     col = PipelineTrace.__table__.c.turn_id
     fks = list(col.foreign_keys)

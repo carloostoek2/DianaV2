@@ -42,6 +42,15 @@ _CHECKS = (
     "ck_emotional_signal_log_signal_type",
 )
 
+_INDEXES = (
+    "ix_vip_profile_history_vip_id_created_at",
+    "ix_vip_profile_history_created_at",
+    "ix_turn_category_log_chat_id_created_at",
+    "ix_turn_category_log_created_at",
+    "ix_emotional_signal_log_vip_id_created_at",
+    "ix_emotional_signal_log_created_at",
+)
+
 
 def _alembic(args: str, target: str, url: str) -> None:
     env = os.environ.copy()
@@ -133,6 +142,33 @@ async def test_024_downgrade_reverses_schema_and_preserves_vips(
                     )
                 ).scalar_one()
                 assert set(pk_columns) == {"vip_id", "turn_category"}
+
+                # UNIQUE on turn_id of both one-row-per-turn log tables.
+                for table in ("turn_category_log", "emotional_signal_log"):
+                    count = (
+                        await conn.execute(
+                            text(
+                                "SELECT count(*) FROM information_schema.table_constraints "
+                                "WHERE table_name = :t AND constraint_type = 'UNIQUE' "
+                                "AND constraint_name = :c"
+                            ),
+                            {"t": table, "c": f"{table}_turn_id_key"},
+                        )
+                    ).scalar_one()
+                    assert count == 1, table
+
+                # The 6 Fase 0 indexes exist by exact name in the real DB.
+                for index in _INDEXES:
+                    count = (
+                        await conn.execute(
+                            text(
+                                "SELECT count(*) FROM pg_indexes "
+                                "WHERE indexname = :i"
+                            ),
+                            {"i": index},
+                        )
+                    ).scalar_one()
+                    assert count == 1, index
 
                 # Valid insert into emotional_signal_log referencing the turn
                 # requires a turns row — create one to prove FK wiring works.

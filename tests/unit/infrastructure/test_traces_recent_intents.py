@@ -110,3 +110,34 @@ async def test_get_recent_comprehension_limit_zero_empty() -> None:
     store = SqlTraceStore(session_factory=factory)
     assert await store.get_recent_comprehension(1, limit=0) == []
     session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_recent_comprehension_all_empty_returns_empty_list() -> None:
+    """Terminal case: no non-empty comprehension rows → [] (not a crash)."""
+    factory, _ = _factory_with_rows(
+        [
+            (uuid4(), {}),  # empty dict
+            (uuid4(), None),  # None comprehension
+            (uuid4(), "not-a-dict"),  # non-dict
+        ]
+    )
+    store = SqlTraceStore(session_factory=factory)
+    assert await store.get_recent_comprehension(42, limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_get_recent_comprehension_filters_terminal_turn_status() -> None:
+    """The baseline only reads completed turns (delivered/escalated).
+
+    FAILED / superseded / aborted turns never finalized their pipeline, so the
+    SQL must constrain Turn.status to the completed set — asserted via the
+    compiled statement (literal binds).
+    """
+    factory, session = _factory_with_rows([(uuid4(), {"emotion": "neutral"})])
+    store = SqlTraceStore(session_factory=factory)
+    await store.get_recent_comprehension(7, limit=2)
+    stmt = session.execute.await_args.args[0]
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "delivered" in compiled
+    assert "escalated" in compiled

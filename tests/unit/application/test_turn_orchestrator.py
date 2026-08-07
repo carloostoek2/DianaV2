@@ -4499,3 +4499,120 @@ async def test_emotional_detector_skipped_when_no_comprehension() -> None:
     assert signal_log.inserted == []
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_no_insert_when_signal_detected_false() -> None:
+    """signal_detected=False → detector runs but NO row is inserted."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    from diana.application.ports import EmotionalSignalRecord
+
+    no_signal = EmotionalSignalRecord(
+        signal_detected=False,
+        signal_type=None,
+        intensity=0.0,
+        pipeline_would_have_escalated=None,
+    )
+    detector = _FakeEmotionalDetector(no_signal)
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": None}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    # Detector ran (guard path exercised) but nothing was written.
+    assert len(detector.calls) == 1
+    assert signal_log.inserted == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_passes_exclude_turn_id_and_limit_to_baseline() -> None:
+    """HIGH invariant: baseline is read with exclude_turn_id + limit=min_turns."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected(), min_baseline_turns=3)
+    signal_log = _FakeEmotionalSignalLog()
+    trace_reader = _FakeEmotionalTraceReader(
+        {"comprehension": {"emotion": "triste"}, "vip_id": None}
+    )
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=trace_reader,
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip())
+    assert len(trace_reader.get_baseline_calls) == 1
+    chat_id, limit, exclude = trace_reader.get_baseline_calls[0]
+    assert chat_id == 100
+    assert limit == 3  # the detector's min_baseline_turns
+    assert exclude == turn_id  # current turn excluded from its own baseline
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_skipped_when_turn_already_terminal() -> None:
+    """Read-back gate: a superseded/terminal turn never gets a shadow signal."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": None}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=100, status="superseded")
+    )
+    await g["orch"]._run_emotional_detector(turn_id, 100, decision)
+    assert detector.calls == []
+    assert signal_log.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_emotional_detector_real_detector_pipeline_escalation() -> None:
+    """Real detector + hook e2e: escalate decision → angustia + p_w_h_escalated."""
+    from diana.application.emotional_signal_detector import EmotionalSignalDetector
+
+    decision = Decision(
+        action="escalate", reason="risk", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = EmotionalSignalDetector()
+    signal_log = _FakeEmotionalSignalLog()
+    trace = {
+        "comprehension": {
+            "emotion": "ansiosa",
+            "urgency": "alta",
+            "risk": "alto",
+            "intent": "otro",
+        },
+        "vip_id": None,
+    }
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(trace),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["orch"]._run_emotional_detector(turn_id, 100, decision)
+    assert len(signal_log.inserted) == 1
+    _t, _v, sig = signal_log.inserted[0]
+    assert sig.signal_type == "angustia"
+    assert sig.pipeline_would_have_escalated is True
+    assert sig.should_escalate_to_owner is True
