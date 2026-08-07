@@ -212,6 +212,49 @@ class SqlTraceStore:
                 break
         return out
 
+    async def get_recent_comprehension(
+        self,
+        chat_id: int,
+        *,
+        limit: int = 5,
+        exclude_turn_id: UUID | None = None,
+    ) -> list[dict]:
+        """Prior-turn comprehension dicts for chat (newest first).
+
+        Emotional baseline for the signal detector: reads
+        ``pipeline_traces.comprehension`` (the only table with per-turn
+        emotion). Skips rows with missing/empty comprehension. Optional
+        ``exclude_turn_id`` drops the current turn after comprehension was
+        stored (mirror of ``get_recent_intents``).
+        """
+        if limit <= 0:
+            return []
+        stmt = (
+            select(PipelineTrace.turn_id, PipelineTrace.comprehension)
+            .where(
+                PipelineTrace.chat_id == chat_id,
+                PipelineTrace.comprehension.is_not(None),
+            )
+            .order_by(PipelineTrace.created_at.desc())
+        )
+        if exclude_turn_id is not None:
+            stmt = stmt.where(PipelineTrace.turn_id != exclude_turn_id)
+        # Oversample then filter empties so limit is on non-empty comprehensions.
+        stmt = stmt.limit(max(limit * 4, limit))
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            rows = result.all()
+        out: list[dict] = []
+        for _turn_id, comprehension in rows:
+            if not isinstance(comprehension, dict):
+                continue
+            if not comprehension:
+                continue
+            out.append(comprehension)
+            if len(out) >= limit:
+                break
+        return out
+
     async def purge_expired(self, ttl_days: int | None = None) -> int:
         """Delete pipeline_traces rows older than TTL, batched.
 

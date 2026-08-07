@@ -76,3 +76,37 @@ async def test_get_recent_intents_limit_zero_empty() -> None:
     store = SqlTraceStore(session_factory=factory)
     assert await store.get_recent_intents(1, limit=0) == []
     session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_recent_comprehension_returns_non_empty_dicts() -> None:
+    t1, t2, t3 = uuid4(), uuid4(), uuid4()
+    rows = [
+        (t1, {"emotion": "positiva", "intent": "saludar"}),
+        (t2, {}),  # empty dict → skipped
+        (t3, None),  # None → skipped
+    ]
+    factory, _ = _factory_with_rows(rows)
+    store = SqlTraceStore(session_factory=factory)
+    out = await store.get_recent_comprehension(42, limit=5)
+    assert out == [{"emotion": "positiva", "intent": "saludar"}]
+
+
+@pytest.mark.asyncio
+async def test_get_recent_comprehension_respects_exclude_turn_id() -> None:
+    current = uuid4()
+    prior = uuid4()
+    rows = [(prior, {"emotion": "triste"})]
+    factory, session = _factory_with_rows(rows)
+    store = SqlTraceStore(session_factory=factory)
+    out = await store.get_recent_comprehension(7, limit=2, exclude_turn_id=current)
+    assert out == [{"emotion": "triste"}]
+    session.execute.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_recent_comprehension_limit_zero_empty() -> None:
+    factory, session = _factory_with_rows([(uuid4(), {"emotion": "neutral"})])
+    store = SqlTraceStore(session_factory=factory)
+    assert await store.get_recent_comprehension(1, limit=0) == []
+    session.execute.assert_not_awaited()

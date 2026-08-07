@@ -115,6 +115,16 @@ Emotion = Literal[
     "urgente",
 ]
 
+# Evo-agente domain vocabularies (ASCII, consistent with analyst catalog).
+# Mirror the migration CheckConstraints — never a native PG enum.
+SignalType = Literal[
+    "vulnerabilidad", "angustia", "revelacion_de_vida", "ruptura_de_patron"
+]
+TurnCategory = Literal["fatico", "informativo", "emocional", "sensible"]
+SynthesisTrigger = Literal[
+    "volume", "session_close", "strong_signal", "emotional_signal"
+]
+
 
 class HistoryMessage(BaseModel):
     """One short-window history line for Analyst input (contrato A.2)."""
@@ -291,7 +301,10 @@ __all__ = [
     "IncomingTurn",
     "Plan",
     "ScoreUnit",
+    "SignalType",
+    "SynthesisTrigger",
     "TERMINAL_TURN_STATUSES",
+    "TurnCategory",
     "TurnContext",
     "TurnStatus",
     "is_turn_status_terminal",

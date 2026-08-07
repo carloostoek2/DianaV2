@@ -9,6 +9,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from diana.cognitive.models import SignalType, TurnCategory, SynthesisTrigger
+
 
 class RuntimeTimerRecord(BaseModel):
     """runtime_timers row shape for crash-recovery persistence.
@@ -484,6 +486,95 @@ class PersonaVersionRecord(BaseModel):
     applied_at: datetime | None = None
 
 
+class VipProfileRecord(BaseModel):
+    """vip_profile row shape — LLM-synthesized per-VIP profile (Fase 1 writer).
+
+    DISTINTO de ``profiles`` (tabla vector, memories.py) y de ``/vip_profile``
+    (comando legacy admin). Fase 0 = schema-only; no writer yet.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    vip_id: UUID
+    stable_traits: dict[str, Any]
+    recent_trend: dict[str, Any]
+    sensitivities: list[Any]
+    version: int = 0
+    last_synthesized_at: datetime | None = None
+    synthesis_trigger: SynthesisTrigger | None = None
+
+
+class VipProfileHistoryRecord(BaseModel):
+    """vip_profile_history row shape (snapshot of a synthesized profile version)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    vip_id: UUID
+    version: int
+    profile_snapshot: dict[str, Any]
+    diff_summary: str | None = None
+    created_at: datetime
+
+
+class VipMoodStateRecord(BaseModel):
+    """vip_mood_state row shape — 3-axis mood vector per VIP (Fase 3 writer)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vip_id: UUID
+    axis_playful_serious: float
+    axis_warm_distant: float
+    axis_energy: float
+    updated_at: datetime
+
+
+class VipTrustBudgetRecord(BaseModel):
+    """vip_trust_budget row shape — trust score per (VIP, turn_category) (Fase 5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vip_id: UUID
+    turn_category: TurnCategory
+    trust_score: float = 0.0
+    correction_count: int = 0
+    autonomous_count: int = 0
+    last_correction_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class TurnCategoryLogRecord(BaseModel):
+    """turn_category_log row shape — per-turn classification (Fase 2 writer)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    turn_id: UUID
+    category: TurnCategory
+    chat_id: int
+    vip_id: UUID | None = None
+    created_at: datetime | None = None
+
+
+class EmotionalSignalRecord(BaseModel):
+    """emotional_signal_log row shape + detector output (componente transversal).
+
+    ``signal_detected`` is the detector's no-match sentinel; the persisted row
+    columns map 1:1 from the other fields. ``pipeline_would_have_escalated`` is
+    NULL for fast-lane turns that skipped the Decider (Fase 2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    signal_detected: bool
+    signal_type: SignalType | None = None
+    intensity: float = 0.0
+    should_trigger_synthesis: bool = False
+    should_escalate_to_owner: bool = False
+    pipeline_would_have_escalated: bool | None = None
+
+
 @runtime_checkable
 class PersonaAdminStore(Protocol):
     """Versioned persona catalog persistence (owner admin, channel-scoped)."""
@@ -589,6 +680,20 @@ class TraceReader(Protocol):
 
     async def get_full_trace(self, turn_id: UUID) -> dict | None:
         """Full pipeline_trace row as dict, including generated_text."""
+        ...
+
+    async def get_recent_comprehension(
+        self,
+        chat_id: int,
+        *,
+        limit: int = 5,
+        exclude_turn_id: UUID | None = None,
+    ) -> list[dict]:
+        """Prior-turn comprehension dicts for chat (newest first).
+
+        Emotional baseline source: ``pipeline_traces.comprehension.emotion``.
+        Skips rows with missing/empty comprehension.
+        """
         ...
 
 
@@ -833,6 +938,7 @@ __all__ = [
     "DeliveryResultWriter",
     "DoctrineNotification",
     "DraftNotification",
+    "EmotionalSignalRecord",
     "EscalationNotification",
     "EscalationStore",
     "GrayZoneQueryView",
@@ -855,9 +961,14 @@ __all__ = [
     "TraceabilityReader",
     "TraceReader",
     "TrainingModeStore",
+    "TurnCategoryLogRecord",
     "TurnRecord",
     "TurnStore",
     "VipInboundMessage",
+    "VipMoodStateRecord",
+    "VipProfileHistoryRecord",
+    "VipProfileRecord",
     "VipRecord",
     "VipStore",
+    "VipTrustBudgetRecord",
 ]

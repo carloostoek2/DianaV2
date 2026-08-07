@@ -22,9 +22,34 @@ from diana.infrastructure.db.repositories.system_config import SqlSystemConfigSt
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore, vip_orm_to_record
+from diana.infrastructure.db.repositories.emotional_signal import (
+    SqlEmotionalSignalLogRepo,
+    emotional_signal_log_orm_to_record,
+)
+from diana.infrastructure.db.repositories.turn_category import (
+    SqlTurnCategoryLogRepo,
+    turn_category_log_orm_to_record,
+)
+from diana.infrastructure.db.repositories.vip_mood_state import (
+    SqlVipMoodStateRepo,
+    vip_mood_state_orm_to_record,
+)
+from diana.infrastructure.db.repositories.vip_profile import (
+    SqlVipProfileRepo,
+    vip_profile_orm_to_record,
+)
+from diana.infrastructure.db.repositories.vip_profile_history import (
+    SqlVipProfileHistoryRepo,
+    vip_profile_history_orm_to_record,
+)
+from diana.infrastructure.db.repositories.vip_trust_budget import (
+    SqlVipTrustBudgetRepo,
+    vip_trust_budget_orm_to_record,
+)
 
 __all__ = [
     "SqlCalibrationDataSource",
+    "SqlEmotionalSignalLogRepo",
     "SqlEscalationStore",
     "SqlLearningMetricsRepo",
     "SqlMetricsDataSource",
@@ -34,9 +59,20 @@ __all__ = [
     "SqlPendingDeliveryStore",
     "SqlSystemConfigStore",
     "SqlTraceStore",
+    "SqlTurnCategoryLogRepo",
     "SqlTurnStore",
+    "SqlVipMoodStateRepo",
+    "SqlVipProfileHistoryRepo",
+    "SqlVipProfileRepo",
     "SqlVipStore",
+    "SqlVipTrustBudgetRepo",
     "PersonaVersionRepo",
     "vip_orm_to_record",
     "persona_version_orm_to_record",
+    "emotional_signal_log_orm_to_record",
+    "turn_category_log_orm_to_record",
+    "vip_mood_state_orm_to_record",
+    "vip_profile_history_orm_to_record",
+    "vip_profile_orm_to_record",
+    "vip_trust_budget_orm_to_record",
 ]
