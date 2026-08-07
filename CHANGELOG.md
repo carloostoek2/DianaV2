@@ -1,6 +1,25 @@
 # DianaV2 Changelog
 
-Highlights of what's new and fixed in Diana, from her early releases through the latest memory work.
+Highlights of what's new and fixed in Diana, from her early releases through the latest agent-evolution work.
+
+## Agent Evolution (Shadow) — 2026-08-07
+
+*Observation-only: this new layer runs in shadow mode, so it measures how Diana would act without changing her live responses yet.*
+
+### ✨ New Features
+- **Shadow agent-evolution engine**: a complete observational layer now watches how Diana handles each conversation — emotional signals, turn-by-turn self-assessment, mood, and per-VIP trust — and records it all for analysis.
+- **Emotional signal detection**: Diana now spots emotional cues in incoming messages with a lightweight local heuristic (no external AI calls).
+- **Automatic profile refresh**: when a VIP's conversation shows strong signals, Diana can now trigger a profile synthesis on her own, keeping VIP profiles current without a manual action.
+- **Turn-by-turn self-classification**: for every turn, Diana records how she would have handled it autonomously and her confidence in that call.
+- **Three-axis mood engine**: Diana now tracks her emotional tone across conversations to keep her delivery consistent.
+- **Trust budget per VIP**: Diana keeps a running trust score per VIP based on how consistently she handles their conversations, with configurable thresholds and a status card.
+- **Correction events**: behavior that needs recalibration is captured as a structured correction event in the trust system.
+- **Automatic data housekeeping**: agent-evolution records are purged automatically on a schedule (TTL) so the system stays bounded.
+
+### 🔧 Improvements
+- **Hardened shadow layer**: several review rounds fixed event-hook safety, deterministic behavior, database-write guards, and in-flight-turn handling.
+- **Live tuning**: shadow behavior can be overridden at runtime per environment without redeploys.
+- **Sensitive-content priority**: the classifier weighs sensitive or personal content first when assessing a turn.
 
 ## ✨ New Features
 - **Automatic memory**: Diana now saves relevant details from conversations (preferences, dates, topics) and recalls them later, without being asked.
