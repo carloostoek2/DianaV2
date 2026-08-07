@@ -17,6 +17,7 @@ from diana.composition import (
     run_app_startup_recovery,
 )
 from diana.config import Settings
+from diana.jobs.agent_data_purge import AgentDataPurgeJob
 from diana.jobs.backfill import BackfillJob
 from diana.jobs.calibration import CalibrationJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
@@ -97,6 +98,7 @@ async def async_main() -> None:
     # F2 Item 4: start gray zone expiration background job.
     expiration_job = _setup_expiration_job(app)
     purge_job = _setup_purge_job(app)
+    agent_purge_job = _setup_agent_data_purge_job(app)
     recontact_job = _setup_recontact_job(app)
     # F3 Pool 3: observational metrics always; calibration only if flag on.
     metrics_job = _setup_metrics_job(app)
@@ -145,6 +147,7 @@ async def async_main() -> None:
         await _cancel_job(metrics_job, "metrics_job")
         await _cancel_job(recontact_job, "recontact_job")
         await _cancel_job(purge_job, "purge_job")
+        await _cancel_job(agent_purge_job, "agent_purge_job")
         await _cancel_job(expiration_job, "expiration_job")
 
 
@@ -175,6 +178,24 @@ def _setup_purge_job(app: AppContainer) -> asyncio.Task | None:
     job = TracePurgeJob(app.trace_store, interval_seconds=3600)
     task = asyncio.create_task(job.start())
     logger.info("purge_job_started", extra={"interval_seconds": 3600})
+    return task
+
+
+def _setup_agent_data_purge_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the agent-evolution TTL purge job (TTL per table from settings)."""
+    stores = [
+        (app.vip_profile_history_repo, app.settings.vip_profile_history_ttl_days),
+        (app.turn_category_log_repo, app.settings.turn_category_log_ttl_days),
+        (app.emotional_signal_log_repo, app.settings.emotional_signal_log_ttl_days),
+    ]
+    stores = [(s, ttl) for s, ttl in stores if s is not None]
+    if not stores:
+        logger.info("agent_data_purge_job_skipped_no_stores")
+        return None
+
+    job = AgentDataPurgeJob(stores, interval_seconds=3600)
+    task = asyncio.create_task(job.start())
+    logger.info("agent_data_purge_job_started", extra={"stores": len(stores)})
     return task
 
 

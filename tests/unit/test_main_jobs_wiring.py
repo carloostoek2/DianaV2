@@ -20,6 +20,25 @@ def test_main_imports_metrics_and_calibration_jobs(_main_src: str) -> None:
     assert "from diana.jobs.calibration import CalibrationJob" in _main_src
 
 
+def test_main_imports_agent_data_purge_job(_main_src: str) -> None:
+    assert "from diana.jobs.agent_data_purge import AgentDataPurgeJob" in _main_src
+
+
+def test_main_defines_agent_purge_setup(_main_src: str) -> None:
+    assert "def _setup_agent_data_purge_job(" in _main_src
+
+
+def test_main_starts_agent_purge_job(_main_src: str) -> None:
+    assert "agent_purge_job = _setup_agent_data_purge_job(app)" in _main_src
+
+
+def test_main_cancels_agent_purge_job(_main_src: str) -> None:
+    finally_idx = _main_src.find("finally:")
+    assert finally_idx != -1
+    finally_block = _main_src[finally_idx:]
+    assert "agent_purge_job" in finally_block
+
+
 def test_main_defines_setup_helpers(_main_src: str) -> None:
     assert "def _setup_metrics_job(" in _main_src
     assert "def _setup_calibration_job(" in _main_src

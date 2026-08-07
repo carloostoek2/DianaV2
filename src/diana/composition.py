@@ -309,6 +309,10 @@ class AppContainer:
     backfill_wake: asyncio.Event | None = None
     # Evo-Agente Fase 0: shadow emotional detector (None when flag off).
     emotional_detector: EmotionalSignalDetector | None = None
+    # Evo-Agente Fase 0 repos exposed for the AgentDataPurgeJob (TTL by table).
+    vip_profile_history_repo: SqlVipProfileHistoryRepo | None = None
+    turn_category_log_repo: SqlTurnCategoryLogRepo | None = None
+    emotional_signal_log_repo: SqlEmotionalSignalLogRepo | None = None
 
 
 def build_app(
@@ -927,6 +931,9 @@ def build_app(
         emotional_detector=(
             detector if settings.feature_emotional_detector_enabled else None
         ),
+        vip_profile_history_repo=vip_profile_history_repo,
+        turn_category_log_repo=turn_category_log_repo,
+        emotional_signal_log_repo=emotional_signal_repo,
     )
 
 
