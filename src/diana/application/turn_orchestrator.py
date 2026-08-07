@@ -218,6 +218,7 @@ class TurnOrchestrator:
         turn_category_log: object | None = None,
         mood_engine: object | None = None,
         vip_mood_state: object | None = None,
+        trust_budget: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -253,6 +254,9 @@ class TurnOrchestrator:
         self._turn_category_log = turn_category_log
         self._mood_engine = mood_engine
         self._vip_mood_state = vip_mood_state
+        # Evo-Agente Fase 5: trust-budget service (flag-gated; None when flag
+        # off → ``_run_trust_budget`` is a no-op, byte-identical).
+        self._trust_budget = trust_budget
         # Per-VIP mood engines forked from the injected prototype with a stable
         # seed per VIP (review round 1, S5) — deterministic bounded noise so the
         # same conversation reproduces the same mood trace across restarts.
@@ -643,7 +647,7 @@ class TurnOrchestrator:
         incoming: VipInboundMessage,
         signal: EmotionalSignalRecord | None,
         vip_epoch: int | None = None,
-    ) -> None:
+    ) -> TurnCategoryLogRecord | None:
         """Shadow classifier hook: never propagates, flag-gated, best-effort.
 
         Classifies the turn (pure heuristics over the analyst comprehension +
@@ -659,6 +663,10 @@ class TurnOrchestrator:
         EA-02(3) deferred to Fase 5 (no draft generation in shadow). EA-03:
         sensitive is never fast-lane. VIP turns only (``incoming.vip_id`` None
         → no-op — the atencion channel is out of the F2 measurement).
+
+        Returns the inserted :class:`TurnCategoryLogRecord` (additive — the
+        Fase 5 ``_run_trust_budget`` hook consumes it BY VALUE, never re-reading
+        the DB), or ``None`` when the hook skipped / failed (best-effort).
         """
         if self._turn_classifier is None or self._turn_category_log is None:
             return
@@ -708,7 +716,7 @@ class TurnOrchestrator:
                 final_category == "fatico"
                 and self._turn_classifier.is_confident(classification)
             )
-            await self._turn_category_log.insert(
+            record = await self._turn_category_log.insert(
                 TurnCategoryLogRecord(
                     turn_id=turn_id,
                     vip_id=incoming.vip_id,
@@ -733,10 +741,12 @@ class TurnOrchestrator:
                     "would_autonomous": would_autonomous,
                 },
             )
+            return record
         except Exception:
             log_swallowed(
                 logger, "turn_classifier_error", turn_id=str(turn_id), chat_id=chat_id
             )
+            return None
 
     async def _run_mood_engine(
         self,
@@ -826,6 +836,61 @@ class TurnOrchestrator:
         except Exception:
             log_swallowed(
                 logger, "mood_engine_error", turn_id=str(turn_id), chat_id=chat_id
+            )
+
+    async def _run_trust_budget(
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        incoming: VipInboundMessage,
+        category_log: TurnCategoryLogRecord | None,
+        vip_epoch: int | None = None,
+    ) -> None:
+        """Shadow trust-budget hook: never propagates, flag-gated, best-effort.
+
+        Increments the (VIP, category) trust budget when the just-classified
+        turn would have been autonomous (``would_autonomous=True``). The
+        increment is the "autonomous without correction" event (spec 5.1); the
+        correction event arrives LATER via ``AdminService.handle_correct`` →
+        ``TrustBudgetService.record_correction``. Read-back gates mirror
+        ``_run_mood_engine``: terminal / stale-epoch turns never increment — a
+        superseded turn's ``would_autonomous`` is not rewarded.
+
+        ``category_log`` is the record JUST inserted by ``_run_turn_classifier``
+        (passed BY VALUE, no DB re-read). ``turn_category_log.would_autonomous``
+        is the SHADOW F2 proxy (not a promise of real auto-send); the trust
+        budget is the future behavioral source (EA-01). Flag OFF →
+        ``self._trust_budget`` None → no-op (byte-identical).
+        """
+        if self._trust_budget is None:
+            return
+        if incoming.vip_id is None:
+            return
+        if category_log is None or not category_log.would_autonomous:
+            return
+        try:
+            turn = await self._coordinator.get_turn(turn_id)
+            if turn is not None and is_turn_status_terminal(turn.status):
+                return
+            if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
+                chat_id, vip_epoch
+            ):
+                return
+            await self._trust_budget.record_autonomous(
+                incoming.vip_id, category_log.category
+            )
+            logger.info(
+                "trust_budget_autonomous",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "vip_id": str(incoming.vip_id),
+                    "category": category_log.category,
+                },
+            )
+        except Exception:
+            log_swallowed(
+                logger, "trust_budget_error", turn_id=str(turn_id), chat_id=chat_id
             )
 
     async def _maybe_post_turn_terminal(
@@ -1868,14 +1933,24 @@ class TurnOrchestrator:
         # single ``emotional_signal_log`` row, UNIQUE ``turn_id``). That same
         # record is REUSED by ``_run_turn_classifier`` to reclassify — the new
         # hooks never re-run ``detector.detect()`` nor write ``emotional_signal_log``.
+        #
+        # Evo-Agente Fase 5 (A3): the trust-budget hook runs right after the
+        # mood hook, consuming the ``TurnCategoryLogRecord`` just returned by
+        # ``_run_turn_classifier`` BY VALUE (no DB re-read). Shadow + flag-gated
+        # (``feature_trust_budget``); it increments only VIP turns classified
+        # ``would_autonomous=True`` and never propagates. The matching decrement
+        # arrives later via ``AdminService.handle_correct`` → ``record_correction``.
         signal = await self._run_emotional_detector(
             turn_id, incoming.chat_id, decision, vip_epoch
         )
-        await self._run_turn_classifier(
+        category_log = await self._run_turn_classifier(
             turn_id, incoming.chat_id, incoming, signal, vip_epoch
         )
         await self._run_mood_engine(
             turn_id, incoming.chat_id, incoming, vip_epoch
+        )
+        await self._run_trust_budget(
+            turn_id, incoming.chat_id, incoming, category_log, vip_epoch
         )
         await self._run_profile_synthesis_trigger(
             turn_id, incoming.chat_id, incoming, signal

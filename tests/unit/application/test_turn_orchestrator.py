@@ -229,6 +229,7 @@ def _build(
     turn_category_log: object | None = None,
     mood_engine: object | None = None,
     vip_mood_state: object | None = None,
+    trust_budget: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -302,6 +303,7 @@ def _build(
         turn_category_log=turn_category_log,
         mood_engine=mood_engine,
         vip_mood_state=vip_mood_state,
+        trust_budget=trust_budget,
     )
     return {
         "orch": orch,
@@ -4445,6 +4447,19 @@ class _FakeVipMoodState:
         return record
 
 
+class _FakeTrustBudget:
+    """Injected trust-budget service: records record_autonomous calls."""
+
+    def __init__(self, *, raise_on_autonomous: bool = False) -> None:
+        self.autonomous_calls: list[tuple] = []
+        self._raise_on_autonomous = raise_on_autonomous
+
+    async def record_autonomous(self, vip_id, turn_category):
+        if self._raise_on_autonomous:
+            raise RuntimeError("trust store down")
+        self.autonomous_calls.append((vip_id, turn_category))
+
+
 class _FakeTurnClassifier:
     """Injected classifier: returns a fixed classification or raises."""
 
@@ -5645,3 +5660,223 @@ async def test_vip_mood_engines_cache_capped() -> None:
     orch._cap_mood_engines()
     assert len(orch._vip_mood_engines) == _VIP_MOOD_ENGINE_CACHE_MAX
     assert set(orch._vip_mood_engines) == set(keys[5:])  # FIFO: oldest evicted
+
+
+# --- Evo-Agente Fase 5: shadow trust-budget hook ------------------------------
+
+
+def _cat_log_record(*, turn_id, vip_id, category="fatico", would_autonomous=True):
+    return TurnCategoryLogRecord(
+        turn_id=turn_id,
+        vip_id=vip_id,
+        chat_id=100,
+        category=category,
+        would_autonomous=would_autonomous,
+    )
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_not_called_flag_off() -> None:
+    """Flag OFF (trust_budget None) → no calls, turn flows (byte-identical)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    trust = _FakeTrustBudget()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=_FakeTurnCategoryLog(),
+        trust_budget=None,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert trust.autonomous_calls == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_increments_on_autonomous() -> None:
+    """would_autonomous=True → record_autonomous(vip, 'fatico'); routing intact."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    trust = _FakeTrustBudget()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=_FakeTurnCategoryLog(),
+        trust_budget=trust,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert trust.autonomous_calls == [(vip_id, "fatico")]
+    # Routing/decision unchanged — approve still lands in pending_approval.
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_skipped_when_not_autonomous() -> None:
+    """would_autonomous=False → no increment (turn still classified)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    trust = _FakeTrustBudget()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=_FakeTurnClassifier(_classification("emocional", 1.0)),
+        turn_category_log=_FakeTurnCategoryLog(),
+        trust_budget=trust,
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert trust.autonomous_calls == []
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_skipped_when_no_record() -> None:
+    """Classifier skipped (None) → no increment."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    trust = _FakeTrustBudget()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": None}),
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=_FakeTurnCategoryLog(),
+        trust_budget=trust,
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert trust.autonomous_calls == []
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_skipped_terminal_turn() -> None:
+    """B2: a terminal (superseded) turn never increments — mirror mood gate."""
+    trust = _FakeTrustBudget()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(Decision(action="approve", reason="ok", evaluation=_eval(), draft_text="d")),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        trust_budget=trust,
+    )
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="superseded"))
+    await g["orch"]._run_trust_budget(
+        turn_id, 100, _vip(vip_id=vip_id), _cat_log_record(turn_id=turn_id, vip_id=vip_id)
+    )
+    assert trust.autonomous_calls == []
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_skipped_stale_epoch() -> None:
+    """B2: a stale-epoch turn never increments — mirror mood gate."""
+    trust = _FakeTrustBudget()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(Decision(action="approve", reason="ok", evaluation=_eval(), draft_text="d")),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        trust_budget=trust,
+    )
+    stale_epoch = g["coordinator"].bump_vip_epoch(100)
+    g["coordinator"].bump_vip_epoch(100)
+    assert not g["coordinator"].is_vip_epoch_current(100, stale_epoch)
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["orch"]._run_trust_budget(
+        turn_id, 100, _vip(vip_id=vip_id),
+        _cat_log_record(turn_id=turn_id, vip_id=vip_id), stale_epoch,
+    )
+    assert trust.autonomous_calls == []
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_skipped_for_atencion_vip_none() -> None:
+    """A2: non-VIP turns (incoming.vip_id None) never increment."""
+    trust = _FakeTrustBudget()
+    g = _build(
+        FakeDirector(Decision(action="approve", reason="ok", evaluation=_eval(), draft_text="d")),
+        trust_budget=trust,
+    )
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["orch"]._run_trust_budget(
+        turn_id, 100, _vip(vip_id=None), _cat_log_record(turn_id=turn_id, vip_id=None)
+    )
+    assert trust.autonomous_calls == []
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_error_does_not_break_turn() -> None:
+    """Trust failure never propagates — the turn completes its normal path."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    trust = _FakeTrustBudget(raise_on_autonomous=True)
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=_FakeTurnCategoryLog(),
+        trust_budget=trust,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_turn_classifier_returns_record() -> None:
+    """The classifier hook returns the inserted record (same turn_id/category)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=cat_log,
+    )
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    record = await g["orch"]._run_turn_classifier(
+        turn_id, 100, _vip(vip_id=vip_id), None
+    )
+    assert record is not None
+    assert record.turn_id == turn_id
+    assert record.category == "fatico"
+    assert record.vip_id == vip_id
+    # Skipped classifier (no comprehension) → None.
+    g2 = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": None}),
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=_FakeTurnCategoryLog(),
+    )
+    skipped = await g2["orch"]._run_turn_classifier(
+        uuid4(), 100, _vip(vip_id=vip_id), None
+    )
+    assert skipped is None

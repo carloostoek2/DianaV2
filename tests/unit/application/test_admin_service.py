@@ -167,6 +167,7 @@ def _admin_graph(
     staging: object | None = None,
     history: object | None = None,
     turns: InMemoryTurnStore | None = None,
+    trust_budget: object | None = None,
 ) -> dict:
     from diana.application.memory import InMemoryVipStore
 
@@ -208,6 +209,7 @@ def _admin_graph(
         vip_store=vips,  # type: ignore[arg-type]
         staging=staging,  # type: ignore[arg-type]
         history=history,  # type: ignore[arg-type]
+        trust_budget=trust_budget,  # type: ignore[arg-type]
     )
     return {
         "admin": admin,
@@ -224,6 +226,7 @@ def _admin_graph(
         "vip_store": vips,
         "staging": staging,
         "history": history,
+        "trust_budget": trust_budget,
     }
 
 
@@ -1950,3 +1953,85 @@ async def test_sandbox_admin_respects_fake_delivery_mode() -> None:
     assert result.success is True
     assert len(captured) == 1
     assert captured[0].mode == "fake_delivery"
+
+
+# --- Evo-Agente Fase 5: owner correction → trust-budget decrement (A2) --------
+
+
+class _FakeTrustBudgetAdmin:
+    """TrustBudget double recording record_correction calls."""
+
+    def __init__(self, *, raise_on_correction: bool = False) -> None:
+        self.correction_calls: list = []
+        self._raise = raise_on_correction
+
+    async def record_correction(self, turn_id):
+        if self._raise:
+            raise RuntimeError("trust db down")
+        self.correction_calls.append(turn_id)
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_decrements_trust_budget() -> None:
+    """Fase 5 (A2): wired trust service → record_correction(turn_id) after the
+    staging save and BEFORE the corrected delivery."""
+    trust = _FakeTrustBudgetAdmin()
+    staging, staging_repo = _real_staging()
+    history = InMemoryMessageHistoryWriter()
+    await history.append(42, role="vip", text="vip trigger text", telegram_message_id=7)
+    g = _admin_graph(staging=staging, history=history, trust_budget=trust)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, telegram_message_id=7),
+        _decision(draft="original draft"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    result = await g["admin"].handle_correct(
+        turn.id, "corrected final", actor_id=OWNER_ID
+    )
+
+    assert result is not None and result.success
+    assert trust.correction_calls == [turn.id]
+    staging_repo.insert.assert_awaited_once()
+    assert g["actuator"].send_count() == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_no_trust_when_unwired() -> None:
+    """Flag OFF (trust_budget None) → no record_correction call, flow normal."""
+    trust = _FakeTrustBudgetAdmin()
+    g = _admin_graph(trust_budget=None)
+    turn = await g["coordinator"].begin_turn(chat_id=42)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    result = await g["admin"].handle_correct(
+        turn.id, "fixed text", actor_id=OWNER_ID
+    )
+
+    assert result is not None and result.success
+    assert trust.correction_calls == []
+    assert g["actuator"].calls[-1]["text"] == "fixed text"
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_trust_failure_still_delivers() -> None:
+    """A trust failure must never break the correction/delivery path."""
+    trust = _FakeTrustBudgetAdmin(raise_on_correction=True)
+    g = _admin_graph(trust_budget=trust)
+    turn = await g["coordinator"].begin_turn(chat_id=42)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    result = await g["admin"].handle_correct(
+        turn.id, "fixed text", actor_id=OWNER_ID
+    )
+
+    assert result is not None and result.success
+    assert g["actuator"].calls[-1]["text"] == "fixed text"

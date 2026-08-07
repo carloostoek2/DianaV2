@@ -136,6 +136,7 @@ class AdminService:
         staging: StagingService | None = None,
         history: MessageHistoryWriter | None = None,
         post_turn: Callable[[UUID, int], Awaitable[None]] | None = None,
+        trust_budget: object | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -153,6 +154,9 @@ class AdminService:
         self._staging = staging
         self._history = history
         self._post_turn = post_turn
+        # Evo-Agente Fase 5: trust-budget service (flag-gated; None when flag
+        # off → the correction event is a no-op, byte-identical).
+        self._trust_budget = trust_budget
 
     def set_post_turn_hook(
         self,
@@ -565,6 +569,19 @@ class AdminService:
                         "staging_save_correction_failed",
                         extra={"turn_id": str(turn_id)},
                     )
+        # Evo-Agente Fase 5: owner correction → trust-budget decrement (event
+        # source, A2). Best-effort: a trust failure must not break the delivery
+        # path. ``record_correction`` resolves (vip_id, category) by turn_id and
+        # no-ops for unclassified / non-VIP turns. Flag OFF → trust_budget None
+        # → no-op (byte-identical).
+        if self._trust_budget is not None:
+            try:
+                await self._trust_budget.record_correction(turn_id)
+            except Exception:
+                logger.exception(
+                    "trust_budget_correction_failed",
+                    extra={"turn_id": str(turn_id)},
+                )
         return await self._resolve_and_deliver(turn_id, corrected_text=stripped)
 
     async def _resolve_trigger_text(
