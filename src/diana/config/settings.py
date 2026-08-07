@@ -84,6 +84,18 @@ class Settings(BaseSettings):
     turn_category_log_ttl_days: int = 90
     emotional_signal_log_ttl_days: int = 90
 
+    # Evo-Agente Fase 1 (ciclo de resíntesis de memoria) — env-driven, default off.
+    feature_profile_synthesis_enabled: bool = False
+    # Mensajes del VIP desde la última síntesis que disparan resíntesis (spec 1.1).
+    profile_synthesis_volume_threshold: int = 25
+    # Minutos sin actividad del VIP tras los cuales el scan marca "cierre de sesión".
+    profile_synthesis_inactivity_minutes: int = 30
+    # Intervalo del job (scan + síntesis) — scheduling, env-only, sin override system_config.
+    profile_synthesis_scan_interval_seconds: int = 900
+    # Gates la sobrescritura de stable_traits/sensitivities (spec 1.2). Constante fija,
+    # override manual por system_config clave `profile_synthesis`; NUNCA auto-calibrada.
+    profile_synthesis_confidence_min: float = 0.6
+
     # Ops surface (Telegram process edge) — single-instance defaults.
     # health_host is loopback-only (SEC-HEALTH-01); no public bind via env.
     health_host: str = "127.0.0.1"

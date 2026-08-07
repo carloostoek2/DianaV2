@@ -36,6 +36,12 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "FEATURE_GENERAL_MODE_ENABLED",
         # Evo-Agente Fase 0 feature flags
         "FEATURE_EMOTIONAL_DETECTOR_ENABLED",
+        # Evo-Agente Fase 1 feature flags + thresholds
+        "FEATURE_PROFILE_SYNTHESIS_ENABLED",
+        "PROFILE_SYNTHESIS_VOLUME_THRESHOLD",
+        "PROFILE_SYNTHESIS_INACTIVITY_MINUTES",
+        "PROFILE_SYNTHESIS_SCAN_INTERVAL_SECONDS",
+        "PROFILE_SYNTHESIS_CONFIDENCE_MIN",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)
