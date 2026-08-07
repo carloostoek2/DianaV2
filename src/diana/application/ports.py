@@ -566,6 +566,11 @@ class TurnCategoryLogRecord(BaseModel):
     category: TurnCategory
     chat_id: int
     vip_id: UUID | None = None
+    # Fase 2 shadow measurement (migración 026): ``would_autonomous`` (True =
+    # the fast-lane would have auto-sent) and ``confidence`` (modo "no estoy
+    # seguro" = below classifier_confidence_min). NULL = pre-Fase-2 rows.
+    would_autonomous: bool | None = None
+    confidence: float | None = None
     created_at: datetime | None = None
 
 

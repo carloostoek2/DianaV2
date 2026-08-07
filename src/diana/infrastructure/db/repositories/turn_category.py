@@ -19,6 +19,8 @@ def turn_category_log_orm_to_record(row: TurnCategoryLog) -> TurnCategoryLogReco
         category=row.category,
         chat_id=row.chat_id,
         vip_id=row.vip_id,
+        would_autonomous=row.would_autonomous,
+        confidence=row.confidence,
         created_at=row.created_at,
     )
 
@@ -35,10 +37,13 @@ class SqlTurnCategoryLogRepo:
             category=record.category,
             chat_id=record.chat_id,
             vip_id=record.vip_id,
+            would_autonomous=record.would_autonomous,
+            confidence=record.confidence,
         )
         # Omit ``id`` / ``created_at`` when None so the server defaults
         # (``gen_random_uuid()`` / ``now()``) fill them — explicit NULLs would
-        # violate the NOT NULL columns.
+        # violate the NOT NULL columns. ``would_autonomous`` / ``confidence``
+        # are NULL-able → explicit None is valid (unlike id/created_at).
         if record.id is not None:
             values["id"] = record.id
         if record.created_at is not None:

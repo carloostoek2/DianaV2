@@ -40,12 +40,33 @@ def test_turn_category_log_mapper_pure() -> None:
         category="emocional",
         chat_id=7,
         vip_id=None,
+        would_autonomous=False,
+        confidence=None,
         created_at=_now(),
     )
     record = turn_category_log_orm_to_record(row)  # type: ignore[arg-type]
     assert record.category == "emocional"
     assert record.chat_id == 7
     assert record.vip_id is None
+    assert record.would_autonomous is False
+    assert record.confidence is None
+
+
+def test_mapper_round_trip_with_shadow_columns() -> None:
+    """Fase 2 (migración 026): the mapper propagates would_autonomous/confidence."""
+    row = SimpleNamespace(
+        id=uuid4(),
+        turn_id=uuid4(),
+        category="fatico",
+        chat_id=100,
+        vip_id=None,
+        would_autonomous=True,
+        confidence=0.7,
+        created_at=_now(),
+    )
+    record = turn_category_log_orm_to_record(row)  # type: ignore[arg-type]
+    assert record.would_autonomous is True
+    assert record.confidence == 0.7
 
 
 def test_turn_category_log_repo_surface() -> None:
@@ -139,3 +160,61 @@ async def test_repo_insert_omits_created_at_when_none() -> None:
     # the DB server_default (now()) fills it. An explicit NULL would violate
     # the NOT NULL constraint.
     assert "created_at" not in row.__dict__  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_insert_with_shadow_columns() -> None:
+    """Fase 2: a record with would_autonomous/confidence persists both on the ORM."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    captured: dict[str, object] = {}
+    session = MagicMock()
+
+    def _capture(row: object) -> None:
+        captured["row"] = row
+
+    session.add.side_effect = _capture
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    repo = SqlTurnCategoryLogRepo(session_factory=factory)  # type: ignore[arg-type]
+    result = await repo.insert(_record(would_autonomous=True, confidence=0.9))
+    row = captured["row"]
+    assert row.would_autonomous is True  # type: ignore[attr-defined]
+    assert row.confidence == 0.9  # type: ignore[attr-defined]
+    # The mapper round-trips the shadow columns back into the returned record.
+    assert result.would_autonomous is True
+    assert result.confidence == 0.9
+
+
+@pytest.mark.asyncio
+async def test_insert_none_shadow_columns() -> None:
+    """Fase 2: shadow columns default to None → explicit NULL is persisted."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    captured: dict[str, object] = {}
+    session = MagicMock()
+
+    def _capture(row: object) -> None:
+        captured["row"] = row
+
+    session.add.side_effect = _capture
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+
+    @asynccontextmanager
+    async def factory():
+        yield session
+
+    repo = SqlTurnCategoryLogRepo(session_factory=factory)  # type: ignore[arg-type]
+    await repo.insert(_record())
+    row = captured["row"]
+    # NULL-able columns accept explicit None (unlike id/created_at).
+    assert row.would_autonomous is None  # type: ignore[attr-defined]
+    assert row.confidence is None  # type: ignore[attr-defined]
