@@ -258,14 +258,15 @@ class MemoriesRepo:
         since: datetime | None,
         limit: int = 200,
     ) -> list[dict]:
-        """Visible fact rows of vip_id created after ``since``, oldest first (A9).
+        """Visible fact rows of vip_id created after ``since``, most recent first (A9).
 
         Fase 1 ``new_episodic_facts`` source for the profile synthesis: only
         rows the retriever may see (``auto``/``approved`` — pending_owner /
         discarded never feed the profile, quality + anti-contamination) and
         never the ``category='perfil'`` panel card. ``since=None`` returns
-        every visible fact of the VIP (first synthesis). Additive method — the
-        retriever's behavior is unchanged.
+        every visible fact of the VIP (first synthesis). Ordered most recent
+        first (fix round S3) so a ``limit`` never discards the newest facts.
+        Additive method — the retriever's behavior is unchanged.
         """
         stmt = (
             select(Memory)
@@ -274,7 +275,7 @@ class MemoriesRepo:
                 Memory.category != "perfil",
                 Memory.status.in_(_VISIBLE_STATUSES),
             )
-            .order_by(Memory.created_at.asc(), Memory.id.asc())
+            .order_by(Memory.created_at.desc(), Memory.id.desc())
             .limit(limit)
         )
         if since is not None:

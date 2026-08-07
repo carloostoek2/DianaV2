@@ -105,18 +105,33 @@ async def test_memory_retriever_scopes_to_own_vip() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _synthesis_modules() -> list[Path]:
+    """Every profile-synthesis / strong-signal / vip-profile module (walked).
+
+    Fix round (S12 + coverage nit): a directory walk of ``application/``,
+    ``jobs/`` and the vip_profile repo, plus ``turn_orchestrator.py`` (the
+    synthesis trigger hook carrier) — NOT a hard-coded list, so a synthesis
+    module added in a later phase can never silently escape the scan.
+    """
+    root = Path(diana.__file__).resolve().parent
+    modules: list[Path] = []
+    for rel in ("application", "jobs", "infrastructure/db/repositories"):
+        for path in _walk(rel):
+            if any(
+                frag in path.name
+                for frag in ("profile_synthesis", "strong_signal", "vip_profile")
+            ):
+                modules.append(path)
+    modules.append(root / "application" / "turn_orchestrator.py")
+    return sorted(set(modules))
+
+
 def test_profile_synthesis_never_feeds_examples_bank() -> None:
     """EA-05: the Fase 1 synthesis/profile modules never reach the examples bank
     or the examples retriever. The synthesized profile is shadow-only: only
     ``recent_trend`` (Fase 2) and mood (Fase 3) will ever feed generation.
     Structural scan (F5 style) — prevents drift when Fase 2 wires recent_trend
-    into the context."""
-    synthesis_files = (
-        "application/profile_synthesis_service.py",
-        "application/profile_synthesis_trigger_service.py",
-        "application/strong_signal_heuristics.py",
-        "infrastructure/db/repositories/vip_profile.py",
-    )
+    into the context. The module set is walked, not hard-coded (S12)."""
     examples_tokens = (
         "retrievers.examples",
         "repositories.examples",
@@ -124,13 +139,14 @@ def test_profile_synthesis_never_feeds_examples_bank() -> None:
         "ExamplesRepo",
         "from diana.cognitive.retrievers import examples",
     )
+    modules = _synthesis_modules()
+    assert modules, "EA-05 scan found no synthesis modules to check"
     hits: list[str] = []
-    root = Path(diana.__file__).resolve().parent
-    for rel in synthesis_files:
-        text = (root / rel).read_text(encoding="utf-8")
+    for path in modules:
+        text = path.read_text(encoding="utf-8")
         for token in examples_tokens:
             if token in text:
-                hits.append(f"{Path(rel).name}:{token}")
+                hits.append(f"{path.name}:{token}")
     assert hits == [], f"Profile synthesis touching examples bank: {hits}"
 
 

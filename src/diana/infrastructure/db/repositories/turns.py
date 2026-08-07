@@ -97,13 +97,15 @@ class SqlTurnStore:
     async def count_messages_since(
         self, vip_id: UUID, *, since: datetime | None
     ) -> int:
-        """Turns of the VIP in the 'vip' channel with created_at > since (or all).
+        """Turns of the VIP in the 'vip' channel with created_at >= since (or all).
 
         Fase 1 profile-synthesis activity source (A2): a message is one turn
         and an edit never creates a new turn, so ``turns`` is an exact counter
         without TTL sub-counting (``pipeline_traces`` and ``message_history``
         were rejected in the impact analysis). ``since=None`` counts every
         'vip' turn of the VIP (used when ``last_synthesized_at`` is unset).
+        The boundary is inclusive (``>=``), matching memories/staging (fix
+        round: unified boundary semantics).
         """
         stmt = (
             select(func.count())
@@ -111,7 +113,7 @@ class SqlTurnStore:
             .where(Turn.vip_id == vip_id, Turn.channel_type == "vip")
         )
         if since is not None:
-            stmt = stmt.where(Turn.created_at > since)
+            stmt = stmt.where(Turn.created_at >= since)
         async with self._sf() as session:
             result = await session.execute(stmt)
             return int(result.scalar_one())

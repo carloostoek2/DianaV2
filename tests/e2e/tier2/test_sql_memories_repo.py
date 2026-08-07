@@ -604,8 +604,8 @@ async def test_list_by_vip_since_filters_visible_since_and_excludes_perfil(
     session_factory,
 ):
     """A9: list_by_vip_since returns only auto/approved non-perfil rows created
-    at/after ``since``, oldest first — pending_owner/discarded never feed the
-    profile synthesis."""
+    at/after ``since``, most recent first (S3) — pending_owner/discarded never
+    feed the profile synthesis."""
     repo = MemoriesRepo(session_factory)
     # NOTE: 531 — 512/513/514 are used by test_find_similar_facts and the
     # insert_facts tests; the session DB accumulates rows across tests.
@@ -669,21 +669,21 @@ async def test_list_by_vip_since_filters_visible_since_and_excludes_perfil(
     assert [r["status"] for r in rows] == ["auto"]
 
     # since = 4 days ago → both visible rows are new; pending_owner/discarded/
-    # perfil never appear.
+    # perfil never appear. Most recent first (S3).
     four_days = datetime.now(UTC) - timedelta(days=4)
     both = await repo.list_by_vip_since(vip_id, since=four_days)
-    assert [r["category"] for r in both] == ["identidad", "preferencias"]
-    assert [r["status"] for r in both] == ["approved", "auto"]
+    assert [r["category"] for r in both] == ["preferencias", "identidad"]
+    assert [r["status"] for r in both] == ["auto", "approved"]
 
-    # since=None → ALL visible non-perfil rows, oldest first.
+    # since=None → ALL visible non-perfil rows, most recent first (S3).
     all_rows = await repo.list_by_vip_since(vip_id, since=None)
-    assert [r["category"] for r in all_rows] == ["identidad", "preferencias"]
-    assert [r["status"] for r in all_rows] == ["approved", "auto"]
+    assert [r["category"] for r in all_rows] == ["preferencias", "identidad"]
+    assert [r["status"] for r in all_rows] == ["auto", "approved"]
     assert all(r["category"] != "perfil" for r in all_rows)
 
-    # The limit is honored.
+    # The limit is honored — the newest row is never discarded (S3).
     limited = await repo.list_by_vip_since(vip_id, since=None, limit=1)
-    assert [r["category"] for r in limited] == ["identidad"]
+    assert [r["category"] for r in limited] == ["preferencias"]
 
 
 @pytest.mark.db

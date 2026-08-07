@@ -8,11 +8,40 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from diana.application.ports import VipProfileRecord
 from diana.application.profile_synthesis_service import SynthesisReport
+from diana.application.profile_synthesis_trigger_service import (
+    ProfileSynthesisTriggerService,
+)
 from diana.jobs.profile_synthesis_job import (
     ProfileSynthesisJob,
     run_profile_synthesis_cycle,
 )
+
+
+class _NoopReader:
+    """get_or_create fake returning an empty version-0 default."""
+
+    async def get_or_create(self, vip_id: UUID) -> VipProfileRecord:
+        return VipProfileRecord(
+            vip_id=vip_id,
+            stable_traits={},
+            recent_trend={},
+            sensitivities=[],
+            version=0,
+            last_synthesized_at=None,
+            synthesis_trigger=None,
+        )
+
+
+class _NoopActivity:
+    """Activity fake: no candidates, no message counts."""
+
+    async def count_messages_since(self, vip_id, *, since) -> int:
+        return 0
+
+    async def list_vips_with_activity_older_than(self, older_than, *, limit):
+        return []
 
 
 class _FakeTrigger:
@@ -74,6 +103,60 @@ async def test_cycle_release_on_synthesis_failure() -> None:
     assert trigger.released == [vip]  # release in finally, even on failure
     # The cycle itself never dies.
     assert out["items"] == 1
+
+
+@pytest.mark.asyncio
+async def test_cycle_releases_all_drained_on_timeout_b1() -> None:
+    """B1: wait_for timeout cancels the cycle mid-loop — EVERY drained VIP is
+    released, never leaving an item stuck in ``_in_flight`` across ticks."""
+    svc = ProfileSynthesisTriggerService(
+        profile_reader=_NoopReader(),
+        activity=_NoopActivity(),
+        volume_threshold=25,
+        inactivity_minutes=30,
+    )
+    vips = [uuid4() for _ in range(3)]
+    for v in vips:
+        svc.enqueue(v, "volume")
+    # Pending (NOT drained yet — the cycle drains them itself).
+    assert len(svc._pending) == 3  # noqa: SLF001
+
+    class _BlockingService:
+        async def synthesize(self, vip_id, trigger):
+            # Never returns until the cycle is cancelled by the timeout.
+            await asyncio.Event().wait()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            run_profile_synthesis_cycle(svc, _BlockingService()),  # type: ignore[arg-type]
+            timeout=0.05,
+        )
+
+    # The cleanup finally released EVERY drained VIP — none stuck in-flight.
+    assert svc._in_flight == set()  # noqa: SLF001
+    # And every VIP is re-enqueueable for the next tick.
+    for v in vips:
+        assert svc.enqueue(v, "volume") is True
+
+
+@pytest.mark.asyncio
+async def test_cycle_scan_feeds_drain_synthesize_same_tick() -> None:
+    """Fix round nit: scan→drain→synthesize of the SAME tick are exercised
+    end-to-end — the scan feeds pending, the drain empties it and synthesizes
+    every item, all in one cycle."""
+    vip_a = uuid4()
+    vip_b = uuid4()
+    trigger = _FakeTrigger(scan_result=2, pending=[(vip_a, "volume"), (vip_b, "session_close")])
+    service = _FakeService()
+    out = await run_profile_synthesis_cycle(trigger, service)  # type: ignore[arg-type]
+    assert trigger.scan_result == 2  # the scan returned 2 candidates
+    assert service.synthesized == [
+        (vip_a, "volume"),
+        (vip_b, "session_close"),
+    ]  # drain picked up exactly what the scan enqueued
+    assert out["items"] == 2
+    assert out["results"] == ["ok", "ok"]
+    assert sorted(trigger.released) == sorted([vip_a, vip_b])  # both released
 
 
 @pytest.mark.asyncio

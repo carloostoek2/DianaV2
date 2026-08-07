@@ -18,6 +18,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 logger = logging.getLogger("diana.jobs")
 
@@ -27,22 +28,39 @@ __all__ = ["ProfileSynthesisJob", "run_profile_synthesis_cycle"]
 async def run_profile_synthesis_cycle(
     trigger_service: Any, synthesis_service: Any
 ) -> dict[str, Any]:
-    """One-shot: scan inactivity, drain pending, synthesize each. Never raises out."""
+    """One-shot: scan inactivity, drain pending, synthesize each. Never raises out.
+
+    ``release`` is guaranteed for EVERY drained VIP, even when the cycle is
+    cancelled mid-loop by ``asyncio.wait_for`` (fix round B1): the per-item
+    ``finally`` releases the in-flight item, and an outer ``finally`` releases
+    every remaining drained VIP that never reached the loop — a timeout or
+    cancel must never leave a VIP stuck in ``_in_flight`` forever.
+    """
     scan = await trigger_service.scan_inactivity(datetime.now(UTC))
     pending = trigger_service.drain_pending()
     results: list[str] = []
-    for vip_id, trigger in pending:
-        try:
-            report = await synthesis_service.synthesize(vip_id, trigger)
-            results.append(report.status)
-        except Exception:
-            logger.exception(
-                "profile_synthesis_item_failed",
-                extra={"vip_id": str(vip_id), "trigger": trigger},
-            )
-            results.append("failed")
-        finally:
-            trigger_service.release(vip_id)
+    released: set[UUID] = set()
+    try:
+        for vip_id, trigger in pending:
+            try:
+                report = await synthesis_service.synthesize(vip_id, trigger)
+                results.append(report.status)
+            except Exception:
+                logger.exception(
+                    "profile_synthesis_item_failed",
+                    extra={"vip_id": str(vip_id), "trigger": trigger},
+                )
+                results.append("failed")
+            finally:
+                trigger_service.release(vip_id)
+                released.add(vip_id)
+    finally:
+        # B1: on cancel/timeout (asyncio.wait_for) the loop exits mid-way —
+        # release every drained VIP that was never released so the in-memory
+        # guard never leaks in-flight items across ticks.
+        for vip_id, _trigger in pending:
+            if vip_id not in released:
+                trigger_service.release(vip_id)
 
     logger.info(
         "profile_synthesis_cycle_complete",

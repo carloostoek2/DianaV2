@@ -17,8 +17,20 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 
 logger = logging.getLogger("diana.application")
+
+
+def _fold(text: str) -> str:
+    """Lowercase + strip diacritics (NFKD) for accent-insensitive matching.
+
+    Mexican VIP chat routinely drops accents ("no se que hacer"); folding both
+    the term and the message to a canonical de-accented form makes the accented
+    term ("no sé qué hacer") match the accent-less text (fix round S4).
+    """
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
 
 # Own strong-signal vocabulary — introspection / trust / life plan. NEVER
 # payment/commitment keywords (those live in j4_triggers.py, out of scope).
@@ -66,22 +78,23 @@ _STRONG_SIGNAL_TERMS: tuple[str, ...] = (
 def match(text: str | None) -> bool:
     """True if ``text`` carries a strong profile-synthesis signal.
 
-    Empty/None text never matches. Case-insensitive: a single-word term is
-    matched at word boundaries, a phrase by substring — the same semantics as
-    ``j4_triggers.match_keywords``. Returns True when ANY term matches.
+    Empty/None text never matches. Case- and accent-insensitive (S4): a
+    single-word term is matched at word boundaries, a phrase by substring — the
+    same semantics as ``j4_triggers.match_keywords``, with both sides folded to
+    a de-accented form. Returns True when ANY term matches.
     """
     if not text:
         return False
-    lower = text.lower()
+    folded = _fold(text)
     for term in _STRONG_SIGNAL_TERMS:
-        k = term.strip().lower()
+        k = _fold(term.strip())
         if not k:
             continue
         if " " in k:
-            if k in lower:
+            if k in folded:
                 return True
         else:
-            if re.search(rf"\b{re.escape(k)}\b", lower, flags=re.IGNORECASE):
+            if re.search(rf"\b{re.escape(k)}\b", folded, flags=re.IGNORECASE):
                 return True
     return False
 

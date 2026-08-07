@@ -130,9 +130,43 @@ async def test_dedup_same_vip_single_pending() -> None:
         volume_threshold=25, inactivity_minutes=30,
     )
     assert await svc.evaluate_and_maybe_enqueue(vip, text="me siento raro") == "strong_signal"
-    assert await svc.evaluate_and_maybe_enqueue(vip, text="no sé qué hacer") == "strong_signal"
+    # Second evaluation: the VIP is already pending → short-circuit (S1),
+    # nothing was enqueued → None (fix round nit: no label when deduped).
+    assert await svc.evaluate_and_maybe_enqueue(vip, text="no sé qué hacer") is None
     # Both conditions matched but only ONE pending item, labeled by the first.
     assert svc.drain_pending() == [(vip, "strong_signal")]
+
+
+@pytest.mark.asyncio
+async def test_pending_vip_short_circuits_before_db_reads() -> None:
+    """S1: a VIP already pending/in-flight is evaluated with NO DB reads.
+
+    In a burst of one pending VIP, each message used to pay 2 queries in the
+    hot path for a discarded result; the short-circuit returns None before
+    touching the reader or the activity source.
+    """
+    vip = uuid4()
+    reader = _MemoryProfileReader()
+    activity = _MemoryActivity(counts={vip: 30})
+    svc = ProfileSynthesisTriggerService(
+        profile_reader=reader, activity=activity,
+        volume_threshold=25, inactivity_minutes=30,
+    )
+    # First evaluation (volume path) reads once.
+    assert await svc.evaluate_and_maybe_enqueue(vip) == "volume"
+    assert activity.count_calls == [(vip, None)]
+    # Pending → short-circuit: no extra activity reads.
+    assert await svc.evaluate_and_maybe_enqueue(vip) is None
+    assert activity.count_calls == [(vip, None)]
+    drained = svc.drain_pending()
+    assert drained == [(vip, "volume")]
+    # In-flight → same short-circuit (still no extra reads).
+    assert await svc.evaluate_and_maybe_enqueue(vip) is None
+    assert activity.count_calls == [(vip, None)]
+    svc.release(vip)
+    # Released → evaluation resumes (a new volume read).
+    assert await svc.evaluate_and_maybe_enqueue(vip) == "volume"
+    assert len(activity.count_calls) == 2
 
 
 @pytest.mark.asyncio
@@ -147,9 +181,9 @@ async def test_in_flight_blocks_re_enqueue_until_release() -> None:
     drained = svc.drain_pending()
     assert drained == [(vip, "volume")]
 
-    # While in-flight, the condition still fires (label returned) but the dedup
-    # guard does NOT re-enqueue — pending stays empty.
-    assert await svc.evaluate_and_maybe_enqueue(vip) == "volume"
+    # While in-flight, the dedup guard does NOT re-enqueue — pending stays
+    # empty and, per the fix round nit, nothing was enqueued → None.
+    assert await svc.evaluate_and_maybe_enqueue(vip) is None
     assert svc.drain_pending() == []
 
     svc.release(vip)
@@ -172,7 +206,9 @@ async def test_scan_inactivity_enqueues_session_close() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_inactivity_skips_no_new_activity() -> None:
+async def test_scan_inactivity_enqueues_when_activity_newer_than_last_synthesis() -> None:
+    """Scan enqueues session_close when there IS new activity since last
+    synthesis (fix round: renamed — this test ENQUEUES; the skip is the next)."""
     vip = uuid4()
     last_synth = _now() - timedelta(hours=2)
     older = _now() - timedelta(hours=1)  # older than cutoff but newer than last_synth

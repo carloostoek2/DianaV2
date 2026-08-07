@@ -137,6 +137,11 @@ class ProfileSynthesisTriggerService:
         """
         if vip_id is None:
             return None
+        # S1: already pending/in-flight → the enqueue would be a no-op, so skip
+        # the DB reads entirely (in a burst of one pending VIP, each message no
+        # longer pays 2 queries in the hot path for a discarded result).
+        if vip_id in self._pending or vip_id in self._in_flight:
+            return None
         trigger: SynthesisTrigger | None = None
         if signal is not None and getattr(signal, "should_trigger_synthesis", False):
             trigger = "emotional_signal"
@@ -149,8 +154,11 @@ class ProfileSynthesisTriggerService:
             )
             if count >= self._volume_threshold:
                 trigger = "volume"
-        if trigger is not None:
-            self.enqueue(vip_id, trigger)
+        # The guard is re-checked inside enqueue (an await may have raced with
+        # the scan/drain); when it dedups, nothing was enqueued → return None,
+        # coherent with the docstring contract (fix round nit).
+        if trigger is not None and not self.enqueue(vip_id, trigger):
+            return None
         return trigger
 
     async def scan_inactivity(self, now: datetime) -> int:

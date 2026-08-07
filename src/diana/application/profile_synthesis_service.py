@@ -44,6 +44,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from diana.application.memory_backfill_service import LLMStructuredPort
+from diana.application.memory_extraction_service import MemoryFactsWriter
 from diana.application.ports import VipProfileRecord
 from diana.cognitive.models import SynthesisTrigger
 
@@ -132,7 +133,7 @@ class ProfileSynthesisService:
         *,
         llm: LLMStructuredPort,
         profile_store: SynthesisProfileStore,
-        memories: Any,  # MemoryFactsWriter (ports) — structural
+        memories: MemoryFactsWriter,
         corrections: SynthesisCorrectionsSource,
         confidence_min: float = 0.6,
     ) -> None:
@@ -183,8 +184,10 @@ class ProfileSynthesisService:
             "weight falls below 0.3.\n"
             "- feedback_signals mix tone/personality feedback with one-off content "
             "corrections; keep only what reflects the VIP's stable self.\n"
-            "- confidence: keep it LOW when there are few facts or contradictory "
-            "signals. It is optional; when in doubt, omit it.\n"
+            "- confidence: ALWAYS return it as a number between 0 and 1 "
+            "(required — it gates how much of the current profile is "
+            "overwritten). Keep it LOW when there are few facts or "
+            "contradictory signals.\n"
             "- changes_summary: one short sentence describing what changed."
         )
         user = json.dumps(
@@ -216,6 +219,12 @@ class ProfileSynthesisService:
         persisted = await self._profile_store.get_by_vip(vip_id)
         was_persisted = persisted is not None
         current = await self._profile_store.get_or_create(vip_id)
+        # S2: capture ``now`` BEFORE the reads. The new ``last_synthesized_at``
+        # is derived from this timestamp, so a fact created while the LLM
+        # window runs never falls into the gap between the read and the write
+        # (created_at >= new last_synthesized_at would otherwise skip it on the
+        # next run too).
+        now = datetime.now(UTC)
 
         facts = await self._memories.list_by_vip_since(
             vip_id, since=current.last_synthesized_at
@@ -248,7 +257,6 @@ class ProfileSynthesisService:
             if output.confidence is None
             else max(0.0, min(1.0, float(output.confidence)))
         )
-        now = datetime.now(UTC)
 
         if conf >= self._confidence_min:
             nxt = VipProfileRecord(
@@ -264,7 +272,12 @@ class ProfileSynthesisService:
                 vip_id,
                 previous=(current if was_persisted else None),
                 next=nxt,
-                changes_summary=(output.changes_summary or None),
+                # S7: never coerce "" to None — the audit trail (1.4) must stay
+                # populated even when the LLM sends no summary.
+                changes_summary=(
+                    output.changes_summary
+                    or "profile resynthesized (no detail provided)"
+                ),
             )
             return SynthesisReport(
                 status="ok",

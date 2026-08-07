@@ -112,6 +112,7 @@ def test_prompt_has_three_explicit_blocks() -> None:
     ]
     messages = svc._build_prompt(current, facts, signals)  # noqa: SLF001
     assert messages[0]["role"] == "system"
+    system = messages[0]["content"]
     user = json.loads(messages[1]["content"])
     assert set(user.keys()) == {
         "current_profile",
@@ -121,6 +122,15 @@ def test_prompt_has_three_explicit_blocks() -> None:
     assert user["new_episodic_facts"] == facts
     assert user["feedback_signals"] == signals
     assert "vip_id" not in user["current_profile"]  # exclude vip_id
+    # S6: confidence is REQUIRED (a numeric [0,1] value) — never "optional".
+    assert "ALWAYS" in system
+    assert "between 0 and 1" in system
+    assert "optional" not in system
+    # Fix round nit: the decay rules (A10) are pinned — a regression that
+    # strips them would fail here.
+    assert "DECAY" in system
+    assert "0.3" in system  # remove-from-sensitivities threshold
+    assert "sensitivities" in system
 
 
 @pytest.mark.asyncio
@@ -238,6 +248,55 @@ async def test_llm_failure_raises_loud_no_write() -> None:
     with pytest.raises(ValueError):
         await svc.synthesize(uuid4(), "volume")
     assert store.saved == []  # no write on failure
+
+
+@pytest.mark.asyncio
+async def test_last_synthesized_at_captured_before_reads_s2() -> None:
+    """S2: ``now`` is captured BEFORE the facts/signals reads, so facts created
+    during the LLM window never fall into the gap (they would be skipped both
+    in this run and the next, since last_synthesized_at already advanced)."""
+    current = _record(version=1)
+    store = _FakeProfileStore(persisted=current)
+    read_marker: dict = {}
+
+    class _MarkingMemories(_FakeMemories):
+        async def list_by_vip_since(self, vip_id, *, since, limit=200):
+            read_marker["facts_read_at"] = datetime.now(UTC)
+            return await super().list_by_vip_since(vip_id, since=since, limit=limit)
+
+    output = SynthesisOutput(
+        stable_traits={"x": True}, recent_trend={}, sensitivities=[],
+        confidence=0.9,
+    )
+    svc = _service(
+        llm=_FakeLLM(output=output), store=store, memories=_MarkingMemories()
+    )
+    report = await svc.synthesize(current.vip_id, "volume")
+    assert report.status == "ok"
+    saved_at = store.saved[0]["next"].last_synthesized_at
+    assert saved_at is not None
+    # The written last_synthesized_at predates the facts read — captured before
+    # the reads, not after the LLM window.
+    assert saved_at <= read_marker["facts_read_at"]
+
+
+@pytest.mark.asyncio
+async def test_high_confidence_changes_summary_not_none_when_empty_s7() -> None:
+    """S7: a high-confidence run persists a changes_summary even when the LLM
+    returns an empty string — the audit trail (1.4) never stores NULL."""
+    current = _record(version=1)
+    store = _FakeProfileStore(persisted=current)
+    output = SynthesisOutput(
+        stable_traits={"x": True}, recent_trend={}, sensitivities=[],
+        changes_summary="",  # LLM sent nothing
+        confidence=0.9,
+    )
+    svc = _service(llm=_FakeLLM(output=output), store=store)
+    report = await svc.synthesize(current.vip_id, "volume")
+    assert report.status == "ok"
+    saved = store.saved[0]
+    assert saved["changes_summary"] is not None
+    assert saved["changes_summary"].strip() != ""
 
 
 def test_apply_overrides() -> None:

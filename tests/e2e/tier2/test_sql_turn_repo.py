@@ -125,15 +125,22 @@ async def test_count_messages_since_filters_vip_channel_and_since(session_factor
     mid = datetime.now(UTC) - timedelta(minutes=5)
     await _set_turn_created_at(session_factory, t1.id, mid - timedelta(minutes=10))
     await _set_turn_created_at(session_factory, t2.id, mid)
-    # Since is exclusive: t2.created_at == mid is not counted.
-    assert await repo.count_messages_since(vip.id, since=mid) == 0
+    # Fix round: the boundary is INCLUSIVE (>=), matching memories/staging —
+    # t2.created_at == mid IS counted.
+    assert await repo.count_messages_since(vip.id, since=mid) == 1
     assert await repo.count_messages_since(vip.id, since=mid - timedelta(minutes=1)) == 1
+    assert await repo.count_messages_since(vip.id, since=mid - timedelta(minutes=11)) == 2
 
 
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_list_vips_with_activity_older_than_filters_and_orders(session_factory):
-    """Only VIPs whose newest 'vip' turn predates the cutoff, newest first."""
+    """Only VIPs whose newest 'vip' turn predates the cutoff, newest first.
+
+    Fix round (S11): membership-based assertions instead of exact-set equality
+    on the shared session-scoped DB — other tests' aged VIPs may also satisfy
+    the cutoff, so we assert OUR aged VIP is present and OUR fresh one is not.
+    """
     repo = SqlTurnStore(session_factory)
     now = datetime.now(UTC)
     old_cut = now - timedelta(days=5)
@@ -152,8 +159,10 @@ async def test_list_vips_with_activity_older_than_filters_and_orders(session_fac
     )
 
     rows = await repo.list_vips_with_activity_older_than(old_cut)
-    assert [vip_id for vip_id, _ in rows] == [old_vip.id]
-    last = rows[0][1]
+    by_id = {vip_id: last for vip_id, last in rows}
+    assert old_vip.id in by_id  # our aged VIP is returned
+    assert fresh_vip.id not in by_id  # our fresh VIP is not
+    last = by_id[old_vip.id]
     assert last is not None and last < old_cut  # newest activity predates the cutoff
     # Sanity: the returned last-activity is the aged turn's created_at.
     assert abs((last - (now - timedelta(days=10))).total_seconds()) < 5

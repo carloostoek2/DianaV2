@@ -40,6 +40,10 @@ def _imported_modules(path: Path) -> set[str]:
         "mi relación con mi familia",
         "estoy pensando en mi futuro",
         "a veces siento que no puedo",
+        # S4: accent-less Mexican chat must match the accented terms.
+        "no se que hacer con mi vida",
+        "quien soy yo realmente",
+        "me siento triste, no se que hacer",
     ],
 )
 def test_strong_signal_matches(text: str) -> None:
@@ -77,6 +81,20 @@ def test_payment_terms_never_match_payment_language() -> None:
         assert match(text) is False, text
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no se que hacer",  # accent-less "no sé qué hacer"
+        "no se que hacer con mi vida",
+        "quien soy",  # accent-less "quién soy"
+        "no se qué hacer",  # accented original still matches
+    ],
+)
+def test_match_is_accent_insensitive_s4(text: str) -> None:
+    """S4: NFKD folding makes accent-less Mexican chat match accented terms."""
+    assert match(text) is True, text
+
+
 def test_terms_are_strings_and_non_empty() -> None:
     assert _STRONG_SIGNAL_TERMS
     assert all(isinstance(t, str) and t.strip() for t in _STRONG_SIGNAL_TERMS)
@@ -91,4 +109,4 @@ def test_import_purity_no_llm_no_infra() -> None:
     assert "aiogram" not in imported
     assert "infrastructure" not in imported
     assert "llm" not in imported
-    assert imported <= {"re", "logging", "__future__"}
+    assert imported <= {"re", "logging", "unicodedata", "__future__"}

@@ -697,6 +697,20 @@ def build_app(
     profile_synthesis_trigger: ProfileSynthesisTriggerService | None = None
     profile_synthesis_service: ProfileSynthesisService | None = None
     if settings.feature_profile_synthesis_enabled:
+        # S9: trigger condition (d) — the emotional signal — requires the
+        # emotional DETECTOR to be on. With it OFF the synthesis trigger still
+        # evaluates volume / strong-signal / session_close, but the immediate
+        # emotional path is inert. Logged (not silently coupled) so a shadow
+        # run with the detector off is a documented partial trigger.
+        if not settings.feature_emotional_detector_enabled:
+            logger.info(
+                "profile_synthesis_emotional_signal_source_unavailable",
+                extra={
+                    "reason": "feature_emotional_detector_enabled is False",
+                    "effect": "condition (d) never fires; volume/strong-signal/"
+                    "session_close still trigger",
+                },
+            )
         if staging_repo is None:
             staging_repo = StagingCandidateRepo(sf)
         profile_synthesis_service = ProfileSynthesisService(
@@ -1075,11 +1089,12 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
             logger.info(
                 "profile_synthesis_thresholds_loaded",
                 extra={
-                    "volume_threshold": getattr(trigger, "_volume_threshold", None),
-                    "inactivity_minutes": getattr(
-                        trigger, "_inactivity_minutes", None
-                    ),
-                    "confidence_min": getattr(service, "_confidence_min", None),
+                    # Fix round nit: direct attribute access (both are wired
+                    # and non-None here) instead of defensive getattr on
+                    # private names.
+                    "volume_threshold": trigger._volume_threshold,  # noqa: SLF001
+                    "inactivity_minutes": trigger._inactivity_minutes,  # noqa: SLF001
+                    "confidence_min": service._confidence_min,  # noqa: SLF001
                 },
             )
 

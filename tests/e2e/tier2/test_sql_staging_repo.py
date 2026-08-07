@@ -2,7 +2,8 @@
 
 The staging row does not store vip_id — the JOIN to ``turns.vip_id`` is what
 scopes owner corrections to a VIP. This suite verifies the JOIN, the
-``since`` window, the oldest-first order and that the FULL payload
+``since`` window, the most-recent-first order (S3), the exclusion of owner-
+rejected (``discarded``) corrections (B2) and that the FULL payload
 (original_draft / corrected_text / context.turn_text) reaches the caller so
 the synthesis LLM can separate tone/personality from point feedback.
 """
@@ -106,9 +107,11 @@ async def test_list_corrections_joins_turns_and_filters_by_vip(session_factory):
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_list_corrections_filters_since_and_orders_oldest_first(
+async def test_list_corrections_filters_since_and_orders_most_recent_first(
     session_factory,
 ):
+    """S3: ordered most recent first, so a ``limit`` never discards the newest
+    corrections (previously oldest first)."""
     repo = StagingCandidateRepo(session_factory)
     vip_a, turn_a = await _create_vip_and_turn(session_factory, 8303)
     now = datetime.now(UTC)
@@ -128,9 +131,9 @@ async def test_list_corrections_filters_since_and_orders_oldest_first(
 
     all_rows = await repo.list_corrections_by_vip_since(vip_a, since=None)
     assert [r["payload"]["original_draft"] for r in all_rows] == [
-        "draft: vieja",
         "draft: nueva",
-    ]  # oldest first
+        "draft: vieja",
+    ]  # most recent first
 
     two_days = now - timedelta(days=2)
     recent = await repo.list_corrections_by_vip_since(vip_a, since=two_days)
@@ -160,3 +163,29 @@ async def test_list_corrections_includes_pending_and_promoted(session_factory):
     assert len(rows) == 1
     assert rows[0]["status"] == "promoted"
     assert "payload" in rows[0]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_list_corrections_excludes_discarded_b2(session_factory):
+    """B2: a correction the owner REJECTED (``discarded``) is the opposite of
+    feedback — it must never reach the synthesis LLM (contradicts A8 if
+    included)."""
+    repo = StagingCandidateRepo(session_factory)
+    vip_a, turn_a = await _create_vip_and_turn(session_factory, 8305)
+
+    await _insert_candidate(session_factory, turn_id=turn_a, payload=_payload("buena"))
+    await _insert_candidate(session_factory, turn_id=turn_a, payload=_payload("rechazada"))
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "UPDATE staging_candidates SET status = 'discarded' "
+                "WHERE payload->>'original_draft' = 'draft: rechazada'"
+            )
+        )
+        await session.commit()
+
+    rows = await repo.list_corrections_by_vip_since(vip_a, since=None)
+    assert len(rows) == 1
+    assert rows[0]["payload"]["original_draft"] == "draft: buena"
+    assert rows[0]["status"] == "pending"  # the discarded row never appears

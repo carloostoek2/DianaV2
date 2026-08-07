@@ -4685,7 +4685,15 @@ class _FakeProfileSynthesisTrigger:
 
 @pytest.mark.asyncio
 async def test_profile_synthesis_trigger_not_called_flag_off() -> None:
-    """Flag OFF → trigger None → hook no-op, turn byte-identical."""
+    """Flag OFF → the orchestrator has NO trigger wired (None), so the hook
+    early-returns on the guard without touching a would-be caller.
+
+    Fix round nit: the assertion on ``g["orch"]._profile_synthesis_trigger is
+    None`` makes the guard observable — it distinguishes the None wiring (flag
+    OFF, byte-identical) from a swallowed AttributeError. When the fake IS
+    wired (the enqueue tests below) it is genuinely invoked, so the empty
+    ``calls`` here is not tautological.
+    """
     decision = Decision(
         action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
     )
@@ -4698,8 +4706,10 @@ async def test_profile_synthesis_trigger_not_called_flag_off() -> None:
         ),
         emotional_detector=_FakeEmotionalDetector(_signal_detected()),
         emotional_signal_log=_FakeEmotionalSignalLog(),
-        # no profile_synthesis_trigger → None → hook early-returns
+        # flag OFF → profile_synthesis_trigger stays None (default)
     )
+    # The wiring leaves the guard None — THIS is what makes the hook inert.
+    assert g["orch"]._profile_synthesis_trigger is None  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
     assert trigger.calls == []
     stored = await g["turns"].get(turn_id)

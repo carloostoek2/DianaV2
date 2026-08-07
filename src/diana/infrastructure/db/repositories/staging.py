@@ -83,7 +83,7 @@ class StagingCandidateRepo:
         since: datetime | None,
         limit: int = 50,
     ) -> list[dict]:
-        """Owner corrections of the VIP since ``since``, oldest first (A8 / EA-04).
+        """Owner corrections of the VIP since ``since``, most recent first (A8 / EA-04).
 
         Fase 1 ``feedback_signals`` source: every ``candidate_type='example'``
         correction whose originating turn belongs to ``vip_id`` (the staging
@@ -91,9 +91,12 @@ class StagingCandidateRepo:
         required). The FULL payload is returned (``original_draft`` +
         ``corrected_text`` + ``context.turn_text``) so the synthesis LLM can
         separate tone/personality feedback from point content. Both ``pending``
-        and promoted corrections are included (both are owner feedback). No
-        index on ``staging_candidates.created_at`` → the query is bounded by
-        ``limit`` (acceptable in shadow; documented).
+        and promoted corrections are included (both are owner feedback), but
+        ``discarded`` rows are NOT — an owner rejection is the opposite of
+        feedback (fix round B2, A8). Ordered most recent first so a ``limit``
+        never discards the newest corrections (fix round S3). No index on
+        ``staging_candidates.created_at`` → the query is bounded by ``limit``
+        (acceptable in shadow; documented).
         """
         stmt = (
             select(StagingCandidate)
@@ -101,8 +104,9 @@ class StagingCandidateRepo:
             .where(
                 Turn.vip_id == vip_id,
                 StagingCandidate.candidate_type == "example",
+                StagingCandidate.status.notin_(["discarded"]),
             )
-            .order_by(StagingCandidate.created_at.asc())
+            .order_by(StagingCandidate.created_at.desc())
             .limit(limit)
         )
         if since is not None:
