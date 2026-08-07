@@ -1,9 +1,10 @@
 # Estado del proyecto — Diana Business Bot (DianaV2)
 
-**Fecha:** 2026-08-05
-**Rama:** main · **Head:** b353511 (pusheado)
+**Fecha:** 2026-08-07
+**Rama:** main · **Head:** `3118513` (pool evo-agente cerrado, 32 commits — no pusheado aún; origin en `90420fd`)
 **Bot en producción:** corriendo (PID 88421, tmux prod:0) — arranque limpio, polling activo.
-**Base de datos:** migraciones al día (head `023_backfill_queue`).
+**Base de datos:** migraciones al día en main (head `026_agent_evolution_turn_category_columns`; el bot en producción
+sigue en `023_backfill_queue` hasta que se despliegue el pool).
 
 ---
 
@@ -27,17 +28,49 @@
   - **Notificaciones con el nombre del VIP** (antes el UUID) + hint `/memoria`.
   - **Anti-contaminación** garantizada por tests (Telegram nunca toca la DB de memoria; pendientes/descartados invisibles al retriever; cada VIP solo ve su memoria).
 
+### Evolución de agente — pool `evo-agente` ✅ (SHADOW — 4 ítems, 2026-08-07)
+Spec `docs/SPEC-EVOLUCION-AGENTE.md` v1.2. **Todo en modo shadow** (flags OFF por default): no cambia el
+comportamiento visible del bot. Migraciones 024-026 aplicadas en main (el bot en producción aún no las tiene).
+
+- **Fase 0 fundaciones + Detector emocional (transversal):** migración 024 (6 tablas: `vip_profile`,
+  `vip_profile_history`, `vip_mood_state`, `vip_trust_budget`, `turn_category_log`, `emotional_signal_log`),
+  6 repos con mapper puro + `purge_expired`, `EmotionalSignalDetector` heurístico sin LLM (umbrales fijos +
+  override manual, nunca auto-calibrado), hook shadow post-turno flag-gated, `AgentDataPurgeJob`.
+- **Fase 1 resíntesis de memoria:** migración 025, `strong_signal_heuristics` + `ProfileSynthesisTriggerService`
+  (4 condiciones OR + dedup), `ProfileSynthesisService` (confidence gating, no sobrescribe en baja confianza) +
+  `ProfileSynthesisJob` (scan+drain+release), hook de disparo + wiring + job en main, EA-05 anti-contaminación
+  (el perfil jamás alimenta examples; solo `recent_trend`/mood al contexto de generación).
+- **Fase 2 autonomía fática (shadow):** migración 026, `TurnClassifier` puro (4 categorías + modo "no estoy seguro").
+  El carril rápido real (autoenvío) queda para cuando la fase salga de shadow: **doble puerta** trust budget +
+  evaluación del Decider + filtros EA-02 (incl. chequeo de seguridad del borrador, EA-02(3)).
+- **Fase 3 motor de mood (shadow):** `MoodEngine` 3 ejes (promedio móvil con retorno a base, ruido determinista),
+  actualizado por turno reusando la salida del analyst (sin LLM extra); conectarlo a selección de variantes cuando
+  salga de shadow.
+- **Fase 5 trust budget (mecánica + ficha):** `TrustBudgetService` puro (asimetría conservadora 0.05/0.2, clamp
+  [0,1], `can_autonomous` doble puerta pura **sin call-sites de envío**, `evaluation_dispersion`), repos atómicos,
+  hook shadow + `handle_correct`→`record_correction` (solo si el turno era candidato autónomo), sección 🔐 Confianza
+  en la ficha del VIP (EA-06). Umbrales fijos + override manual, jamás calibrados por LLM.
+
+Flags nuevos (todos OFF por default): `FEATURE_EMOTIONAL_DETECTOR_ENABLED`, `feature_profile_synthesis_enabled`,
+`feature_phatic_autonomy`, `feature_mood_engine`, `feature_trust_budget`. Verificaciones: 4 review loops a 0 open
+(3 rondas c/u); suite unit 2441 passed / 2 pre-existentes (`test_sql_repo_shapes.py`, no atribuibles); e2e DB verde
+con Docker. **Pendiente:** cola durable `synthesis_queue`, ficha perfil EA-06 completa (historial de versiones),
+`.env.example` con los flags nuevos, y la Fase 5 real (doble puerta) cuando F2 salga de shadow.
+
 ### Otros
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria).
-- Migraciones: 001-023 aplicadas. Persona sin reglas de voseo; español neutro. CHANGELOG.md creado.
+- Migraciones: 001-026 en main (001-023 en producción hasta desplegar el pool evo-agente). Persona sin reglas de voseo; español neutro. CHANGELOG.md creado.
 
 ---
 
-## 2. Estado de operación (verificado 2026-08-05 22:04)
+## 2. Estado de operación (verificado 2026-08-05 22:04; pool evo-agente cerrado en main 2026-08-07)
 
 - Bot corriendo con la Fase 5 completa (PID 88421, ventana "bot" en tmux prod).
 - Cola de backfill activa: los VIPs con historial se perfilan de a uno por hora (sin intervención).
 - Verificación de suites: **2082 unit + 98 e2e (Docker) verdes**, purity gates 3/3.
+- **Importante:** el pool `evo-agente` (F0-F5 shadow) está cerrado en `main` pero **NO desplegado** — producción sigue
+  en `90420fd`/migración 023. Todo el pool es shadow (flags OFF), así que el despliegue no cambia el comportamiento;
+  desplegar requiere rebase de producción a main + `alembic upgrade head` (024-026).
 
 ---
 
@@ -45,6 +78,17 @@
 
 ### Fase 6 en adelante (nuevas fases — no definidas aún)
 - El SPEC-FASE6 no existe; los siguientes pasos de producto se deciden con la dueña.
+
+### Evolución de agente — pendiente del pool `evo-agente` (ver SPEC-EVOLUCION-AGENTE.md v1.2)
+- **Fase 5 real (cablear la doble puerta):** cuando F2 salga de shadow — `decision.action=="send" AND can_autonomous(...)`
+  en `_prepare_autonomous_send`, interpretar/resetear la semántica shadow del incremento, filtro EA-02(3) (chequeo de
+  seguridad del borrador). Requiere `feature_phatic_autonomy` + `recent_trend` confiable + confianza por categoría.
+- **Cola durable `synthesis_queue`** para la resíntesis de memoria (hoy guard en memoria).
+- **Ficha perfil EA-06 completa** (historial de versiones de `vip_profile_history`).
+- **`.env.example`** — documentar los flags/keys nuevos de Fase 0-5.
+- **Fixture de `test_sql_repo_shapes.py`** — fix trivial (agregar `updated_at` al `SimpleNamespace`) para cerrar los
+  2 tests pre-existentes.
+- **Fase 4 (iniciativa contextual)** — diferida por decisión del usuario; queda especificada en el SPEC v1.2.
 
 ### Deuda técnica / mejoras menores (trazadas)
 - `reasonix.toml` untracked (config local de tooling — decidir si va a `.gitignore`).
@@ -57,7 +101,7 @@
 
 ## 4. Referencias
 
-- SPECs: `docs/SPEC-FASE4.md`, `docs/SPEC-FASE5.md` (contratos vigentes).
+- SPECs: `docs/SPEC-FASE4.md`, `docs/SPEC-FASE5.md`, `docs/SPEC-EVOLUCION-AGENTE.md` (v1.2, pool evo-agente F0-F5 shadow) (contratos vigentes).
 - Trazabilidad del pipeline: `.planning/quick/20260805-f5-perfil-vip/` (PLAN-POOL2/3/4.md, SUMMARYs, AUDITs, REVIEWs, SECURITYs).
 - Logs de agentes: `.planning/quick/gsd-*.log`.
 - Repo legacy (v1, patrón de extracción): `repos/diana/services/history_backfill.py`.
