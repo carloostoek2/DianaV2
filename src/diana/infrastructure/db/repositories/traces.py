@@ -224,12 +224,15 @@ class SqlTraceStore:
 
         Emotional baseline for the signal detector: reads
         ``pipeline_traces.comprehension`` (the only table with per-turn
-        emotion). Only turns that reached a **completed** terminal status
-        (``delivered`` / ``escalated``) are included — a FAILED / superseded /
-        aborted turn never finalized its pipeline and would pollute the
-        ``ruptura_de_patron`` baseline. Skips rows with missing/empty
-        comprehension. Optional ``exclude_turn_id`` drops the current turn
-        after comprehension was stored (mirror of ``get_recent_intents``).
+        emotion). Turn status is filtered by **exclusion**: FAILED /
+        superseded / aborted turns never finalized their pipeline and would
+        pollute the ``ruptura_de_patron`` baseline, so they are excluded —
+        every other status is included, notably ``delivered`` / ``escalated``
+        AND ``pending_approval`` / ``gray_zone`` (turns with real
+        comprehension that are waiting on human approval). Skips rows with
+        missing/empty comprehension. Optional ``exclude_turn_id`` drops the
+        current turn after comprehension was stored (mirror of
+        ``get_recent_intents``).
         """
         if limit <= 0:
             return []
@@ -239,10 +242,10 @@ class SqlTraceStore:
             .where(
                 PipelineTrace.chat_id == chat_id,
                 PipelineTrace.comprehension.is_not(None),
-                Turn.status.in_(
+                Turn.status.notin_(
                     [
-                        TurnStatus.DELIVERED.value,
-                        TurnStatus.ESCALATED.value,
+                        TurnStatus.FAILED.value,
+                        TurnStatus.SUPERSEDED.value,
                     ]
                 ),
             )

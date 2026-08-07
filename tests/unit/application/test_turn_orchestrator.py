@@ -4584,6 +4584,45 @@ async def test_emotional_detector_skipped_when_turn_already_terminal() -> None:
 
 
 @pytest.mark.asyncio
+async def test_emotional_detector_skipped_when_epoch_stale() -> None:
+    """Deterministic stale-epoch gap: a superseded-by-newer-message turn is skipped.
+
+    The read-back terminal gate only covers turns ALREADY terminal at hook
+    time. A turn whose VIP epoch is no longer current (a newer message will
+    supersede it via ``_apply_decision_after_director``'s epoch check right
+    after the call-site) must not be logged either — the epoch gate covers
+    the case the terminal read-back cannot see yet (review round 2).
+    """
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": None}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+    # Advance the chat twice: the first epoch token is now stale.
+    stale_epoch = g["coordinator"].bump_vip_epoch(100)
+    g["coordinator"].bump_vip_epoch(100)
+    assert not g["coordinator"].is_vip_epoch_current(100, stale_epoch)
+    # Non-terminal turn (epoch stale is what makes it about to be superseded).
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(id=turn_id, chat_id=100, status="deciding")
+    )
+    await g["orch"]._run_emotional_detector(
+        turn_id, 100, decision, stale_epoch
+    )
+    assert detector.calls == []
+    assert signal_log.inserted == []
+
+
+@pytest.mark.asyncio
 async def test_emotional_detector_real_detector_pipeline_escalation() -> None:
     """Real detector + hook e2e: escalate decision → angustia + p_w_h_escalated."""
     from diana.application.emotional_signal_detector import EmotionalSignalDetector

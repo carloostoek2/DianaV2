@@ -964,14 +964,43 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
 
     The emotional detector override is independent of the RuntimeThresholds
     holder: it is applied whenever ``app.emotional_detector`` is wired (manual
-    override only, never auto-calibrated).
+    override only, never auto-calibrated) and runs LAST (plan Task 4 "al
+    final"). The holder-None path keeps its pre-item no-op semantics for the
+    holder queries (no I/O there); only the detector override does its own
+    single read on the wired path.
     """
     store = SqlSystemConfigStore(app.session_factory)
 
+    holder = app.runtime_thresholds
+    if holder is not None:
+        auto = await store.get_autonomous_thresholds()
+        if auto:
+            holder.replace_autonomous(auto)
+        supervised = await store.get_supervised_thresholds()
+        if isinstance(supervised, dict) and "safety_min" in supervised:
+            try:
+                holder.replace_safety(float(supervised["safety_min"]))
+            except (TypeError, ValueError):
+                pass
+        eval_th = await store.get_eval_thresholds()
+        if isinstance(eval_th, dict) and "safety" in eval_th:
+            try:
+                holder.replace_safety(float(eval_th["safety"]))
+            except (TypeError, ValueError):
+                pass
+        logger.info(
+            "runtime_thresholds_loaded",
+            extra={
+                "autonomous": dict(holder.autonomous),
+                "safety": holder.safety,
+            },
+        )
+
     # Evo-Agente Fase 0: manual override of the detector thresholds from
-    # system_config key ``emotional_detector``. Detector None (flag off) →
-    # no-op WITHOUT any DB I/O on the non-wired path. A transient DB error
-    # must not break boot — read is best-effort.
+    # system_config key ``emotional_detector`` — at the END of the method
+    # (plan Task 4). Detector None (flag off) → no-op WITHOUT any DB I/O on
+    # the non-wired path. A transient DB error must not break boot — read is
+    # best-effort.
     detector = getattr(app, "emotional_detector", None)
     if detector is not None:
         try:
@@ -989,32 +1018,6 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
                     "min_baseline_turns": detector.min_baseline_turns,
                 },
             )
-
-    holder = app.runtime_thresholds
-    if holder is None:
-        return
-    auto = await store.get_autonomous_thresholds()
-    if auto:
-        holder.replace_autonomous(auto)
-    supervised = await store.get_supervised_thresholds()
-    if isinstance(supervised, dict) and "safety_min" in supervised:
-        try:
-            holder.replace_safety(float(supervised["safety_min"]))
-        except (TypeError, ValueError):
-            pass
-    eval_th = await store.get_eval_thresholds()
-    if isinstance(eval_th, dict) and "safety" in eval_th:
-        try:
-            holder.replace_safety(float(eval_th["safety"]))
-        except (TypeError, ValueError):
-            pass
-    logger.info(
-        "runtime_thresholds_loaded",
-        extra={
-            "autonomous": dict(holder.autonomous),
-            "safety": holder.safety,
-        },
-    )
 
 
 async def run_app_startup_recovery(app: AppContainer) -> Any:

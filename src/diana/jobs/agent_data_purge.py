@@ -15,12 +15,15 @@ class AgentDataPurgeJob:
     turn_category_log, emotional_signal_log). Delegates to each store's
     purge_expired(ttl_days); no business logic here (AGENTS.md).
 
-    ``start()`` is guarded against double-start (a ``_running`` flag with
-    try/finally): two concurrent loops would purge the same tables. Once it
-    returns (after ``stop()``), the instance can be restarted. A failure in
-    ONE store does not stop the loop (each store is wrapped in its own
-    try/except). The per-store purge timeout is longer than the interval so a
-    slow batch is not cancelled mid-batch by the wait_for.
+    ``start()`` is one-shot (pattern ``TracePurgeJob``): once it returns
+    (after ``stop()`` is called) the instance cannot be restarted —
+    ``_stop_event`` stays set, so a second ``start()`` returns without
+    purging. Create a new instance if needed. ``start()`` is also guarded
+    against double-start (a ``_running`` flag with try/finally): two
+    concurrent loops would purge the same tables. A failure in ONE store does
+    not stop the loop (each store is wrapped in its own try/except). The
+    per-store purge timeout is longer than the interval so a slow batch is not
+    cancelled mid-batch by the wait_for.
     """
 
     def __init__(

@@ -128,16 +128,24 @@ async def test_get_recent_comprehension_all_empty_returns_empty_list() -> None:
 
 @pytest.mark.asyncio
 async def test_get_recent_comprehension_filters_terminal_turn_status() -> None:
-    """The baseline only reads completed turns (delivered/escalated).
+    """The baseline EXCLUDES failed/superseded turns (``notin_`` semantics).
 
-    FAILED / superseded / aborted turns never finalized their pipeline, so the
-    SQL must constrain Turn.status to the completed set — asserted via the
-    compiled statement (literal binds).
+    FAILED / superseded / aborted turns never finalized their pipeline and
+    would pollute the baseline, so they are the exclusion set — asserted via
+    the compiled statement (literal binds). ``notin_`` means every OTHER
+    status (delivered / escalated / pending_approval / gray_zone) is INCLUDED
+    by absence from the exclusion set, so none of them may appear as a literal
+    in the compiled WHERE clause.
     """
     factory, session = _factory_with_rows([(uuid4(), {"emotion": "neutral"})])
     store = SqlTraceStore(session_factory=factory)
     await store.get_recent_comprehension(7, limit=2)
     stmt = session.execute.await_args.args[0]
     compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-    assert "delivered" in compiled
-    assert "escalated" in compiled
+    # The exclusion set is EXACTLY {failed, superseded}: a future fix that
+    # re-includes SUPERSEDED (or drops either from the NOT IN) changes the
+    # compiled clause and fails this assertion.
+    assert "NOT IN ('failed', 'superseded')" in compiled
+    # Valid baseline statuses are included by absence (they are NOT excluded).
+    for literal in ("'delivered'", "'escalated'", "'pending_approval'", "'gray_zone'"):
+        assert literal not in compiled

@@ -480,7 +480,11 @@ class TurnOrchestrator:
             )
 
     async def _run_emotional_detector(
-        self, turn_id: UUID, chat_id: int, decision: Decision | None
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        decision: Decision | None,
+        vip_epoch: int | None = None,
     ) -> None:
         """Shadow detector hook: never propagates, flag-gated, writes
         emotional_signal_log only. Best-effort (pattern _maybe_post_turn_guarded).
@@ -490,6 +494,11 @@ class TurnOrchestrator:
         signal is detected — inserts one emotional_signal_log row. No effect
         on the decision pipeline (shadow-only). Both deps are ``object | None``
         (flag OFF → detector is None → no-op).
+
+        ``vip_epoch`` closes the deterministic stale-epoch gap: a turn whose
+        VIP epoch advanced since it was minted (a newer message superseded it
+        via ``supersede_chat``) is never logged, even when the read-back below
+        is not yet terminal.
         """
         if self._emotional_detector is None or self._emotional_signal_log is None:
             return
@@ -507,6 +516,16 @@ class TurnOrchestrator:
             # and aborted turns (review round 1).
             turn = await self._coordinator.get_turn(turn_id)
             if turn is not None and is_turn_status_terminal(turn.status):
+                return
+            # Deterministic stale-epoch gate (review round 2): the read-back
+            # above only covers turns ALREADY terminal at hook time. A turn
+            # whose VIP epoch advanced since mint (superseded right after the
+            # call-site by ``_apply_decision_after_director``'s
+            # ``is_vip_epoch_current`` check) would still be logged here — skip
+            # it too so a stale turn never gets a shadow signal.
+            if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
+                chat_id, vip_epoch
+            ):
                 return
             min_turns = getattr(
                 self._emotional_detector, "min_baseline_turns", 5
@@ -1554,8 +1573,12 @@ class TurnOrchestrator:
         # Flag OFF → detector None → no-op. ``_run_emotional_detector`` is
         # fully guarded (its inner try/except never propagates), so no external
         # guard is needed here — and the hook never transitions the turn, so
-        # TurnSupersededError cannot originate from it.
-        await self._run_emotional_detector(turn_id, incoming.chat_id, decision)
+        # TurnSupersededError cannot originate from it. ``vip_epoch`` is passed
+        # so the hook can skip turns that are about to be superseded by the
+        # ``_apply_decision_after_director`` epoch check below (round 2).
+        await self._run_emotional_detector(
+            turn_id, incoming.chat_id, decision, vip_epoch
+        )
 
         # Route decision + transitions: owner/VIP cancel may raise on status_sink
         # when the Director stub never polled mid-pipeline (A2 clean abort).
