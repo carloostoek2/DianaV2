@@ -500,6 +500,14 @@ class TurnOrchestrator:
             trace = await trace_reader.get_full_trace(turn_id)
             if trace is None or not trace.get("comprehension"):
                 return
+            # Read-back gate (pattern ``_maybe_post_turn_terminal``): a turn
+            # that is already terminal (superseded / failed / ...) never had
+            # its decision applied — do not log a shadow signal for it. This
+            # keeps the emotional_signal_log clean of stale-epoch superseded
+            # and aborted turns (review round 1).
+            turn = await self._coordinator.get_turn(turn_id)
+            if turn is not None and is_turn_status_terminal(turn.status):
+                return
             min_turns = getattr(
                 self._emotional_detector, "min_baseline_turns", 5
             )
@@ -518,6 +526,15 @@ class TurnOrchestrator:
                     turn_id=turn_id,
                     vip_id=trace.get("vip_id"),
                     signal=signal,
+                )
+                logger.info(
+                    "emotional_detector_signal",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": chat_id,
+                        "signal_type": signal.signal_type,
+                        "intensity": signal.intensity,
+                    },
                 )
         except Exception:
             log_swallowed(
@@ -1534,20 +1551,11 @@ class TurnOrchestrator:
 
         # Evo-Agente: shadow emotional detector AFTER the Director produced a
         # decision (needs decision.action for pipeline_would_have_escalated).
-        # Flag OFF → detector None → no-op. The method itself never propagates;
-        # this extra guard only protects against unexpected errors without
-        # masking TurnSupersededError from the normal path below.
-        try:
-            await self._run_emotional_detector(turn_id, incoming.chat_id, decision)
-        except TurnSupersededError:
-            raise
-        except Exception:
-            log_swallowed(
-                logger,
-                "emotional_detector_hook_error",
-                turn_id=str(turn_id),
-                chat_id=incoming.chat_id,
-            )
+        # Flag OFF → detector None → no-op. ``_run_emotional_detector`` is
+        # fully guarded (its inner try/except never propagates), so no external
+        # guard is needed here — and the hook never transitions the turn, so
+        # TurnSupersededError cannot originate from it.
+        await self._run_emotional_detector(turn_id, incoming.chat_id, decision)
 
         # Route decision + transitions: owner/VIP cancel may raise on status_sink
         # when the Director stub never polled mid-pipeline (A2 clean abort).

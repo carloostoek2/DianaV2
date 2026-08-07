@@ -505,16 +505,21 @@ class VipProfileRecord(BaseModel):
 
 
 class VipProfileHistoryRecord(BaseModel):
-    """vip_profile_history row shape (snapshot of a synthesized profile version)."""
+    """vip_profile_history row shape (snapshot of a synthesized profile version).
+
+    ``id`` / ``created_at`` are optional so the DB ``server_default``
+    (``gen_random_uuid()`` / ``now()``) fills them when the caller omits them —
+    mirroring ``EmotionalSignalLog``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    id: UUID
+    id: UUID | None = None
     vip_id: UUID
     version: int
     profile_snapshot: dict[str, Any]
     diff_summary: str | None = None
-    created_at: datetime
+    created_at: datetime | None = None
 
 
 class VipMoodStateRecord(BaseModel):
@@ -536,7 +541,9 @@ class VipTrustBudgetRecord(BaseModel):
 
     vip_id: UUID
     turn_category: TurnCategory
-    trust_score: float = 0.0
+    # Spec documents trust_score as [0, 1]; enforce the range at the record
+    # boundary (the Fase 5 writer is the only producer of these records).
+    trust_score: float = Field(default=0.0, ge=0.0, le=1.0)
     correction_count: int = 0
     autonomous_count: int = 0
     last_correction_at: datetime | None = None
@@ -545,11 +552,16 @@ class VipTrustBudgetRecord(BaseModel):
 
 
 class TurnCategoryLogRecord(BaseModel):
-    """turn_category_log row shape — per-turn classification (Fase 2 writer)."""
+    """turn_category_log row shape — per-turn classification (Fase 2 writer).
+
+    ``id`` / ``created_at`` are optional so the DB ``server_default``
+    (``gen_random_uuid()`` / ``now()``) fills them when the caller omits them —
+    mirroring ``EmotionalSignalLog``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    id: UUID
+    id: UUID | None = None
     turn_id: UUID
     category: TurnCategory
     chat_id: int

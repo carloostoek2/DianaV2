@@ -42,6 +42,15 @@ class SqlEmotionalSignalLogRepo:
         vip_id: UUID | None,
         signal: EmotionalSignalRecord,
     ) -> None:
+        # Enforce the write invariant: only a detected signal carries a valid
+        # ``signal_type``. Persisting a non-detected record (signal_type=None)
+        # would surface as an opaque NOT NULL IntegrityError — reject it here
+        # with a clear error instead.
+        if not signal.signal_detected:
+            raise ValueError(
+                "cannot persist a non-detected emotional signal "
+                "(signal_type is None and the column is NOT NULL)"
+            )
         async with self._sf() as session:
             row = EmotionalSignalLog(
                 turn_id=turn_id,

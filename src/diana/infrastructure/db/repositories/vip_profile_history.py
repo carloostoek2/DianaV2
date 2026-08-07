@@ -37,15 +37,21 @@ class SqlVipProfileHistoryRepo:
         self._sf = session_factory
 
     async def insert(self, record: VipProfileHistoryRecord) -> VipProfileHistoryRecord:
+        values: dict[str, object] = dict(
+            vip_id=record.vip_id,
+            version=record.version,
+            profile_snapshot=record.profile_snapshot,
+            diff_summary=record.diff_summary,
+        )
+        # Omit ``id`` / ``created_at`` when None so the server defaults
+        # (``gen_random_uuid()`` / ``now()``) fill them — explicit NULLs would
+        # violate the NOT NULL columns.
+        if record.id is not None:
+            values["id"] = record.id
+        if record.created_at is not None:
+            values["created_at"] = record.created_at
         async with self._sf() as session:
-            row = VipProfileHistory(
-                id=record.id,
-                vip_id=record.vip_id,
-                version=record.version,
-                profile_snapshot=record.profile_snapshot,
-                diff_summary=record.diff_summary,
-                created_at=record.created_at,
-            )
+            row = VipProfileHistory(**values)
             session.add(row)
             await session.commit()
             await session.refresh(row)

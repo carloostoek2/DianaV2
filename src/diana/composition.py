@@ -969,10 +969,16 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
     store = SqlSystemConfigStore(app.session_factory)
 
     # Evo-Agente Fase 0: manual override of the detector thresholds from
-    # system_config key ``emotional_detector``. Detector None (flag off) → no-op.
+    # system_config key ``emotional_detector``. Detector None (flag off) →
+    # no-op WITHOUT any DB I/O on the non-wired path. A transient DB error
+    # must not break boot — read is best-effort.
     detector = getattr(app, "emotional_detector", None)
     if detector is not None:
-        cfg = await store.get("emotional_detector")
+        try:
+            cfg = await store.get("emotional_detector")
+        except Exception:
+            logger.exception("emotional_detector_thresholds_read_failed")
+            cfg = None
         if isinstance(cfg, dict):
             detector.apply_overrides(cfg)
             logger.info(

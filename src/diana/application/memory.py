@@ -400,6 +400,22 @@ class InMemoryTraceReaderWriter:
         bucket = self.data.get(turn_id)
         return dict(bucket) if bucket else None
 
+    async def get_recent_comprehension(
+        self,
+        chat_id: int,
+        *,
+        limit: int = 5,
+        exclude_turn_id: UUID | None = None,
+    ) -> list[dict]:
+        """TraceReader protocol completion: no comprehension storage here.
+
+        The in-memory reader has no per-chat comprehension index to query, so
+        it returns ``[]`` — the emotional detector hook then sees an empty
+        baseline and emits no ``ruptura_de_patron`` signal instead of failing
+        with an AttributeError.
+        """
+        return []
+
     def get_delivery_result(self, turn_id: UUID) -> dict | None:
         return self.delivery_results.get(turn_id)
 

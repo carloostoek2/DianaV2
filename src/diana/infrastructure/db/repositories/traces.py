@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, literal, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from diana.cognitive.models import TurnStatus
 from diana.cognitive.ports import TRACE_KEYS, TRACE_KEY_TO_COLUMN, to_jsonable
 from diana.infrastructure.db.models import PipelineTrace, Turn, Vip
 
@@ -223,17 +224,27 @@ class SqlTraceStore:
 
         Emotional baseline for the signal detector: reads
         ``pipeline_traces.comprehension`` (the only table with per-turn
-        emotion). Skips rows with missing/empty comprehension. Optional
-        ``exclude_turn_id`` drops the current turn after comprehension was
-        stored (mirror of ``get_recent_intents``).
+        emotion). Only turns that reached a **completed** terminal status
+        (``delivered`` / ``escalated``) are included — a FAILED / superseded /
+        aborted turn never finalized its pipeline and would pollute the
+        ``ruptura_de_patron`` baseline. Skips rows with missing/empty
+        comprehension. Optional ``exclude_turn_id`` drops the current turn
+        after comprehension was stored (mirror of ``get_recent_intents``).
         """
         if limit <= 0:
             return []
         stmt = (
             select(PipelineTrace.turn_id, PipelineTrace.comprehension)
+            .join(Turn, PipelineTrace.turn_id == Turn.id)
             .where(
                 PipelineTrace.chat_id == chat_id,
                 PipelineTrace.comprehension.is_not(None),
+                Turn.status.in_(
+                    [
+                        TurnStatus.DELIVERED.value,
+                        TurnStatus.ESCALATED.value,
+                    ]
+                ),
             )
             .order_by(PipelineTrace.created_at.desc())
         )

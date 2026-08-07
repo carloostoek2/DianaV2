@@ -29,8 +29,10 @@ class SqlVipProfileRepo:
     """Thin persistence for the synthesized profile — no synthesis logic.
 
     ``insert`` is a simple upsert keyed on ``vip_id`` (Postgres ON CONFLICT):
-    it overwrites the mutable columns and bumps ``version`` for the caller's
-    row, matching the "perfil sintetizado" write contract of Fase 1.
+    it overwrites the mutable columns with the caller's record values verbatim.
+    Versioning (incrementing ``version`` and snapshotting the prior profile
+    into ``vip_profile_history``) is the Fase 1 service's job — this repo
+    never bumps the version itself.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:

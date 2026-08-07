@@ -11,15 +11,21 @@ NEVER auto-calibrated by the LLM (incident lesson — safety gates stay constant
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from diana.application.ports import EmotionalSignalRecord
 from diana.cognitive.models import Comprehension, SignalType
 
+logger = logging.getLogger("diana.application")
+
 # Fixed thresholds (constants, never auto-calibrated). Manual override only.
 SYNTHESIS_THRESHOLD = 0.5
 ESCALATE_THRESHOLD = 0.8
 MIN_BASELINE_TURNS = 5
+# Manual-override clamp bounds for ``min_baseline_turns`` (config-typo safety).
+MIN_BASELINE_TURNS_MIN = 1
+MIN_BASELINE_TURNS_MAX = 50
 BASELINE_WARM_RATIO_OPEN = 0.4
 BASELINE_WARM_RATIO_COOL = 0.7
 
@@ -27,9 +33,6 @@ _ANGUISH_EMOTIONS = frozenset({"ansiosa", "molesta", "triste"})
 _VULNERABILITY_EMOTIONS = frozenset({"triste", "ansiosa"})
 _PERSONAL_OPENING_INTENTS = frozenset(
     {"pedir_consejo", "contar_anecdota", "compartir_logro"}
-)
-_PERSONAL_OPENING_TOPICS = frozenset(
-    {"apertura", "honestidad", "conexion", "tema_pesado"}
 )
 # ``honestidad``/``extrañar`` are analyst "useful tags" (analyst.py:44-53),
 # not mandatory topics — match both sets; a missing tag is simply "no signal".
@@ -56,22 +59,40 @@ class EmotionalSignalDetector:
     ) -> None:
         self.synthesis_threshold = float(synthesis_threshold)
         self.escalate_threshold = float(escalate_threshold)
-        self.min_baseline_turns = int(min_baseline_turns)
+        # Clamp to a sane range so a typo'd constructor arg cannot pull the
+        # baseline over thousands of rows per turn (config-typo safety).
+        self.min_baseline_turns = min(
+            max(int(min_baseline_turns), MIN_BASELINE_TURNS_MIN),
+            MIN_BASELINE_TURNS_MAX,
+        )
 
     def apply_overrides(self, config: dict[str, Any]) -> None:
         """Manual threshold override from ``system_config`` (key ``emotional_detector``).
 
         This is the ONLY override point — thresholds are never auto-calibrated.
         Missing keys are ignored; invalid values are rejected without crashing.
+
+        The ``(synthesis_threshold, escalate_threshold)`` pair is validated
+        together: both must be within [0, 1] AND ``escalate_threshold`` must be
+        strictly greater than ``synthesis_threshold`` (the spec's asymmetry —
+        synthesis is cheap, an escalation saturates the owner). An inverted /
+        equal override is rejected wholesale (previous values kept) and logged.
+        ``min_baseline_turns`` is clamped to
+        [``MIN_BASELINE_TURNS_MIN``, ``MIN_BASELINE_TURNS_MAX``].
         """
         if not isinstance(config, dict):
             return
+
+        synthesis = self.synthesis_threshold
+        escalate = self.escalate_threshold
+        pair_touched = False
         try:
             raw = config.get("synthesis_threshold")
             if raw is not None:
                 value = float(raw)
                 if 0.0 <= value <= 1.0:
-                    self.synthesis_threshold = value
+                    synthesis = value
+                    pair_touched = True
         except (TypeError, ValueError):
             pass
         try:
@@ -79,15 +100,32 @@ class EmotionalSignalDetector:
             if raw is not None:
                 value = float(raw)
                 if 0.0 <= value <= 1.0:
-                    self.escalate_threshold = value
+                    escalate = value
+                    pair_touched = True
         except (TypeError, ValueError):
             pass
+
+        if pair_touched and not (escalate > synthesis):
+            logger.warning(
+                "emotional_detector_override_rejected",
+                extra={
+                    "synthesis_threshold": synthesis,
+                    "escalate_threshold": escalate,
+                },
+            )
+            return  # reject the pair wholesale — keep the current thresholds
+
+        self.synthesis_threshold = synthesis
+        self.escalate_threshold = escalate
+
         try:
             raw = config.get("min_baseline_turns")
             if raw is not None:
                 value = int(raw)
-                if value >= 1:
-                    self.min_baseline_turns = value
+                self.min_baseline_turns = min(
+                    max(value, MIN_BASELINE_TURNS_MIN),
+                    MIN_BASELINE_TURNS_MAX,
+                )
         except (TypeError, ValueError):
             pass
 
@@ -121,13 +159,13 @@ class EmotionalSignalDetector:
                 signal_type="angustia", intensity=0.85, decision_action=decision_action
             )
 
-        # vulnerabilidad (0.6): emotion in {triste, ansiosa} AND personal opening.
+        # vulnerabilidad (0.6): emotion in {triste, ansiosa} AND a personal-
+        # opening intent (spec table: emotion + intent de apertura personal).
+        # Topics alone do NOT trigger it — opening is behavioural, not topical;
+        # a topical-only turn falls through to revelacion_de_vida below.
         intent = self._get(comp, "intent")
         topics = self._topics(comp)
-        if emotion in _VULNERABILITY_EMOTIONS and (
-            intent in _PERSONAL_OPENING_INTENTS
-            or bool(topics & _PERSONAL_OPENING_TOPICS)
-        ):
+        if emotion in _VULNERABILITY_EMOTIONS and intent in _PERSONAL_OPENING_INTENTS:
             return self._build(
                 signal_type="vulnerabilidad",
                 intensity=0.6,
@@ -188,7 +226,16 @@ class EmotionalSignalDetector:
         raw = comp.get("topics")
         if not isinstance(raw, list):
             return set()
-        return {str(t).strip().lower() for t in raw if str(t).strip()}
+        # Only real vocabulary tokens count — None/ints/other non-strings are
+        # analyst artifacts, not topics (no "none"/"123" junk tokens).
+        topics: set[str] = set()
+        for t in raw:
+            if not isinstance(t, str):
+                continue
+            token = t.strip().lower()
+            if token:
+                topics.add(token)
+        return topics
 
     def _baseline_warm_ratio(
         self, baseline: list[dict[str, Any]] | None,
@@ -246,6 +293,8 @@ __all__ = [
     "BASELINE_WARM_RATIO_OPEN",
     "ESCALATE_THRESHOLD",
     "MIN_BASELINE_TURNS",
+    "MIN_BASELINE_TURNS_MAX",
+    "MIN_BASELINE_TURNS_MIN",
     "SYNTHESIS_THRESHOLD",
     "EmotionalSignalDetector",
 ]
