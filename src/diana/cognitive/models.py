@@ -242,6 +242,17 @@ class EvaluationProfile(BaseModel):
         return value
 
 
+def evaluation_dispersion(profile: EvaluationProfile) -> float:
+    """Population std of the 7 evaluation dims — a SPREAD metric, not a
+    collapsed score (spec 5.2). High dispersion = dimensions disagree = low
+    confidence for autonomous send. The ``EvaluationProfile`` contract forbids
+    collapsing to a single score; a spread metric does not violate it."""
+    values = [getattr(profile, dim) for dim in _EVAL_DIMS]
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    return math.sqrt(variance)
+
+
 class Policy(BaseModel):
     """Pure domain model for a distilled business policy (non-ORM).
 

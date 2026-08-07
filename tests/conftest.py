@@ -51,6 +51,14 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "MOOD_SIGNAL_WEIGHT",
         "MOOD_AXIS_WEIGHTS",
         "MOOD_NOISE",
+        # Evo-Agente Fase 5 (trust budget, shadow) flags/thresholds
+        "FEATURE_TRUST_BUDGET",
+        "TRUST_BUDGET_INITIAL",
+        "TRUST_BUDGET_INCREMENT",
+        "TRUST_BUDGET_DECREMENT",
+        "TRUST_BUDGET_THRESHOLD",
+        "TRUST_DISPERSION_HIGH",
+        "TRUST_TREND_WINDOW_DAYS",
     ]
     for key in keys:
         monkeypatch.delenv(key, raising=False)

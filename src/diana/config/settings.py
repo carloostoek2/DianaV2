@@ -119,6 +119,17 @@ class Settings(BaseSettings):
     # Ruido acotado ±mood_noise (determinista con semilla en el motor para tests).
     mood_noise: float = 0.05
 
+    # Evo-Agente Fase 5 (presupuesto de confianza, shadow) — env-driven, default off.
+    feature_trust_budget: bool = False
+    # Mecánica del trust budget por (VIP, categoría). Constantes fijas con override
+    # manual por system_config clave `trust_budget`; NUNCA auto-calibradas (incidente).
+    trust_budget_initial: float = 0.2      # arranca bajo
+    trust_budget_increment: float = 0.05   # sube lento (turno autónomo sin corrección)
+    trust_budget_decrement: float = 0.2    # baja rápido (corrección del owner), asimétrico
+    trust_budget_threshold: float = 0.9    # umbral autoenvío por categoría (coincide con phatic_trust_min reservado L108)
+    trust_dispersion_high: float = 0.25    # 5.2: dispersión del EvaluationProfile que invalida autoenvío
+    trust_trend_window_days: int = 14      # ventana "tendencia reciente" de la ficha (EA-06)
+
     # Ops surface (Telegram process edge) — single-instance defaults.
     # health_host is loopback-only (SEC-HEALTH-01); no public bind via env.
     health_host: str = "127.0.0.1"

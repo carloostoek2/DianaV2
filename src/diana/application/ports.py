@@ -555,6 +555,50 @@ class VipTrustBudgetRecord(BaseModel):
     updated_at: datetime | None = None
 
 
+@runtime_checkable
+class VipTrustBudgetStore(Protocol):
+    """(VIP, turn_category) budget persistence — atomic deltas, no trust math.
+
+    The repository applies the SQL delta (increment/decrement) atomically so
+    concurrent correction/autonomous events never race; the application service
+    decides the deltas and clamps. ``initial`` seeds the INSERT branch.
+    """
+
+    async def get_by_vip_and_category(
+        self, vip_id: UUID, turn_category: TurnCategory
+    ) -> VipTrustBudgetRecord | None: ...
+
+    async def increment_autonomous(
+        self,
+        vip_id: UUID,
+        turn_category: TurnCategory,
+        *,
+        delta: float,
+        initial: float,
+    ) -> VipTrustBudgetRecord: ...
+
+    async def decrement_correction(
+        self,
+        vip_id: UUID,
+        turn_category: TurnCategory,
+        *,
+        delta: float,
+        initial: float,
+        correction_time: datetime,
+    ) -> VipTrustBudgetRecord: ...
+
+    async def list_by_vip(self, vip_id: UUID) -> list[VipTrustBudgetRecord]: ...
+
+
+@runtime_checkable
+class TurnCategoryLogReader(Protocol):
+    """Read-only view of the turn classification log (by turn_id)."""
+
+    async def get_by_turn_id(
+        self, turn_id: UUID
+    ) -> TurnCategoryLogRecord | None: ...
+
+
 class TurnCategoryLogRecord(BaseModel):
     """turn_category_log row shape — per-turn classification (Fase 2 writer).
 
