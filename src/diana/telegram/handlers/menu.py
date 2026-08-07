@@ -191,6 +191,8 @@ _MEMORY_STATUS_ICONS = {
 
 _MEMORY_SECTION_MAX = 50
 
+_TRUST_TREND_ICONS = {"up": "▲", "down": "▼", "flat": "→"}
+
 
 def _memory_section_lines(
     memory_rows: list[dict], *, max_facts: int = _MEMORY_SECTION_MAX
@@ -217,6 +219,31 @@ def _memory_section_lines(
     return lines, pending
 
 
+def _trust_section_lines(trust_rows: list[dict]) -> list[str]:
+    """Render the 🔐 Confianza section (EA-06); empty rows → no lines.
+
+    The "collapsible section" pattern of this codebase = a header + lines that
+    never break the Telegram render (no orphan header when there are no rows).
+    Each row: category, score (0.00-1.00), trend icon, counts and the date of
+    the last correction. User-facing text is neutral Mexican Spanish.
+    """
+    if not trust_rows:
+        return []
+    lines = ["\n🔐 Confianza:"]
+    for row in trust_rows:
+        category = row.get("category") or "?"
+        score = float(row.get("trust_score") or 0.0)
+        trend = _TRUST_TREND_ICONS.get(row.get("trend"), "→")
+        parts = [f"  • [{category}] {score:.2f} {trend}"]
+        parts.append(f"autónomos {row.get('autonomous_count', 0)}")
+        parts.append(f"correcciones {row.get('correction_count', 0)}")
+        last = row.get("last_correction_at")
+        if last:
+            parts.append(f"última {str(last)[:10]}")
+        lines.append(" · ".join(parts))
+    return lines
+
+
 def _format_vip_profile(result: Any) -> str:
     """Format a ``ProfileAdminResult`` for display."""
     if result.status == "vip_not_found":
@@ -227,7 +254,13 @@ def _format_vip_profile(result: Any) -> str:
     # memory is an extra section. The "Sin datos todavia" empty card only
     # applies when there is no manual data AND no memory either (the
     # diagnosed "perfil generado pero no se ve nada" case is fixed here).
-    if result.status == "profile_empty" and not memory_lines:
+    # Evo-Agente Fase 5 (EA-06): trust rows also keep the card away — a VIP
+    # with only trust history still gets a ficha with the 🔐 Confianza section.
+    if (
+        result.status == "profile_empty"
+        and not memory_lines
+        and not (result.trust_budget or [])
+    ):
         return f"Ficha de {name}\n\nSin datos todavia."
 
     content = result.content or {}
@@ -255,6 +288,10 @@ def _format_vip_profile(result: Any) -> str:
     lines.extend(memory_lines)
     if pending_count > 0:
         lines.append(f"\nHay {pending_count} hechos por aprobar — usá /memoria.")
+
+    # Evo-Agente Fase 5 (EA-06): the 🔐 Confianza section — additive, follows
+    # the memory section; empty rows render nothing (no orphan header).
+    lines.extend(_trust_section_lines(result.trust_budget or []))
 
     return "\n".join(lines)
 

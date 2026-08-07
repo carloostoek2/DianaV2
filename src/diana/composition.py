@@ -44,6 +44,7 @@ from diana.application.staging_service import StagingService
 from diana.application.turn_classifier import TurnClassifier
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
+from diana.application.trust_budget_service import TrustBudgetService
 from diana.application.emotional_signal_detector import EmotionalSignalDetector
 from diana.application.profile_synthesis_service import ProfileSynthesisService
 from diana.application.profile_synthesis_trigger_service import (
@@ -327,6 +328,10 @@ class AppContainer:
     turn_classifier: object | None = None
     mood_engine: object | None = None
     vip_mood_state_repo: SqlVipMoodStateRepo | None = None
+    # Evo-Agente Fase 5: trust-budget service (built ALWAYS — consumed by
+    # admin/profile_admin/thresholds even when the flag is off) + its repo.
+    trust_budget: object | None = None
+    vip_trust_budget_repo: SqlVipTrustBudgetRepo | None = None
 
 
 def build_app(
@@ -369,6 +374,21 @@ def build_app(
         bot_inst, owner_telegram_id=settings.owner_telegram_id
     )
     clock = SystemClock()
+    # Evo-Agente Fase 5: the trust-budget service is built ALWAYS — admin
+    # (correction event), profile_admin (ficha) and load_runtime_thresholds
+    # consume it even when ``feature_trust_budget`` is off (the consumers gate
+    # the wiring themselves with ``... if settings.feature_trust_budget else None``).
+    trust_budget_service = TrustBudgetService(
+        store=vip_trust_budget_repo,
+        turn_category_log=turn_category_log_repo,
+        clock=clock.now,
+        initial=settings.trust_budget_initial,
+        increment=settings.trust_budget_increment,
+        decrement=settings.trust_budget_decrement,
+        threshold=settings.trust_budget_threshold,
+        dispersion_high=settings.trust_dispersion_high,
+        trend_window_days=settings.trust_trend_window_days,
+    )
     policy = delay_policy or RandomDelayPolicy(
         supervised_min=settings.delivery_supervised_delay_min,
         supervised_max=settings.delivery_supervised_delay_max,
@@ -560,6 +580,9 @@ def build_app(
         sandbox=sandbox,
         staging=staging,
         history=history,
+        trust_budget=(
+            trust_budget_service if settings.feature_trust_budget else None
+        ),
     )
 
     catalog = get_persona_catalog()
@@ -784,6 +807,9 @@ def build_app(
         turn_category_log=turn_category_log_repo,
         mood_engine=(mood if settings.feature_mood_engine else None),
         vip_mood_state=vip_mood_state_repo,
+        trust_budget=(
+            trust_budget_service if settings.feature_trust_budget else None
+        ),
     )
 
     # REQ-MEM-07: supervised-approved turns must run the SAME post-turn
@@ -856,6 +882,11 @@ def build_app(
         # F5 Pool 4 (F5-06): semantic memory section of the ficha — only
         # wired with the flag ON (flag OFF → None → no query, byte-identical).
         memories=(memories_repo if settings.feature_memory_enabled else None),
+        # Evo-Agente Fase 5 (EA-06): 🔐 Confianza section of the ficha — only
+        # wired with the flag ON (flag OFF → None → no query, byte-identical).
+        trust_budget=(
+            trust_budget_service if settings.feature_trust_budget else None
+        ),
     )
 
     # VIP DM history seed (Telethon personal session) — optional until env is set.
@@ -1012,6 +1043,8 @@ def build_app(
         ),
         mood_engine=(mood if settings.feature_mood_engine else None),
         vip_mood_state_repo=vip_mood_state_repo,
+        trust_budget=trust_budget_service,
+        vip_trust_budget_repo=vip_trust_budget_repo,
     )
 
 
@@ -1175,6 +1208,36 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
         logger.info(
             "mood_engine_thresholds_skipped",
             extra={"reason": "mood_engine not wired (feature_mood_engine off)"},
+        )
+
+    # Evo-Agente Fase 5: manual override of the trust-budget thresholds from
+    # system_config key ``trust_budget`` (same best-effort pattern). The
+    # service is built ALWAYS (AppContainer.trust_budget); the overrides apply
+    # regardless of the feature flag so a manual calibration survives a toggle.
+    # Override is manual ONLY — never auto-calibrated.
+    tb = getattr(app, "trust_budget", None)
+    if tb is not None:
+        try:
+            cfg = await store.get("trust_budget")
+        except Exception:
+            logger.exception("trust_budget_thresholds_read_failed")
+            cfg = None
+        if isinstance(cfg, dict):
+            tb.apply_overrides(cfg)
+            logger.info(
+                "trust_budget_thresholds_loaded",
+                extra={
+                    "initial": tb._initial,  # noqa: SLF001
+                    "increment": tb._increment,  # noqa: SLF001
+                    "decrement": tb._decrement,  # noqa: SLF001
+                    "threshold": tb._threshold,  # noqa: SLF001
+                    "dispersion_high": tb._dispersion_high,  # noqa: SLF001
+                },
+            )
+    else:
+        logger.info(
+            "trust_budget_thresholds_skipped",
+            extra={"reason": "trust_budget not wired"},
         )
 
 

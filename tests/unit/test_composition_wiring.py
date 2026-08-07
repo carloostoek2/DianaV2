@@ -689,3 +689,46 @@ def test_composition_load_runtime_thresholds_reads_phatic_and_mood(
     assert 'store.get("mood_engine")' in _comp_src
     assert "phatic_classifier_thresholds_loaded" in _comp_src
     assert "mood_engine_thresholds_loaded" in _comp_src
+
+
+# --- Evo-Agente Fase 5: trust budget wiring ----------------------------------
+
+
+def test_composition_trust_budget_service_wired(_comp_src: str) -> None:
+    """The pure TrustBudgetService is imported and constructed in build_app."""
+    assert (
+        "from diana.application.trust_budget_service import TrustBudgetService"
+        in _comp_src
+    )
+    assert "trust_budget_service = TrustBudgetService(" in _comp_src
+
+
+def test_composition_trust_budget_wired_flag_gated(_comp_src: str) -> None:
+    """Orchestrator/admin/profile_admin receive the service flag-gated
+    (flag OFF → None → byte-identical)."""
+    # Split the flag-gated expression (multiline wiring style, review nit).
+    assert "trust_budget=(" in _comp_src
+    assert (
+        "trust_budget_service if settings.feature_trust_budget else None"
+        in _comp_src
+    )
+    assert (
+        _comp_src.count(
+            "trust_budget_service if settings.feature_trust_budget else None"
+        )
+        >= 3
+    )
+
+
+def test_composition_trust_budget_repo_exposed(_comp_src: str) -> None:
+    """AppContainer exposes trust_budget + vip_trust_budget_repo."""
+    assert "trust_budget: object | None = None" in _comp_src
+    assert "vip_trust_budget_repo: SqlVipTrustBudgetRepo | None = None" in _comp_src
+    assert "vip_trust_budget_repo=vip_trust_budget_repo" in _comp_src
+
+
+def test_composition_load_runtime_thresholds_reads_trust(_comp_src: str) -> None:
+    """Boot hydrate reads system_config key ``trust_budget`` (manual override)."""
+    assert 'store.get("trust_budget")' in _comp_src
+    assert "trust_budget_thresholds_loaded" in _comp_src
+    assert "trust_budget_thresholds_skipped" in _comp_src

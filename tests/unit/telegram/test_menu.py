@@ -810,3 +810,89 @@ def test_format_vip_profile_empty_without_memory_stays_empty_card() -> None:
 
     assert "Sin datos" in text
     assert "🧠 Memoria" not in text
+
+
+# --- Evo-Agente Fase 5 (EA-06): 🔐 Confianza section of the ficha ------------
+
+
+def test_format_vip_profile_renders_trust_section() -> None:
+    """The ficha shows the trust section with per-category score, trend icon,
+    counts and last-correction date (additive, memory section untouched)."""
+    result = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {"city": "BA"}, "notes": []},
+        trust_budget=[
+            {
+                "category": "fatico",
+                "trust_score": 0.42,
+                "autonomous_count": 3,
+                "correction_count": 1,
+                "last_correction_at": "2026-08-05T10:00:00+00:00",
+                "trend": "down",
+            }
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "🔐 Confianza" in text
+    assert "[fatico] 0.42 ▼" in text
+    assert "autónomos 3" in text
+    assert "correcciones 1" in text
+    assert "última 2026-08-05" in text
+    # Memory/manual sections untouched.
+    assert "📌 Datos:" in text
+    assert "city: BA" in text
+
+
+def test_format_vip_profile_empty_with_trust_shows_trust() -> None:
+    """No manual ficha + no memory, but trust rows → the ficha shows the 🔐
+    section, NOT the 'Sin datos' empty card."""
+    result = ProfileAdminResult(
+        status="profile_empty",
+        telegram_user_id=555,
+        display_name="Alice",
+        trust_budget=[
+            {
+                "category": "informativo",
+                "trust_score": 0.9,
+                "autonomous_count": 2,
+                "correction_count": 0,
+                "last_correction_at": None,
+                "trend": "up",
+            }
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "🔐 Confianza" in text
+    assert "[informativo] 0.90 ▲" in text
+    assert "Sin datos" not in text
+
+
+def test_format_vip_profile_no_trust_no_section() -> None:
+    """trust_budget None/[] → no orphan 🔐 header, memory hint still works."""
+    result = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {"city": "BA"}, "notes": []},
+        trust_budget=None,
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "🔐 Confianza" not in text
+    assert "📌 Datos:" in text
+
+    empty_rows = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {"city": "BA"}, "notes": []},
+        trust_budget=[],
+    )
+    assert "🔐 Confianza" not in _format_vip_profile(empty_rows)

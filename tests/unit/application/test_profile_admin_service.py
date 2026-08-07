@@ -459,3 +459,94 @@ async def test_show_profile_memory_none_when_unwired(
 
     assert r.status == "profile_empty"
     assert r.memory is None
+
+
+# --- Evo-Agente Fase 5 (EA-06): 🔐 Confianza section of the ficha -----------
+
+
+class FakeTrustBudget:
+    """TrustBudget double: list_for_ficha returns the wired rows."""
+
+    def __init__(self, rows: list[dict] | None = None) -> None:
+        self.rows = list(rows or [])
+        self.calls: list[UUID] = []
+
+    async def list_for_ficha(self, vip_id: UUID) -> list[dict]:
+        self.calls.append(vip_id)
+        return [dict(r) for r in self.rows]
+
+
+@pytest.mark.asyncio
+async def test_show_profile_includes_trust_when_wired(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """EA-06: with a trust service wired, show_profile carries the trust rows
+    in BOTH result paths (profile_empty and profile_ok)."""
+    service, vips, profiles = svc
+    rec = await vips.add(555, display_name="Alice")
+    rows = [
+        {
+            "category": "fatico",
+            "trust_score": 0.42,
+            "autonomous_count": 3,
+            "correction_count": 1,
+            "last_correction_at": "2026-08-05T10:00:00+00:00",
+            "trend": "down",
+        }
+    ]
+    trust = FakeTrustBudget(rows)
+    wired = ProfileAdminService(
+        profiles=profiles,
+        vips=vips,
+        owner_telegram_id=OWNER,
+        trust_budget=trust,
+        clock=lambda: datetime(2026, 8, 7, 12, 0, tzinfo=UTC),
+    )
+
+    # profile_empty path.
+    r_empty = await wired.show_profile(OWNER, 555)
+    assert r_empty.status == "profile_empty"
+    assert r_empty.trust_budget == rows
+    assert trust.calls == [rec.id]
+
+    # profile_ok path.
+    profiles.rows[rec.id] = {"facts": {"city": "BA"}, "notes": []}
+    r_ok = await wired.show_profile(OWNER, 555)
+    assert r_ok.status == "profile_ok"
+    assert r_ok.trust_budget == rows
+
+
+@pytest.mark.asyncio
+async def test_show_profile_trust_none_when_unwired(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """EA-06: without a trust service (flag OFF) → trust_budget=None
+    (byte-identical — existing ficha untouched)."""
+    service, vips, _ = svc
+    await vips.add(555, display_name="Alice")
+
+    r = await service.show_profile(OWNER, 555)
+
+    assert r.status == "profile_empty"
+    assert r.trust_budget is None
+
+
+@pytest.mark.asyncio
+async def test_show_profile_empty_trust_rows_normalized_to_none(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """EA-06: an empty list (VIP without trust history) becomes None so the
+    ficha never renders an orphan 🔐 header."""
+    service, vips, _ = svc
+    rec = await vips.add(555, display_name="Alice")
+    wired = ProfileAdminService(
+        profiles=service._profiles,  # noqa: SLF001
+        vips=vips,
+        owner_telegram_id=OWNER,
+        trust_budget=FakeTrustBudget([]),
+    )
+
+    r = await wired.show_profile(OWNER, 555)
+
+    assert r.status == "profile_empty"
+    assert r.trust_budget is None

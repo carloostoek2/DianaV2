@@ -42,6 +42,11 @@ class ProfileAdminResult:
     # extra section of the ficha. Default None keeps every existing
     # constructor/tests byte-identical (A7).
     memory: list[dict] | None = None
+    # Evo-Agente Fase 5 (EA-06): per-category trust rows (list_for_ficha) shown
+    # as the 🔐 Confianza section of the ficha. Default None keeps every
+    # existing constructor/tests byte-identical (A7). Only wired with the flag
+    # ON (flag OFF → None → no query, byte-identical).
+    trust_budget: list[dict] | None = None
 
 
 class ProfileAdminService:
@@ -55,6 +60,7 @@ class ProfileAdminService:
         owner_telegram_id: int,
         clock: Callable[[], datetime] | None = None,
         memories: Any | None = None,
+        trust_budget: Any | None = None,
     ) -> None:
         self._profiles = profiles
         self._vips = vips
@@ -64,6 +70,9 @@ class ProfileAdminService:
         # Wired only when feature_memory_enabled (flag OFF → None → no query,
         # byte-identical).
         self._memories = memories
+        # Evo-Agente Fase 5 (EA-06): optional trust-budget service (flag-gated;
+        # flag OFF → None → no query, byte-identical).
+        self._trust_budget = trust_budget
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -115,6 +124,13 @@ class ProfileAdminService:
         memory_rows: list[dict] | None = None
         if self._memories is not None:
             memory_rows = await self._memories.list_by_vip(vip.id)
+        # Evo-Agente Fase 5 (EA-06): per-category trust rows (only when wired —
+        # flag ON). An empty list (VIP with no trust history) is normalized to
+        # None so the ficha never renders an orphan header.
+        trust_rows: list[dict] | None = None
+        if self._trust_budget is not None:
+            rows = await self._trust_budget.list_for_ficha(vip.id)
+            trust_rows = rows or None
         row = await self._profiles.get_by_vip_id(vip.id)
         content = None if row is None else row.get("content")
         if row is None or is_hollow_content(content):
@@ -124,6 +140,7 @@ class ProfileAdminService:
                 display_name=vip.display_name,
                 content={"facts": {}, "notes": []},
                 memory=memory_rows,
+                trust_budget=trust_rows,
             )
         # Prefer normalized schema for structured rows; keep legacy flat as-is.
         display: dict | None
@@ -141,6 +158,7 @@ class ProfileAdminService:
             display_name=vip.display_name,
             content=display,
             memory=memory_rows,
+            trust_budget=trust_rows,
         )
 
     async def set_fact(
