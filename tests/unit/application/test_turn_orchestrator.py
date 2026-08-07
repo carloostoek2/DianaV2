@@ -25,9 +25,13 @@ from diana.application.memory import (
 )
 from diana.application.ports import (
     EmotionalSignalRecord,
+    TurnCategoryLogRecord,
     TurnRecord,
     VipInboundMessage,
+    VipMoodStateRecord,
 )
+from diana.application.mood_engine import MoodSignal, MoodState
+from diana.application.turn_classifier import TurnClassification
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import (
     ATENCION_DAILY_LIMIT_CLOSE,
@@ -220,6 +224,10 @@ def _build(
     emotional_detector: object | None = None,
     emotional_signal_log: object | None = None,
     profile_synthesis_trigger: object | None = None,
+    turn_classifier: object | None = None,
+    turn_category_log: object | None = None,
+    mood_engine: object | None = None,
+    vip_mood_state: object | None = None,
 ) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -289,6 +297,10 @@ def _build(
         emotional_detector=emotional_detector,
         emotional_signal_log=emotional_signal_log,
         profile_synthesis_trigger=profile_synthesis_trigger,
+        turn_classifier=turn_classifier,
+        turn_category_log=turn_category_log,
+        mood_engine=mood_engine,
+        vip_mood_state=vip_mood_state,
     )
     return {
         "orch": orch,
@@ -311,6 +323,10 @@ def _build(
         "emotional_detector": emotional_detector,
         "emotional_signal_log": emotional_signal_log,
         "profile_synthesis_trigger": profile_synthesis_trigger,
+        "turn_classifier": turn_classifier,
+        "turn_category_log": turn_category_log,
+        "mood_engine": mood_engine,
+        "vip_mood_state": vip_mood_state,
     }
 
 
@@ -4401,6 +4417,89 @@ class _FakeEmotionalSignalLog:
         self.inserted.append((turn_id, vip_id, signal))
 
 
+class _FakeTurnCategoryLog:
+    """In-memory turn_category_log writer for the classifier hook."""
+
+    def __init__(self) -> None:
+        self.inserted: list[TurnCategoryLogRecord] = []
+
+    async def insert(self, record: TurnCategoryLogRecord) -> TurnCategoryLogRecord:
+        self.inserted.append(record)
+        return record
+
+
+class _FakeVipMoodState:
+    """In-memory vip_mood_state store (get_by_vip/upsert) for the mood hook."""
+
+    def __init__(self) -> None:
+        self.rows: dict[UUID, VipMoodStateRecord] = {}
+        self.upsert_calls: list[VipMoodStateRecord] = []
+
+    async def get_by_vip(self, vip_id: UUID) -> VipMoodStateRecord | None:
+        return self.rows.get(vip_id)
+
+    async def upsert(self, record: VipMoodStateRecord) -> VipMoodStateRecord:
+        self.upsert_calls.append(record)
+        self.rows[record.vip_id] = record
+        return record
+
+
+class _FakeTurnClassifier:
+    """Injected classifier: returns a fixed classification or raises."""
+
+    def __init__(
+        self, classification: object, *, confidence_min: float = 0.7
+    ) -> None:
+        self._classification = classification
+        self.confidence_min = confidence_min
+        self.calls: list[tuple] = []
+
+    def classify(self, text, comprehension) -> TurnClassification:
+        self.calls.append((text, comprehension))
+        if isinstance(self._classification, Exception):
+            raise self._classification
+        return self._classification
+
+    def is_confident(self, classification: TurnClassification) -> bool:
+        return classification.confidence >= self.confidence_min
+
+
+class _FakeMoodEngine:
+    """Injected mood engine: fixed signal/update or raises."""
+
+    def __init__(
+        self,
+        *,
+        signal: MoodSignal | Exception | None = None,
+        update_result: MoodState | Exception | None = None,
+    ) -> None:
+        self._signal = signal or MoodSignal(0.4, 0.2, 0.0)
+        self._update_result = update_result or MoodState(0.5, -0.3, 0.2)
+        self.signal_calls: list[object] = []
+        self.update_calls: list[tuple] = []
+
+    def signal_from_comprehension(self, comprehension):
+        self.signal_calls.append(comprehension)
+        if isinstance(self._signal, Exception):
+            raise self._signal
+        return self._signal
+
+    def update(self, current, signal):
+        self.update_calls.append((current, signal))
+        if isinstance(self._update_result, Exception):
+            raise self._update_result
+        return self._update_result
+
+    def tone_distance(self, mood, emotion) -> float:
+        return 0.1234
+
+
+def _classification(
+    category: str = "fatico", confidence: float = 1.0, reason: str = "x"
+) -> TurnClassification:
+    return TurnClassification(category=category, confidence=confidence, reason=reason)
+
+
 def _signal_detected(signal_type: str = "angustia") -> object:
     from diana.application.ports import EmotionalSignalRecord
 
@@ -4805,5 +4904,342 @@ async def test_profile_synthesis_trigger_error_does_not_break_turn() -> None:
     )
     turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
     assert len(trigger.calls) == 1  # the trigger DID run and raised
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+# ---------------------------------------------------------------------------
+# Fase 2/3 shadow hooks: turn classifier + mood engine (flag-gated, guarded)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_turn_classifier_not_called_flag_off() -> None:
+    """turn_classifier None (flag off) → no turn_category_log insert; byte-identical."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        # turn_classifier stays None → the hook early-returns before any insert.
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert g["orch"]._turn_classifier is None  # noqa: SLF001
+    assert cat_log.inserted == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_mood_engine_not_called_flag_off() -> None:
+    """mood_engine None (flag off) → no vip_mood_state upsert; byte-identical."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        vip_mood_state=mood_state,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert g["orch"]._mood_engine is None  # noqa: SLF001
+    assert mood_state.upsert_calls == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_turn_classifier_logs_one_row() -> None:
+    """Flag on → exactly 1 turn_category_log insert; decision routing unchanged."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert len(cat_log.inserted) == 1
+    rec = cat_log.inserted[0]
+    assert rec.turn_id == turn_id
+    assert rec.vip_id == vip_id
+    assert rec.category == "fatico"
+    assert rec.confidence == 1.0
+    assert rec.would_autonomous is True
+    assert len(classifier.calls) == 1
+    # The classifier hook NEVER writes emotional_signal_log (no detector here).
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_mood_engine_upserts_state() -> None:
+    """Flag on → exactly 1 vip_mood_state upsert with the 3 axes."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine()
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert len(mood_state.upsert_calls) == 1
+    rec = mood_state.upsert_calls[0]
+    assert rec.vip_id == vip_id
+    assert (rec.axis_playful_serious, rec.axis_warm_distant, rec.axis_energy) == (
+        0.5,
+        -0.3,
+        0.2,
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_emotional_signal_log_one_row_per_turn() -> None:
+    """CRITICAL anti-doble-conteo: ONE detector evaluation per turn.
+
+    The detector fake is evaluated once (single detect() call); the classifier
+    hook REUSES the same record and never writes emotional_signal_log. The same
+    turn yields 1 emotional_signal_log + 1 turn_category_log, never 2 of the
+    former (UNIQUE turn_id)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert len(detector.calls) == 1
+    assert len(signal_log.inserted) == 1
+    assert len(cat_log.inserted) == 1
+    assert signal_log.inserted[0][0] == turn_id
+    assert cat_log.inserted[0].turn_id == turn_id
+
+
+@pytest.mark.asyncio
+async def test_detector_reclassifies_phatic_to_emocional() -> None:
+    """Signal (synthesis, no escalation) pulls a confident phatic → emocional."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    signal = EmotionalSignalRecord(
+        signal_detected=True,
+        signal_type="revelacion_de_vida",
+        intensity=0.5,
+        should_trigger_synthesis=True,
+        should_escalate_to_owner=False,
+        pipeline_would_have_escalated=False,
+    )
+    detector = _FakeEmotionalDetector(signal)
+    signal_log = _FakeEmotionalSignalLog()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    rec = cat_log.inserted[0]
+    assert rec.turn_id == turn_id
+    assert rec.category == "emocional"
+    assert rec.would_autonomous is False
+    assert len(signal_log.inserted) == 1  # detector still writes exactly one row
+
+
+@pytest.mark.asyncio
+async def test_detector_reclassifies_to_sensitive_never_fastlane() -> None:
+    """EA-03: escalation signal → sensitive, would_autonomous never True."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    detector = _FakeEmotionalDetector(_signal_detected())  # escalates to owner
+    signal_log = _FakeEmotionalSignalLog()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    rec = cat_log.inserted[0]
+    assert rec.category == "sensible"
+    assert rec.would_autonomous is False
+
+
+@pytest.mark.asyncio
+async def test_sensitive_never_autonomous() -> None:
+    """EA-03: a classifier-produced sensitive is never fast-lane."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("sensible", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "triste"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    rec = cat_log.inserted[0]
+    assert rec.category == "sensible"
+    assert rec.would_autonomous is False
+
+
+@pytest.mark.asyncio
+async def test_would_autonomous_independent_of_flag() -> None:
+    """A confident phatic is measured would_autonomous=True with the flag OFF.
+
+    The orchestrator holds no feature_phatic_autonomy flag — the wiring gates
+    the hook by injecting the classifier or None. would_autonomous derives only
+    from (final_category == fatico) AND is_confident, so the measurement does
+    not depend on the flag."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    rec = cat_log.inserted[0]
+    assert rec.category == "fatico"
+    assert rec.confidence == 1.0
+    assert rec.would_autonomous is True
+
+
+@pytest.mark.asyncio
+async def test_classifier_error_does_not_break_turn() -> None:
+    """Classifier raising → the turn completes its normal route (pending_approval)."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(RuntimeError("classifier boom"))
+    cat_log = _FakeTurnCategoryLog()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert cat_log.inserted == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_mood_error_does_not_break_turn() -> None:
+    """Mood engine raising → the turn completes its normal route."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine(update_result=RuntimeError("mood boom"))
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert mood_state.upsert_calls == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_non_vip_turn_skipped() -> None:
+    """vip_id None (atencion channel) → no category insert nor mood upsert."""
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    mood_engine = _FakeMoodEngine()
+    mood_state = _FakeVipMoodState()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": None}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=None))
+    assert cat_log.inserted == []
+    assert mood_state.upsert_calls == []
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "pending_approval"

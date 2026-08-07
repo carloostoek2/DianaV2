@@ -31,9 +31,11 @@ from diana.application.ports import (
     RuntimeTimerRecord,
     RuntimeTimerStore,
     TraceReader,
+    TurnCategoryLogRecord,
     TurnRecord,
     TurnStore,
     VipInboundMessage,
+    VipMoodStateRecord,
     VipStore,
 )
 from diana.behavior.ports import DelayPolicy
@@ -205,6 +207,10 @@ class TurnOrchestrator:
         emotional_detector: object | None = None,
         emotional_signal_log: object | None = None,
         profile_synthesis_trigger: object | None = None,
+        turn_classifier: object | None = None,
+        turn_category_log: object | None = None,
+        mood_engine: object | None = None,
+        vip_mood_state: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -233,6 +239,13 @@ class TurnOrchestrator:
         self._emotional_detector = emotional_detector
         self._emotional_signal_log = emotional_signal_log
         self._profile_synthesis_trigger = profile_synthesis_trigger
+        # Evo-Agente Fase 2/3 shadow hooks: classifier + mood engine are
+        # flag-gated (None when flag off → hooks no-op); the repos are always
+        # wired (the hooks need them when the flag is on).
+        self._turn_classifier = turn_classifier
+        self._turn_category_log = turn_category_log
+        self._mood_engine = mood_engine
+        self._vip_mood_state = vip_mood_state
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
 
@@ -606,6 +619,165 @@ class TurnOrchestrator:
                 "profile_synthesis_trigger_error",
                 turn_id=str(turn_id),
                 chat_id=chat_id,
+            )
+
+    async def _run_turn_classifier(
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        incoming: VipInboundMessage,
+        signal: EmotionalSignalRecord | None,
+        vip_epoch: int | None = None,
+    ) -> None:
+        """Shadow classifier hook: never propagates, flag-gated, best-effort.
+
+        Classifies the turn (pure heuristics over the analyst comprehension +
+        ``incoming.text``), reclassifies with the SAME :class:`EmotionalSignalRecord`
+        already computed by ``_run_emotional_detector`` (ONE evaluation per turn —
+        never calls ``detector.detect()`` again and never writes
+        ``emotional_signal_log``), computes ``would_autonomous`` (fast-lane
+        shadow decision, independent of the ``feature_phatic_autonomy`` flag),
+        and persists one ``turn_category_log`` row.
+
+        EA-02(1) confident check + EA-02(2) satisfied by construction
+        (``ForbiddenKeywordsMiddleware`` short-circuits before the orchestrator);
+        EA-02(3) deferred to Fase 5 (no draft generation in shadow). EA-03:
+        sensitive is never fast-lane. VIP turns only (``incoming.vip_id`` None
+        → no-op — the atencion channel is out of the F2 measurement).
+        """
+        if self._turn_classifier is None or self._turn_category_log is None:
+            return
+        if incoming.vip_id is None:
+            return
+        trace_reader = self._trace_reader
+        if trace_reader is None:
+            return
+        try:
+            trace = await trace_reader.get_full_trace(turn_id)
+            if trace is None or not trace.get("comprehension"):
+                return
+            # Read-back gates (pattern ``_run_emotional_detector``): terminal /
+            # stale-epoch turns are never logged.
+            turn = await self._coordinator.get_turn(turn_id)
+            if turn is not None and is_turn_status_terminal(turn.status):
+                return
+            if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
+                chat_id, vip_epoch
+            ):
+                return
+            classification = self._turn_classifier.classify(
+                incoming.text, trace["comprehension"]
+            )
+            # Detector reclassification (spec transversal, Puntos de integración
+            # 2): a signal above SYNTHESIS_THRESHOLD pulls the turn out of the
+            # fast-lane (escalation-candidate → sensitive; otherwise emotional).
+            final_category = classification.category
+            if (
+                signal is not None
+                and signal.signal_detected
+                and signal.should_trigger_synthesis
+            ):
+                final_category = (
+                    "sensible" if signal.should_escalate_to_owner else "emocional"
+                )
+            # Fast-lane shadow decision (EA-02(1) + EA-03), independent of the
+            # ``feature_phatic_autonomy`` flag — the flag only gates the hook.
+            would_autonomous = (
+                final_category == "fatico"
+                and self._turn_classifier.is_confident(classification)
+            )
+            await self._turn_category_log.insert(
+                TurnCategoryLogRecord(
+                    turn_id=turn_id,
+                    vip_id=incoming.vip_id,
+                    chat_id=chat_id,
+                    category=final_category,
+                    confidence=classification.confidence,
+                    would_autonomous=would_autonomous,
+                )
+            )
+            logger.info(
+                "turn_classifier_classified",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "category": final_category,
+                    "confidence": classification.confidence,
+                    "would_autonomous": would_autonomous,
+                },
+            )
+        except Exception:
+            log_swallowed(
+                logger, "turn_classifier_error", turn_id=str(turn_id), chat_id=chat_id
+            )
+
+    async def _run_mood_engine(
+        self, turn_id: UUID, chat_id: int, incoming: VipInboundMessage
+    ) -> None:
+        """Shadow mood hook: never propagates, flag-gated, best-effort.
+
+        Computes the per-turn mood signal from the analyst ``emotion`` (no LLM),
+        updates the 3-axis ``vip_mood_state`` with the moving-average-with-
+        return formula and upserts one row per VIP turn. 3.3 shadow: logs the
+        mood→tone distance WITHOUT applying it (variant selection is Fase 5).
+        VIP turns only (``incoming.vip_id`` None → no-op).
+
+        Unlike the classifier, the stale-epoch gate is omitted: the mood upsert
+        is idempotent per VIP (a single row is rewritten), so a superseded
+        turn's signal is harmless — mood is a moving average, not an event log.
+        The terminal read-back gate IS kept so an aborted turn never nudges the
+        mood.
+        """
+        if self._mood_engine is None or self._vip_mood_state is None:
+            return
+        if incoming.vip_id is None:
+            return
+        trace_reader = self._trace_reader
+        if trace_reader is None:
+            return
+        try:
+            trace = await trace_reader.get_full_trace(turn_id)
+            if trace is None or not trace.get("comprehension"):
+                return
+            turn = await self._coordinator.get_turn(turn_id)
+            if turn is not None and is_turn_status_terminal(turn.status):
+                return
+            comprehension = trace["comprehension"]
+            signal = self._mood_engine.signal_from_comprehension(comprehension)
+            current = await self._vip_mood_state.get_by_vip(incoming.vip_id)
+            updated = self._mood_engine.update(current, signal)
+            await self._vip_mood_state.upsert(
+                VipMoodStateRecord(
+                    vip_id=incoming.vip_id,
+                    axis_playful_serious=updated.axis_playful_serious,
+                    axis_warm_distant=updated.axis_warm_distant,
+                    axis_energy=updated.axis_energy,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            emotion = (
+                comprehension.get("emotion")
+                if isinstance(comprehension, dict)
+                else None
+            )
+            tone_distance = self._mood_engine.tone_distance(
+                updated, emotion or "neutral"
+            )
+            logger.info(
+                "mood_updated",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "vip_id": str(incoming.vip_id),
+                    "axis_playful": updated.axis_playful_serious,
+                    "axis_warm": updated.axis_warm_distant,
+                    "axis_energy": updated.axis_energy,
+                    "tone_distance": round(tone_distance, 4),
+                },
+            )
+        except Exception:
+            log_swallowed(
+                logger, "mood_engine_error", turn_id=str(turn_id), chat_id=chat_id
             )
 
     async def _maybe_post_turn_terminal(
@@ -1629,10 +1801,21 @@ class TurnOrchestrator:
         # autonomous send / supervised approval happen downstream). The
         # detector's signal is passed through so ``should_trigger_synthesis``
         # is evaluated in the same turn (immediate). ``_maybe_post_turn`` has
-        # no message text → it is NOT the call-site. Both hooks are guarded.
+        # no message text → it is NOT the call-site. All hooks are guarded.
+        #
+        # Evo-Agente Fase 2/3 (A2): the classifier and mood-engine shadow hooks
+        # run here too. ANTI-DOUBLE-COUNT: the emotional signal is evaluated ONE
+        # time per turn, in ``_run_emotional_detector`` (which also writes the
+        # single ``emotional_signal_log`` row, UNIQUE ``turn_id``). That same
+        # record is REUSED by ``_run_turn_classifier`` to reclassify — the new
+        # hooks never re-run ``detector.detect()`` nor write ``emotional_signal_log``.
         signal = await self._run_emotional_detector(
             turn_id, incoming.chat_id, decision, vip_epoch
         )
+        await self._run_turn_classifier(
+            turn_id, incoming.chat_id, incoming, signal, vip_epoch
+        )
+        await self._run_mood_engine(turn_id, incoming.chat_id, incoming)
         await self._run_profile_synthesis_trigger(
             turn_id, incoming.chat_id, incoming, signal
         )
