@@ -545,6 +545,7 @@ class AdminService:
             raise ValueError("corrected_text must be non-empty")
         stripped = corrected_text.strip()
         # H7.1 timing A: capture correction before claim/deliver (orphan pending OK).
+        correction_persisted = False
         if self._staging is not None:
             turn = await self._turns.get(turn_id)
             approval = await self._approvals.get_by_turn(turn_id)
@@ -553,7 +554,7 @@ class AdminService:
                     turn.chat_id, turn.trigger_message_id
                 )
                 try:
-                    await self._staging.save_correction(
+                    saved = await self._staging.save_correction(
                         turn_id,
                         original_draft=approval.draft_text,
                         corrected_text=stripped,
@@ -564,6 +565,9 @@ class AdminService:
                         chat_id=turn.chat_id,
                         channel_type=turn.channel_type,
                     )
+                    # Sandbox skips persistence (returns None without insert);
+                    # only a genuinely persisted correction counts (S6).
+                    correction_persisted = saved is not None
                 except Exception:
                     logger.exception(
                         "staging_save_correction_failed",
@@ -572,9 +576,12 @@ class AdminService:
         # Evo-Agente Fase 5: owner correction → trust-budget decrement (event
         # source, A2). Best-effort: a trust failure must not break the delivery
         # path. ``record_correction`` resolves (vip_id, category) by turn_id and
-        # no-ops for unclassified / non-VIP turns. Flag OFF → trust_budget None
+        # no-ops for unclassified / non-VIP / non-autonomous turns. The decrement
+        # fires ONLY when the correction actually persisted — a swallowed
+        # ``save_correction`` failure must not penalize trust for a correction
+        # that never landed (review round 1, S6). Flag OFF → trust_budget None
         # → no-op (byte-identical).
-        if self._trust_budget is not None:
+        if self._trust_budget is not None and correction_persisted:
             try:
                 await self._trust_budget.record_correction(turn_id)
             except Exception:

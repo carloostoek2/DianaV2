@@ -205,6 +205,29 @@ async def test_record_correction_noop_when_vip_none() -> None:
     assert store.rows == {}
 
 
+@pytest.mark.asyncio
+async def test_record_correction_noop_when_turn_was_supervised() -> None:
+    """S2: a supervised turn (``would_autonomous`` False/None) never increments,
+    so a correction on it must not seed a 0.0 row with an inflated count."""
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    cat_log = _FakeTurnCategoryLogReader(
+        {
+            turn_id: _log_record(
+                turn_id=turn_id, vip_id=vip, category="informativo",
+                would_autonomous=False,
+            )
+        }
+    )
+    svc = _service(store=store, cat_log=cat_log)
+
+    rec = await svc.record_correction(turn_id)
+
+    assert rec is None
+    assert store.rows == {}
+
+
 # --- asymmetry + clamp to 0 ---------------------------------------------------
 
 
@@ -241,6 +264,29 @@ async def test_cascade_decrements_clamp_to_0() -> None:
         await store.decrement_correction(
             vip, "fatico", delta=0.5, initial=0.2, correction_time=NOW
         )
+
+    rec = await store.get_by_vip_and_category(vip, "fatico")
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.0)  # clamped, not negative
+    assert rec.correction_count == 3
+
+
+@pytest.mark.asyncio
+async def test_cascade_clamp_to_0_through_record_correction() -> None:
+    """S10: the clamp propagates through the SERVICE event (record_correction),
+    not just the store fake — a regression in the service's delta propagation
+    would surface here."""
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turns = [uuid4() for _ in range(3)]
+    cat_log = _FakeTurnCategoryLogReader(
+        {t: _log_record(turn_id=t, vip_id=vip, category="fatico") for t in turns}
+    )
+    svc = _service(store=store, cat_log=cat_log, decrement=0.5)
+    await svc.record_autonomous(vip, "fatico")  # 0.2 + 0.05 = 0.25
+
+    for t in turns:
+        await svc.record_correction(t)  # 0.25 → 0.0 after the first -0.5
 
     rec = await store.get_by_vip_and_category(vip, "fatico")
     assert rec is not None
@@ -363,6 +409,29 @@ def test_apply_overrides_invalid_and_absent_are_ignored() -> None:
     assert svc._initial == 0.2  # noqa: SLF001
 
 
+def test_apply_overrides_rejects_asymmetry_inversion() -> None:
+    """S7: a manual override that would invert the conservative asymmetry
+    (decrement > increment) is rejected as a whole — nothing is applied."""
+    svc = _service()
+    svc.apply_overrides(
+        {"increment": 0.5, "decrement": 0.1, "threshold": 0.4}
+    )
+    # Asymmetry inverted → the WHOLE config is dropped (threshold too).
+    assert svc._increment == 0.05  # noqa: SLF001
+    assert svc._decrement == 0.2  # noqa: SLF001
+    assert svc._threshold == 0.9  # noqa: SLF001
+
+    # An equal pair is also rejected (must be STRICTLY decrement > increment).
+    svc.apply_overrides({"increment": 0.2, "decrement": 0.2})
+    assert svc._increment == 0.05  # noqa: SLF001
+    assert svc._decrement == 0.2  # noqa: SLF001
+
+    # A valid conservative pair still applies.
+    svc.apply_overrides({"increment": 0.1, "decrement": 0.4})
+    assert svc._increment == 0.1  # noqa: SLF001
+    assert svc._decrement == 0.4  # noqa: SLF001
+
+
 # --- trend --------------------------------------------------------------------
 
 
@@ -410,13 +479,46 @@ def test_trend_custom_window() -> None:
     assert svc.trend_for(rec, now=NOW, window_days=5) == "up"
 
 
+def test_trend_up_requires_positive_score() -> None:
+    """S4: an autonomous with the score punished back to 0.0 (corrections
+    dominated) is NOT "up" — a VIP with 1 old autonomous + score 0.0 must not
+    show "▲ up" forever."""
+    svc = _service(trend_window_days=14)
+    rec = _trust_record(autonomous_count=1, trust_score=0.0)
+    assert svc.trend_for(rec, now=NOW) == "flat"
+    # A positive score still trends up (positive trust exists).
+    assert svc.trend_for(_trust_record(autonomous_count=1, trust_score=0.01), now=NOW) == "up"
+
+
+def test_trend_future_correction_is_ignored() -> None:
+    """Clock-skew robustness: a last_correction_at in the future must not report
+    "down" forever — the windowed check ignores future stamps."""
+    svc = _service(trend_window_days=14)
+    future = NOW + timedelta(days=1)
+    rec = _trust_record(autonomous_count=1, correction_count=1, last_correction_at=future)
+    assert svc.trend_for(rec, now=NOW) == "up"
+    # With no autonomous history the future stamp also cannot claim "down".
+    rec2 = _trust_record(correction_count=1, last_correction_at=future)
+    assert svc.trend_for(rec2, now=NOW) == "flat"
+
+
+def test_trend_window_zero_clamps_to_minimum() -> None:
+    """window_days <= 0 clamps to a 1-day minimum instead of silently falling
+    back to the instance default."""
+    svc = _service(trend_window_days=14)
+    correction = NOW - timedelta(days=10)
+    rec = _trust_record(autonomous_count=1, correction_count=1, last_correction_at=correction)
+    # 10 days is beyond even the 1-day clamped window → not "down".
+    assert svc.trend_for(rec, now=NOW, window_days=0) == "up"
+    assert svc.trend_for(rec, now=NOW, window_days=-3) == "up"
+
+
 # --- ficha --------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_list_for_ficha_shape() -> None:
     store = _MemoryVipTrustBudgetStore()
-    svc = _service(store=store)
     vip = uuid4()
     turn_id = uuid4()
     cat_log = _FakeTurnCategoryLogReader(

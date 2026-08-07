@@ -617,10 +617,15 @@ class TurnCategoryLogRecord(BaseModel):
     # Fase 2 shadow measurement (migración 026). ``would_autonomous`` is a
     # SHADOW proxy — "the fast-lane WOULD have auto-sent in shadow" (F2
     # measurement), NOT a promise of real auto-send; it ignores vip_trust_budget
-    # (EA-01) and the EA-02(3) draft-safety check, both Fase 5. ``confidence``
-    # is the classifier's confidence on its PRE-reclassification category
-    # (modo "no estoy seguro" = below classifier_confidence_min). NULL =
-    # pre-Fase-2 rows.
+    # (EA-01) and the EA-02(3) draft-safety check, both Fase 5. It is also the
+    # CALIBRATION SIGNAL for the F2 predictor: the trust budget increments ONLY
+    # on ``would_autonomous == True``, and the increment runs BEFORE the real
+    # delivery outcome (shadow semantics — a "would have sent" without a send).
+    # The accumulated trust is meant to be INTERPRETED / RESET when F2 leaves
+    # shadow, when the real auto-send becomes the source of truth (review round
+    # 1, S3). ``confidence`` is the classifier's confidence on its
+    # PRE-reclassification category (modo "no estoy seguro" = below
+    # classifier_confidence_min). NULL = pre-Fase-2 rows.
     would_autonomous: bool | None = None
     confidence: float | None = None
     created_at: datetime | None = None

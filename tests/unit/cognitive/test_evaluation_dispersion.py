@@ -47,10 +47,16 @@ def test_spread_profile_dispersion_positive_and_grows() -> None:
 
 
 def test_dispersion_uses_all_seven_dims() -> None:
+    """A UNIFORM base profile makes a single dropped dim detectable: moving ANY
+    one of the 7 dims away from the uniform value must change the std. If
+    ``_EVAL_DIMS`` lost that dim, the perturbation would be a no-op and the
+    test would fail (review round 1, S9)."""
     assert len(_EVAL_DIMS) == 7
-    # Only one dim moved to the opposite end → spread reflects a single deviation.
-    low = _profile(naturalness=0.0)
-    assert evaluation_dispersion(low) > 0.0
+    base = EvaluationProfile(**{dim: 0.5 for dim in _EVAL_DIMS})
+    assert evaluation_dispersion(base) == pytest.approx(0.0)
+    for dim in _EVAL_DIMS:
+        shifted = base.model_copy(update={dim: 1.0})
+        assert evaluation_dispersion(shifted) > 0.0, dim
 
 
 def test_evaluation_profile_gains_no_new_field() -> None:

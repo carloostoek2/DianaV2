@@ -126,10 +126,19 @@ class ProfileAdminService:
             memory_rows = await self._memories.list_by_vip(vip.id)
         # Evo-Agente Fase 5 (EA-06): per-category trust rows (only when wired —
         # flag ON). An empty list (VIP with no trust history) is normalized to
-        # None so the ficha never renders an orphan header.
+        # None so the ficha never renders an orphan header. Best-effort (review
+        # round 1, S5): a DB error on the trust rows must never break the owner
+        # ficha — consistent with the item's "never propagates" ethos.
         trust_rows: list[dict] | None = None
         if self._trust_budget is not None:
-            rows = await self._trust_budget.list_for_ficha(vip.id)
+            try:
+                rows = await self._trust_budget.list_for_ficha(vip.id)
+            except Exception:
+                logger.exception(
+                    "profile_trust_rows_failed",
+                    extra={"telegram_user_id": telegram_user_id},
+                )
+                rows = None
             trust_rows = rows or None
         row = await self._profiles.get_by_vip_id(vip.id)
         content = None if row is None else row.get("content")

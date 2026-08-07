@@ -100,9 +100,19 @@ class TrustBudgetService:
 
         Missing keys are ignored; invalid values are rejected without crashing
         (pattern ``MoodEngine.apply_overrides``). Never auto-calibrated.
+
+        Validation policy (review round 1, S7): unlike ``__init__`` — which
+        CLAMPS constructor args to [0, 1] to absorb typos — an explicit manual
+        override REJECTS out-of-range values (a deliberate override must be
+        valid, not silently corrected). It also REJECTS the whole config when it
+        would invert the conservative asymmetry (``decrement > increment``): the
+        punishment must keep outweighing the reward, otherwise the gates stop
+        being conservative by design.
         """
         if not isinstance(config, dict):
             return
+        # Collect candidate values first, then validate as a whole.
+        candidates: dict[str, float] = {}
         for key in ("initial", "increment", "decrement", "threshold",
                     "dispersion_high"):
             raw = config.get(key)
@@ -113,7 +123,17 @@ class TrustBudgetService:
             except (TypeError, ValueError):
                 continue
             if 0.0 <= value <= 1.0:
-                setattr(self, f"_{key}", value)
+                candidates[key] = value
+        increment = candidates.get("increment", self._increment)
+        decrement = candidates.get("decrement", self._decrement)
+        if decrement <= increment:
+            logger.warning(
+                "trust_budget_asymmetry_rejected",
+                extra={"increment": increment, "decrement": decrement},
+            )
+            return
+        for key, value in candidates.items():
+            setattr(self, f"_{key}", value)
         raw_window = config.get("trend_window_days")
         if raw_window is not None:
             try:
@@ -150,12 +170,16 @@ class TrustBudgetService:
     ) -> VipTrustBudgetRecord | None:
         """Owner-correction event: resolve (VIP, category) by turn_id and decay.
 
-        ``turn_id`` is UNIQUE in ``turn_category_log`` → at most one row. A turn
-        without a classification (pre-Fase-2) or a non-VIP turn (``vip_id``
-        None) is a no-op — no row is created without a category (A2).
+        ``turn_id`` is UNIQUE in ``turn_category_log`` → at most one row. The
+        decrement applies ONLY when the corrected turn was an autonomous
+        candidate (``would_autonomous == True``): a supervised turn never
+        increments, so a correction on it must not seed a 0.0 row with an
+        inflated ``correction_count`` (review round 1, S2). A turn without a
+        classification (pre-Fase-2) or a non-VIP turn (``vip_id`` None) is also
+        a no-op — no row is created without a category (A2).
         """
         log = await self._turn_category_log.get_by_turn_id(turn_id)
-        if log is None or log.vip_id is None:
+        if log is None or log.vip_id is None or not log.would_autonomous:
             return None
         return await self._store.decrement_correction(
             log.vip_id,
@@ -192,7 +216,14 @@ class TrustBudgetService:
     ) -> bool:
         """§5.2: high spread across the 7 dims → low confidence → no auto-send.
 
-        A missing profile (None) does not gate (nothing to disagree).
+        Deliberately FAIL-OPEN on ``None`` (a missing profile does not gate —
+        nothing to disagree): this is a SHADOW helper, not wired to any send
+        today, and the caller decides whether an evaluation is mandatory when
+        the real auto-send is composed (Fase 5). The metric is a SPREAD, so a
+        uniformly LOW profile (std ≈ 0) passes — that is "coherent", not
+        "uniformly bad": the Decider's per-dimension minimums gate that case
+        separately (AGENTS.md §4.1), never this dispersion helper (review round
+        1).
         """
         if evaluation is None:
             return True
@@ -226,15 +257,31 @@ class TrustBudgetService:
 
         - "down": a correction landed within the window (last_correction_at
           within ``window_days``) — the owner recently lost trust.
-        - "up": autonomous runs without a recent correction (positive signal).
-        - "flat": no data to judge (no autonomous runs, no recent correction).
+        - "up": autonomous runs WITHOUT a recent correction AND a positive
+          score. The record has no ``last_autonomous_at`` column, so recency is
+          approximated by the score: a score clamped to 0.0 (corrections
+          dominated) is NOT "up" even when ``autonomous_count`` > 0 — a VIP
+          with one old autonomous and score 0.0 must not show "▲ up" forever
+          (review round 1, S4).
+        - "flat": no data to judge, or the score was punished back to 0.
+
+        Robustness (review round 1): ``window_days`` <= 0 clamps to a 1-day
+        minimum (never the silent default); a ``last_correction_at`` in the
+        future (clock skew) is ignored for the windowed-down check so it cannot
+        report "down" forever.
         """
-        window = window_days or self._trend_window_days
+        window = (
+            self._trend_window_days
+            if window_days is None
+            else max(1, int(window_days))
+        )
         if record.correction_count > 0 and record.last_correction_at is not None:
-            age_seconds = (now - record.last_correction_at).total_seconds()
-            if age_seconds <= window * _DAY_SECONDS:
-                return "down"
-        if record.autonomous_count > 0:
+            correction = record.last_correction_at
+            if correction <= now:
+                age_seconds = (now - correction).total_seconds()
+                if age_seconds <= window * _DAY_SECONDS:
+                    return "down"
+        if record.autonomous_count > 0 and record.trust_score > 0.0:
             return "up"
         return "flat"
 

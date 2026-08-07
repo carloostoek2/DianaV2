@@ -812,6 +812,22 @@ def build_app(
         ),
     )
 
+    # Evo-Agente Fase 5 (review round 1, S1): surface the inert combo — the
+    # trust-budget hook consumes ``turn_category_log`` rows that ONLY the phatic
+    # classifier produces (``feature_phatic_autonomy``). With the classifier OFF
+    # the whole trust mechanics can never fire; a silent build plus a
+    # ``trust_budget_thresholds_loaded`` log would be a false impression.
+    if settings.feature_trust_budget and not settings.feature_phatic_autonomy:
+        logger.warning(
+            "trust_budget_inert",
+            extra={
+                "reason": (
+                    "feature_trust_budget on but feature_phatic_autonomy off — "
+                    "the trust hook never receives a classification; mechanics inert"
+                )
+            },
+        )
+
     # REQ-MEM-07: supervised-approved turns must run the SAME post-turn
     # learning + memory extraction as the autonomous path. AdminService is
     # built BEFORE the orchestrator (line ~503), so the hook is injected via a
@@ -1212,11 +1228,16 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
 
     # Evo-Agente Fase 5: manual override of the trust-budget thresholds from
     # system_config key ``trust_budget`` (same best-effort pattern). The
-    # service is built ALWAYS (AppContainer.trust_budget); the overrides apply
-    # regardless of the feature flag so a manual calibration survives a toggle.
-    # Override is manual ONLY — never auto-calibrated.
+    # service is built ALWAYS (AppContainer.trust_budget), but the overrides
+    # only MEAN something when the classification source is wired: the hook
+    # consumes the ``turn_category_log`` record that only ``_run_turn_classifier``
+    # produces, and the classifier is gated by ``feature_phatic_autonomy``. When
+    # it is OFF the whole trust mechanics is inert — logging ``_loaded`` would
+    # be a false impression (review round 1, S1/S8). Override is manual ONLY —
+    # never auto-calibrated.
     tb = getattr(app, "trust_budget", None)
-    if tb is not None:
+    classifier_wired = getattr(app, "turn_classifier", None) is not None
+    if tb is not None and classifier_wired:
         try:
             cfg = await store.get("trust_budget")
         except Exception:
@@ -1234,10 +1255,15 @@ async def load_runtime_thresholds(app: AppContainer) -> None:
                     "dispersion_high": tb._dispersion_high,  # noqa: SLF001
                 },
             )
-    else:
+    elif tb is not None:
         logger.info(
             "trust_budget_thresholds_skipped",
-            extra={"reason": "trust_budget not wired"},
+            extra={
+                "reason": (
+                    "trust_budget wired but turn_classifier off "
+                    "(feature_phatic_autonomy off) — mechanics inert"
+                )
+            },
         )
 
 

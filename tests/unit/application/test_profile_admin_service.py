@@ -550,3 +550,31 @@ async def test_show_profile_empty_trust_rows_normalized_to_none(
 
     assert r.status == "profile_empty"
     assert r.trust_budget is None
+
+
+@pytest.mark.asyncio
+async def test_show_profile_trust_db_error_never_breaks_ficha(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """S5: a DB error on the trust rows is best-effort swallowed → trust_budget
+    None (no section) and the ficha still renders — "never propagates" ethos."""
+    service, vips, profiles = svc
+    rec = await vips.add(555, display_name="Alice")
+    profiles.rows[rec.id] = {"facts": {"city": "BA"}, "notes": []}
+
+    class _BoomTrustBudget:
+        async def list_for_ficha(self, vip_id):  # noqa: ARG002
+            raise RuntimeError("trust db down")
+
+    wired = ProfileAdminService(
+        profiles=profiles,
+        vips=vips,
+        owner_telegram_id=OWNER,
+        trust_budget=_BoomTrustBudget(),
+    )
+
+    r = await wired.show_profile(OWNER, 555)
+
+    assert r.status == "profile_ok"
+    assert r.trust_budget is None
+    assert r.content == {"facts": {"city": "BA"}, "notes": []}

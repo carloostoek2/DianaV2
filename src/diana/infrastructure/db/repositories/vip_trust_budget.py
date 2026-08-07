@@ -36,10 +36,12 @@ class SqlVipTrustBudgetRepo:
     """Thin (VIP, turn_category) budget persistence — no trust math here.
 
     The delta methods (``increment_autonomous`` / ``decrement_correction``) are
-    ATOMIC SQL updates: the score is computed server-side
-    (``LEAST(1, GREATEST(0, score + delta))``), so concurrent autonomous and
-    correction events cannot race. The INSERT branch clamps in Python because
-    the initial+delta expression is evaluated client-side.
+    ATOMIC SQL updates: on an EXISTING row the score is computed server-side
+    (``LEAST(1, GREATEST(0, score + delta))``), so concurrent deltas on the same
+    key cannot lose each other. Caveat (review round 1): two concurrent
+    FIRST-inserts of the same NEW key serialize on the unique index — the second
+    blocks until the first commits, then takes the DO UPDATE branch, so the
+    INSERT branch (client-side clamp of ``initial ± delta``) wins exactly once.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:

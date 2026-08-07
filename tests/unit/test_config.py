@@ -301,6 +301,28 @@ def test_settings_evo_agente_fase_2_3_threshold_defaults(
     assert settings.mood_noise == 0.05
 
 
+def test_settings_trust_budget_defaults_conservative(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S11: pin the Fase 5 trust-budget defaults — the flag must stay OFF and
+    the conservative asymmetry (decrement > increment) must hold, so a change
+    that inverts the gates fails the suite."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    assert settings.feature_trust_budget is False
+    assert settings.trust_budget_initial == 0.2
+    assert settings.trust_budget_increment == 0.05
+    assert settings.trust_budget_decrement == 0.2
+    assert settings.trust_budget_threshold == 0.9
+    assert settings.trust_dispersion_high == 0.25
+    assert settings.trust_trend_window_days == 14
+    # Conservative design invariant: punishment outweighs reward.
+    assert settings.trust_budget_decrement > settings.trust_budget_increment
+
+
 @pytest.mark.parametrize(
     ("env_key", "attr"),
     [

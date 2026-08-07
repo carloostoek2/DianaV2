@@ -857,9 +857,16 @@ class TurnOrchestrator:
         superseded turn's ``would_autonomous`` is not rewarded.
 
         ``category_log`` is the record JUST inserted by ``_run_turn_classifier``
-        (passed BY VALUE, no DB re-read). ``turn_category_log.would_autonomous``
-        is the SHADOW F2 proxy (not a promise of real auto-send); the trust
-        budget is the future behavioral source (EA-01). Flag OFF →
+        (passed BY VALUE — the hook never re-reads ``turn_category_log``); the
+        terminal / stale-epoch read-back gates DO re-read the turn and epoch
+        (``_coordinator.get_turn`` / ``is_vip_epoch_current``), mirroring
+        ``_run_mood_engine`` (review round 1).
+
+        Shadow semantics (review round 1, S3): in supervised mode each increment
+        is a "would have sent" WITHOUT a real send — it is predictor
+        (F2 ``would_autonomous``) calibration, not observed behavior. The trust
+        budget is meant to be INTERPRETED / RESET when F2 leaves shadow, when
+        the real auto-send becomes the source of truth (EA-01). Flag OFF →
         ``self._trust_budget`` None → no-op (byte-identical).
         """
         if self._trust_budget is None:

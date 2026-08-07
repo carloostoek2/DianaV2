@@ -1973,8 +1973,8 @@ class _FakeTrustBudgetAdmin:
 
 @pytest.mark.asyncio
 async def test_handle_correct_decrements_trust_budget() -> None:
-    """Fase 5 (A2): wired trust service → record_correction(turn_id) after the
-    staging save and BEFORE the corrected delivery."""
+    """Fase 5 (A2, S6): wired trust service → record_correction(turn_id) once
+    the staging correction actually persisted; the corrected delivery proceeds."""
     trust = _FakeTrustBudgetAdmin()
     staging, staging_repo = _real_staging()
     history = InMemoryMessageHistoryWriter()
@@ -2000,12 +2000,38 @@ async def test_handle_correct_decrements_trust_budget() -> None:
 
 @pytest.mark.asyncio
 async def test_handle_correct_no_trust_when_unwired() -> None:
-    """Flag OFF (trust_budget None) → no record_correction call, flow normal."""
-    trust = _FakeTrustBudgetAdmin()
+    """Flag OFF (trust_budget None) → nothing to call, flow normal."""
     g = _admin_graph(trust_budget=None)
     turn = await g["coordinator"].begin_turn(chat_id=42)
     await g["admin"].send_draft_for_approval(
         _incoming(turn.id), _decision(draft="draft"), turn.id
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    result = await g["admin"].handle_correct(
+        turn.id, "fixed text", actor_id=OWNER_ID
+    )
+
+    assert result is not None and result.success
+    assert g["actuator"].calls[-1]["text"] == "fixed text"
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_no_decrement_when_staging_failed() -> None:
+    """S6: a swallowed staging save failure → the correction never persisted →
+    record_correction is NOT fired (no trust penalty for a non-landed
+    correction); the corrected delivery still proceeds."""
+    trust = _FakeTrustBudgetAdmin()
+    staging, _ = _real_staging(
+        insert_side_effect=RuntimeError("staging db down")
+    )
+    history = InMemoryMessageHistoryWriter()
+    g = _admin_graph(staging=staging, history=history, trust_budget=trust)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, telegram_message_id=7),
+        _decision(draft="draft"),
+        turn.id,
     )
     await g["coordinator"].transition(turn.id, "pending_approval")
 
