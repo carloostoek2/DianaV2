@@ -152,20 +152,24 @@ async def test_pending_vip_short_circuits_before_db_reads() -> None:
         profile_reader=reader, activity=activity,
         volume_threshold=25, inactivity_minutes=30,
     )
-    # First evaluation (volume path) reads once.
+    # First evaluation (volume path) reads BOTH sources once.
     assert await svc.evaluate_and_maybe_enqueue(vip) == "volume"
+    assert reader.get_calls == [vip]
     assert activity.count_calls == [(vip, None)]
-    # Pending → short-circuit: no extra activity reads.
+    # Pending → short-circuit: no extra reads on EITHER source.
     assert await svc.evaluate_and_maybe_enqueue(vip) is None
+    assert reader.get_calls == [vip]
     assert activity.count_calls == [(vip, None)]
     drained = svc.drain_pending()
     assert drained == [(vip, "volume")]
     # In-flight → same short-circuit (still no extra reads).
     assert await svc.evaluate_and_maybe_enqueue(vip) is None
+    assert reader.get_calls == [vip]
     assert activity.count_calls == [(vip, None)]
     svc.release(vip)
-    # Released → evaluation resumes (a new volume read).
+    # Released → evaluation resumes (a new read on BOTH sources).
     assert await svc.evaluate_and_maybe_enqueue(vip) == "volume"
+    assert reader.get_calls == [vip, vip]
     assert len(activity.count_calls) == 2
 
 

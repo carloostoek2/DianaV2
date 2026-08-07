@@ -49,14 +49,25 @@ class _FakeTrigger:
         self,
         *,
         scan_result: int = 1,
+        scan_candidates: list[tuple[UUID, str]] | None = None,
         pending: list[tuple[UUID, str]] | None = None,
     ) -> None:
         self.scan_result = scan_result
+        self.scan_candidates = list(scan_candidates or [])
         self.pending = list(pending or [])
         self.released: list[UUID] = []
 
+    def enqueue(self, vip_id: UUID, label: str) -> bool:
+        """Mirror the real trigger dedup: a VIP is never pending twice."""
+        if any(v == vip_id for v, _ in self.pending):
+            return False
+        self.pending.append((vip_id, label))
+        return True
+
     async def scan_inactivity(self, now: datetime) -> int:
-        return self.scan_result
+        # The scan feeds pending through the real enqueue link (dedup'd), so
+        # the drain of the SAME tick synthesizes exactly what the scan enqueued.
+        return sum(1 for vip, label in self.scan_candidates if self.enqueue(vip, label))
 
     def drain_pending(self) -> list[tuple[UUID, str]]:
         items = list(self.pending)
@@ -141,19 +152,21 @@ async def test_cycle_releases_all_drained_on_timeout_b1() -> None:
 
 @pytest.mark.asyncio
 async def test_cycle_scan_feeds_drain_synthesize_same_tick() -> None:
-    """Fix round nit: scan→drain→synthesize of the SAME tick are exercised
-    end-to-end — the scan feeds pending, the drain empties it and synthesizes
-    every item, all in one cycle."""
+    """The scan feeds pending via the real enqueue link — the drain of the SAME
+    tick synthesizes exactly the VIPs the scan enqueued, end-to-end."""
     vip_a = uuid4()
     vip_b = uuid4()
-    trigger = _FakeTrigger(scan_result=2, pending=[(vip_a, "volume"), (vip_b, "session_close")])
+    trigger = _FakeTrigger(
+        scan_candidates=[(vip_a, "volume"), (vip_b, "session_close")],
+    )
     service = _FakeService()
     out = await run_profile_synthesis_cycle(trigger, service)  # type: ignore[arg-type]
-    assert trigger.scan_result == 2  # the scan returned 2 candidates
+    assert trigger.pending == []  # the drain emptied exactly what the scan enqueued
     assert service.synthesized == [
         (vip_a, "volume"),
         (vip_b, "session_close"),
-    ]  # drain picked up exactly what the scan enqueued
+    ]  # the VIPs enqueued by the scan are the ones synthesized
+    assert out["scanned"] == 2  # the scan returned the count it enqueued
     assert out["items"] == 2
     assert out["results"] == ["ok", "ok"]
     assert sorted(trigger.released) == sorted([vip_a, vip_b])  # both released
