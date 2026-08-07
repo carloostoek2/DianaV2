@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     # F4 general mode (non-VIP atencion channel) — env-driven, default off.
     feature_general_mode_enabled: bool = False
 
+    # Evo-Agente Fase 0 (detector de quiebre emocional) — env-driven, default off.
+    feature_emotional_detector_enabled: bool = False
+    # Retención por tabla (purga): las 3 tablas de agente que crecen sin límite.
+    vip_profile_history_ttl_days: int = 90
+    turn_category_log_ttl_days: int = 90
+    emotional_signal_log_ttl_days: int = 90
+
     # Ops surface (Telegram process edge) — single-instance defaults.
     # health_host is loopback-only (SEC-HEALTH-01); no public bind via env.
     health_host: str = "127.0.0.1"
