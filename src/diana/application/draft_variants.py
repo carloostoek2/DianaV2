@@ -19,7 +19,12 @@ from diana.application.ports import (
     TurnStore,
     VipStore,
 )
-from diana.cognitive.models import Decision, IncomingTurn, TurnStatus
+from diana.cognitive.models import (
+    Decision,
+    IncomingTurn,
+    TurnStatus,
+    is_turn_status_terminal,
+)
 
 logger = logging.getLogger("diana.application")
 
@@ -218,6 +223,9 @@ class DraftVariantService:
         approval = await self._approvals.get_by_turn(turn_id)
         if approval is None or approval.status != "waiting":
             return VariantNavResult(ok=False, token="stale", toast="Borrador no disponible")
+        turn = await self._turns.get(turn_id)
+        if turn is None or is_turn_status_terminal(turn.status):
+            return VariantNavResult(ok=False, token="stale", toast="Borrador no disponible")
         versions = read_versions(approval.evaluation)
         if versions["regenerating"]:
             return VariantNavResult(
@@ -232,6 +240,8 @@ class DraftVariantService:
         if new_sel >= len(items):
             return VariantNavResult(ok=False, token="blocked_last", toast="Última versión")
         updated = await self._apply_selection(approval, new_sel)
+        if updated is None:
+            return VariantNavResult(ok=False, token="stale", toast="Borrador no disponible")
         await self._refresh_owner_message(updated)
         return VariantNavResult(ok=True, token="nav_ok", approval=updated, toast="")
 
@@ -241,6 +251,12 @@ class DraftVariantService:
         self._assert_owner(actor_id)
         approval = await self._approvals.get_by_turn(turn_id)
         if approval is None or approval.status != "waiting":
+            return VariantNavResult(ok=False, token="stale", toast="Borrador no disponible")
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            return VariantNavResult(ok=False, token="stale", toast="Turno no encontrado")
+        if is_turn_status_terminal(turn.status):
+            # Never re-run cognition or refresh buttons on a dead turn.
             return VariantNavResult(ok=False, token="stale", toast="Borrador no disponible")
         versions = read_versions(approval.evaluation)
         if versions["regenerating"]:
@@ -260,17 +276,13 @@ class DraftVariantService:
             return VariantNavResult(ok=False, token="stale", toast="Borrador no disponible")
 
         try:
+            # Re-check after lock: race may have terminalized the turn.
             turn = await self._turns.get(turn_id)
-            if turn is None or turn.status not in {
-                TurnStatus.PENDING_APPROVAL.value,
-                TurnStatus.DECIDING.value,
-                TurnStatus.GENERATING.value,
-                TurnStatus.EVALUATING.value,
-                "pending_approval",
-            }:
-                # Still allow if waiting approval even if status drifted mid-regen prep
-                if turn is None:
-                    return VariantNavResult(ok=False, token="stale", toast="Turno no encontrado")
+            if turn is None or is_turn_status_terminal(turn.status):
+                await self._set_regenerating(locked, False)
+                return VariantNavResult(
+                    ok=False, token="stale", toast="Borrador no disponible"
+                )
 
             vip_text = versions.get("vip_text") or ""
             if not vip_text and self._history is not None:
@@ -298,10 +310,35 @@ class DraftVariantService:
                     approval=await self._set_regenerating(locked, False),
                 )
 
-            # Re-load approval (may have been cancelled mid-LLM)
+            # Post-LLM gates: never revive a cancelled/superseded draft UI.
+            turn_after = await self._turns.get(turn_id)
+            if turn_after is None or is_turn_status_terminal(turn_after.status):
+                logger.info(
+                    "draft_regen_aborted_terminal",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "status": None if turn_after is None else turn_after.status,
+                    },
+                )
+                # Close orphan waiting approvals on a dead turn (no UI refresh).
+                try:
+                    orphan = await self._approvals.get_by_turn(turn_id)
+                    if orphan is not None and orphan.status == "waiting":
+                        await self._approvals.mark_status(turn_id, "cancelled")
+                except Exception:
+                    logger.exception(
+                        "draft_regen_cancel_orphan_failed",
+                        extra={"turn_id": str(turn_id)},
+                    )
+                return VariantNavResult(
+                    ok=False, token="stale", toast="Borrador cancelado"
+                )
+
             live = await self._approvals.get_by_turn(turn_id)
             if live is None or live.status != "waiting":
-                return VariantNavResult(ok=False, token="stale", toast="Borrador cancelado")
+                return VariantNavResult(
+                    ok=False, token="stale", toast="Borrador cancelado"
+                )
 
             v = read_versions(live.evaluation)
             items = list(v["items"])
@@ -318,15 +355,21 @@ class DraftVariantService:
                 "regenerating": False,
                 "vip_text": v.get("vip_text") or vip_text,
             }
+            # CAS: only while still waiting (lost race → None, no UI refresh).
             updated = await self._approvals.update_draft(
                 turn_id,
                 draft_text=draft,
                 evaluation=eval_dict,
                 cognitive_summary=decision.reason,
             )
-            # Keep turn in approval queue for owner
+            if updated is None:
+                return VariantNavResult(
+                    ok=False, token="stale", toast="Borrador cancelado"
+                )
+
+            # Restore approval queue status; refuse UI if terminal latch wins.
             try:
-                await self._turns.transition(
+                restored = await self._turns.transition(
                     turn_id, TurnStatus.PENDING_APPROVAL.value
                 )
             except Exception:
@@ -334,6 +377,37 @@ class DraftVariantService:
                     "draft_regen_restore_status_failed",
                     extra={"turn_id": str(turn_id)},
                 )
+                await self._set_regenerating(updated, False)
+                return VariantNavResult(
+                    ok=False,
+                    token="error",
+                    toast="Regeneración falló: no se pudo restaurar el borrador",
+                )
+            if (
+                is_turn_status_terminal(restored.status)
+                or restored.status != TurnStatus.PENDING_APPROVAL.value
+            ):
+                logger.info(
+                    "draft_regen_restore_not_pending",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "status": restored.status,
+                    },
+                )
+                # Avoid leaving a waiting approval on a dead turn.
+                try:
+                    live_appr = await self._approvals.get_by_turn(turn_id)
+                    if live_appr is not None and live_appr.status == "waiting":
+                        await self._approvals.mark_status(turn_id, "cancelled")
+                except Exception:
+                    logger.exception(
+                        "draft_regen_cancel_orphan_failed",
+                        extra={"turn_id": str(turn_id)},
+                    )
+                return VariantNavResult(
+                    ok=False, token="stale", toast="Borrador cancelado"
+                )
+
             await self._refresh_owner_message(updated)
             return VariantNavResult(
                 ok=True, token="regen_ok", approval=updated, toast="Nueva versión lista"
@@ -392,7 +466,7 @@ class DraftVariantService:
 
     async def _apply_selection(
         self, approval: ApprovalRecord, selected: int
-    ) -> ApprovalRecord:
+    ) -> ApprovalRecord | None:
         eval_dict = ensure_versions(
             approval.evaluation,
             draft_text=approval.draft_text,

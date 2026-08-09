@@ -119,8 +119,12 @@ async def test_navigate_prev_next() -> None:
     assert r3.approval.draft_text == "v1"
 
 
-@pytest.mark.asyncio
-async def test_regenerate_appends_variant() -> None:
+async def _pending_approval_fixture(
+    *,
+    draft: str = "primera",
+    status: str = "pending_approval",
+    owner_message_id: int = 501,
+) -> tuple:
     OWNER = 99
     approvals = InMemoryPendingApprovalStore()
     turns = InMemoryTurnStore()
@@ -129,13 +133,13 @@ async def test_regenerate_appends_variant() -> None:
         TurnRecord(
             id=turn_id,
             chat_id=1,
-            status="pending_approval",
+            status=status,
             trigger_message_id=10,
         )
     )
     eval_dict = ensure_versions(
         {"naturalness": 0.8},
-        draft_text="primera",
+        draft_text=draft,
         reason="ok",
         vip_text="hola",
     )
@@ -145,12 +149,18 @@ async def test_regenerate_appends_variant() -> None:
             turn_id=turn_id,
             chat_id=1,
             business_connection_id="bc",
-            draft_text="primera",
+            draft_text=draft,
             evaluation=eval_dict,
-            owner_message_id=501,
+            owner_message_id=owner_message_id,
             trigger_message_id=10,
         )
     )
+    return OWNER, approvals, turns, turn_id
+
+
+@pytest.mark.asyncio
+async def test_regenerate_appends_variant() -> None:
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
     director = FakeDirector(["segunda versión"])
     notifier = FakeOwnerNotifier()
     svc = DraftVariantService(
@@ -168,6 +178,85 @@ async def test_regenerate_appends_variant() -> None:
     assert len(v["items"]) == 2
     assert v["selected"] == 1
     assert director.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_regenerate_rejects_terminal_turn_without_director() -> None:
+    """Do not re-run cognition or revive UI when the turn is already dead."""
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture(
+        status="superseded"
+    )
+    director = FakeDirector(["no debe usarse"])
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+    )
+    r = await svc.regenerate(turn_id, actor_id=OWNER)
+    assert not r.ok and r.token == "stale"
+    assert director.calls == 0
+    live = await approvals.get_by_turn(turn_id)
+    assert live is not None
+    assert live.draft_text == "primera"
+    assert not any(str(t).startswith("edit_draft:") for t, _ in notifier.infos)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_cancelled_mid_llm_does_not_revive_ui() -> None:
+    """If approval dies during regen, do not rewrite draft or restore buttons."""
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+
+    class CancelMidDirector:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def handle_turn(self, turn: IncomingTurn) -> Decision:
+            self.calls += 1
+            await approvals.mark_status(turn.turn_id, "cancelled")
+            await turns.transition(turn.turn_id, "superseded")
+            return Decision(
+                action="approve",
+                reason="late",
+                evaluation=_eval(),
+                draft_text="versión zombie",
+            )
+
+    director = CancelMidDirector()
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+    )
+    r = await svc.regenerate(turn_id, actor_id=OWNER)
+    assert not r.ok and r.token == "stale"
+    assert director.calls == 1
+    live = await approvals.get_by_turn(turn_id)
+    assert live is not None
+    assert live.status == "cancelled"
+    assert live.draft_text == "primera"  # not overwritten
+    assert not any(str(t).startswith("edit_draft:") for t, _ in notifier.infos)
+
+
+@pytest.mark.asyncio
+async def test_update_draft_cas_skips_non_waiting() -> None:
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    await approvals.mark_status(turn_id, "cancelled")
+    updated = await approvals.update_draft(
+        turn_id,
+        draft_text="no debe entrar",
+        evaluation={"x": 1},
+        cognitive_summary="nope",
+    )
+    assert updated is None
+    live = await approvals.get_by_turn(turn_id)
+    assert live is not None
+    assert live.draft_text == "primera"
 
 
 def test_build_owner_draft_text_falls_back_to_chat_id() -> None:

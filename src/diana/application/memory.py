@@ -195,10 +195,11 @@ class InMemoryPendingApprovalStore:
         draft_text: str,
         evaluation: dict | None = None,
         cognitive_summary: str | None = None,
-    ) -> ApprovalRecord:
+    ) -> ApprovalRecord | None:
+        """CAS: update only while status is ``waiting``. None if missing/raced."""
         rec = self._by_turn.get(turn_id)
-        if rec is None:
-            raise KeyError(f"approval not found for turn: {turn_id}")
+        if rec is None or rec.status != "waiting":
+            return None
         data: dict[str, Any] = {"draft_text": draft_text}
         if evaluation is not None:
             data["evaluation"] = evaluation

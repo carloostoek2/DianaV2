@@ -124,7 +124,8 @@ class SqlPendingApprovalStore:
         draft_text: str,
         evaluation: dict | None = None,
         cognitive_summary: str | None = None,
-    ) -> ApprovalRecord:
+    ) -> ApprovalRecord | None:
+        """CAS: update only while status is ``waiting``. None if missing/raced."""
         values: dict = {"draft_text": draft_text}
         if evaluation is not None:
             values["evaluation"] = evaluation
@@ -133,13 +134,17 @@ class SqlPendingApprovalStore:
         async with self._sf() as session:
             result = await session.execute(
                 update(PendingApproval)
-                .where(PendingApproval.turn_id == turn_id)
+                .where(
+                    PendingApproval.turn_id == turn_id,
+                    PendingApproval.status == "waiting",
+                )
                 .values(**values)
                 .returning(PendingApproval)
             )
             row = result.scalar_one_or_none()
             if row is None:
-                raise KeyError(f"approval not found for turn: {turn_id}")
+                await session.rollback()
+                return None
             await session.commit()
             trigger = await self._trigger_for(session, turn_id)
             return approval_orm_to_record(row, trigger_message_id=trigger)
