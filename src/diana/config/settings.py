@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     database_url: SecretStr  # must be postgresql+asyncpg://...
     deepseek_api_key: SecretStr = SecretStr("")
     llm_base_url: str = "https://api.deepseek.com"
+    # DeepSeek v4 "thinking" (chain-of-thought) for free-text drafts only.
+    # Structured JSON nodes (Analyst/Evaluator) always keep thinking off.
+    # Default on: better draft quality; raise max_tokens budget via provider.
+    llm_thinking_enabled: bool = True
     global_mode: Literal["supervised", "autonomous", "fake_delivery"] = "supervised"
     delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3
     delivery_retry_backoff_seconds: Annotated[float, Field(gt=0)] = 0.05

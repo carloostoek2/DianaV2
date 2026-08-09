@@ -113,6 +113,7 @@ class DeepSeekProvider:
         model: str = "deepseek-v4-flash",
         client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
+        thinking_enabled: bool = True,
     ) -> None:
         if not isinstance(api_key, SecretStr):
             raise TypeError("api_key must be a pydantic SecretStr")
@@ -122,10 +123,13 @@ class DeepSeekProvider:
         self._api_key = secret  # kept only for Authorization header at I/O boundary
         self._base_url = validate_llm_base_url(base_url)
         self._model = model
+        self._thinking_enabled = thinking_enabled
         self._owns_client = client is None
+        # Thinking adds CoT latency; give more room than the plain-text default.
+        self._timeout = timeout if not thinking_enabled else max(timeout, 120.0)
         self._client = client or httpx.AsyncClient(
             base_url=self._base_url,
-            timeout=timeout,
+            timeout=self._timeout,
             headers={"Authorization": f"Bearer {self._api_key}"},
         )
         # Always bind Authorization from constructor api_key (ignore pre-set client auth).
@@ -140,19 +144,34 @@ class DeepSeekProvider:
         messages: list[dict],
         *,
         temperature: float = 0.4,
-        max_tokens: int = 1024,
+        max_tokens: int | None = None,
     ) -> str:
+        # With thinking on, CoT + final draft share the token budget.
+        if max_tokens is None:
+            max_tokens = 4096 if self._thinking_enabled else 1024
+        thinking_type = "enabled" if self._thinking_enabled else "disabled"
         payload = {
             "model": self._model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            # DeepSeek v4 defaults thinking=enabled; CoT can exhaust max_tokens
-            # and leave content empty → reasoning_content leaked as draft text.
-            "thinking": {"type": "disabled"},
+            # Free-text drafts may use thinking for better quality.
+            # Never fall back to reasoning_content as the draft (leak risk).
+            "thinking": {"type": thinking_type},
         }
         data = await self._chat_completions(payload)
-        return self._extract_content(data)
+        content = self._extract_content(data)
+        if not content.strip():
+            logger.error(
+                "deepseek generate empty content",
+                extra={
+                    "model": self._model,
+                    "thinking": thinking_type,
+                    "finish_reason": _finish_reason(data),
+                    "had_reasoning": _has_reasoning_content(data),
+                },
+            )
+        return content
 
     async def generate_structured(
         self,
@@ -185,8 +204,9 @@ class DeepSeekProvider:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
-            # DeepSeek v4 defaults thinking=enabled; CoT can exhaust max_tokens
+            # ALWAYS disabled for structured JSON: CoT can exhaust max_tokens
             # and leave content empty → Analyst/Evaluator schema failures.
+            # Independent of llm_thinking_enabled (draft-only switch).
             "thinking": {"type": "disabled"},
         }
         data = await self._chat_completions(payload)
@@ -269,3 +289,13 @@ def _finish_reason(data: dict[str, Any]) -> str | None:
         return data["choices"][0].get("finish_reason")
     except (KeyError, IndexError, TypeError):
         return None
+
+
+def _has_reasoning_content(data: dict[str, Any]) -> bool:
+    """True when the model returned internal CoT (never use as public draft)."""
+    try:
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    reasoning = message.get("reasoning_content")
+    return isinstance(reasoning, str) and bool(reasoning.strip())

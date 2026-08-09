@@ -36,6 +36,7 @@ def _provider_with_transport(
     *,
     api_key: str = "test-key",
     base_url: str = "https://api.deepseek.com",
+    thinking_enabled: bool = True,
 ) -> DeepSeekProvider:
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url=base_url)
@@ -44,6 +45,7 @@ def _provider_with_transport(
         base_url=base_url,
         client=client,
         model="deepseek-chat",
+        thinking_enabled=thinking_enabled,
     )
 
 
@@ -154,15 +156,35 @@ async def test_generate_structured_disables_thinking_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_disables_thinking_mode() -> None:
-    """Free-text generate() must also disable thinking to prevent CoT leak into drafts."""
+async def test_generate_enables_thinking_mode_by_default() -> None:
+    """Free-text generate() uses thinking when thinking_enabled (draft quality)."""
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["payload"] = json.loads(request.content)
         return _openai_chat_response("ok")
 
-    provider = _provider_with_transport(handler)
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        await provider.generate([{"role": "user", "content": "x"}])
+    finally:
+        await provider.aclose()
+        await client.aclose()
+    assert seen["payload"].get("thinking") == {"type": "enabled"}
+    assert seen["payload"].get("max_tokens") == 4096
+
+
+@pytest.mark.asyncio
+async def test_generate_disables_thinking_when_flag_off() -> None:
+    """Operator can turn thinking off via thinking_enabled=False."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return _openai_chat_response("ok")
+
+    provider = _provider_with_transport(handler, thinking_enabled=False)
     client = provider._client
     try:
         await provider.generate([{"role": "user", "content": "x"}])
@@ -170,6 +192,40 @@ async def test_generate_disables_thinking_mode() -> None:
         await provider.aclose()
         await client.aclose()
     assert seen["payload"].get("thinking") == {"type": "disabled"}
+    assert seen["payload"].get("max_tokens") == 1024
+
+
+@pytest.mark.asyncio
+async def test_generate_never_leaks_reasoning_content_as_draft() -> None:
+    """Empty content must not fall back to reasoning_content (owner/VIP leak)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "internal monologue never send this",
+                    },
+                    "finish_reason": "length",
+                }
+            ],
+        }
+        return httpx.Response(200, json=body)
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == ""
+        assert "internal monologue" not in text
+    finally:
+        await provider.aclose()
+        await client.aclose()
 
 
 @pytest.mark.asyncio

@@ -433,6 +433,7 @@ def build_app(
         provider = DeepSeekProvider(
             api_key=settings.deepseek_api_key,
             base_url=settings.llm_base_url,
+            thinking_enabled=settings.llm_thinking_enabled,
         )
 
     # F2 knowledge services (Item 1)
