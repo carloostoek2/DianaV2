@@ -71,9 +71,10 @@ async def async_main() -> None:
     )
 
     # F4: recover any business messages that arrived while the bot was offline.
-    # Best-effort: polling loop provides the fallback if Telegram API is unavailable.
+    # Fetches+ACKs getUpdates, then runs handlers in background so VIP pre_delay
+    # (e.g. 120s supervised) does not block health/jobs/polling startup.
     # Must run BEFORE VIP pre_delay resume so offline owner/VIP traffic can
-    # supersede waiting_delay turns first.
+    # supersede waiting_delay turns (handlers race via TurnCoordinator).
     try:
         missed = await recover_missed_updates(bot=app.bot, dispatcher=app.dispatcher)
         if missed.total_updates:
@@ -83,12 +84,14 @@ async def async_main() -> None:
                     "business": missed.recovered_business_messages,
                     "regular": missed.recovered_regular_messages,
                     "total": missed.total_updates,
+                    "handlers_scheduled": missed.handlers_scheduled,
                 },
             )
     except BaseException:
         logger.exception("missed_message_recovery_failed")
 
-    # D1: resume VIP human wait that survived the restart (after missed updates).
+    # D1: schedule resume of VIP human waits that survived the restart.
+    # Sleeps run in background tasks (same non-blocking posture as missed feeds).
     try:
         pre_n = await run_app_pre_delay_recovery(app)
         if pre_n:

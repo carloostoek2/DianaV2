@@ -463,7 +463,10 @@ async def test_resume_pre_delay_continues_vip_pipeline() -> None:
         InMemoryTurnStore,
     )
     from diana.application.ports import RuntimeTimerRecord, TurnRecord, VipInboundMessage
-    from diana.application.recovery_startup import resume_pre_delay_timers
+    from diana.application.recovery_startup import (
+        resume_pre_delay_timers,
+        wait_pre_delay_recovery_tasks,
+    )
     from diana.behavior.fake import ImmediateClock
     from diana.cognitive.models import Decision, EvaluationProfile
 
@@ -526,6 +529,7 @@ async def test_resume_pre_delay_continues_vip_pipeline() -> None:
         clock=clock,
     )
     assert n == 1
+    await wait_pre_delay_recovery_tasks()
     assert len(orch.calls) == 1
     assert orch.calls[0]["turn_id"] == turn_id
     assert orch.calls[0]["vip_epoch"] == 2
@@ -548,7 +552,10 @@ async def test_resume_pre_delay_preserves_atencion_channel() -> None:
         InMemoryTurnStore,
     )
     from diana.application.ports import RuntimeTimerRecord, TurnRecord
-    from diana.application.recovery_startup import resume_pre_delay_timers
+    from diana.application.recovery_startup import (
+        resume_pre_delay_timers,
+        wait_pre_delay_recovery_tasks,
+    )
     from diana.behavior.fake import ImmediateClock
 
     turns = InMemoryTurnStore()
@@ -609,6 +616,7 @@ async def test_resume_pre_delay_preserves_atencion_channel() -> None:
         clock=clock,
     )
     assert n == 1
+    await wait_pre_delay_recovery_tasks()
     incoming = orch.calls[0]["incoming"]
     assert incoming.channel_type == "atencion"
     assert incoming.vip_id is None
@@ -826,7 +834,10 @@ async def test_resume_pre_delay_corrupt_payload_does_not_abort_pass() -> None:
         InMemoryTurnStore,
     )
     from diana.application.ports import RuntimeTimerRecord, TurnRecord
-    from diana.application.recovery_startup import resume_pre_delay_timers
+    from diana.application.recovery_startup import (
+        resume_pre_delay_timers,
+        wait_pre_delay_recovery_tasks,
+    )
     from diana.behavior.fake import ImmediateClock
 
     turns = InMemoryTurnStore()
@@ -921,14 +932,15 @@ async def test_resume_pre_delay_corrupt_payload_does_not_abort_pass() -> None:
         orchestrator=orch,
         clock=clock,
     )
-    # Only the healthy timer resumed; the corrupt one was skipped.
+    # Only the healthy timer is scheduled; the corrupt one was failed inline.
     assert n == 1
+    await wait_pre_delay_recovery_tasks()
     assert len(orch.calls) == 1
     assert orch.calls[0]["turn_id"] == good_turn_id
     good = await turns.get(good_turn_id)
     assert good is not None and good.status == "pending_approval"
-    # The corrupt timer was marked completed, so the orphan sweep fails the
-    # turn (crash_recovery) instead of stranding it — the pass never aborts.
+    # The corrupt timer was marked completed and the turn failed immediately
+    # (crash_recovery) so the pass never aborts.
     bad = await turns.get(bad_turn_id)
     assert bad is not None and bad.status == "failed"
     assert bad.error == "crash_recovery"

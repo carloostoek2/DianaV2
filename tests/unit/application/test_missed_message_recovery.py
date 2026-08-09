@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock
 import pytest
 from aiogram.types import Update
 
-from diana.application.missed_message_recovery import recover_missed_updates
+from diana.application.missed_message_recovery import (
+    recover_missed_updates,
+    wait_missed_recovery_tasks,
+)
 
 
 def _updates(*dicts: dict) -> list[Update]:
@@ -91,11 +94,13 @@ async def test_recovers_business_messages() -> None:
     dispatcher.feed_update = AsyncMock()
 
     report = await recover_missed_updates(bot, dispatcher)
+    await wait_missed_recovery_tasks()
 
     assert report.total_updates == 3
     assert report.recovered_business_messages == 2
     assert report.recovered_regular_messages == 1
     assert report.total_batches == 1
+    assert report.handlers_scheduled == 3
     assert dispatcher.feed_update.await_count == 3
 
 
@@ -127,6 +132,7 @@ async def test_multiple_batches() -> None:
     dispatcher.feed_update = AsyncMock()
 
     report = await recover_missed_updates(bot, dispatcher)
+    await wait_missed_recovery_tasks()
 
     assert report.total_updates == 4
     assert report.recovered_business_messages == 4
@@ -164,6 +170,7 @@ async def test_get_updates_offset_passed_correctly() -> None:
     dispatcher.feed_update = AsyncMock()
 
     await recover_missed_updates(bot, dispatcher)
+    await wait_missed_recovery_tasks()
 
     # First call offset = None (earliest unconfirmed)
     assert call_log[0] is None
@@ -190,9 +197,54 @@ async def test_non_business_non_regular_counted_as_total_only() -> None:
     dispatcher.feed_update = AsyncMock()
 
     report = await recover_missed_updates(bot, dispatcher)
+    await wait_missed_recovery_tasks()
 
     assert report.total_updates == 1
     assert report.recovered_business_messages == 0
     assert report.recovered_regular_messages == 0
     assert report.total_batches == 1
     assert dispatcher.feed_update.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_recover_returns_without_waiting_for_slow_handlers() -> None:
+    """VIP pre_delay must not block recover_missed_updates (startup hang fix)."""
+    import asyncio
+    import time
+
+    bot = AsyncMock()
+    bot.get_updates = _make_bot_get_updates(
+        _updates(
+            {
+                "update_id": 300,
+                "business_message": {
+                    "message_id": 1,
+                    "date": 1700000000,
+                    "chat": {"id": 1, "type": "private"},
+                    "text": "slow",
+                    "business_connection_id": "bc",
+                },
+            },
+        ),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_feed(*_a: object, **_k: object) -> None:
+        started.set()
+        await release.wait()
+
+    dispatcher = AsyncMock()
+    dispatcher.feed_update = AsyncMock(side_effect=slow_feed)
+
+    t0 = time.monotonic()
+    report = await recover_missed_updates(bot, dispatcher)
+    elapsed = time.monotonic() - t0
+
+    assert report.total_updates == 1
+    assert report.handlers_scheduled == 1
+    assert elapsed < 1.0
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    # Unblock background task so the suite does not leak a hung task.
+    release.set()
+    await wait_missed_recovery_tasks(timeout=2.0)

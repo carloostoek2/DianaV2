@@ -566,6 +566,28 @@ async def _renotify_approval(
     )
 
 
+# Background pre_delay resumes — strong refs; sleep/pipeline must not block boot.
+_pre_delay_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_pre_delay(coro: object, *, name: str) -> asyncio.Task:
+    task = asyncio.create_task(coro, name=name)  # type: ignore[arg-type]
+    _pre_delay_bg_tasks.add(task)
+    task.add_done_callback(_pre_delay_bg_tasks.discard)
+    return task
+
+
+async def wait_pre_delay_recovery_tasks(*, timeout: float = 30.0) -> None:
+    """Await in-flight pre_delay resume tasks (tests / graceful drain)."""
+    pending = [t for t in _pre_delay_bg_tasks if not t.done()]
+    if not pending:
+        return
+    await asyncio.wait_for(
+        asyncio.gather(*pending, return_exceptions=True),
+        timeout=timeout,
+    )
+
+
 async def resume_pre_delay_timers(
     *,
     timers: RuntimeTimerStore,
@@ -573,12 +595,18 @@ async def resume_pre_delay_timers(
     orchestrator: object,
     clock: ClockPort,
 ) -> int:
-    """Resume VIP pre-pipeline waits after missed-update recovery (D1).
+    """Schedule VIP pre-pipeline waits after missed-update recovery (D1).
 
     For each active ``kind=pre_delay`` timer whose turn is still
-    ``waiting_delay``, sleep remaining time and continue the cognitive path
-    via ``orchestrator.resume_waiting_delay``. Orphan ``waiting_delay`` turns
-    without a live timer are failed with ``crash_recovery``.
+    ``waiting_delay``, schedule ``orchestrator.resume_waiting_delay`` (remaining
+    sleep + cognitive path) as a **background task** so startup is not blocked
+    by multi-minute human delays.
+
+    Orphan ``waiting_delay`` turns without a live timer (or with a corrupt
+    payload that cannot be reconstructed) are failed immediately with
+    ``crash_recovery``.
+
+    Returns the number of resume tasks **scheduled** (not necessarily finished).
     """
     from uuid import UUID as _UUID
 
@@ -586,16 +614,57 @@ async def resume_pre_delay_timers(
 
     active = await timers.list_active()
     pre_delay = [t for t in active if (t.kind or "delivery") == "pre_delay"]
-    resumed = 0
+    scheduled = 0
+    scheduled_turn_ids: set = set()
+    orphans = 0
 
-    async def _one(timer: RuntimeTimerRecord) -> int:
+    async def _run_resume(
+        timer: RuntimeTimerRecord,
+        incoming: object,
+        vip_epoch: int,
+        remaining: float,
+    ) -> None:
+        try:
+            await orchestrator.resume_waiting_delay(  # type: ignore[union-attr]
+                turn_id=timer.turn_id,
+                incoming=incoming,
+                vip_epoch=vip_epoch,
+                remaining_seconds=remaining,
+            )
+            await timers.mark_completed(timer.id)
+        except Exception:
+            logger.exception(
+                "pre_delay_resume_failed",
+                extra={
+                    "timer_id": str(timer.id),
+                    "turn_id": str(timer.turn_id),
+                },
+            )
+            try:
+                await timers.mark_completed(timer.id)
+            except Exception:
+                pass
+            # Mirror former post-gather orphan sweep for failed resumes.
+            try:
+                live = await turns.get(timer.turn_id)
+                if live is not None and live.status == "waiting_delay":
+                    await turns.transition(
+                        live.id, "failed", error="crash_recovery"
+                    )
+            except Exception:
+                logger.exception(
+                    "pre_delay_resume_fail_turn_failed",
+                    extra={"turn_id": str(timer.turn_id)},
+                )
+
+    for timer in pre_delay:
         live = await turns.get(timer.turn_id)
         if live is None or live.status != "waiting_delay":
             try:
                 await timers.mark_completed(timer.id)
             except Exception:
                 pass
-            return 0
+            continue
         payload = timer.payload if isinstance(timer.payload, dict) else {}
         raw_in = (
             payload.get("incoming")
@@ -624,9 +693,7 @@ async def resume_pre_delay_timers(
                 channel_type=str(raw_in.get("channel_type") or "vip"),
             )
         except Exception:
-            # A corrupt/manual payload must not abort the whole recovery pass
-            # (asyncio.gather would re-raise); skip this timer and resume the
-            # rest (mirrors the resume-failure path below).
+            # Corrupt payload: do not block the pass; fail this turn now.
             logger.exception(
                 "pre_delay_reconstruction_failed",
                 extra={
@@ -638,45 +705,44 @@ async def resume_pre_delay_timers(
                 await timers.mark_completed(timer.id)
             except Exception:
                 pass
-            return 0
+            try:
+                await turns.transition(
+                    timer.turn_id, "failed", error="crash_recovery"
+                )
+                orphans += 1
+                logger.info(
+                    "waiting_delay_orphan_failed",
+                    extra={
+                        "turn_id": str(timer.turn_id),
+                        "chat_id": timer.chat_id,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "waiting_delay_orphan_fail_failed",
+                    extra={"turn_id": str(timer.turn_id)},
+                )
+            continue
+
         now_val = clock.now()
         elapsed = (now_val - timer.scheduled_at).total_seconds()
         remaining = max(0.0, float(timer.initial_delay_seconds) - elapsed)
-        try:
-            await orchestrator.resume_waiting_delay(  # type: ignore[union-attr]
-                turn_id=timer.turn_id,
-                incoming=incoming,
-                vip_epoch=vip_epoch,
-                remaining_seconds=remaining,
-            )
-            await timers.mark_completed(timer.id)
-            return 1
-        except Exception:
-            logger.exception(
-                "pre_delay_resume_failed",
-                extra={
-                    "timer_id": str(timer.id),
-                    "turn_id": str(timer.turn_id),
-                },
-            )
-            try:
-                await timers.mark_completed(timer.id)
-            except Exception:
-                pass
-            return 0
+        scheduled_turn_ids.add(timer.turn_id)
+        _spawn_pre_delay(
+            _run_resume(timer, incoming, vip_epoch, remaining),
+            name=f"pre_delay_resume_{timer.id}",
+        )
+        scheduled += 1
 
-    if pre_delay:
-        results = await asyncio.gather(*[_one(t) for t in pre_delay])
-        resumed = sum(results)
-
-    # Fail orphan waiting_delay (no timer, or resume left them stranded).
+    # Fail orphan waiting_delay with no scheduled resume (no live timer).
     try:
         non_term = await turns.list_all_non_terminal()
     except Exception:
         non_term = []
-    orphans = 0
     for rec in non_term:
         if rec.status != "waiting_delay":
+            continue
+        if rec.id in scheduled_turn_ids:
             continue
         try:
             await turns.transition(rec.id, "failed", error="crash_recovery")
@@ -691,12 +757,12 @@ async def resume_pre_delay_timers(
                 extra={"turn_id": str(rec.id)},
             )
 
-    if resumed or orphans:
+    if scheduled or orphans:
         logger.info(
             "pre_delay_recovery_done",
-            extra={"resumed": resumed, "orphans_failed": orphans},
+            extra={"resumed": scheduled, "orphans_failed": orphans},
         )
-    return resumed
+    return scheduled
 
 
 __all__ = [
@@ -704,4 +770,5 @@ __all__ = [
     "RecoveryStartupReport",
     "resume_pre_delay_timers",
     "run_startup_recovery",
+    "wait_pre_delay_recovery_tasks",
 ]
