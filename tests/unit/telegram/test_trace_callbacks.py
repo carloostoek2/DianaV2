@@ -17,11 +17,18 @@ from diana.application.memory import (
     InMemoryTraceReaderWriter,
     InMemoryTurnStore,
 )
+from diana.application.ports import ApprovalRecord
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.behavior.engine import BehaviorEngine
 from diana.behavior.fake import FakeTelegramActuator, FixedDelayPolicy, ImmediateClock
 from diana.telegram.handlers.callbacks import CorrectSessionStore, dispatch_owner_callback
-from diana.telegram.keyboards import encode_trace_detail, encode_trace_json, encode_trace_page, encode_trace_view
+from diana.telegram.keyboards import (
+    encode_trace_back_to_draft,
+    encode_trace_detail,
+    encode_trace_json,
+    encode_trace_page,
+    encode_trace_view,
+)
 
 
 class FakeTraceabilityReader:
@@ -189,6 +196,88 @@ class TestTraceJsonCallback:
         assert status == "trace_export"
 
 
+class TestTraceFromDraftCallbacks:
+    """Trace entered from the owner draft (vtd / tdd / tb)."""
+
+    async def test_vtd_returns_trace_view_token(self, admin_trace: AdminTraceService) -> None:
+        turn_id = uuid4()
+        reader: FakeTraceabilityReader = admin_trace._traces  # type: ignore[attr-defined]  # noqa: SLF001
+        reader.seed_trace(str(turn_id), {
+            "turn_id": turn_id, "chat_id": 1, "status": "delivered", "error": None,
+            "vip_id": None, "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+            "comprehension": None, "plan": None, "retrieved": None,
+            "prompt_text": None, "generated_text": "Hello",
+            "evaluation": None, "decision": {"action": "approve"},
+            "delivery_result": None, "timings": {"total_ms": 100},
+        })
+        status = await dispatch_owner_callback(
+            admin=None,  # type: ignore[arg-type]
+            correct_sessions=CorrectSessionStore(),
+            callback_data=encode_trace_view(turn_id, from_draft=True),
+            actor_id=OWNER,
+            admin_trace=admin_trace,
+        )
+        assert status == "trace_view"
+
+    async def test_tdd_returns_detail_token(self, admin_trace: AdminTraceService) -> None:
+        turn_id = uuid4()
+        reader: FakeTraceabilityReader = admin_trace._traces  # type: ignore[attr-defined]  # noqa: SLF001
+        reader.seed_trace(str(turn_id), {
+            "turn_id": turn_id, "chat_id": 1, "status": "delivered", "error": None,
+            "vip_id": None, "created_at": datetime(2026, 7, 25, 14, 30, tzinfo=UTC),
+            "comprehension": {"intent": "chat"}, "plan": None, "retrieved": None,
+            "prompt_text": None, "generated_text": "Hello",
+            "evaluation": None, "decision": {"action": "approve"},
+            "delivery_result": None, "timings": {"analyst_ms": 100},
+        })
+        status = await dispatch_owner_callback(
+            admin=None,  # type: ignore[arg-type]
+            correct_sessions=CorrectSessionStore(),
+            callback_data=encode_trace_detail(turn_id, "analyst", from_draft=True),
+            actor_id=OWNER,
+            admin_trace=admin_trace,
+        )
+        assert status == "trace_detail_view"
+
+    async def test_tb_returns_back_to_draft_token_when_waiting(
+        self, standard_admin: AdminService
+    ) -> None:
+        turn_id = uuid4()
+        await standard_admin._approvals.create_waiting(  # type: ignore[attr-defined]  # noqa: SLF001
+            ApprovalRecord(
+                id=uuid4(),
+                turn_id=turn_id,
+                chat_id=123,
+                business_connection_id="bc",
+                draft_text="Hola",
+            )
+        )
+        status = await dispatch_owner_callback(
+            admin=standard_admin,
+            correct_sessions=CorrectSessionStore(),
+            callback_data=encode_trace_back_to_draft(turn_id),
+            actor_id=OWNER,
+            admin_trace=AdminTraceService(
+                traces=FakeTraceabilityReader(), trace_ttl_days=30
+            ),
+        )
+        assert status == "trace_back_to_draft"
+
+    async def test_tb_returns_stale_when_no_waiting_approval(
+        self, standard_admin: AdminService
+    ) -> None:
+        status = await dispatch_owner_callback(
+            admin=standard_admin,
+            correct_sessions=CorrectSessionStore(),
+            callback_data=encode_trace_back_to_draft(uuid4()),
+            actor_id=OWNER,
+            admin_trace=AdminTraceService(
+                traces=FakeTraceabilityReader(), trace_ttl_days=30
+            ),
+        )
+        assert status == "trace_back_stale"
+
+
 class TestBackwardCompat:
     """Existing standard callbacks still work with admin_trace present."""
 
@@ -240,7 +329,6 @@ class TestBackwardCompat:
         self, standard_admin: AdminService
     ) -> None:
         """Standard callback prefixes (a:, c:, e:) still work when admin_trace is present."""
-        turn_id = uuid4()
         # Standard callbacks without an active turn return forbidden
         # because admin._assert_owner check fails when admin=None.
         # With a real admin that has owner_telegram_id set, missing actor

@@ -14,9 +14,11 @@ from aiogram.types import BufferedInputFile, CallbackQuery
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.draft_variants import build_owner_draft_text
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.telegram.keyboards import (
     MENU_ROOT_TEXT,
+    draft_keyboard,
     menu_root_keyboard,
     parse_callback,
     parse_metrics_callback,
@@ -179,19 +181,28 @@ async def dispatch_owner_callback(
             return "metrics_export"
         return "ignored"
 
-    # Check trace callbacks first (vt, td, tp, tj).
+    # Check trace callbacks first (vt, vtd, td, tdd, tp, tj, tb).
     trace_parsed = parse_trace_callback(callback_data)
     if trace_parsed is not None:
         action = trace_parsed.action
+        if action == "tb":
+            turn_id = trace_parsed.turn_id
+            if turn_id is None:
+                return "trace_invalid"
+            if admin is not None:
+                approval = await admin.get_approval(turn_id)
+                if approval is None or approval.status != "waiting":
+                    return "trace_back_stale"
+            return "trace_back_to_draft"
         if admin_trace is None:
             return "ignored"
-        if action == "vt":
+        if action in {"vt", "vtd"}:
             turn_id = trace_parsed.turn_id
             if turn_id is not None:
                 trace = await admin_trace.get_full_trace(turn_id)
                 return "trace_view" if trace is not None else "trace_not_found"
             return "trace_invalid"
-        if action == "td":
+        if action in {"td", "tdd"}:
             turn_id = trace_parsed.turn_id
             step = trace_parsed.step
             if turn_id is not None and step:
@@ -327,7 +338,7 @@ def build_callback_router(
 
             action = trace_parsed.action
             try:
-                if action == "vt":
+                if action in {"vt", "vtd"}:
                     turn_id = trace_parsed.turn_id
                     if turn_id is None:
                         await query.answer("Dato de traza inválido")
@@ -336,13 +347,17 @@ def build_callback_router(
                     if view is None:
                         await query.answer("Turno no encontrado", show_alert=True)
                         return
-                    kb = trace_detail_keyboard(view.turn_id, timings=view.timings)
+                    kb = trace_detail_keyboard(
+                        view.turn_id,
+                        timings=view.timings,
+                        from_draft=action == "vtd",
+                    )
                     if query.message:
                         await query.message.edit_text(view.text, reply_markup=kb, parse_mode=None)
                     await query.answer()
                     return
 
-                if action == "td":
+                if action in {"td", "tdd"}:
                     turn_id = trace_parsed.turn_id
                     step = trace_parsed.step or ""
                     if turn_id is None or not step:
@@ -352,9 +367,28 @@ def build_callback_router(
                     if view is None:
                         await query.answer("Turno no encontrado", show_alert=True)
                         return
-                    kb = step_detail_keyboard(view.turn_id)
+                    kb = step_detail_keyboard(view.turn_id, from_draft=action == "tdd")
                     if query.message:
                         await query.message.edit_text(view.text, reply_markup=kb, parse_mode=None)
+                    await query.answer()
+                    return
+
+                if action == "tb":
+                    turn_id = trace_parsed.turn_id
+                    if turn_id is None:
+                        await query.answer("Dato de traza inválido")
+                        return
+                    approval = await admin.get_approval(turn_id)
+                    if approval is None or approval.status != "waiting":
+                        await query.answer("Borrador no disponible", show_alert=True)
+                        return
+                    vip_name = await admin.resolve_vip_display_name(
+                        approval.vip_id, approval.chat_id
+                    )
+                    text = build_owner_draft_text(approval, vip_name=vip_name)
+                    kb = draft_keyboard(turn_id, chat_id=approval.chat_id)
+                    if query.message:
+                        await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
                     await query.answer()
                     return
 

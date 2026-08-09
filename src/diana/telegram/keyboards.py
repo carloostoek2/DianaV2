@@ -21,6 +21,10 @@ _ACTION_VIEW_TRACE = "vt"
 _ACTION_TRACE_DETAIL = "td"
 _ACTION_TRACE_PAGE = "tp"
 _ACTION_TRACE_JSON = "tj"
+# Trace entered from the owner draft — keeps "back to draft" navigation.
+_ACTION_VIEW_TRACE_FROM_DRAFT = "vtd"
+_ACTION_TRACE_DETAIL_FROM_DRAFT = "tdd"
+_ACTION_TRACE_BACK_TO_DRAFT = "tb"
 # Add note callback (an:<chat_id>) — ≤64 bytes
 _ACTION_ADD_NOTE = "an"
 # Metrics dashboard callbacks (mx:e export, mx:b back) — ≤64 bytes
@@ -220,17 +224,29 @@ _STEP_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
-def encode_trace_view(turn_id: UUID) -> str:
-    """Build callback_data for viewing a trace: vt:<uuid>."""
-    data = f"{_ACTION_VIEW_TRACE}:{turn_id}"
+def encode_trace_view(turn_id: UUID, from_draft: bool = False) -> str:
+    """Build callback_data for viewing a trace: vt:<uuid> (vtd when from draft)."""
+    code = _ACTION_VIEW_TRACE_FROM_DRAFT if from_draft else _ACTION_VIEW_TRACE
+    data = f"{code}:{turn_id}"
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
     return data
 
 
-def encode_trace_detail(turn_id: UUID, step_name: str) -> str:
-    """Build callback_data for a step detail: td:<uuid>:<step>."""
-    data = f"{_ACTION_TRACE_DETAIL}:{turn_id}:{step_name}"
+def encode_trace_detail(
+    turn_id: UUID, step_name: str, from_draft: bool = False
+) -> str:
+    """Build callback_data for a step detail: td:<uuid>:<step> (tdd when from draft)."""
+    code = _ACTION_TRACE_DETAIL_FROM_DRAFT if from_draft else _ACTION_TRACE_DETAIL
+    data = f"{code}:{turn_id}:{step_name}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_trace_back_to_draft(turn_id: UUID) -> str:
+    """Build callback_data for returning to the owner draft: tb:<uuid>."""
+    data = f"{_ACTION_TRACE_BACK_TO_DRAFT}:{turn_id}"
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
     return data
@@ -263,7 +279,15 @@ def parse_trace_callback(data: str) -> TraceCallbackData | None:
     parts = data.split(":", 2)
     code = parts[0]
 
-    actions = {_ACTION_VIEW_TRACE, _ACTION_TRACE_DETAIL, _ACTION_TRACE_PAGE, _ACTION_TRACE_JSON}
+    actions = {
+        _ACTION_VIEW_TRACE,
+        _ACTION_TRACE_DETAIL,
+        _ACTION_TRACE_PAGE,
+        _ACTION_TRACE_JSON,
+        _ACTION_VIEW_TRACE_FROM_DRAFT,
+        _ACTION_TRACE_DETAIL_FROM_DRAFT,
+        _ACTION_TRACE_BACK_TO_DRAFT,
+    }
     if code not in actions:
         return None
 
@@ -273,7 +297,7 @@ def parse_trace_callback(data: str) -> TraceCallbackData | None:
         except (ValueError, IndexError):
             return None
 
-    if code == _ACTION_TRACE_DETAIL:
+    if code in {_ACTION_TRACE_DETAIL, _ACTION_TRACE_DETAIL_FROM_DRAFT}:
         try:
             return TraceCallbackData(
                 action=code,
@@ -283,7 +307,7 @@ def parse_trace_callback(data: str) -> TraceCallbackData | None:
         except (ValueError, IndexError):
             return None
 
-    # vt or tj
+    # vt, tj, vtd, tb
     try:
         return TraceCallbackData(action=code, turn_id=UUID(parts[1]))
     except (ValueError, IndexError):
@@ -330,8 +354,13 @@ def trace_list_keyboard(
 def trace_detail_keyboard(
     turn_id: UUID,
     timings: dict[str, float] | None = None,
+    from_draft: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Keyboard with per-step buttons and export/back actions."""
+    """Keyboard with per-step buttons and export/back actions.
+
+    ``from_draft`` swaps the "back to turns" action for a "back to draft"
+    button so owners can return to the pending approval they entered from.
+    """
     timings = timings or {}
     buttons: list[list[InlineKeyboardButton]] = []
 
@@ -354,33 +383,41 @@ def trace_detail_keyboard(
         buttons.append([
             InlineKeyboardButton(
                 text=label,
-                callback_data=encode_trace_detail(turn_id, step_key),
+                callback_data=encode_trace_detail(turn_id, step_key, from_draft=from_draft),
             ),
         ])
 
-    # Bottom row: export JSON + back to turns.
+    # Bottom row: export JSON + back (to the turns list, or the draft when entered from it).
+    back_button = (
+        InlineKeyboardButton(
+            text="🔙 Volver al borrador",
+            callback_data=encode_trace_back_to_draft(turn_id),
+        )
+        if from_draft
+        else InlineKeyboardButton(
+            text="🔙 Volver a turnos",
+            callback_data=encode_trace_page(0),
+        )
+    )
     buttons.append([
         InlineKeyboardButton(
             text="📥 Exportar JSON",
             callback_data=encode_trace_json(turn_id),
         ),
-        InlineKeyboardButton(
-            text="🔙 Volver a turnos",
-            callback_data=encode_trace_page(0),
-        ),
+        back_button,
     ])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def step_detail_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+def step_detail_keyboard(turn_id: UUID, from_draft: bool = False) -> InlineKeyboardMarkup:
     """Keyboard with a single "Back to trace" button."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="🔙 Volver a traza",
-                    callback_data=encode_trace_view(turn_id),
+                    callback_data=encode_trace_view(turn_id, from_draft=from_draft),
                 ),
             ],
         ]
@@ -415,7 +452,7 @@ def draft_keyboard(turn_id: UUID, chat_id: int | None = None) -> InlineKeyboardM
     base.inline_keyboard.append([
         InlineKeyboardButton(
             text="🔍 Traza",
-            callback_data=f"{_ACTION_VIEW_TRACE}:{turn_id}",
+            callback_data=encode_trace_view(turn_id, from_draft=True),
         ),
         InlineKeyboardButton(
             text="📝 Agregar nota",
@@ -1099,6 +1136,7 @@ __all__ = [
     "encode_trace_detail",
     "encode_trace_page",
     "encode_trace_json",
+    "encode_trace_back_to_draft",
     "menu_back_keyboard",
     "menu_config_keyboard",
     "menu_confirm_delete_keyboard",

@@ -29,7 +29,7 @@ from diana.application.ports import (
     TurnStore,
     VipStore,
 )
-from diana.application.draft_variants import ensure_versions
+from diana.application.draft_variants import ensure_versions, resolve_vip_display_name
 from diana.application.escalation_labels import tipo_from_reason
 from diana.application.memory_extraction_service import (
     _POST_TURN_EXTRACTABLE_STATUSES,  # noqa: PLC2701 — extraction gate, single source (R3)
@@ -627,6 +627,16 @@ class AdminService:
             return False
         approval = await self._approvals.get_by_turn(turn_id)
         return approval is not None and approval.status == "waiting"
+
+    async def get_approval(self, turn_id: UUID) -> ApprovalRecord | None:
+        """Return the approval record for a turn, or None when missing."""
+        return await self._approvals.get_by_turn(turn_id)
+
+    async def resolve_vip_display_name(
+        self, vip_id: UUID | None, chat_id: int
+    ) -> str | None:
+        """Best-effort VIP display name for the owner draft body."""
+        return await resolve_vip_display_name(self._vip_store, vip_id, chat_id)
 
     async def mark_false_positive(
         self,
