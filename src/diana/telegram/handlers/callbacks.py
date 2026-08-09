@@ -151,8 +151,27 @@ def _map_delivery_status(result: Any, *, success_token: str) -> str:
     if success:
         return success_token
     if getattr(result, "cancelled", False):
-        return "stale"
+        err = str(getattr(result, "error", "") or "")
+        if err == "vip_frozen":
+            return "vip_frozen"
+        if "superseded" in err:
+            return "stale_replaced"
+        return "stale_cancelled"
     return "deliver_failed"
+
+
+# Owner-facing alerts for approve/correct no-ops (product language).
+_APPROVE_NOOP_ALERTS: dict[str, str] = {
+    "stale": "Ya fue resuelto o reemplazado — no se realizó ninguna acción",
+    "stale_replaced": (
+        "Este borrador ya no aplica (mensaje nuevo o se reemplazó). No se envió."
+    ),
+    "stale_already_sent": "Este mensaje ya se había enviado — no se hizo nada.",
+    "stale_resolved": "Este turno ya se resolvió — no se hizo nada.",
+    "stale_cancelled": "El borrador ya no está disponible — no se envió.",
+    "stale_gone": "No se encontró el turno — no se hizo nada.",
+    "vip_frozen": "El VIP está en pausa/congelado — no se envió.",
+}
 
 
 async def dispatch_owner_callback(
@@ -225,6 +244,9 @@ async def dispatch_owner_callback(
     try:
         if action == "approve":
             result = await admin.handle_approve(turn_id, actor_id=actor_id)
+            if result is None:
+                correct_sessions.cancel_turn(turn_id)
+                return await admin.classify_approve_noop(turn_id)
             status = _map_delivery_status(result, success_token="approved")
             if status != "approved":
                 correct_sessions.cancel_turn(turn_id)
@@ -235,13 +257,15 @@ async def dispatch_owner_callback(
             admin._assert_owner(actor_id)  # noqa: SLF001 — intentional thin gate
             if not await admin.is_pending_approval(turn_id):
                 correct_sessions.cancel_turn(turn_id)
-                return "stale"
+                return await admin.classify_approve_noop(turn_id)
             correct_sessions.start(actor_id, turn_id)
             return "awaiting_correct"
         if action == "escalate":
             applied = await admin.handle_owner_escalate(turn_id, actor_id=actor_id)
             correct_sessions.cancel_turn(turn_id)
-            return "escalated" if applied else "stale"
+            if applied:
+                return "escalated"
+            return await admin.classify_approve_noop(turn_id)
         if action in {"regen", "prev", "next"}:
             if draft_variants is None:
                 return "ignored"
@@ -519,9 +543,9 @@ def build_callback_router(
                         },
                     )
                 return
-            if status == "stale":
+            if status in _APPROVE_NOOP_ALERTS:
                 await query.answer(
-                    "Ya fue resuelto o reemplazado — no se realizó ninguna acción",
+                    _APPROVE_NOOP_ALERTS[status],
                     show_alert=True,
                 )
                 return

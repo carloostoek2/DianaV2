@@ -77,7 +77,7 @@ async def test_owner_approve_delivers_and_transitions():
 
 @pytest.mark.asyncio
 async def test_approve_twice_second_returns_stale():
-    """Approving an already-delivered turn returns stale."""
+    """Approving an already-delivered turn returns an honest already-sent token."""
     decision = Decision(action="approve", reason="ok", evaluation=make_eval(), draft_text="respuesta")
     g = build_e2e([decision])
 
@@ -89,7 +89,7 @@ async def test_approve_twice_second_returns_stale():
 
     # Second approve on terminal turn
     status2 = await dispatch("approve", turn_id, g)
-    assert status2 == "stale"
+    assert status2 == "stale_already_sent"
 
 
 @pytest.mark.asyncio

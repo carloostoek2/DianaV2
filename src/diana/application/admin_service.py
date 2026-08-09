@@ -533,6 +533,39 @@ class AdminService:
         self._assert_owner(actor_id)
         return await self._resolve_and_deliver(turn_id, corrected_text=None)
 
+    async def classify_approve_noop(self, turn_id: UUID) -> str:
+        """Map a no-op approve (``handle_approve`` → None) to an honest UX token.
+
+        Tokens are consumed by owner callbacks for distinct alerts instead of a
+        single generic "already resolved" toast.
+        """
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            return "stale_gone"
+        status = turn.status
+        if is_turn_status_terminal(status):
+            if status in {
+                TurnStatus.SUPERSEDED.value,
+                "superseded",
+            }:
+                return "stale_replaced"
+            if status in {
+                TurnStatus.DELIVERED.value,
+                "delivered",
+            }:
+                return "stale_already_sent"
+            if status in {
+                TurnStatus.ESCALATED.value,
+                "escalated",
+            }:
+                return "stale_resolved"
+            return "stale_resolved"
+        approval = await self._approvals.get_by_turn(turn_id)
+        if approval is None or approval.status not in {"waiting", "claimed"}:
+            return "stale_cancelled"
+        # Live turn + open approval but claim lost (concurrent owner action).
+        return "stale"
+
     async def handle_correct(
         self,
         turn_id: UUID,

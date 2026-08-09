@@ -54,4 +54,4 @@ async def test_correct_on_non_pending_returns_stale():
     assert (await g["turns"].get(turn_id)).status == TurnStatus.DELIVERED
 
     status = await dispatch("correct", turn_id, g)
-    assert status == "stale"
+    assert status == "stale_already_sent"

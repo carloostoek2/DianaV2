@@ -187,7 +187,7 @@ async def test_correct_callback_non_owner_forbidden(graph: dict) -> None:
 
 
 @pytest.mark.asyncio
-async def test_approve_after_supersede_returns_stale(graph: dict) -> None:
+async def test_approve_after_supersede_returns_stale_replaced(graph: dict) -> None:
     g = graph
     turn = await _queue_draft(g)
     await g["coordinator"].begin_turn(chat_id=42)  # supersede
@@ -197,7 +197,22 @@ async def test_approve_after_supersede_returns_stale(graph: dict) -> None:
         callback_data=encode_callback("approve", turn.id),
         actor_id=OWNER,
     )
-    assert status == "stale"
+    assert status == "stale_replaced"
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_approve_cancelled_approval_returns_stale_cancelled(graph: dict) -> None:
+    g = graph
+    turn = await _queue_draft(g)
+    await g["approvals"].mark_status(turn.id, "cancelled")
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("approve", turn.id),
+        actor_id=OWNER,
+    )
+    assert status == "stale_cancelled"
     assert g["actuator"].send_count() == 0
 
 
