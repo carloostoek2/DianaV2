@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
-from diana.application.draft_variants import build_owner_draft_text
-from diana.application.ports import ApprovalRecord, OwnerNotifierPort
+from diana.application.draft_variants import build_owner_draft_text, resolve_vip_display_name
+from diana.application.ports import ApprovalRecord, OwnerNotifierPort, VipStore
 
 logger = logging.getLogger("diana.application")
 
@@ -19,8 +19,11 @@ _REASON_LEGENDS = {
 class ApprovalDraftVoider:
     """Strip draft keyboards and mark messages as cancelled, keeping the draft."""
 
-    def __init__(self, notifier: OwnerNotifierPort) -> None:
+    def __init__(
+        self, notifier: OwnerNotifierPort, vips: VipStore | None = None
+    ) -> None:
         self._notifier = notifier
+        self._vips = vips
 
     async def on_approvals_cancelled(
         self,
@@ -45,10 +48,13 @@ class ApprovalDraftVoider:
             legend = _REASON_LEGENDS.get(reason, "Cancelado")
             # Keep the draft body for audit; prepend the cancel legend like the
             # approved path prepends "Enviado".
+            vip_name = await resolve_vip_display_name(
+                self._vips, rec.vip_id, rec.chat_id
+            )
             text = (
                 f"⚠️ <b>{legend}</b>\n"
                 "No se envió al VIP. Los botones quedaron desactivados.\n\n"
-                f"{build_owner_draft_text(rec)}"
+                f"{build_owner_draft_text(rec, vip_name=vip_name)}"
             )
             try:
                 await void(owner_message_id=int(mid), text=text)

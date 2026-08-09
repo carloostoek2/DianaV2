@@ -564,7 +564,7 @@ def build_app(
         behavior,
         recontact=recontact,
         feature_recontact_enabled=feature_recontact_enabled,
-        approval_ui=ApprovalDraftVoider(notifier),
+        approval_ui=ApprovalDraftVoider(notifier, vips=vips),
         runtime_timers=runtime_timers_store,
     )
     owner_marks = SqlOwnerMarkStore(sf)
@@ -971,6 +971,7 @@ def build_app(
         notifier=notifier,
         owner_telegram_id=settings.owner_telegram_id,
         history=history,
+        vips=vips,
     )
 
     wiring = build_dispatcher(

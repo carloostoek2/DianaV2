@@ -17,6 +17,7 @@ from diana.application.ports import (
     OwnerNotifierPort,
     PendingApprovalStore,
     TurnStore,
+    VipStore,
 )
 from diana.cognitive.models import Decision, IncomingTurn, TurnStatus
 
@@ -95,11 +96,14 @@ def selected_text(evaluation: dict[str, Any] | None, fallback: str) -> str:
     return fallback
 
 
-def build_owner_draft_text(record: ApprovalRecord) -> str:
+def build_owner_draft_text(
+    record: ApprovalRecord, vip_name: str | None = None
+) -> str:
     """Reconstruct the owner draft DM body from an approval record.
 
     Mirrors the on-message body so void/audit paths show the same text the
-    owner last saw (VIP name falls back to chat_id, matching draft refresh).
+    owner last saw. VIP name falls back to chat_id when the caller does not
+    resolve a display name.
     """
     v = read_versions(record.evaluation)
     vip_text = v.get("vip_text") or ""
@@ -117,7 +121,7 @@ def build_owner_draft_text(record: ApprovalRecord) -> str:
         except (TypeError, ValueError):
             summary = ""
     return format_draft_owner_text(
-        vip_name=str(record.chat_id),
+        vip_name=vip_name or str(record.chat_id),
         vip_text=vip_text,
         draft_text=record.draft_text,
         reason=record.cognitive_summary or "",
@@ -125,6 +129,23 @@ def build_owner_draft_text(record: ApprovalRecord) -> str:
         version_index=selected,
         version_count=len(items),
     )
+
+
+async def resolve_vip_display_name(
+    vips: VipStore | None,
+    vip_id: UUID | None,
+    chat_id: int,
+) -> str | None:
+    """Best-effort VIP display name; None when the store is missing or the VIP is unknown."""
+    if vips is None:
+        return None
+    if vip_id is not None:
+        rec = await vips.get_by_id(vip_id)
+    else:
+        rec = await vips.get_by_telegram_user_id(chat_id)
+    if rec is not None and getattr(rec, "display_name", None):
+        return str(rec.display_name)
+    return None
 
 
 def format_draft_owner_text(
@@ -170,6 +191,7 @@ class DraftVariantService:
         notifier: OwnerNotifierPort,
         owner_telegram_id: int,
         history: MessageHistoryWriter | None = None,
+        vips: VipStore | None = None,
         max_variants: int = MAX_DRAFT_VARIANTS,
     ) -> None:
         self._approvals = approvals
@@ -178,6 +200,7 @@ class DraftVariantService:
         self._notifier = notifier
         self._owner_telegram_id = owner_telegram_id
         self._history = history
+        self._vips = vips
         self._max = max(1, int(max_variants))
 
     def _assert_owner(self, actor_id: int | None) -> None:
@@ -402,7 +425,10 @@ class DraftVariantService:
         edit = getattr(self._notifier, "edit_draft", None)
         if not callable(edit) or approval.owner_message_id is None:
             return
-        text = build_owner_draft_text(approval)
+        vip_name = await resolve_vip_display_name(
+            self._vips, approval.vip_id, approval.chat_id
+        )
+        text = build_owner_draft_text(approval, vip_name=vip_name)
         try:
             await edit(
                 owner_message_id=approval.owner_message_id,
@@ -426,5 +452,6 @@ __all__ = [
     "ensure_versions",
     "format_draft_owner_text",
     "read_versions",
+    "resolve_vip_display_name",
     "selected_text",
 ]

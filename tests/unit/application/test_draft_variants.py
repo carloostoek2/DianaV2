@@ -8,14 +8,17 @@ import pytest
 
 from diana.application.draft_variants import (
     DraftVariantService,
+    build_owner_draft_text,
     ensure_versions,
     read_versions,
+    resolve_vip_display_name,
     selected_text,
 )
 from diana.application.memory import (
     FakeOwnerNotifier,
     InMemoryPendingApprovalStore,
     InMemoryTurnStore,
+    InMemoryVipStore,
 )
 from diana.application.ports import ApprovalRecord, TurnRecord
 from diana.cognitive.models import Decision, EvaluationProfile, IncomingTurn
@@ -165,3 +168,96 @@ async def test_regenerate_appends_variant() -> None:
     assert len(v["items"]) == 2
     assert v["selected"] == 1
     assert director.calls == 1
+
+
+def test_build_owner_draft_text_falls_back_to_chat_id() -> None:
+    eval_dict = ensure_versions(
+        {}, draft_text="hola", reason="ok", vip_text="msg del vip"
+    )
+    rec = ApprovalRecord(
+        id=uuid4(),
+        turn_id=uuid4(),
+        chat_id=123,
+        business_connection_id="bc",
+        draft_text="hola",
+        evaluation=eval_dict,
+    )
+    body = build_owner_draft_text(rec)
+    assert "123" in body
+    assert "Marian" not in body
+
+
+def test_build_owner_draft_text_uses_resolved_name() -> None:
+    eval_dict = ensure_versions(
+        {}, draft_text="hola", reason="ok", vip_text="msg del vip"
+    )
+    rec = ApprovalRecord(
+        id=uuid4(),
+        turn_id=uuid4(),
+        chat_id=123,
+        business_connection_id="bc",
+        draft_text="hola",
+        evaluation=eval_dict,
+    )
+    body = build_owner_draft_text(rec, vip_name="Marian")
+    assert "Marian" in body
+    assert "123" not in body
+
+
+@pytest.mark.asyncio
+async def test_resolve_vip_display_name() -> None:
+    assert await resolve_vip_display_name(None, None, 1) is None
+    vips = InMemoryVipStore()
+    assert await resolve_vip_display_name(vips, None, 999) is None
+    await vips.add(1, display_name="Marian")
+    assert await resolve_vip_display_name(vips, None, 1) == "Marian"
+    vip_id = (await vips.get_by_telegram_user_id(1)).id
+    assert await resolve_vip_display_name(vips, vip_id, 1) == "Marian"
+
+
+@pytest.mark.asyncio
+async def test_refresh_owner_message_uses_vip_display_name() -> None:
+    OWNER = 99
+    approvals = InMemoryPendingApprovalStore()
+    turns = InMemoryTurnStore()
+    vips = InMemoryVipStore()
+    turn_id = uuid4()
+    await turns.create(
+        TurnRecord(
+            id=turn_id,
+            chat_id=1,
+            status="pending_approval",
+            trigger_message_id=10,
+        )
+    )
+    await vips.add(1, display_name="Marian")
+    eval_dict = ensure_versions(
+        {}, draft_text="v1", reason="r1", vip_text="user said hi"
+    )
+    eval_dict["_draft_versions"]["items"].append({"text": "v2", "reason": "r2"})
+    eval_dict["_draft_versions"]["selected"] = 0
+    await approvals.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=turn_id,
+            chat_id=1,
+            business_connection_id="bc",
+            draft_text="v1",
+            evaluation=eval_dict,
+            owner_message_id=500,
+            trigger_message_id=10,
+        )
+    )
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=FakeDirector(["x"]),
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+        vips=vips,
+    )
+    r = await svc.navigate(turn_id, actor_id=OWNER, delta=1)
+    assert r.ok and r.token == "nav_ok"
+    assert any("Marian" in text for text, _ in notifier.infos)
+    assert not any("Propuesta de respuesta para 1" in text for text, _ in notifier.infos)
