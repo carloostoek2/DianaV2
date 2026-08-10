@@ -27,7 +27,7 @@ Hablar de **qué pasa en el producto**, **qué gana o pierde el negocio**, **qu�
 · Explicar con el mundo real del producto: VIP, Telegram, aprobación, corrección, sandbox, modo autónomo, recontacto, promo, “el bot manda solo o espera OK”.
 · Si aparece un concepto técnico inevitable, **traducirlo en una frase** al impacto de producto (ej. no “middleware fail-closed”: “si no podemos confirmar el estado, por seguridad no mandamos el mensaje”).
 · Las preguntas al usuario se formulan en lenguaje de negocio/producto, no de implementación.
-· Resumir avances como “qué cambió para vos / para el VIP / para el control”, no como lista de módulos.
+· Resumir avances como “qué cambió para ti / para el VIP / para el control”, no como lista de módulos.
 · Ante un error o bloqueo: qué falló en la práctica, qué se puede hacer ahora, y si hace falta una decisión de la dueña.
 
 0.3 Qué evitar en el chat (salvo que el usuario lo pida)
@@ -51,6 +51,33 @@ Hablar de **qué pasa en el producto**, **qué gana o pierde el negocio**, **qu�
 4. Si usé un término técnico, ¿lo traduje al efecto práctico?
 
 Si alguna respuesta es “no”, reescribir el mensaje antes de enviarlo.
+
+0.6 Idioma del producto: español neutro (obligatorio, sin excepciones)
+
+Todo texto de producto — UI del bot, prompts, seeds de persona, plantillas,
+mensajes al VIP, textos de la dueña, specs y este documento — se escribe en
+**español neutro** (variante mexicana/neutra). El **español rioplatense
+(voseo) está prohibido**: querés, tenés, hacés, decime, sos, vos, contame,
+andás, podés, escribime, y los imperativos voseantes (Revisá, Elegí, Tocá,
+Esperá, Enviá, Mandá, Comprá, Buscá, Cargá, Hablá, Poné, Dejá, Sacá, Mirá,
+Fijate, Acordate, Quedate, Pará, Seguí, Probá, Usá, Creá, Editá, Borrá,
+Guardá, Volvé, Pedí, Sentí, Sabé, Chequeá, Vení, Entrá, Agregá, Anotá).
+
+Regla de acción inmediata para cualquier agente (humano o IA):
+
+1. Al encontrar **cualquier** texto, referencia, código hardcodeado o
+   instrucción que use español rioplatense — en código, docs, prompts,
+   seeds, DB o ejemplos — **corregirlo en ese mismo instante** a español
+   neutro, sin esperar una tarea aparte ni una orden explícita.
+2. Si la referencia es una **regla o instrucción que prescribe usar
+   voseo/rioplatense** (ej. “respondé de forma cercana” con verbos
+   voseantes), **borrar esa regla** y reemplazarla por la forma neutra.
+3. Verificar también la **base de datos** cuando aplique (ej.
+   `persona_versions.payload` puede conservar seeds viejos con voseo);
+   actualizar las filas afectadas.
+4. Los textos de producto nuevos que escriba el agente deben nacer ya en
+   español neutro; no es válido dejarlos en voseo “porque es lo que se
+   entiende” ni postergar la corrección.
 
 ---
 

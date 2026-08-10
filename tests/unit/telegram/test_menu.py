@@ -766,7 +766,7 @@ def test_format_vip_profile_renders_memory_section() -> None:
     assert "🧠 Memoria" in text
     assert "[preferencias] Le gusta viajar" in text
     assert "⏳ pendiente" in text
-    assert "Hay 1 hechos por aprobar — usá /memoria." in text
+    assert "Hay 1 hechos por aprobar — usa /memoria." in text
     # Manual ficha still present (section added, not replaced).
     assert "📌 Datos:" in text
     assert "city: BA" in text

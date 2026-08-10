@@ -287,7 +287,7 @@ def _format_vip_profile(result: Any) -> str:
 
     lines.extend(memory_lines)
     if pending_count > 0:
-        lines.append(f"\nHay {pending_count} hechos por aprobar — usá /memoria.")
+        lines.append(f"\nHay {pending_count} hechos por aprobar — usa /memoria.")
 
     # Evo-Agente Fase 5 (EA-06): the 🔐 Confianza section — additive, follows
     # the memory section; empty rows render nothing (no orphan header).
