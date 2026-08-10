@@ -35,6 +35,10 @@ from diana.telegram.handlers.callbacks import (
     CorrectSessionStore,
     build_callback_router,
 )
+from diana.telegram.handlers.doctrine import (
+    DoctrineSessionStore,
+    build_doctrine_router,
+)
 from diana.telegram.handlers.staging import build_staging_router
 from diana.telegram.handlers.memory_approval import build_memory_approval_router
 from diana.telegram.freeze_middleware import FreezeCheckMiddleware
@@ -92,6 +96,7 @@ def build_dispatcher(
     forbidden_keywords: list[str],
     correct_sessions: CorrectSessionStore | None = None,
     doctrine_router: Router | None = None,
+    doctrine_sessions: DoctrineSessionStore | None = None,
     gray_zone: GrayZoneServicePort | None = None,
     staging: StagingService | None = None,
     admin_trace: AdminTraceService | None = None,
@@ -246,6 +251,8 @@ def build_dispatcher(
             coordinator=coordinator,
             history_seed=history_seed,
             backfill_queue=backfill_queue,
+            doctrine_sessions=doctrine_sessions,
+            gray_zone=gray_zone,
         )
     )
     root.include_router(build_business_router(orchestrator=orchestrator))

@@ -126,7 +126,10 @@ from diana.llm.deepseek import DeepSeekProvider
 from diana.llm.fake import FakeLLM
 from diana.telegram.actuator import AiogramTelegramActuator
 from diana.telegram.handlers.callbacks import CorrectSessionStore
-from diana.telegram.handlers.doctrine import build_doctrine_router
+from diana.telegram.handlers.doctrine import (
+    DoctrineSessionStore,
+    build_doctrine_router,
+)
 from diana.telegram.notifier import AiogramOwnerNotifier
 from diana.telegram.setup import TelegramWiring, build_dispatcher
 
@@ -845,6 +848,9 @@ def build_app(
     # Forbidden keywords loaded at boot (async load deferred to startup helper).
     forbidden_keywords: list[str] = []
     sessions = CorrectSessionStore()
+    # Free-text doctrine sessions (dr: flow) — shared between the doctrine
+    # router (opens the session) and the admin router (captures the text).
+    doctrine_sessions = DoctrineSessionStore()
 
     # Doctrine router — only wired when gray zone feature is enabled.
     doctrine_router = (
@@ -853,6 +859,7 @@ def build_app(
             coordinator=coordinator,
             owner_telegram_id=settings.owner_telegram_id,
             admin=admin,
+            doctrine_sessions=doctrine_sessions,
         )
         if gray_zone is not None
         else None
@@ -987,6 +994,7 @@ def build_app(
         forbidden_keywords=forbidden_keywords,
         correct_sessions=sessions,
         doctrine_router=doctrine_router,
+        doctrine_sessions=doctrine_sessions,
         gray_zone=gray_zone,
         staging=staging,
         admin_trace=admin_trace,

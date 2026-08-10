@@ -14,15 +14,48 @@ from aiogram.types import Message
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
-from diana.application.ports import VipRecord, VipStore
+from diana.application.ports import GrayZoneServicePort, VipRecord, VipStore
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.sandbox import SandboxService
 from diana.application.turn_coordinator import TurnCoordinator
+from diana.telegram.handlers.doctrine import (
+    DoctrineSessionStore,
+    handle_doctrine_free_text,
+)
 from diana.telegram.handlers.callbacks import (
     ADMIN_MENU_TEXT,
     SESSION_EXPIRED_UX,
     CorrectSessionStore,
 )
+
+DOCTRINE_SESSION_EXPIRED_UX = (
+    "Sesión de doctrina expirada — presiona Responder consulta de nuevo"
+)
+
+_DOCTRINE_STATUS_UX: dict[str, str] = {
+    "doctrine_session_expired": DOCTRINE_SESSION_EXPIRED_UX,
+    "doctrine_unavailable": "Módulo de zona gris no disponible",
+    "resolved": "Doctrina guardada y envío en borrador para tu aprobación",
+    "escalated": "Consulta escalada",
+    "not_found": "Consulta no encontrada — ya fue resuelta",
+    "error": "Error del sistema al guardar la doctrina",
+}
+
+
+async def _answer_doctrine_status(message: Message, status: str) -> None:
+    """Map doctrine free-text status tokens to owner-facing UX (fail-open text)."""
+    text = _DOCTRINE_STATUS_UX.get(status)
+    if text is None:
+        # Unknown token (e.g. forbidden) — stay silent, mirroring correct flow.
+        return
+    try:
+        await message.answer(text)
+    except Exception:
+        logger.exception(
+            "doctrine_status_answer_failed",
+            extra={"status": status},
+        )
+
 from diana.telegram.keyboards import (
     metrics_keyboard,
     trace_detail_keyboard,
@@ -230,6 +263,8 @@ async def handle_admin_text(
     coordinator: TurnCoordinator | None = None,
     history_seed: object | None = None,
     backfill_queue: object | None = None,
+    doctrine_sessions: DoctrineSessionStore | None = None,
+    gray_zone: GrayZoneServicePort | None = None,
 ) -> str:
     """Pure admin text dispatcher for unit tests. Returns honest status token."""
     if actor_id is None or actor_id != owner_telegram_id:
@@ -238,6 +273,27 @@ async def handle_admin_text(
     stripped = (text or "").strip()
     if not stripped:
         return "ignored"
+
+    # Free-text doctrine response takes priority when session is open
+    # (dr: flow — SPEC-FASE2 6.2). resolve distinguishes expired (UX)
+    # vs never-started (silent ignore), mirroring correct_sessions.
+    if doctrine_sessions is not None and not stripped.startswith("/"):
+        state, pending_turn = doctrine_sessions.resolve(actor_id)
+        if state == "expired":
+            return "doctrine_session_expired"
+        if state == "live" and pending_turn is not None:
+            doctrine_sessions.cancel(actor_id)
+            if gray_zone is None:
+                return "doctrine_unavailable"
+            if coordinator is None:
+                return "doctrine_unavailable"
+            return await handle_doctrine_free_text(
+                gray_zone=gray_zone,
+                coordinator=coordinator,
+                turn_id=pending_turn,
+                text=stripped,
+                admin=admin,
+            )
 
     # Free-text correct follow-up takes priority when session is open.
     # resolve distinguishes expired (UX) vs never-started (silent ignore).
@@ -439,10 +495,13 @@ def build_admin_router(
     coordinator: TurnCoordinator | None = None,
     history_seed: object | None = None,
     backfill_queue: object | None = None,
+    doctrine_sessions: DoctrineSessionStore | None = None,
+    gray_zone: GrayZoneServicePort | None = None,
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
     sessions_note = note_sessions or {}
+    doctrine_s = doctrine_sessions or DoctrineSessionStore()
 
     def _is_owner(message: Message) -> bool:
         # Owner identity + private DM only (SEC-VIP-01: no group leak).
@@ -463,6 +522,8 @@ def build_admin_router(
             sandbox=sandbox,
             coordinator=coordinator,
             backfill_queue=backfill_queue,
+            doctrine_sessions=doctrine_s,
+            gray_zone=gray_zone,
         )
 
     _SANDBOX_UX: dict[str, str] = {
@@ -787,6 +848,26 @@ def build_admin_router(
                     return
             await message.answer("Nota guardada")
             return
+
+        # Pending doctrine session handling (dr: free-text response).
+        if doctrine_s is not None:
+            d_state, _ = doctrine_s.resolve(actor_id)
+            if d_state == "expired":
+                await message.answer(DOCTRINE_SESSION_EXPIRED_UX)
+                return
+            if d_state == "live":
+                status = await handle_admin_text(
+                    text=message.text or "",
+                    actor_id=message.from_user.id if message.from_user else None,
+                    owner_telegram_id=owner_telegram_id,
+                    vips=vips,
+                    admin=admin,
+                    correct_sessions=sessions,
+                    doctrine_sessions=doctrine_s,
+                    gray_zone=gray_zone,
+                )
+                await _answer_doctrine_status(message, status)
+                return
 
         # Existing correct session handling.
         state, _ = sessions.resolve(actor_id)

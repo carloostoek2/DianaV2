@@ -258,9 +258,16 @@ class AdminService:
         )
 
     async def create_supervised_delivery_from_gray_zone(
-        self, turn_id: UUID, query: GrayZoneQueryView
+        self,
+        turn_id: UUID,
+        query: GrayZoneQueryView,
+        *,
+        draft_override: str | None = None,
     ) -> bool:
         """Create a supervised PendingApproval from a resolved/expired gray zone draft.
+
+        ``draft_override`` replaces the persisted query draft when the owner
+        provided free-text doctrine (dr: flow) that must be the delivered text.
 
         Synthesizes an ``IncomingTurn`` + minimal ``Decision`` from the turn
         record and the persisted gray zone query, reuses
@@ -306,7 +313,11 @@ class AdminService:
             )
             return False
 
-        draft = getattr(query, "draft", "") or ""
+        draft = (
+            draft_override
+            if draft_override is not None
+            else (getattr(query, "draft", "") or "")
+        )
         if not draft.strip():
             logger.info("gray_zone_delivery_empty_draft", extra={"turn_id": str(turn_id)})
             return False

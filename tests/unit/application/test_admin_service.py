@@ -1341,6 +1341,30 @@ async def test_gray_zone_supervised_delivery_atencion_no_vip(admin_graph: dict) 
 
 
 @pytest.mark.asyncio
+async def test_gray_zone_supervised_delivery_draft_override(admin_graph: dict) -> None:
+    """Free-text doctrine: draft_override replaces the persisted query draft."""
+    g = admin_graph
+    turn_id = uuid4()
+    await g["turns"].create(
+        TurnRecord(
+            id=turn_id, chat_id=42, status="gray_zone",
+            channel_type="vip", trigger_message_id=7,
+        )
+    )
+    query = _gray_zone_query(turn_id=turn_id)
+
+    result = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query, draft_override="Siempre ofrecer 10% si pide 3 unidades"
+    )
+    assert result is True
+
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.draft_text == "Siempre ofrecer 10% si pide 3 unidades"
+    assert g["notifier"].drafts[0].draft_text == "Siempre ofrecer 10% si pide 3 unidades"
+
+
+@pytest.mark.asyncio
 async def test_gray_zone_supervised_delivery_missing_turn(admin_graph: dict) -> None:
     """Missing turn → False, no approval, no notification."""
     g = admin_graph

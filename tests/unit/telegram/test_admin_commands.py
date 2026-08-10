@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -196,6 +197,7 @@ def admin_ctx() -> dict:
         "profile_admin": profile_admin,
         "sandbox": sandbox,
         "coordinator": coordinator,
+        "turns": turns,
     }
 
 
@@ -239,6 +241,103 @@ async def test_start_menu_owner(admin_ctx: dict) -> None:
         correct_sessions=g["sessions"],
     )
     assert status == "menu"
+
+
+@pytest.mark.asyncio
+async def test_doctrine_free_text_session_captures_text(admin_ctx: dict) -> None:
+    """dr: session → owner free text resolves the gray zone query as doctrine."""
+    from diana.application.ports import TurnRecord
+    from diana.telegram.handlers.doctrine import DoctrineSessionStore
+
+    g = admin_ctx
+    turn_id = uuid4()
+    # Real turn in gray_zone so the supervised delivery can transition it.
+    await g["turns"].create(
+        TurnRecord(
+            id=turn_id,
+            chat_id=42,
+            status="gray_zone",
+            channel_type="vip",
+            trigger_message_id=7,
+        )
+    )
+    sessions = DoctrineSessionStore()
+    sessions.start(OWNER, turn_id)
+
+    class _FakeGrayZone:
+        def __init__(self) -> None:
+            self.resolved: list[tuple[str, str]] = []
+
+        async def get_open_query_by_turn_id(self, tid: UUID) -> object:
+            assert tid == turn_id
+            return SimpleNamespace(
+                id=uuid4(),
+                turn_id=turn_id,
+                draft="draft",
+                question="q",
+                business_connection_id="bc-gray",
+            )
+
+        async def resolve_with_doctrine(
+            self, query_id: UUID, generalization: str, rule: str
+        ) -> object:
+            self.resolved.append((generalization, rule))
+            return SimpleNamespace(id=uuid4())
+
+        async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
+            return SimpleNamespace(id=query_id)
+
+        async def reopen_query(self, query_id: UUID) -> bool:
+            return True
+
+    gz = _FakeGrayZone()
+    status = await handle_admin_text(
+        text="Siempre ofrecer 10% si piden 3 unidades",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        doctrine_sessions=sessions,
+        gray_zone=gz,  # type: ignore[arg-type]
+        coordinator=g["coordinator"],
+    )
+    assert status == "resolved"
+    assert gz.resolved == [("Siempre ofrecer 10% si piden 3 unidades", "Siempre ofrecer 10% si piden 3 unidades")]
+    # Session consumed after capture.
+    assert sessions.resolve(OWNER) == ("none", None)
+    # The turn moved to pending approval with the owner text as draft.
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_doctrine_free_text_expired_session_returns_token(
+    admin_ctx: dict,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from diana.telegram.handlers.doctrine import DoctrineSessionStore
+
+    g = admin_ctx
+    now = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    sessions = DoctrineSessionStore(ttl=timedelta(minutes=15), clock=lambda: now)
+    sessions.start(OWNER, uuid4())
+    # Advance past TTL.
+    now = now + timedelta(minutes=16)
+
+    status = await handle_admin_text(
+        text="alguna regla",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        doctrine_sessions=sessions,
+        gray_zone=None,
+    )
+    assert status == "doctrine_session_expired"
 
 
 @pytest.mark.asyncio

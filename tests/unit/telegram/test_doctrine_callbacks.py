@@ -48,7 +48,7 @@ class FakeAdmin:
     """Fake AdminService recording supervised-delivery synthesis calls."""
 
     def __init__(self) -> None:
-        self.create_supervised_calls: list[tuple[UUID, object]] = []
+        self.create_supervised_calls: list[tuple[UUID, object, str | None]] = []
         self._denials: set[UUID] = set()
 
     def deny_on(self, turn_id: UUID) -> None:
@@ -56,9 +56,13 @@ class FakeAdmin:
         self._denials.add(turn_id)
 
     async def create_supervised_delivery_from_gray_zone(
-        self, turn_id: UUID, query: object
+        self,
+        turn_id: UUID,
+        query: object,
+        *,
+        draft_override: str | None = None,
     ) -> bool:
-        self.create_supervised_calls.append((turn_id, query))
+        self.create_supervised_calls.append((turn_id, query, draft_override))
         return turn_id not in self._denials
 
 
@@ -340,9 +344,11 @@ async def test_resolve_with_draft_with_admin_creates_supervised_delivery() -> No
 
     assert len(gray_zone.confirm_calls) == 1
     assert len(admin.create_supervised_calls) == 1
-    called_turn_id, called_query = admin.create_supervised_calls[0]
+    called_turn_id, called_query, draft_override = admin.create_supervised_calls[0]
     assert called_turn_id == turn_id
     assert called_query is query
+    # Draft path passes the persisted draft as the override.
+    assert draft_override == "use-this-draft"
 
 
 @pytest.mark.asyncio
@@ -385,7 +391,10 @@ async def test_resolve_with_draft_confirm_before_supervised_delivery() -> None:
         return object()
 
     async def _create_supervised(
-        turn_id_: UUID, query: object
+        turn_id_: UUID,
+        query: object,
+        *,
+        draft_override: str | None = None,
     ) -> bool:
         events.append("supervised")
         return True
@@ -439,7 +448,12 @@ async def test_resolve_with_draft_delivery_error_falls_back_to_escalate() -> Non
     turn_id = uuid4()
     gray_zone.add_query(turn_id, draft="use-this-draft")
 
-    async def _boom(turn_id_: UUID, query: object) -> bool:
+    async def _boom(
+        turn_id_: UUID,
+        query: object,
+        *,
+        draft_override: str | None = None,
+    ) -> bool:
         msg = "simulated delivery failure"
         raise RuntimeError(msg)
 
@@ -470,7 +484,12 @@ async def test_resolve_with_draft_lock_timeout_is_error_not_escalated() -> None:
     turn_id = uuid4()
     query = gray_zone.add_query(turn_id, draft="use-this-draft")
 
-    async def _lock_timeout(turn_id_: UUID, query: object) -> bool:
+    async def _lock_timeout(
+        turn_id_: UUID,
+        query: object,
+        *,
+        draft_override: str | None = None,
+    ) -> bool:
         msg = "simulated lock contention"
         raise ChatLockTimeoutError(msg)
 
@@ -602,7 +621,7 @@ async def test_doctrine_router_non_owner_forbidden_all_actions() -> None:
         args, kwargs = query.answer.await_args
         assert kwargs.get("show_alert") is True
         text = args[0] if args else kwargs.get("text", "")
-        assert "Not authorized" in text
+        assert "No autorizado" in text
 
     assert gray_zone.resolve_calls == []
     assert gray_zone.discard_calls == []
@@ -625,7 +644,7 @@ async def test_doctrine_router_missing_owner_id_fail_closed() -> None:
     query = _callback(encode_doctrine_resolve_callback(turn_id), user_id=OWNER)
     await handler(query)
     args, kwargs = query.answer.await_args
-    assert "Not authorized" in (args[0] if args else kwargs.get("text", ""))
+    assert "No autorizado" in (args[0] if args else kwargs.get("text", ""))
     assert gray_zone.resolve_calls == []
 
 
@@ -646,7 +665,7 @@ async def test_doctrine_router_owner_resolve_allowed() -> None:
     assert len(gray_zone.resolve_calls) == 1
     args, kwargs = query.answer.await_args
     text = args[0] if args else kwargs.get("text", "")
-    assert "Resolved" in text
+    assert "Resuelto" in text
 
 
 # --- parse_doctrine_callback tests (TEST-1) ---

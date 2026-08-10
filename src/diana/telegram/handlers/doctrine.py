@@ -1,9 +1,17 @@
-"""Doctrine callback handlers: respond, resolve-with-draft, escalate."""
+"""Doctrine callback handlers: respond, resolve-with-draft, escalate.
+
+Flow (SPEC-FASE2 6.2):
+- dr: (Responder consulta) opens a free-text doctrine session; the owner's
+  next DM text is captured as doctrine (generalization + rule) and resolved.
+- dx: (Usar borrador) resolves with the persisted draft as doctrine.
+- de: (Escalar) discards the query and escalates the turn.
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, Callable, Literal
 from uuid import UUID
 
 from aiogram import Router
@@ -20,45 +28,112 @@ from diana.telegram.keyboards import parse_doctrine_callback
 logger = logging.getLogger("diana.telegram")
 
 _RESULT_MESSAGES: dict[str, tuple[str, bool]] = {
-    "resolved": ("Resolved and applied", False),
-    "escalated": ("Escalated", False),
-    "not_found": ("Query not found — already handled", True),
-    "error": ("Error processing request", True),
+    "resolved": ("Resuelto y aplicado", False),
+    "escalated": ("Escalado", False),
+    "not_found": ("Consulta no encontrada — ya fue resuelta", True),
+    "error": ("Error al procesar la solicitud", True),
 }
 
-
-async def handle_doctrine_respond(
-    *,
-    turn_id: UUID,
-) -> str:
-    """Handle respond callback: acknowledge and return 'prompted' status."""
-    logger.info(
-        "doctrine_respond",
-        extra={
-            "turn_id": str(turn_id),
-        },
-    )
-    return "prompted"
+DEFAULT_DOCTRINE_TTL = timedelta(minutes=15)
+DoctrineClockFn = Callable[[], datetime]
+DoctrineResolveState = Literal["live", "expired", "none"]
 
 
-async def handle_doctrine_resolve_with_draft(
+class DoctrineSessionStore:
+    """Process-local FSM: owner_id → awaiting free-text doctrine for turn_id.
+
+    Same pattern as ``CorrectSessionStore`` (callbacks.py) but for gray zone
+    doctrine responses: the owner pressed "Responder consulta" and the next
+    free-text DM is captured as doctrine for that turn.
+
+    In-memory only (single-instance). Restart clears all sessions; multi-replica
+    would need a shared store (out of scope — see docs/OPS_SINGLE_INSTANCE.md).
+    Supports TTL (default 15 min) and cancel-by-turn for supersede cleanup.
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl: timedelta = DEFAULT_DOCTRINE_TTL,
+        clock: DoctrineClockFn | None = None,
+    ) -> None:
+        self._awaiting: dict[int, tuple[UUID, datetime]] = {}
+        self._ttl = ttl
+        self._clock: DoctrineClockFn = clock or (lambda: datetime.now(UTC))
+
+    def start(self, owner_id: int, turn_id: UUID) -> None:
+        self._awaiting[owner_id] = (turn_id, self._clock())
+        logger.info(
+            "doctrine_session_started",
+            extra={
+                "owner_id": owner_id,
+                "turn_id": str(turn_id),
+                "ttl_s": int(self._ttl.total_seconds()),
+            },
+        )
+
+    def pop(self, owner_id: int) -> UUID | None:
+        item = self._awaiting.pop(owner_id, None)
+        if item is None:
+            return None
+        turn_id, started = item
+        if self._clock() - started > self._ttl:
+            return None
+        return turn_id
+
+    def resolve(
+        self, owner_id: int
+    ) -> tuple[DoctrineResolveState, UUID | None]:
+        """Gate helper for free-text doctrine.
+
+        - live: within TTL; UUID returned; entry KEPT (does not consume)
+        - expired: TTL exceeded; entry POPPED; log doctrine_session_expired once
+        - none: missing; no log
+        """
+        item = self._awaiting.get(owner_id)
+        if item is None:
+            return ("none", None)
+        turn_id, started = item
+        if self._clock() - started > self._ttl:
+            self._awaiting.pop(owner_id, None)
+            logger.info(
+                "doctrine_session_expired",
+                extra={
+                    "owner_id": owner_id,
+                    "turn_id": str(turn_id),
+                },
+            )
+            return ("expired", turn_id)
+        return ("live", turn_id)
+
+    def cancel(self, owner_id: int) -> None:
+        self._awaiting.pop(owner_id, None)
+
+    def cancel_turn(self, turn_id: UUID) -> int:
+        """Clear any doctrine sessions awaiting this turn (supersede / terminal)."""
+        removed = 0
+        for oid, (tid, _) in list(self._awaiting.items()):
+            if tid == turn_id:
+                self._awaiting.pop(oid, None)
+                removed += 1
+        return removed
+
+
+async def _resolve_query_with_doctrine(
     *,
     gray_zone: GrayZoneServicePort,
     coordinator: TurnCoordinator,
     turn_id: UUID,
+    generalization: str,
+    rule: str,
+    draft: str,
     admin: AdminService | None = None,
 ) -> str:
-    """Resolve using the existing query draft as doctrine, then confirm.
+    """Shared resolution core: doctrine text → candidate → confirm → deliver.
 
-    After ``confirm_and_apply`` closes the query (and unfreezes the VIP),
-    ``admin.create_supervised_delivery_from_gray_zone`` creates a supervised
-    PendingApproval with the query draft and transitions the turn to
-    ``PENDING_APPROVAL``. With ``admin=None`` the behavior is legacy:
-    only ``confirm_and_apply`` (no approval creation, no transition). If the
-    supervised delivery cannot be created, the turn is escalated as a
-    fallback so it never stays stuck in ``gray_zone``.
-
-    Returns status token: 'resolved', 'escalated', 'not_found', or 'error'.
+    Used by both the draft path (generalization=rule=draft=query.draft) and
+    the free-text path (all three = the owner's text). Returns status token:
+    'resolved', 'escalated', 'not_found', or 'error'.
     """
     try:
         query = await gray_zone.get_open_query_by_turn_id(turn_id)
@@ -75,8 +150,8 @@ async def handle_doctrine_resolve_with_draft(
     try:
         candidate = await gray_zone.resolve_with_doctrine(
             query.id,
-            query.draft,
-            query.draft,
+            generalization,
+            rule,
         )
         # If confirm_and_apply fails below, resolve_with_doctrine already
         # created an orphan staging candidate. The query stays open so it
@@ -85,7 +160,7 @@ async def handle_doctrine_resolve_with_draft(
         if admin is not None:
             try:
                 created = await admin.create_supervised_delivery_from_gray_zone(
-                    turn_id, query
+                    turn_id, query, draft_override=draft
                 )
             except ChatLockTimeoutError:
                 # Lock contention with the expiry job or an owner callback:
@@ -121,7 +196,7 @@ async def handle_doctrine_resolve_with_draft(
                 except Exception:
                     logger.exception(
                         "doctrine_resolve_fallback_escalate_error",
-                        extra={"turn_id": str(turn_id)},
+                        extra={"turn_id": str(turn_id), "query_id": str(query.id)},
                     )
                     # Double failure: reopen the query so a later run (expiry)
                     # retries instead of stranding the turn in gray_zone.
@@ -130,10 +205,7 @@ async def handle_doctrine_resolve_with_draft(
                     except Exception:
                         logger.exception(
                             "doctrine_resolve_reopen_error",
-                            extra={
-                                "turn_id": str(turn_id),
-                                "query_id": str(query.id),
-                            },
+                            extra={"turn_id": str(turn_id), "query_id": str(query.id)},
                         )
                     return "error"
                 logger.warning(
@@ -142,12 +214,13 @@ async def handle_doctrine_resolve_with_draft(
                 )
                 return "escalated"
         logger.info(
-            "doctrine_resolved_with_draft",
+            "doctrine_resolved_with_text",
             extra={
                 "turn_id": str(turn_id),
                 "query_id": str(query.id),
                 "candidate_id": str(candidate.id),
                 "supervised": admin is not None,
+                "source": "draft" if generalization == draft else "free_text",
             },
         )
         return "resolved"
@@ -157,6 +230,89 @@ async def handle_doctrine_resolve_with_draft(
             extra={"turn_id": str(turn_id), "query_id": str(query.id)},
         )
         return "error"
+
+
+async def handle_doctrine_respond(
+    *,
+    turn_id: UUID,
+) -> str:
+    """Handle respond callback: acknowledge and return 'prompted' status."""
+    logger.info(
+        "doctrine_respond",
+        extra={
+            "turn_id": str(turn_id),
+        },
+    )
+    return "prompted"
+
+
+async def handle_doctrine_free_text(
+    *,
+    gray_zone: GrayZoneServicePort,
+    coordinator: TurnCoordinator,
+    turn_id: UUID,
+    text: str,
+    admin: AdminService | None = None,
+) -> str:
+    """Resolve a gray zone query with the owner's free-text doctrine.
+
+    The owner's text plays both roles (SPEC-FASE2 6.2): it is the answer
+    delivered to the VIP (via supervised approval) and the generalization
+    stored as doctrine. ``text`` must be non-empty (callers gate this).
+
+    Returns status token: 'resolved', 'escalated', 'not_found', or 'error'.
+    """
+    return await _resolve_query_with_doctrine(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        generalization=text,
+        rule=text,
+        draft=text,
+        admin=admin,
+    )
+
+
+async def handle_doctrine_resolve_with_draft(
+    *,
+    gray_zone: GrayZoneServicePort,
+    coordinator: TurnCoordinator,
+    turn_id: UUID,
+    admin: AdminService | None = None,
+) -> str:
+    """Resolve using the existing query draft as doctrine, then confirm.
+
+    After ``confirm_and_apply`` closes the query (and unfreezes the VIP),
+    ``admin.create_supervised_delivery_from_gray_zone`` creates a supervised
+    PendingApproval with the query draft and transitions the turn to
+    ``PENDING_APPROVAL``. With ``admin=None`` the behavior is legacy:
+    only ``confirm_and_apply`` (no approval creation, no transition). If the
+    supervised delivery cannot be created, the turn is escalated as a
+    fallback so it never stays stuck in ``gray_zone``.
+
+    Returns status token: 'resolved', 'escalated', 'not_found', or 'error'.
+    """
+    try:
+        query = await gray_zone.get_open_query_by_turn_id(turn_id)
+    except Exception:
+        logger.exception(
+            "doctrine_resolve_lookup_error", extra={"turn_id": str(turn_id)}
+        )
+        return "error"
+
+    if query is None:
+        logger.info("doctrine_resolve_no_query", extra={"turn_id": str(turn_id)})
+        return "not_found"
+
+    return await _resolve_query_with_doctrine(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        generalization=query.draft,
+        rule=query.draft,
+        draft=query.draft,
+        admin=admin,
+    )
 
 
 async def handle_doctrine_escalate(
@@ -210,6 +366,7 @@ def build_doctrine_router(
     coordinator: TurnCoordinator,
     owner_telegram_id: int | None = None,
     admin: AdminService | None = None,
+    doctrine_sessions: DoctrineSessionStore | None = None,
 ) -> Router:
     """Build a Router with doctrine callback handlers.
 
@@ -218,6 +375,7 @@ def build_doctrine_router(
     Owner auth mirrors metrics/trace: non-owner answers ``Not authorized``.
     """
     router = Router(name="doctrine")
+    sessions = doctrine_sessions or DoctrineSessionStore()
 
     def _is_owner(callback: CallbackQuery) -> bool:
         if owner_telegram_id is None:
@@ -228,30 +386,37 @@ def build_doctrine_router(
     @router.callback_query(lambda c: c.data and c.data.startswith("dr:"))
     async def on_doctrine_respond(callback: CallbackQuery, **_: Any) -> None:
         if not _is_owner(callback):
-            await callback.answer("Not authorized", show_alert=True)
+            await callback.answer("No autorizado", show_alert=True)
             return
         turn_id = parse_doctrine_callback(callback.data or "")
         if turn_id is None:
-            await callback.answer("Invalid callback", show_alert=True)
+            await callback.answer("Dato de consulta inválido", show_alert=True)
             return
 
         status = await handle_doctrine_respond(turn_id=turn_id)
-        await callback.answer("Opening response prompt...")
-        if callback.message:
-            await callback.message.answer(
-                f"Send your doctrine response text for turn {turn_id}"
-            )
+        await callback.answer("Abriendo respuesta de doctrina...")
+        if status == "prompted":
+            # Open a free-text session so the owner's next DM is captured.
+            actor_id = callback.from_user.id if callback.from_user else None
+            if actor_id is not None:
+                sessions.start(actor_id, turn_id)
+            if callback.message:
+                await callback.message.answer(
+                    f"Envía tu respuesta de doctrina para el turno {turn_id}.\n"
+                    "Escribe el texto que quieres que el VIP reciba; quedará "
+                    "también como regla para casos futuros."
+                )
 
     @router.callback_query(lambda c: c.data and c.data.startswith("dx:"))
     async def on_doctrine_resolve_with_draft(
         callback: CallbackQuery, **_: Any
     ) -> None:
         if not _is_owner(callback):
-            await callback.answer("Not authorized", show_alert=True)
+            await callback.answer("No autorizado", show_alert=True)
             return
         turn_id = parse_doctrine_callback(callback.data or "")
         if turn_id is None:
-            await callback.answer("Invalid callback", show_alert=True)
+            await callback.answer("Dato de consulta inválido", show_alert=True)
             return
 
         status = await handle_doctrine_resolve_with_draft(
@@ -260,17 +425,17 @@ def build_doctrine_router(
             turn_id=turn_id,
             admin=admin,
         )
-        text, alert = _RESULT_MESSAGES.get(status, ("Processed", False))
+        text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
         await callback.answer(text, show_alert=alert)
 
     @router.callback_query(lambda c: c.data and c.data.startswith("de:"))
     async def on_doctrine_escalate(callback: CallbackQuery, **_: Any) -> None:
         if not _is_owner(callback):
-            await callback.answer("Not authorized", show_alert=True)
+            await callback.answer("No autorizado", show_alert=True)
             return
         turn_id = parse_doctrine_callback(callback.data or "")
         if turn_id is None:
-            await callback.answer("Invalid callback", show_alert=True)
+            await callback.answer("Dato de consulta inválido", show_alert=True)
             return
 
         status = await handle_doctrine_escalate(
@@ -278,15 +443,17 @@ def build_doctrine_router(
             coordinator=coordinator,
             turn_id=turn_id,
         )
-        text, alert = _RESULT_MESSAGES.get(status, ("Processed", False))
+        text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
         await callback.answer(text, show_alert=alert)
 
     return router
 
 
 __all__ = [
+    "DoctrineSessionStore",
     "build_doctrine_router",
+    "handle_doctrine_escalate",
+    "handle_doctrine_free_text",
     "handle_doctrine_respond",
     "handle_doctrine_resolve_with_draft",
-    "handle_doctrine_escalate",
 ]
