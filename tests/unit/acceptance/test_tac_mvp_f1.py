@@ -236,29 +236,48 @@ async def test_mvp06_tac08_recovery_no_auto_approve() -> None:
 
 
 # --- MVP-08 / TAC-01 purity ---
+def _is_type_checking_guard(node: ast.AST) -> bool:
+    """True for ``if TYPE_CHECKING:`` / ``if typing.TYPE_CHECKING:`` guards."""
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
 def test_mvp08_tac01_purity_trio() -> None:
     roots = {
         "cognitive": REPO / "src" / "diana" / "cognitive",
         "application": REPO / "src" / "diana" / "application",
         "behavior": REPO / "src" / "diana" / "behavior",
     }
+
+    def walk(name: str, path: Path, node: ast.AST) -> None:
+        if _is_type_checking_guard(node):
+            return
+        mods: list[str] = []
+        if isinstance(node, ast.Import):
+            mods = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            mods = [node.module]
+        for mod in mods:
+            assert not (mod == "aiogram" or mod.startswith("aiogram.")), (
+                f"{name}/{path.name} imports {mod}"
+            )
+            if name == "cognitive":
+                assert not (
+                    mod == "diana.telegram" or mod.startswith("diana.telegram.")
+                ), f"cognitive imports telegram: {path.name}"
+        for child in ast.iter_child_nodes(node):
+            walk(name, path, child)
+
     for name, root in roots.items():
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                mods: list[str] = []
-                if isinstance(node, ast.Import):
-                    mods = [a.name for a in node.names]
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    mods = [node.module]
-                for mod in mods:
-                    assert not (mod == "aiogram" or mod.startswith("aiogram.")), (
-                        f"{name}/{path.name} imports {mod}"
-                    )
-                    if name == "cognitive":
-                        assert not (
-                            mod == "diana.telegram" or mod.startswith("diana.telegram.")
-                        ), f"cognitive imports telegram: {path.name}"
+            walk(name, path, tree)
 
 
 # --- Auth allowlist ---

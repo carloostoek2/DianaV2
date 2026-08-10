@@ -341,5 +341,6 @@ class TestBackwardCompat:
             admin_trace=AdminTraceService(traces=FakeTraceabilityReader(), trace_ttl_days=30),
         )
         # A valid non-stale turn returns "approved"; stale turn returns None.
-        # Without a seeded turn, it should be forbidden or stale.
-        assert status in ("stale", "forbidden", "approved")
+        # Without a seeded turn, the no-op approve resolves to an honest token
+        # ("stale_gone" when the turn does not exist) or forbidden.
+        assert status in ("stale", "stale_gone", "forbidden", "approved")

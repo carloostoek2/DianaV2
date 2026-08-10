@@ -12,15 +12,38 @@ FORBIDDEN_PREFIXES = (
 )
 
 
+def _is_type_checking_guard(node: ast.AST) -> bool:
+    """True for ``if TYPE_CHECKING:`` / ``if typing.TYPE_CHECKING:`` guards.
+
+    Type-only imports create no runtime coupling, so the purity guard skips
+    their subtrees.
+    """
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
 def _imported_modules(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     modules: set[str] = set()
-    for node in ast.walk(tree):
+
+    def walk(node: ast.AST) -> None:
+        if _is_type_checking_guard(node):
+            return
         if isinstance(node, ast.Import):
             for alias in node.names:
                 modules.add(alias.name)
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.add(node.module)
+        for child in ast.iter_child_nodes(node):
+            walk(child)
+
+    walk(tree)
     return modules
 
 
