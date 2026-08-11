@@ -43,3 +43,8 @@ reasonix.toml
 # Wiki knowledge graph — scratch intermedio (el knowledge-graph.json final SÍ se commitea)
 wiki/.ua/intermediate/
 
+# Understand-Anything (root) — scratch intermedio y trash de análisis
+# (knowledge-graph.json / meta.json / fingerprints.json / config.json SÍ se commitean)
+.ua/intermediate/
+.ua/.trash-*/
+
