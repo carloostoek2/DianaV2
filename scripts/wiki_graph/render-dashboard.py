@@ -189,6 +189,14 @@ def main() -> None:
   #legend span { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; }
   .hint { position:fixed; bottom:14px; right:14px; z-index:12; font-size:11px; color:var(--muted);
           background:var(--panel); padding:6px 10px; border-radius:8px; border:1px solid var(--border); }
+  #results { position:fixed; top:100px; left:14px; z-index:19; background:var(--panel);
+             border:1px solid var(--border); border-radius:10px; overflow:hidden;
+             max-height:min(320px, 45vh); overflow-y:auto; display:none; min-width:240px;
+             box-shadow:0 8px 24px rgba(0,0,0,.35); }
+  #results .rrow { padding:8px 12px; font-size:12.5px; cursor:pointer; border-bottom:1px solid var(--border); }
+  #results .rrow:last-child { border-bottom:none; }
+  #results .rrow:hover, #results .rrow.cur { background:var(--accent); color:#fff; }
+  #results .rrow .rtype { font-size:10px; opacity:.7; margin-left:6px; }
 </style>
 </head>
 <body data-theme="dark">
@@ -199,6 +207,7 @@ def main() -> None:
 </div>
 <div id="filters"></div>
 <div id="graph"></div>
+<div id="results"></div>
 <div id="side"><button id="closeSide">✕</button><div id="sideBody"></div></div>
 <div id="legend">
   <div><span style="background:#4f8ef7"></span>Artículo / módulo</div>
@@ -250,6 +259,16 @@ function applyFilters() {
   });
 }
 
+// slugify: normaliza títulos a slugs (sin acentos, guiones) para resolver wikilinks
+function slugify(s) {
+  return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+function findNodeBySlug(slug) {
+  const w = slugify(slug);
+  return NODES.find(n => slugify(n.label) === w
+    || String(n.id).includes(':' + w) || String(n.id).includes('/' + w)) || null;
+}
 // panel lateral
 const side = document.getElementById('side');
 const sideBody = document.getElementById('sideBody');
@@ -268,8 +287,9 @@ function showDetail(d) {
   side.classList.add('open');
   sideBody.querySelectorAll('a[data-wl]').forEach(a => {
     a.onclick = () => {
-      const target = NODES.find(n => String(n.label).toLowerCase() === a.dataset.wl.toLowerCase());
+      const target = findNodeBySlug(a.dataset.wl);
       if (target) { network.selectNodes([target.id]); network.focus(target.id, {scale: 1.1}); showDetail(target.detail); }
+      else { hint.textContent = `No encontré '${a.dataset.wl}' en el grafo`; }
     };
   });
 }
@@ -277,18 +297,49 @@ document.getElementById('closeSide').onclick = () => side.classList.remove('open
 network.on('selectNode', p => { showDetail(p.nodes[0] && nodes.get(p.nodes[0]).detail); });
 network.on('deselectNode', () => side.classList.remove('open'));
 
-// busqueda
+// busqueda con navegacion entre coincidencias
 const search = document.getElementById('search');
 const hint = document.getElementById('hint');
+const resultsBox = document.getElementById('results');
+let hits = [], hitIdx = 0;
+function renderDropdown() {
+  resultsBox.innerHTML = '';
+  if (!hits.length) { resultsBox.style.display = 'none'; return; }
+  hits.forEach((h, i) => {
+    const row = document.createElement('div');
+    row.className = 'rrow' + (i === hitIdx ? ' cur' : '');
+    row.innerHTML = `${h.label}<span class="rtype">${h.detail.typeLabel}</span>`;
+    row.onclick = () => { goHit(i); };
+    resultsBox.appendChild(row);
+  });
+  resultsBox.style.display = 'block';
+}
+function goHit(i) {
+  if (!hits.length) return;
+  hitIdx = ((i % hits.length) + hits.length) % hits.length;
+  const h = hits[hitIdx];
+  network.selectNodes([h.id]); network.focus(h.id, {scale: 1.15}); showDetail(h.detail);
+  hint.textContent = hits.length > 1
+    ? `Coincidencia ${hitIdx + 1} de ${hits.length} — Enter para la siguiente`
+    : '1 coincidencia';
+  renderDropdown();
+}
 search.addEventListener('input', () => {
   const q = search.value.trim().toLowerCase();
-  if (!q) { network.selectNodes([]); hint.textContent = 'Clic en un nodo para ver detalle'; return; }
-  const hits = NODES.filter(n => String(n.label).toLowerCase().includes(q) ||
-                                String(n.detail.summary).toLowerCase().includes(q)).slice(0, 8);
-  if (hits.length === 0) { hint.textContent = 'Sin resultados'; return; }
-  const h = hits[0];
-  network.selectNodes([h.id]); network.focus(h.id, {scale: 1.15});
-  hint.textContent = hits.length > 1 ? `${hits.length} coincidencias — mostrando la primera` : '1 coincidencia';
+  if (!q) { hits = []; hitIdx = 0; renderDropdown(); network.selectNodes([]);
+    hint.textContent = 'Clic en un nodo para ver detalle'; return; }
+  hits = NODES.filter(n => String(n.label).toLowerCase().includes(q) ||
+                            String(n.detail.summary).toLowerCase().includes(q)).slice(0, 10);
+  hitIdx = 0;
+  if (hits.length === 0) { renderDropdown(); hint.textContent = 'Sin resultados'; return; }
+  goHit(0);
+});
+search.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); if (hits.length) goHit(hitIdx + 1); }
+  if (e.key === 'Escape') { search.value = ''; hits = []; renderDropdown(); }
+});
+document.addEventListener('click', e => {
+  if (!resultsBox.contains(e.target) && e.target !== search) resultsBox.style.display = 'none';
 });
 window.addEventListener('resize', () => network.redraw());
 setTimeout(() => { document.body.dataset.theme = (tg && tg.colorScheme === 'light') ? 'light' : 'dark'; }, 50);
