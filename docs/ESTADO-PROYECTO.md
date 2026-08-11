@@ -1,10 +1,9 @@
 # Estado del proyecto — Diana Business Bot (DianaV2)
 
-**Fecha:** 2026-08-07
-**Rama:** main · **Head:** `3118513` (pool evo-agente cerrado, 32 commits — no pusheado aún; origin en `90420fd`)
-**Bot en producción:** corriendo (PID 88421, tmux prod:0) — arranque limpio, polling activo.
-**Base de datos:** migraciones al día en main (head `026_agent_evolution_turn_category_columns`; el bot en producción
-sigue en `023_backfill_queue` hasta que se despliegue el pool).
+**Fecha:** 2026-08-11
+**Rama:** main · **Head:** `4d30d1f` (pusheado; origin/main = local).
+**Bot en producción:** corriendo (PID 204716, tmux prod) — arranque limpio, polling activo.
+**Base de datos:** migraciones al día en producción (head `026_agent_evolution_turn_category_columns`).
 
 ---
 
@@ -28,9 +27,9 @@ sigue en `023_backfill_queue` hasta que se despliegue el pool).
   - **Notificaciones con el nombre del VIP** (antes el UUID) + hint `/memoria`.
   - **Anti-contaminación** garantizada por tests (Telegram nunca toca la DB de memoria; pendientes/descartados invisibles al retriever; cada VIP solo ve su memoria).
 
-### Evolución de agente — pool `evo-agente` ✅ (SHADOW — 4 ítems, 2026-08-07)
-Spec `docs/SPEC-EVOLUCION-AGENTE.md` v1.2. **Todo en modo shadow** (flags OFF por default): no cambia el
-comportamiento visible del bot. Migraciones 024-026 aplicadas en main (el bot en producción aún no las tiene).
+### Evolución de agente — pool `evo-agente` ✅ (SHADOW ACTIVO en producción — 4 ítems, 2026-08-07)
+Spec `docs/SPEC-EVOLUCION-AGENTE.md` v1.2. **En modo medición/registro** (shadow): los hooks miden y guardan,
+pero **no cambian ninguna decisión** — el bot sigue 100% supervisado. Migraciones 024-026 **aplicadas en producción**.
 
 - **Fase 0 fundaciones + Detector emocional (transversal):** migración 024 (6 tablas: `vip_profile`,
   `vip_profile_history`, `vip_mood_state`, `vip_trust_budget`, `turn_category_log`, `emotional_signal_log`),
@@ -51,26 +50,31 @@ comportamiento visible del bot. Migraciones 024-026 aplicadas en main (el bot en
   hook shadow + `handle_correct`→`record_correction` (solo si el turno era candidato autónomo), sección 🔐 Confianza
   en la ficha del VIP (EA-06). Umbrales fijos + override manual, jamás calibrados por LLM.
 
-Flags nuevos (todos OFF por default): `FEATURE_EMOTIONAL_DETECTOR_ENABLED`, `feature_profile_synthesis_enabled`,
-`feature_phatic_autonomy`, `feature_mood_engine`, `feature_trust_budget`. Verificaciones: 4 review loops a 0 open
+Flags nuevos (todos OFF por default en código; **ACTIVOS en `.env` de producción en modo medición**):
+`FEATURE_EMOTIONAL_DETECTOR_ENABLED=true`, `FEATURE_PROFILE_SYNTHESIS_ENABLED=true`, `FEATURE_PHATIC_AUTONOMY=true`,
+`FEATURE_MOOD_ENGINE=true`, `FEATURE_TRUST_BUDGET=true` — con `FEATURE_AUTONOMOUS_MODE=false` (nada se autoenvía).
+El comentario del `.env` lo explicita: *"Turning on only measures/records"*. Verificaciones: 4 review loops a 0 open
 (3 rondas c/u); suite unit 2441 passed / 2 pre-existentes (`test_sql_repo_shapes.py`, no atribuibles); e2e DB verde
-con Docker. **Pendiente:** cola durable `synthesis_queue`, ficha perfil EA-06 completa (historial de versiones),
+con Docker. **Datos shadow reales en producción (verif. 2026-08-11):** `turn_category_log` 48, `emotional_signal_log` 29,
+`vip_profile` 9 (versiones hasta v7), `vip_profile_history` 9, `vip_mood_state` 8, `vip_trust_budget` 2 (fático, score ~0.18).
+**Pendiente:** cola durable `synthesis_queue`, ficha perfil EA-06 completa (historial de versiones),
 `.env.example` con los flags nuevos, y la Fase 5 real (doble puerta) cuando F2 salga de shadow.
 
 ### Otros
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria).
-- Migraciones: 001-026 en main (001-023 en producción hasta desplegar el pool evo-agente). Persona sin reglas de voseo; español neutro. CHANGELOG.md creado.
+- Migraciones: 001-026 aplicadas en producción (pool evo-agente desplegado). Persona sin reglas de voseo; español neutro. CHANGELOG.md creado.
 
 ---
 
-## 2. Estado de operación (verificado 2026-08-05 22:04; pool evo-agente cerrado en main 2026-08-07)
+## 2. Estado de operación (verificado 2026-08-11)
 
-- Bot corriendo con la Fase 5 completa (PID 88421, ventana "bot" en tmux prod).
+- Bot corriendo con Fase 5 completa + pool evo-agente en modo medición (PID 204716, tmux prod).
 - Cola de backfill activa: los VIPs con historial se perfilan de a uno por hora (sin intervención).
-- Verificación de suites: **2082 unit + 98 e2e (Docker) verdes**, purity gates 3/3.
-- **Importante:** el pool `evo-agente` (F0-F5 shadow) está cerrado en `main` pero **NO desplegado** — producción sigue
-  en `90420fd`/migración 023. Todo el pool es shadow (flags OFF), así que el despliegue no cambia el comportamiento;
-  desplegar requiere rebase de producción a main + `alembic upgrade head` (024-026).
+- Memoria en producción: 81 filas en `memories` (52 auto, 18 discarded, 11 approved); 10 backfills completados.
+- Verificación de suites: **2441 unit + e2e (Docker) verdes** (incl. `test_sql_repo_shapes.py` 10/10, ya reparado), purity gates 3/3.
+- **Pool `evo-agente` DESPLEGADO en producción** (migraciones 024-026 aplicadas; flags en `.env` activos en modo
+  medición). El bot sigue 100% supervisado: `FEATURE_AUTONOMOUS_MODE=false` y la doble puerta no está cableada a
+  ningún envío real (los hooks solo miden y registran).
 
 ---
 
@@ -80,14 +84,15 @@ con Docker. **Pendiente:** cola durable `synthesis_queue`, ficha perfil EA-06 co
 - El SPEC-FASE6 no existe; los siguientes pasos de producto se deciden con la dueña.
 
 ### Evolución de agente — pendiente del pool `evo-agente` (ver SPEC-EVOLUCION-AGENTE.md v1.2)
-- **Fase 5 real (cablear la doble puerta):** cuando F2 salga de shadow — `decision.action=="send" AND can_autonomous(...)`
+- **Fase 5 real (cablear la doble puerta):** `decision.action=="send" AND can_autonomous(...)`
   en `_prepare_autonomous_send`, interpretar/resetear la semántica shadow del incremento, filtro EA-02(3) (chequeo de
-  seguridad del borrador). Requiere `feature_phatic_autonomy` + `recent_trend` confiable + confianza por categoría.
+  seguridad del borrador). Requiere que la medición shadow acumule confianza por categoría suficiente + `recent_trend`
+  confiable; hoy los flags están ON en modo medición, la puerta no está cableada a ningún envío.
 - **Cola durable `synthesis_queue`** para la resíntesis de memoria (hoy guard en memoria).
 - **Ficha perfil EA-06 completa** (historial de versiones de `vip_profile_history`).
 - **`.env.example`** — documentar los flags/keys nuevos de Fase 0-5.
-- **Fixture de `test_sql_repo_shapes.py`** — fix trivial (agregar `updated_at` al `SimpleNamespace`) para cerrar los
-  2 tests pre-existentes.
+- ~~**Fixture de `test_sql_repo_shapes.py`**~~ — ✅ resuelto: el commit `4d30d1f` (repair CI unit suite) ya lo arregló
+  (10/10 pasando).
 - **Fase 4 (iniciativa contextual)** — diferida por decisión del usuario; queda especificada en el SPEC v1.2.
 
 ### Deuda técnica / mejoras menores (trazadas)
