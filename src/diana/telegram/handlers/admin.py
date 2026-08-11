@@ -9,7 +9,12 @@ from uuid import UUID
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    WebAppInfo,
+)
 
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
@@ -559,6 +564,28 @@ def build_admin_router(
         if not _is_owner(message):
             return
         await message.answer(ADMIN_MENU_TEXT)
+
+    # Telegram Mini App: grafo de conocimiento de la wiki (servido vía Cloudflare Tunnel)
+    GRAFO_URL = "https://grafo.srtakinky.pics"
+
+    @router.message(Command("grafo"))
+    async def on_grafo(message: Message, **_: Any) -> None:
+        if not _is_owner(message):
+            return
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🧠 Abrir grafo de conocimiento",
+                        web_app=WebAppInfo(url=GRAFO_URL),
+                    )
+                ]
+            ]
+        )
+        await message.answer(
+            "El grafo interactivo del sistema (wiki de conocimiento compilada):",
+            reply_markup=kb,
+        )
 
     @router.message(Command("add_vip"))
     async def on_add_vip(message: Message, **_: Any) -> None:

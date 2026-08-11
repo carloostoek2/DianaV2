@@ -39,3 +39,7 @@ build/
 # Agent tooling local cache (skill registry, etc.)
 .atl/
 reasonix.toml
+
+# Wiki knowledge graph — scratch intermedio (el knowledge-graph.json final SÍ se commitea)
+wiki/.ua/intermediate/
+
