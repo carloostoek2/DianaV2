@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 from uuid import UUID
@@ -565,8 +566,12 @@ def build_admin_router(
             return
         await message.answer(ADMIN_MENU_TEXT)
 
-    # Telegram Mini App: grafo de conocimiento de la wiki (servido vía Cloudflare Tunnel)
-    GRAFO_URL = "https://grafo.srtakinky.pics"
+    # Telegram Mini App: grafo del sistema (servido vía Cloudflare Tunnel).
+    # GRAFO_URL/GRAFO_TOKEN env-overridable: el token es el mismo
+    # UNDERSTAND_ACCESS_TOKEN del servidor del dashboard (grafo.srtakinky.pics).
+    _grafo_base = os.getenv("GRAFO_URL", "https://grafo.srtakinky.pics").rstrip("/")
+    _grafo_token = os.getenv("GRAFO_TOKEN", "")
+    GRAFO_URL = f"{_grafo_base}/?token={_grafo_token}" if _grafo_token else _grafo_base
 
     @router.message(Command("grafo"))
     async def on_grafo(message: Message, **_: Any) -> None:
@@ -583,7 +588,7 @@ def build_admin_router(
             ]
         )
         await message.answer(
-            "El grafo interactivo del sistema (wiki de conocimiento compilada):",
+            "El grafo interactivo del sistema (código + arquitectura):",
             reply_markup=kb,
         )
 
