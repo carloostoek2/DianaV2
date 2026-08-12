@@ -11,8 +11,9 @@ English ↔ Anexo I (docstring map only):
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from diana.application.ports import DeliveryContext, DeliveryMode, DeliveryResult
@@ -20,6 +21,13 @@ from diana.application.ports import DeliveryContext, DeliveryMode, DeliveryResul
 
 class TransientSendError(Exception):
     """Transient channel/API failure eligible for bounded retry (I.4)."""
+
+
+# Progress stages the owner sees while a supervised delivery is in flight.
+# "sent" is not reported here: the caller maps the DeliveryResult itself.
+ProgressKind = Literal["reading", "typing"]
+
+DeliveryProgressCallback = Callable[[ProgressKind], Awaitable[None]]
 
 
 @runtime_checkable
@@ -86,7 +94,9 @@ __all__ = [
     "DelayPolicy",
     "DeliveryContext",
     "DeliveryMode",
+    "DeliveryProgressCallback",
     "DeliveryResult",
+    "ProgressKind",
     "TelegramActuatorPort",
     "TransientSendError",
     "TurnStatusReader",

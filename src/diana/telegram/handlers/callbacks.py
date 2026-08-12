@@ -12,6 +12,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery
 
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
+from diana.behavior.ports import DeliveryProgressCallback, ProgressKind
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.draft_variants import build_owner_draft_text
 from diana.application.profile_admin_service import ProfileAdminService
@@ -172,6 +173,13 @@ _APPROVE_NOOP_ALERTS: dict[str, str] = {
     "vip_frozen": "El VIP está en pausa/congelado — no se envió.",
 }
 
+# Live delivery stages shown on the draft message while the human-like
+# simulation runs after approval (edited in place, buttons kept until the end).
+_DRAFT_PROGRESS_LABELS: dict[ProgressKind, str] = {
+    "reading": "👀 Mensaje visto",
+    "typing": "✍️ Escribiendo…",
+}
+
 
 async def dispatch_owner_callback(
     *,
@@ -183,6 +191,7 @@ async def dispatch_owner_callback(
     admin_metrics: AdminMetricsService | None = None,
     owner_telegram_id: int | None = None,
     draft_variants: Any | None = None,
+    on_delivery_progress: DeliveryProgressCallback | None = None,
 ) -> str:
     """Domain dispatch for unit tests. Returns honest status token."""
 
@@ -242,7 +251,11 @@ async def dispatch_owner_callback(
     action, turn_id = parsed
     try:
         if action == "approve":
-            result = await admin.handle_approve(turn_id, actor_id=actor_id)
+            result = await admin.handle_approve(
+                turn_id,
+                actor_id=actor_id,
+                on_progress=on_delivery_progress,
+            )
             if result is None:
                 correct_sessions.cancel_turn(turn_id)
                 return await admin.classify_approve_noop(turn_id)
@@ -499,6 +512,33 @@ def build_callback_router(
         except Exception:
             logger.debug("owner_callback_early_answer_failed", exc_info=True)
 
+        # Snapshot the draft body once, before any live-edit below, so the
+        # progress stages and the final status all keep the original text.
+        draft_text = (
+            (query.message.text or query.message.caption or "")
+            if query.message
+            else ""
+        )
+
+        # Live delivery stages: while the human-like simulation runs, edit the
+        # draft in place (leído → escribiendo) keeping the buttons until the
+        # final status replaces them. Faults are best-effort (engine already
+        # guards its own callback).
+        async def _progress(kind: ProgressKind) -> None:
+            if query.message is None or not draft_text:
+                return
+            label = _DRAFT_PROGRESS_LABELS.get(kind)
+            if label is None:
+                return
+            try:
+                await query.message.edit_text(
+                    f"{label}\n\n{draft_text}",
+                    reply_markup=query.message.reply_markup,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logger.debug("draft_progress_edit_failed", exc_info=True)
+
         # Domain dispatch only — status→Telegram UX mapping stays outside so
         # post-success I/O faults are not labeled "Error processing action."
         try:
@@ -509,6 +549,7 @@ def build_callback_router(
                 actor_id=actor_id,
                 admin_trace=admin_trace,
                 draft_variants=draft_variants,
+                on_delivery_progress=_progress,
             )
         except Exception:
             logger.exception(
@@ -543,12 +584,12 @@ def build_callback_router(
                 return
             if status == "approved":
                 # The message edit is the primary feedback; the initial empty
-                # answer already cleared the spinner (A3).
+                # answer already cleared the spinner (A3). ``draft_text`` keeps
+                # the original body even after live progress edits.
                 if query.message:
                     try:
-                        original = query.message.text or query.message.caption or ""
                         await query.message.edit_text(
-                            f"✅ <b>Enviado</b>\n\n{original}",
+                            f"✅ <b>Enviado</b>\n\n{draft_text}",
                             reply_markup=None,
                             parse_mode="HTML",
                         )
@@ -558,9 +599,8 @@ def build_callback_router(
             if status == "escalated":
                 if query.message:
                     try:
-                        original = query.message.text or query.message.caption or ""
                         await query.message.edit_text(
-                            f"⚠️ <b>Escalado</b>\n\n{original}",
+                            f"⚠️ <b>Escalado</b>\n\n{draft_text}",
                             reply_markup=None,
                             parse_mode="HTML",
                         )

@@ -31,6 +31,7 @@ from diana.application.ports import (
 )
 from diana.application.draft_variants import ensure_versions, resolve_vip_display_name
 from diana.application.escalation_labels import tipo_from_reason
+from diana.behavior.ports import DeliveryProgressCallback
 from diana.application.memory_extraction_service import (
     _POST_TURN_EXTRACTABLE_STATUSES,  # noqa: PLC2701 — extraction gate, single source (R3)
 )
@@ -540,9 +541,12 @@ class AdminService:
         turn_id: UUID,
         *,
         actor_id: int | None = None,
+        on_progress: DeliveryProgressCallback | None = None,
     ) -> DeliveryResult | None:
         self._assert_owner(actor_id)
-        return await self._resolve_and_deliver(turn_id, corrected_text=None)
+        return await self._resolve_and_deliver(
+            turn_id, corrected_text=None, on_progress=on_progress
+        )
 
     async def classify_approve_noop(self, turn_id: UUID) -> str:
         """Map a no-op approve (``handle_approve`` → None) to an honest UX token.
@@ -779,6 +783,7 @@ class AdminService:
         turn_id: UUID,
         *,
         corrected_text: str | None,
+        on_progress: DeliveryProgressCallback | None = None,
     ) -> DeliveryResult | None:
         turn = await self._turns.get(turn_id)
         if turn is None:
@@ -904,6 +909,7 @@ class AdminService:
             ctx,
             turn_id,
             decision=decision_dump,
+            on_progress=on_progress,
         )
 
         # Fix round (R2/R3): the post-turn hook fires from a ``finally`` keyed

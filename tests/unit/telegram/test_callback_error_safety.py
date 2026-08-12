@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -286,10 +286,64 @@ async def test_approve_answers_before_delivery() -> None:
 
     await on_callback(cq)
 
-    admin.handle_approve.assert_awaited_once_with(turn_id, actor_id=OWNER)
+    admin.handle_approve.assert_awaited_once_with(
+        turn_id, actor_id=OWNER, on_progress=ANY
+    )
     # Spinner cleared exactly once, before delivery — no trailing re-answer.
     cq.answer.assert_awaited_once_with()
     msg.edit_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_approve_edits_draft_with_live_progress() -> None:
+    """Approve reflects leído → escribiendo → Enviado on the draft message."""
+    turn_id = uuid4()
+    admin = MagicMock()
+
+    async def fake_approve(
+        turn_id: object,
+        *,
+        actor_id: object | None = None,
+        on_progress: object | None = None,
+    ) -> object:
+        if on_progress is not None:
+            await on_progress("reading")
+            await on_progress("typing")
+        return MagicMock(success=True)
+
+    admin.handle_approve = AsyncMock(side_effect=fake_approve)
+    router = build_callback_router(
+        admin=admin,
+        correct_sessions=CorrectSessionStore(),
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+    msg = Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="<b>Propuesta</b> — borrador 1/1",
+    )
+    object.__setattr__(msg, "edit_text", AsyncMock(return_value=True))
+    cq = CallbackQuery(
+        id="cq-app-progress",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_callback("approve", turn_id),
+        message=msg,
+    )
+    object.__setattr__(cq, "answer", AsyncMock(return_value=True))
+
+    await on_callback(cq)
+
+    edits = [c.args[0] for c in msg.edit_text.await_args_list]
+    assert edits[0].startswith("👀 Mensaje visto\n\n")
+    assert edits[1].startswith("✍️ Escribiendo…\n\n")
+    assert edits[2].startswith("✅ <b>Enviado</b>\n\n")
+    # The original draft body is preserved across all live stages.
+    assert "Propuesta" in edits[0] and "Propuesta" in edits[2]
+    assert "borrador 1/1" in edits[2]
 
 
 @pytest.mark.asyncio

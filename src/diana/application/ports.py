@@ -788,6 +788,8 @@ class BehaviorDeliverer(Protocol):
         ctx: Any,
         turn_id: UUID,
         decision: Any | None = None,
+        *,
+        on_progress: Any | None = None,
     ) -> Any: ...
 
 

@@ -485,7 +485,9 @@ async def test_handle_approve_skips_post_turn_hook_on_reopened_cancel() -> None:
     from diana.application.ports import DeliveryResult
 
     class _CancelledDeliverer:
-        async def deliver(self, texts, ctx, turn_id, decision=None) -> DeliveryResult:
+        async def deliver(
+            self, texts, ctx, turn_id, decision=None, *, on_progress=None
+        ) -> DeliveryResult:
             return DeliveryResult(
                 success=False, cancelled=True, error="mid_send_cancelled"
             )
@@ -780,6 +782,8 @@ class _MultiMidDeliverer:
         ctx: object,
         turn_id: object,
         decision: object | None = None,
+        *,
+        on_progress: object | None = None,
     ) -> object:
         self.ctxs.append(ctx)
         return self._DeliveryResult(
@@ -1611,6 +1615,8 @@ class _CapturingDeliverer:
         ctx: object,
         turn_id: object,
         decision: object | None = None,
+        *,
+        on_progress: object | None = None,
     ) -> object:
         from diana.application.ports import DeliveryResult
 

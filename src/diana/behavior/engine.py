@@ -31,7 +31,9 @@ from diana.behavior.ports import (
     Clock,
     DelayPolicy,
     DeliveryContext,
+    DeliveryProgressCallback,
     DeliveryResult,
+    ProgressKind,
     TelegramActuatorPort,
     TransientSendError,
     TurnStatusReader,
@@ -93,11 +95,16 @@ class BehaviorEngine:
         ctx: DeliveryContext,
         turn_id: UUID,
         decision: Any | None = None,
+        *,
+        on_progress: DeliveryProgressCallback | None = None,
     ) -> DeliveryResult:
         """Run the delivery sequence for ``texts`` toward ``ctx.chat_id``.
 
         ``turn_id`` is required for pending_deliveries FK and cancel scope.
         ``decision`` is stored as a dump for reconstructability only.
+        ``on_progress`` (optional) is awaited at each human-like stage
+        ("reading", "typing") so the caller can surface live status; faults in
+        the callback never affect the delivery itself.
 
         Caller-supplied multi-text keeps single typing (no inter-gap). When
         dual-gate split expands a long text, inter-message delay+typing applies
@@ -111,6 +118,7 @@ class BehaviorEngine:
             decision=decision,
             inter_message_gap=inter_gap,
             quirk=quirk,
+            on_progress=on_progress,
         )
 
     async def deliver_with_sequence(
@@ -144,6 +152,7 @@ class BehaviorEngine:
         decision: Any | None = None,
         inter_message_gap: bool = False,
         quirk: QuirkKind | None = None,
+        on_progress: DeliveryProgressCallback | None = None,
     ) -> DeliveryResult:
         bc = (ctx.business_connection_id or "").strip()
         if not bc:
@@ -238,6 +247,7 @@ class BehaviorEngine:
                     pre_read = self._delay.pre_read_delay_seconds()
                     if pre_read > 0:
                         await self._clock.sleep(pre_read)
+                    await self._notify_progress(on_progress, "reading")
                     await self._actuator.read_business_message(
                         ctx.chat_id,
                         ctx.telegram_message_id,
@@ -256,6 +266,7 @@ class BehaviorEngine:
                             if gap > 0:
                                 await self._clock.sleep(gap)
                         typing_secs = self._delay.typing_duration_seconds(text)
+                        await self._notify_progress(on_progress, "typing")
                         await self._show_typing(ctx, bc, typing_secs)
 
                     frozen_mid = await self._frozen_abort_pending(
@@ -577,6 +588,19 @@ class BehaviorEngine:
             typing_duration_seconds=typing_secs,
             error=error,
         )
+
+    async def _notify_progress(
+        self,
+        on_progress: DeliveryProgressCallback | None,
+        kind: ProgressKind,
+    ) -> None:
+        """Best-effort live progress callback; a fault never affects delivery."""
+        if on_progress is None:
+            return
+        try:
+            await on_progress(kind)
+        except Exception:
+            logger.debug("delivery_progress_callback_failed", exc_info=True)
 
     async def _show_typing(
         self,

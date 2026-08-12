@@ -1066,3 +1066,55 @@ def test_deliver_with_sequence_not_on_behavior_deliverer_protocol() -> None:
     # Concrete engine exposes the method; protocol only requires deliver.
     assert hasattr(BehaviorEngine, "deliver_with_sequence")
     assert hasattr(BehaviorDeliverer, "deliver")
+
+
+@pytest.mark.asyncio
+async def test_deliver_reports_progress_reading_then_typing(
+    engine_bundle: tuple,
+) -> None:
+    """Live progress callback fires reading → typing in order for an owner approve."""
+    engine, _, _, _ = engine_bundle
+    seen: list[str] = []
+
+    async def on_progress(kind: str) -> None:
+        seen.append(kind)
+
+    result = await engine.deliver(["hola"], _ctx(), uuid4(), on_progress=on_progress)
+
+    assert result.success is True
+    assert seen == ["reading", "typing"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_no_reading_progress_without_trigger_message(
+    engine_bundle: tuple,
+) -> None:
+    """Without a VIP message to mark read, only the typing stage is reported."""
+    engine, _, _, _ = engine_bundle
+    seen: list[str] = []
+
+    async def on_progress(kind: str) -> None:
+        seen.append(kind)
+
+    result = await engine.deliver(
+        ["hola"], _ctx(telegram_message_id=None), uuid4(), on_progress=on_progress
+    )
+
+    assert result.success is True
+    assert seen == ["typing"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_progress_callback_fault_does_not_break_delivery(
+    engine_bundle: tuple,
+) -> None:
+    """A fault inside the progress callback must never fail the delivery."""
+    engine, actuator, _, _ = engine_bundle
+
+    async def on_progress(kind: str) -> None:
+        raise RuntimeError("edit failed")
+
+    result = await engine.deliver(["hola"], _ctx(), uuid4(), on_progress=on_progress)
+
+    assert result.success is True
+    assert actuator.send_count() >= 1
