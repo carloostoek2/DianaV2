@@ -71,6 +71,9 @@ from diana.telegram.keyboards import (
 
 logger = logging.getLogger("diana.telegram")
 
+_CONFIRM_EXPIRED_UX = "Esta confirmación expiró, vuelve a intentarlo."
+_SESSION_EXPIRED_UX = "Tu operación expiró, vuelve a intentarlo."
+
 # ---------------------------------------------------------------------------
 # MenuSessionStore — process-local FSM for multi-step menu flows
 # ---------------------------------------------------------------------------
@@ -113,11 +116,15 @@ class MenuSessionStore:
     ) -> None:
         self._sessions: dict[int, MenuSession] = {}
         self._pending_vip_names: dict[int, str] = {}
+        self._confirmations: dict[int, datetime] = {}
         self._ttl = ttl
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def start(self, owner_id: int, kind: MenuSessionKind, **kwargs: Any) -> None:
-        self._sessions[owner_id] = MenuSession(kind=kind, **kwargs)
+        session = MenuSession(kind=kind, **kwargs)
+        # Use the store clock (injected in tests) so TTL expiry is deterministic.
+        session.created_at = self._clock()
+        self._sessions[owner_id] = session
 
     def _resolve(self, owner_id: int) -> MenuSession | None:
         session = self._sessions.get(owner_id)
@@ -140,6 +147,15 @@ class MenuSessionStore:
     def has_active(self, owner_id: int) -> bool:
         return self._resolve(owner_id) is not None
 
+    def status(self, owner_id: int) -> Literal["none", "live", "expired"]:
+        """Pure session state query (no popping): none | live | expired."""
+        session = self._sessions.get(owner_id)
+        if session is None:
+            return "none"
+        if self._clock() - session.created_at > self._ttl:
+            return "expired"
+        return "live"
+
     def cancel(self, owner_id: int) -> None:
         self._sessions.pop(owner_id, None)
 
@@ -149,9 +165,44 @@ class MenuSessionStore:
     def pop_pending_vip_name(self, owner_id: int) -> str | None:
         return self._pending_vip_names.pop(owner_id, None)
 
+    # -- destructive-confirmation TTL (A7) --------------------------------
+    # Delete/register confirmation buttons must not stay valid forever. A new
+    # confirmation overwrites the previous one, and TTL bounds how long an
+    # unconfirmed prompt can still execute. Kept separate from _sessions so an
+    # active confirmation never captures plain text through HasActiveMenuSession.
+
+    def record_confirmation(self, owner_id: int) -> None:
+        """Mark the instant a destructive confirmation prompt was shown (A7)."""
+        self._confirmations[owner_id] = self._clock()
+
+    def confirmation_live(self, owner_id: int) -> bool:
+        """True if a confirmation prompt is within TTL and not yet spent."""
+        issued = self._confirmations.get(owner_id)
+        if issued is None:
+            return False
+        if self._clock() - issued > self._ttl:
+            self._confirmations.pop(owner_id, None)
+            return False
+        return True
+
+    def consume_confirmation(self, owner_id: int) -> bool:
+        """Validate and spend a confirmation in one step (A7)."""
+        live = self.confirmation_live(owner_id)
+        self._confirmations.pop(owner_id, None)
+        return live
+
 
 class HasActiveMenuSession(Filter):
-    """Aiogram filter: True when the owner has a live MenuSession."""
+    """Aiogram filter: True when the owner has a live (or just-expired) MenuSession.
+
+    Slash-commands are never swallowed: they must route to their own command
+    handlers (e.g. /list_vips while a rename session is pending). Forwarded
+    messages keep their ``forward_origin`` so they still match even if the
+    forwarded content happens to start with "/".
+
+    Expired sessions still match (A6) so the text handler can warn "Tu operación
+    expiró" instead of silently swallowing the owner's input.
+    """
 
     def __init__(self, sessions: MenuSessionStore) -> None:
         self.sessions = sessions
@@ -159,7 +210,12 @@ class HasActiveMenuSession(Filter):
     async def __call__(self, message: Message) -> bool:
         if message.from_user is None:
             return False
-        return self.sessions.has_active(message.from_user.id)
+        if self.sessions.status(message.from_user.id) == "none":
+            return False
+        text = (message.text or "").strip()
+        if text.startswith("/") and message.forward_origin is None:
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +573,7 @@ def build_menu_router(
             return
 
         # --- dispatch concrete actions ---
-        await _dispatch_action(
+        result = await _dispatch_action(
             msg,
             parsed=parsed,
             actor_id=actor_id,
@@ -534,6 +590,16 @@ def build_menu_router(
             history_seed=history_seed,
             backfill_queue=backfill_queue,
         )
+        if result == "confirm_expired":
+            # A3-style late alert: the early empty answer already cleared the
+            # spinner; the message edit shows the redirect, the alert explains.
+            try:
+                await callback.answer(_CONFIRM_EXPIRED_UX, show_alert=True)
+            except Exception:
+                logger.exception(
+                    "menu_confirm_expired_answer_failed",
+                    extra={"callback_data": callback.data or "", "actor_id": actor_id},
+                )
 
     # ---- text capture for multi-step flows ----
 
@@ -545,7 +611,7 @@ def build_menu_router(
         if sessions.pop(owner_id) is not None:
             await message.reply("Operacion cancelada.")
         else:
-            await message.reply("No hay ninguna operacion activa para cancelar.")
+            await message.reply("No hay ninguna operación activa para cancelar.")
 
     @router.message(HasActiveMenuSession(sessions))
     async def on_menu_session_text(message: Message, bot: Bot, **_: Any) -> None:
@@ -553,13 +619,10 @@ def build_menu_router(
             return
         owner_id = message.from_user.id  # type: ignore[union-attr]
 
-        # Treat literal "/cancelar" as a cancel command, not as input text,
-        # so users who follow the "Usa /cancelar para abortar." instruction
-        # don't accidentally rename the VIP (or add a note/fact) to "/cancelar".
-        text = (message.text or "").strip()
-        if text == "/cancelar":
-            sessions.pop(owner_id)
-            await message.reply("Operacion cancelada.")
+        # A6: a wizard that outlived its TTL must warn, not swallow the input.
+        if sessions.status(owner_id) == "expired":
+            sessions.cancel(owner_id)
+            await message.reply(_SESSION_EXPIRED_UX)
             return
 
         session = sessions.pop(owner_id)
@@ -569,8 +632,19 @@ def build_menu_router(
         if session.kind == "sandbox_forward":
             await _handle_sandbox_forward(message, bot, session, sandbox, sessions)
         elif session.kind == "sandbox_profile":
+            # Owner typed text instead of tapping a profile button: keep the
+            # wizard alive so the next tap/input still lands here.
+            sessions.start(
+                owner_id,
+                "sandbox_profile",
+                sandbox_chat_id=session.sandbox_chat_id,
+                last_bot_message_id=session.last_bot_message_id,
+                last_chat_id=session.last_chat_id,
+            )
             await _edit_or_answer(
-                bot, "Usa los botones para seleccionar un perfil.",
+                bot,
+                "Usa los botones para seleccionar un perfil.\n\n"
+                "Usa /cancelar para abortar.",
                 session=session, fallback=message,
             )
         elif session.kind == "persona_edit":
@@ -578,11 +652,11 @@ def build_menu_router(
         elif session.kind == "register_vip":
             await _handle_register_forward(message, bot, session, vips, sessions)
         elif session.kind == "note":
-            await _handle_note_text(message, bot, session, profile_admin)
+            await _handle_note_text(message, bot, session, profile_admin, sessions)
         elif session.kind == "fact":
-            await _handle_fact_text(message, bot, session, profile_admin)
+            await _handle_fact_text(message, bot, session, profile_admin, sessions)
         elif session.kind == "rename":
-            await _handle_rename_text(message, bot, session, vips)
+            await _handle_rename_text(message, bot, session, vips, sessions)
 
     return router
 
@@ -622,14 +696,24 @@ async def _dispatch_action(
         # Show VIP detail card
         if action == str(user_id):
             vip = await vips.get_by_telegram_user_id(user_id)
-            name = vip.display_name if vip and vip.display_name else str(user_id)
+            if vip is None or not vip.is_active:
+                # A13: a stale m:vip button (VIP gone or deactivated) must not
+                # render a card whose actions fail one by one; send the owner
+                # back to the active list with a warning.
+                await _show(
+                    message,
+                    "El VIP ya no existe o fue desactivado.",
+                    menu_back_keyboard(encode_menu("vips")),
+                )
+                return
+            name = vip.display_name or str(user_id)
             is_paused = _is_vip_paused(vip)
             status_line = "Estado: 🔒 Pausado\n" if is_paused else "Estado: 🟢 Activo\n"
             text = (
                 f"👤 Perfil de {name}\n"
                 f"ID: {user_id}\n\n"
                 f"{status_line}"
-                "Selecciona una accion:"
+                "Selecciona una acción:"
             )
             await _show(message, text, menu_vip_detail_keyboard(user_id, is_paused=is_paused))
             return
@@ -637,14 +721,22 @@ async def _dispatch_action(
         # --- profile (view ficha) ---
         if action == "profile":
             if profile_admin is None:
-                await _show(message, "Gestion de perfiles no disponible.", None)
+                await _show(
+                    message,
+                    "Gestion de perfiles no disponible.",
+                    menu_back_keyboard(encode_menu_vip(user_id)),
+                )
                 return
             result = await profile_admin.show_profile(actor_id, user_id)
+            content = result.content or {}
             await _show(
                 message,
                 _format_vip_profile(result),
                 menu_vip_profile_keyboard(
-                    user_id, show_generate=backfill_queue is not None
+                    user_id,
+                    show_generate=backfill_queue is not None,
+                    notes=content.get("notes", []) if isinstance(content, dict) else None,
+                    facts=content.get("facts", {}) if isinstance(content, dict) else None,
                 ),
             )
             return
@@ -671,7 +763,11 @@ async def _dispatch_action(
         # --- add note ---
         if action == "note_add":
             if profile_admin is None:
-                await _show(message, "Gestion de perfiles no disponible.", None)
+                await _show(
+                    message,
+                    "Gestion de perfiles no disponible.",
+                    menu_back_keyboard(encode_menu_vip(user_id)),
+                )
                 return
             sessions.start(
                 actor_id,
@@ -691,12 +787,20 @@ async def _dispatch_action(
         # --- delete note ---
         if action == "note_del":
             if profile_admin is None:
-                await _show(message, "Gestion de perfiles no disponible.", None)
+                await _show(
+                    message,
+                    "Gestion de perfiles no disponible.",
+                    menu_back_keyboard(encode_menu_vip(user_id)),
+                )
                 return
             try:
                 idx = int(parsed.extra or "0")
             except ValueError:
-                await _show(message, "Numero de nota invalido.", None)
+                await _show(
+                    message,
+                    "Número de nota inválido.",
+                    menu_back_keyboard(encode_menu_vip(user_id)),
+                )
                 return
             result = await profile_admin.delete_note(actor_id, user_id, idx)
             kb = menu_back_keyboard(encode_menu_vip(user_id))
@@ -717,7 +821,11 @@ async def _dispatch_action(
         # --- add fact ---
         if action == "fact_add":
             if profile_admin is None:
-                await _show(message, "Gestion de perfiles no disponible.", None)
+                await _show(
+                    message,
+                    "Gestion de perfiles no disponible.",
+                    menu_back_keyboard(encode_menu_vip(user_id)),
+                )
                 return
             sessions.start(
                 actor_id,
@@ -738,11 +846,19 @@ async def _dispatch_action(
         # --- delete fact ---
         if action == "fact_del":
             if profile_admin is None:
-                await _show(message, "Gestion de perfiles no disponible.", None)
+                await _show(
+                    message,
+                    "Gestion de perfiles no disponible.",
+                    menu_back_keyboard(encode_menu_vip(user_id)),
+                )
                 return
             key = (parsed.extra or "").strip()
             if not key:
-                await _show(message, "Especifica la clave del dato a eliminar.", None)
+                await _show(
+                    message,
+                    "Especifica la clave del dato a eliminar.",
+                    menu_back_keyboard(encode_menu_vip(user_id)),
+                )
                 return
             result = await profile_admin.delete_fact(actor_id, user_id, key)
             kb = menu_back_keyboard(encode_menu_vip(user_id))
@@ -779,6 +895,7 @@ async def _dispatch_action(
 
         # --- delete confirmation ---
         if action == "delete":
+            sessions.record_confirmation(actor_id)
             await _show(
                 message,
                 f"¿Desactivar al VIP {user_id}?\n\n"
@@ -789,12 +906,18 @@ async def _dispatch_action(
 
         # --- delete confirmed ---
         if action == "delete_confirm":
+            # A7: a confirm button from a stale message must not execute.
+            if not sessions.consume_confirmation(actor_id):
+                await _show(
+                    message, _CONFIRM_EXPIRED_UX, menu_back_keyboard(encode_menu("vips"))
+                )
+                return "confirm_expired"
             ok = await vips.deactivate(user_id)
             kb = menu_back_keyboard(encode_menu("vips"))
             if ok:
                 await _show(message, f"VIP {user_id} desactivado.", kb)
             else:
-                await _show(message, f"No se encontro al VIP {user_id}.", kb)
+                await _show(message, f"No se encontró al VIP {user_id}.", kb)
             return
 
         # --- pause (pausar) ---
@@ -810,7 +933,7 @@ async def _dispatch_action(
                 await _show(
                     message,
                     f"⏸ Pausar a {name}\n\n"
-                    "Selecciona la duracion de la pausa:",
+                    "Selecciona la duración de la pausa:",
                     menu_pause_duration_keyboard(user_id),
                 )
                 return
@@ -849,7 +972,7 @@ async def _dispatch_action(
                 f"👤 Perfil de {name}\n"
                 f"ID: {user_id}\n\n"
                 f"{status_line}"
-                "Selecciona una accion:"
+                "Selecciona una acción:"
             )
             await _show(
                 message, text, menu_vip_detail_keyboard(user_id, is_paused=is_paused)
@@ -874,14 +997,18 @@ async def _dispatch_action(
                 f"👤 Perfil de {name}\n"
                 f"ID: {user_id}\n\n"
                 "Estado: 🟢 Activo\n"
-                "Selecciona una accion:"
+                "Selecciona una acción:"
             )
             await _show(
                 message, text, menu_vip_detail_keyboard(user_id, is_paused=False)
             )
             return
 
-        await _show(message, "Accion no disponible.", None)
+        await _show(
+            message,
+            "Accion no disponible.",
+            menu_back_keyboard(encode_menu("vips")),
+        )
         return
 
     # ==================================================================
@@ -918,10 +1045,21 @@ async def _dispatch_action(
             return
 
         if action == "confirm":
+            # A7: a confirm button from a stale message must not register the
+            # VIP with outdated context (pending name could already be gone).
+            if not sessions.consume_confirmation(actor_id):
+                await _show(
+                    message, _CONFIRM_EXPIRED_UX, menu_back_keyboard(encode_menu("vips"))
+                )
+                return "confirm_expired"
             try:
                 user_id = int(parsed.extra or "0")
             except (ValueError, TypeError):
-                await _show(message, "ID de usuario inválido.", None)
+                await _show(
+                    message,
+                    "ID de usuario inválido.",
+                    menu_back_keyboard(encode_menu("vips")),
+                )
                 return
 
             # Use the display name from the forwarded message if available.
@@ -942,7 +1080,11 @@ async def _dispatch_action(
             )
             return
 
-        await _show(message, "Acción no disponible.", None)
+        await _show(
+            message,
+            "Acción no disponible.",
+            menu_back_keyboard(encode_menu("vips")),
+        )
         return
 
     # ==================================================================
@@ -950,7 +1092,11 @@ async def _dispatch_action(
     # ==================================================================
     if category == "sandbox":
         if sandbox is None:
-            await _show(message, "El modo de prueba no esta disponible.", None)
+            await _show(
+                message,
+                "El modo de prueba no está disponible.",
+                menu_back_keyboard(encode_menu("root")),
+            )
             return
 
         if action == "activate":
@@ -962,7 +1108,7 @@ async def _dispatch_action(
             )
             await _show(
                 message,
-                "Para activar el modo de prueba, reenvia un mensaje del chat "
+                "Para activar el modo de prueba, reenvía un mensaje del chat "
                 "que quieres poner en modo sandbox.\n\n"
                 "Usa /cancelar para abortar.",
                 None,
@@ -977,8 +1123,8 @@ async def _dispatch_action(
             if chat_id is None:
                 await _show(
                     message,
-                    "No se encontro el chat. Inicia de nuevo la activacion.",
-                    None,
+                    "No se encontró el chat. Inicia de nuevo la activación.",
+                    menu_back_keyboard(encode_menu("sandbox")),
                 )
                 sessions.cancel(actor_id)
                 return
@@ -1010,7 +1156,11 @@ async def _dispatch_action(
         if action == "off":
             focus = sandbox.get_focus_chat_id()
             if focus is None:
-                await _show(message, "No hay modo de prueba activo.", None)
+                await _show(
+                    message,
+                    "No hay modo de prueba activo.",
+                    menu_back_keyboard(encode_menu("sandbox")),
+                )
                 return
             was = sandbox.deactivate(focus)
             await _show(
@@ -1025,7 +1175,11 @@ async def _dispatch_action(
         if action == "reset":
             focus = sandbox.get_focus_chat_id()
             if focus is None or not sandbox.is_active(focus):
-                await _show(message, "No hay modo de prueba activo.", None)
+                await _show(
+                    message,
+                    "No hay modo de prueba activo.",
+                    menu_back_keyboard(encode_menu("sandbox")),
+                )
                 return
             if coordinator is None:
                 await _show(
@@ -1037,7 +1191,7 @@ async def _dispatch_action(
             await coordinator.reset_chat_session(focus, reason="menu_reset")
             await _show(
                 message,
-                f"Conversacion de prueba reiniciada (chat {focus}).",
+                f"Conversación de prueba reiniciada (chat {focus}).",
                 menu_back_keyboard(encode_menu("sandbox")),
             )
             return
@@ -1052,7 +1206,7 @@ async def _dispatch_action(
         await _show(
             message,
             "Usa el comando:\n/fp <id_del_turno>\n\n"
-            "Usalo cuando Diana escalo algo que en realidad no era un problema.\n"
+            "Úsalo cuando Diana escaló algo que en realidad no era un problema.\n"
             "El id del turno aparece en Historial -> Ver turnos recientes.",
             menu_back_keyboard(encode_menu("review")),
         )
@@ -1076,7 +1230,7 @@ async def _dispatch_action(
                 logger.exception("Error loading metrics summary")
                 await _show(
                     message,
-                    "Error del sistema al cargar metricas. Reintenta mas tarde.",
+                    "Error del sistema al cargar métricas. Reintenta más tarde.",
                     menu_back_keyboard(encode_menu("metrics")),
                 )
                 return
@@ -1091,7 +1245,7 @@ async def _dispatch_action(
             if token == "unavailable":
                 await _show(
                     message,
-                    "El aprendizaje por ejemplos no esta disponible.",
+                    "El aprendizaje por ejemplos no está disponible.",
                     menu_back_keyboard(encode_menu("metrics")),
                 )
                 return
@@ -1117,7 +1271,7 @@ async def _dispatch_action(
     if category == "history" and action == "turns":
         back = menu_back_keyboard(encode_menu("history"))
         if admin_trace is None:
-            await _show(message, "El historial no esta disponible.", back)
+            await _show(message, "El historial no está disponible.", back)
             return
         try:
             view = await admin_trace.render_turns_page(0)
@@ -1125,7 +1279,7 @@ async def _dispatch_action(
             logger.exception("Error querying traces")
             await _show(
                 message,
-                "Error del sistema al consultar el historial. Reintenta mas tarde.",
+                "Error del sistema al consultar el historial. Reintenta más tarde.",
                 back,
             )
             return
@@ -1183,7 +1337,7 @@ async def _dispatch_action(
     # Unknown / unmapped action — should not normally happen.
     await _show(
         message,
-        "Esa opcion todavia no esta disponible.",
+        "Esa opción todavía no está disponible.",
         menu_back_keyboard(encode_menu("root")),
     )
 
@@ -1200,21 +1354,34 @@ async def _handle_sandbox_forward(
     sandbox: SandboxService | None,
     sessions: MenuSessionStore,
 ) -> None:
+    def _restart() -> None:
+        # Keep the wizard alive: on invalid input the "reintenta" hint must be
+        # real, so the next forwarded message still lands here (A2).
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "sandbox_forward",
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
     chat_id = _extract_chat_id_from_forward(message)
     if chat_id is None:
+        _restart()
         await _edit_or_answer(
             bot,
             "No se pudo extraer el ID del chat del mensaje reenviado. "
-            "Asegurate de reenviar un mensaje del chat que quieres activar.",
+            "Asegúrate de reenviar un mensaje del chat que quieres activar.\n\n"
+            "Usa /cancelar para abortar.",
             session=session,
             fallback=message,
         )
         return
 
     if sandbox is None:
+        _restart()
         await _edit_or_answer(
             bot,
-            "El modo de prueba no esta disponible.",
+            "El modo de prueba no está disponible.",
             session=session,
             fallback=message,
         )
@@ -1243,12 +1410,24 @@ async def _handle_register_forward(
     vips: VipStore,
     sessions: MenuSessionStore,
 ) -> None:
+    def _restart() -> None:
+        # Keep the wizard alive: the "reenvia" hint must be real, so a bad
+        # forward lets the owner try another message instead of restarting (A2).
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "register_vip",
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
     user_info = _extract_user_from_forward(message)
     if user_info is None:
+        _restart()
         await _edit_or_answer(
             bot,
-            "No se pudo identificar al usuario. Asegurate de reenviar "
-            "un mensaje desde el chat de la persona que quieras agregar.",
+            "No se pudo identificar al usuario. Asegúrate de reenviar "
+            "un mensaje desde el chat de la persona que quieras agregar.\n\n"
+            "Usa /cancelar para abortar.",
             session=session,
             fallback=message,
         )
@@ -1260,9 +1439,11 @@ async def _handle_register_forward(
     # Check if already an active VIP.
     existing = await vips.get_by_telegram_user_id(user_id)
     if existing is not None and existing.is_active:
+        _restart()
         await _edit_or_answer(
             bot,
-            f"El usuario {name_str} (ID: {user_id}) ya es un VIP activo.",
+            f"El usuario {name_str} (ID: {user_id}) ya es un VIP activo. "
+            "Reenvía un mensaje de otra persona o usa /cancelar.",
             session=session,
             fallback=message,
         )
@@ -1282,6 +1463,9 @@ async def _handle_register_forward(
         text += "\n⚠️ Este usuario estaba desactivado. Se reactivará."
     text += "\n¿Agregar este usuario como VIP?"
 
+    # A7: start the confirmation TTL so a stale Confirm tap is rejected.
+    if message.from_user is not None:
+        sessions.record_confirmation(message.from_user.id)
     kb = menu_register_confirm_keyboard(user_id)
     await _edit_or_answer(
         bot, text, session=session, fallback=message, keyboard=kb,
@@ -1293,7 +1477,19 @@ async def _handle_note_text(
     bot: Bot,
     session: MenuSession,
     profile_admin: ProfileAdminService | None,
+    sessions: MenuSessionStore,
 ) -> None:
+    def _restart() -> None:
+        # Keep the note wizard alive on validation/service errors so the owner
+        # can retry the same prompt (A2) instead of silently dropping it.
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "note",
+            vip_user_id=session.vip_user_id,
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
     back_kb = (
         menu_back_keyboard(encode_menu_vip(session.vip_user_id))
         if session.vip_user_id
@@ -1301,14 +1497,16 @@ async def _handle_note_text(
     )
     if profile_admin is None or session.vip_user_id is None:
         await _edit_or_answer(
-            bot, "Gestion de perfiles no disponible.",
+            bot, "Gestión de notas no disponible.",
             session=session, fallback=message, keyboard=back_kb,
         )
         return
     text = (message.text or "").strip()
     if not text:
+        _restart()
         await _edit_or_answer(
-            bot, "El texto de la nota no puede estar vacio.",
+            bot, "El texto de la nota no puede estar vacío. "
+            "Envíalo de nuevo o usa /cancelar.",
             session=session, fallback=message, keyboard=back_kb,
         )
         return
@@ -1324,8 +1522,10 @@ async def _handle_note_text(
             session=session, fallback=message, keyboard=back_kb,
         )
     else:
+        _restart()
         await _edit_or_answer(
-            bot, f"No se pudo agregar la nota: {result.status}",
+            bot, f"No se pudo agregar la nota: {result.status}. "
+            "Reinténtalo o usa /cancelar.",
             session=session, fallback=message, keyboard=back_kb,
         )
 
@@ -1335,7 +1535,18 @@ async def _handle_fact_text(
     bot: Bot,
     session: MenuSession,
     profile_admin: ProfileAdminService | None,
+    sessions: MenuSessionStore,
 ) -> None:
+    def _restart() -> None:
+        # Keep the fact wizard alive on validation/service errors (A2).
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "fact",
+            vip_user_id=session.vip_user_id,
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
     back_kb = (
         menu_back_keyboard(encode_menu_vip(session.vip_user_id))
         if session.vip_user_id
@@ -1343,14 +1554,16 @@ async def _handle_fact_text(
     )
     if profile_admin is None or session.vip_user_id is None:
         await _edit_or_answer(
-            bot, "Gestion de perfiles no disponible.",
+            bot, "Gestión de perfiles no disponible.",
             session=session, fallback=message, keyboard=back_kb,
         )
         return
     text = (message.text or "").strip()
     if ":" not in text:
+        _restart()
         await _edit_or_answer(
-            bot, "Formato incorrecto. Usa:\nclave: valor",
+            bot, "Formato incorrecto. Usa:\nclave: valor\n\n"
+            "Usa /cancelar para abortar.",
             session=session, fallback=message, keyboard=back_kb,
         )
         return
@@ -1358,8 +1571,10 @@ async def _handle_fact_text(
     key = key.strip()
     value = value.strip()
     if not key or not value:
+        _restart()
         await _edit_or_answer(
-            bot, "La clave y el valor no pueden estar vacios.",
+            bot, "La clave y el valor no pueden estar vacíos.\n\n"
+            "Usa /cancelar para abortar.",
             session=session, fallback=message, keyboard=back_kb,
         )
         return
@@ -1376,8 +1591,10 @@ async def _handle_fact_text(
             session=session, fallback=message, keyboard=back_kb,
         )
     else:
+        _restart()
         await _edit_or_answer(
-            bot, f"No se pudo agregar el dato: {result.status}",
+            bot, f"No se pudo agregar el dato: {result.status}. "
+            "Reinténtalo o usa /cancelar.",
             session=session, fallback=message, keyboard=back_kb,
         )
 
@@ -1387,14 +1604,27 @@ async def _handle_rename_text(
     bot: Bot,
     session: MenuSession,
     vips: VipStore,
+    sessions: MenuSessionStore,
 ) -> None:
+    def _restart() -> None:
+        # Keep the rename wizard alive on validation errors (A2).
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "rename",
+            vip_user_id=session.vip_user_id,
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
     if session.vip_user_id is None:
         return
     back_kb = menu_back_keyboard(encode_menu_vip(session.vip_user_id))
     new_name = (message.text or "").strip()
     if not new_name:
+        _restart()
         await _edit_or_answer(
-            bot, "El nombre no puede estar vacio.",
+            bot, "El nombre no puede estar vacío. "
+            "Escríbelo de nuevo o usa /cancelar.",
             session=session, fallback=message, keyboard=back_kb,
         )
         return
@@ -1405,9 +1635,11 @@ async def _handle_rename_text(
             session=session, fallback=message, keyboard=back_kb,
         )
     else:
+        _restart()
         await _edit_or_answer(
             bot,
-            f"No se encontro al VIP {session.vip_user_id} o esta inactivo.",
+            f"No se encontró al VIP {session.vip_user_id} o está inactivo. "
+            "Reinténtalo o usa /cancelar.",
             session=session, fallback=message, keyboard=back_kb,
         )
 

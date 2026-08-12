@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from aiogram.types import CallbackQuery, User
 
 from diana.telegram.handlers.memory_approval import (
     build_memory_approval_router,
@@ -113,3 +114,27 @@ def test_build_router_when_none() -> None:
     )
     assert router is not None
     assert router.name == "memory_approval"
+
+
+@pytest.mark.asyncio
+async def test_discard_toast_uses_show_alert(memory: AsyncMock) -> None:
+    """A4: discarding a pending fact surfaces as an alert, not a silent toast."""
+    router = build_memory_approval_router(memory=memory, owner_telegram_id=OWNER)
+    handler = router.callback_query.handlers[0]
+    assert handler.callback is not None
+    fid = uuid4()
+    cq = CallbackQuery(
+        id="cq-md",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_memory_discard(fid),
+    )
+    object.__setattr__(cq, "answer", AsyncMock(return_value=True))
+
+    await handler.callback(cq)
+
+    cq.answer.assert_awaited_once()
+    args, kwargs = cq.answer.await_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert "Descartado" in text
+    assert kwargs.get("show_alert") is True

@@ -224,10 +224,18 @@ _STEP_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
-def encode_trace_view(turn_id: UUID, from_draft: bool = False) -> str:
-    """Build callback_data for viewing a trace: vt:<uuid> (vtd when from draft)."""
+def encode_trace_view(
+    turn_id: UUID, from_draft: bool = False, page: int | None = None
+) -> str:
+    """Build callback_data for viewing a trace: vt:<uuid> (vtd when from draft).
+
+    ``page`` (optional) is appended as ``:N`` so "Volver a turnos" can restore
+    the exact list page the owner was on (A10), instead of resetting to page 0.
+    """
     code = _ACTION_VIEW_TRACE_FROM_DRAFT if from_draft else _ACTION_VIEW_TRACE
     data = f"{code}:{turn_id}"
+    if page:
+        data = f"{data}:{page}"
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
     return data
@@ -307,11 +315,18 @@ def parse_trace_callback(data: str) -> TraceCallbackData | None:
         except (ValueError, IndexError):
             return None
 
-    # vt, tj, vtd, tb
+    # vt, vtd, tj, tb — optional trailing page for vt/vtd (A10).
     try:
-        return TraceCallbackData(action=code, turn_id=UUID(parts[1]))
+        turn_id = UUID(parts[1])
     except (ValueError, IndexError):
         return None
+    page: int | None = None
+    if code in {_ACTION_VIEW_TRACE, _ACTION_VIEW_TRACE_FROM_DRAFT} and len(parts) > 2:
+        try:
+            page = int(parts[2])
+        except ValueError:
+            return None
+    return TraceCallbackData(action=code, turn_id=turn_id, page=page)
 
 
 def trace_list_keyboard(
@@ -320,12 +335,13 @@ def trace_list_keyboard(
     """Keyboard for the /turnos list with turn buttons + pagination."""
     buttons: list[list[InlineKeyboardButton]] = []
 
-    # One button per turn.
+    # One button per turn. The current page travels in the callback so the
+    # detail's "Volver a turnos" returns to this exact page (A10).
     for turn_id, short_id in turns:
         buttons.append([
             InlineKeyboardButton(
                 text=f"🔍 Traza {short_id}",
-                callback_data=encode_trace_view(turn_id),
+                callback_data=encode_trace_view(turn_id, page=page),
             ),
         ])
 
@@ -348,6 +364,14 @@ def trace_list_keyboard(
     if nav_row:
         buttons.append(nav_row)
 
+    # Escape back to the owner panel (the /turnos legacy list had none — A10).
+    buttons.append([
+        InlineKeyboardButton(
+            text="🔙 Volver al menú",
+            callback_data=encode_menu("root"),
+        )
+    ])
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -355,11 +379,14 @@ def trace_detail_keyboard(
     turn_id: UUID,
     timings: dict[str, float] | None = None,
     from_draft: bool = False,
+    page: int = 0,
 ) -> InlineKeyboardMarkup:
     """Keyboard with per-step buttons and export/back actions.
 
     ``from_draft`` swaps the "back to turns" action for a "back to draft"
     button so owners can return to the pending approval they entered from.
+    ``page`` is the turns-list page to restore when pressing "Volver a turnos"
+    (A10); it defaults to 0 for direct /traza entries.
     """
     timings = timings or {}
     buttons: list[list[InlineKeyboardButton]] = []
@@ -396,7 +423,7 @@ def trace_detail_keyboard(
         if from_draft
         else InlineKeyboardButton(
             text="🔙 Volver a turnos",
-            callback_data=encode_trace_page(0),
+            callback_data=encode_trace_page(page),
         )
     )
     buttons.append([
@@ -524,21 +551,49 @@ def encode_staging_discard(candidate_id: UUID) -> str:
     return data
 
 
+def encode_staging_discard_confirm(candidate_id: UUID) -> str:
+    """Build callback_data for discard confirm: sd:<uuid>:confirm (A4)."""
+    data = f"{_ACTION_STAGING_DISCARD}:{candidate_id}:confirm"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_staging_discard_cancel(candidate_id: UUID) -> str:
+    """Build callback_data for discard cancel: sd:<uuid>:cancel (A4)."""
+    data = f"{_ACTION_STAGING_DISCARD}:{candidate_id}:cancel"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
 def parse_staging_callback(data: str) -> tuple[str, UUID] | None:
-    """Parse staging callback into (promote|discard, candidate_id) or None."""
+    """Parse staging callback into (action, candidate_id) or None.
+
+    ``sp:<uuid>`` → (promote, id). ``sd:<uuid>`` → (discard, id) — the first
+    tap of the two-step discard (A4). ``sd:<uuid>:confirm`` and
+    ``sd:<uuid>:cancel`` → (discard_confirm|discard_cancel, id).
+    """
     if not data or ":" not in data:
         return None
-    code, raw_id = data.split(":", 1)
+    code, raw = data.split(":", 1)
     action = {
         _ACTION_STAGING_PROMOTE: "promote",
         _ACTION_STAGING_DISCARD: "discard",
     }.get(code)
     if action is None:
         return None
+    suffix = ""
+    if action == "discard" and ":" in raw:
+        raw, suffix = raw.rsplit(":", 1)
     try:
-        return action, UUID(raw_id)
+        candidate_id = UUID(raw)
     except ValueError:
         return None
+    if suffix:
+        mapped = {"confirm": "discard_confirm", "cancel": "discard_cancel"}.get(suffix)
+        return (mapped, candidate_id) if mapped is not None else None
+    return action, candidate_id
 
 
 def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
@@ -553,6 +608,24 @@ def staging_candidate_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="🗑 Descartar",
                     callback_data=encode_staging_discard(candidate_id),
+                ),
+            ]
+        ]
+    )
+
+
+def staging_discard_confirm_keyboard(candidate_id: UUID) -> InlineKeyboardMarkup:
+    """Two-step discard confirm (A4): YES discards, NO returns to the candidate."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Sí, descartar",
+                    callback_data=encode_staging_discard_confirm(candidate_id),
+                ),
+                InlineKeyboardButton(
+                    text="❌ No, mantener",
+                    callback_data=encode_staging_discard_cancel(candidate_id),
                 ),
             ]
         ]
@@ -851,14 +924,20 @@ def menu_pause_duration_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 
 def menu_vip_profile_keyboard(
-    user_id: int, *, show_generate: bool = False
+    user_id: int,
+    *,
+    show_generate: bool = False,
+    notes: list | None = None,
+    facts: dict | None = None,
 ) -> InlineKeyboardMarkup:
     """Back to VIP detail after viewing profile/ficha.
 
     With memory backfill wired (``show_generate=True``) the first row offers
     "🔄 Generar perfil" (callback ``profile_generate``) — the ficha-triggered
-    enqueue of REQ-MEM-05. Default ``False`` keeps the output identical to the
-    pre-Pool-2 keyboard (back-compat).
+    enqueue of REQ-MEM-05. ``facts``/``notes`` (A9) add one per-item delete
+    button per fact (``fact_del:<key>``) and note (``note_del:<i>``) so the
+    ficha stops hiding capabilities the legacy /vip_note_del commands exposed.
+    Defaults keep the output identical to the pre-Pool-2 keyboard (back-compat).
     """
     rows: list[list[InlineKeyboardButton]] = []
     if show_generate:
@@ -866,6 +945,21 @@ def menu_vip_profile_keyboard(
             InlineKeyboardButton(
                 text="🔄 Generar perfil",
                 callback_data=encode_menu_vip_action(user_id, "profile_generate"),
+            )
+        ])
+    for key in (facts or {}).keys():
+        try:
+            data = encode_menu_vip_action(user_id, f"fact_del:{key}")
+        except ValueError:
+            # A key too long for callback_data still shows in the ficha text
+            # and stays reachable via the legacy command; skip its button.
+            continue
+        rows.append([InlineKeyboardButton(text=f"🗑 {key}", callback_data=data)])
+    for i in range(1, len(notes or []) + 1):
+        rows.append([
+            InlineKeyboardButton(
+                text=f"🗑 Nota {i}",
+                callback_data=encode_menu_vip_action(user_id, f"note_del:{i}"),
             )
         ])
     rows.append([
@@ -1004,7 +1098,7 @@ def menu_sandbox_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🔴 Desactivar", callback_data=encode_menu("sandbox", "off"))],
             [InlineKeyboardButton(text="📄 Ver perfiles de prueba", callback_data=encode_menu("sandbox", "profiles"))],
             [InlineKeyboardButton(text="ℹ️ Ver estado actual", callback_data=encode_menu("sandbox", "status"))],
-            [InlineKeyboardButton(text="🔄 Reiniciar conversacion de prueba", callback_data=encode_menu("sandbox", "reset"))],
+            [InlineKeyboardButton(text="🔄 Reiniciar prueba", callback_data=encode_menu("sandbox", "reset"))],
             _menu_back_row(),
         ]
     )
@@ -1131,6 +1225,8 @@ __all__ = [
     "encode_register_cancel",
     "encode_register_confirm",
     "encode_staging_discard",
+    "encode_staging_discard_confirm",
+    "encode_staging_discard_cancel",
     "encode_staging_promote",
     "encode_trace_view",
     "encode_trace_detail",
@@ -1162,6 +1258,7 @@ __all__ = [
     "parse_staging_callback",
     "parse_trace_callback",
     "staging_candidate_keyboard",
+    "staging_discard_confirm_keyboard",
     "step_detail_keyboard",
     "trace_detail_keyboard",
     "trace_list_keyboard",

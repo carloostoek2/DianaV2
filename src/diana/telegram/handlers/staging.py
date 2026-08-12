@@ -17,7 +17,11 @@ from diana.application.staging_service import (
     AtencionPromoteBlocked,
     StagingService,
 )
-from diana.telegram.keyboards import parse_staging_callback, staging_candidate_keyboard
+from diana.telegram.keyboards import (
+    parse_staging_callback,
+    staging_candidate_keyboard,
+    staging_discard_confirm_keyboard,
+)
 
 logger = logging.getLogger("diana.telegram")
 
@@ -103,6 +107,10 @@ async def dispatch_staging_callback(
             )
             return "promoted"
         if action == "discard":
+            # A4: the first tap only arms the two-step confirm — nothing is
+            # deleted until the owner confirms with sd:<id>:confirm.
+            return "discard_confirm_prompt"
+        if action == "discard_confirm":
             await staging.discard(candidate_id)
             logger.info(
                 "staging_discarded",
@@ -112,6 +120,8 @@ async def dispatch_staging_callback(
                 },
             )
             return "discarded"
+        if action == "discard_cancel":
+            return "discard_cancelled"
     except AtencionPromoteBlocked:
         logger.info(
             "staging_atencion_promote_blocked",
@@ -179,6 +189,40 @@ def build_staging_router(
             actor_id=actor_id,
             owner_telegram_id=owner_telegram_id,
         )
+        parsed = parse_staging_callback(callback.data or "")
+        candidate_id = parsed[1] if parsed is not None else None
+
+        if token == "discard_confirm_prompt":
+            # A4: first discard tap swaps in the confirm keyboard; the body
+            # text stays put, so "No, mantener" can simply swap it back.
+            await callback.answer()
+            if candidate_id is not None and callback.message is not None:
+                try:
+                    await callback.message.edit_reply_markup(
+                        reply_markup=staging_discard_confirm_keyboard(candidate_id)
+                    )
+                except Exception:
+                    logger.debug(
+                        "staging_show_confirm_failed",
+                        extra={"actor_id": actor_id},
+                        exc_info=True,
+                    )
+            return
+        if token == "discard_cancelled":
+            await callback.answer()
+            if candidate_id is not None and callback.message is not None:
+                try:
+                    await callback.message.edit_reply_markup(
+                        reply_markup=staging_candidate_keyboard(candidate_id)
+                    )
+                except Exception:
+                    logger.debug(
+                        "staging_restore_keyboard_failed",
+                        extra={"actor_id": actor_id},
+                        exc_info=True,
+                    )
+            return
+
         text, alert = _TOKEN_UX.get(token, ("Processed", False))
         await callback.answer(text, show_alert=alert)
         if token in {"promoted", "discarded"} and callback.message is not None:

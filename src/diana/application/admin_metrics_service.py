@@ -28,7 +28,6 @@ __all__ = [
     "format_week_range_label",
 ]
 
-_TELEGRAM_MSG_CAP = 4096
 _DRIFT_NORMAL_MAX = 0.1  # score < 0.1 → normal; else alto
 
 
@@ -217,9 +216,6 @@ class AdminMetricsService:
             "metrics": summary.values,
             "previous": summary.previous,
         }
-        raw = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
-        if len(raw) <= _TELEGRAM_MSG_CAP:
-            return raw
-        note = "\n\n… [truncated — export exceeds Telegram 4096 cap]"
-        budget = _TELEGRAM_MSG_CAP - len(note)
-        return raw[: max(0, budget)] + note
+        # Full, untruncated JSON: the Telegram handler ships it as a document,
+        # so Telegram's 4096-char message cap no longer applies (A8).
+        return json.dumps(payload, indent=2, ensure_ascii=False, default=str)

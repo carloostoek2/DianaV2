@@ -14,6 +14,8 @@ from diana.telegram.handlers.staging import (
 )
 from diana.telegram.keyboards import (
     encode_staging_discard,
+    encode_staging_discard_cancel,
+    encode_staging_discard_confirm,
     encode_staging_promote,
 )
 
@@ -44,7 +46,8 @@ async def test_owner_promote_success(staging: AsyncMock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_owner_discard_success(staging: AsyncMock) -> None:
+async def test_owner_discard_arms_confirm_prompt(staging: AsyncMock) -> None:
+    """A4: the first discard tap only arms the two-step confirm — no delete."""
     cid = uuid4()
     token = await dispatch_staging_callback(
         staging=staging,
@@ -52,8 +55,36 @@ async def test_owner_discard_success(staging: AsyncMock) -> None:
         actor_id=OWNER,
         owner_telegram_id=OWNER,
     )
+    assert token == "discard_confirm_prompt"
+    staging.discard.assert_not_awaited()
+    staging.promote_to_example.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_discard_confirm_deletes(staging: AsyncMock) -> None:
+    cid = uuid4()
+    token = await dispatch_staging_callback(
+        staging=staging,
+        callback_data=encode_staging_discard_confirm(cid),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
     assert token == "discarded"
     staging.discard.assert_awaited_once_with(cid)
+    staging.promote_to_example.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_discard_cancel_keeps_candidate(staging: AsyncMock) -> None:
+    cid = uuid4()
+    token = await dispatch_staging_callback(
+        staging=staging,
+        callback_data=encode_staging_discard_cancel(cid),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
+    assert token == "discard_cancelled"
+    staging.discard.assert_not_awaited()
     staging.promote_to_example.assert_not_awaited()
 
 
@@ -124,12 +155,12 @@ async def test_promote_atencion_blocked_distinct_status(staging: AsyncMock) -> N
 
 
 @pytest.mark.asyncio
-async def test_discard_value_error_stale(staging: AsyncMock) -> None:
+async def test_discard_confirm_value_error_stale(staging: AsyncMock) -> None:
     cid = uuid4()
     staging.discard.side_effect = ValueError("not found")
     token = await dispatch_staging_callback(
         staging=staging,
-        callback_data=encode_staging_discard(cid),
+        callback_data=encode_staging_discard_confirm(cid),
         actor_id=OWNER,
         owner_telegram_id=OWNER,
     )

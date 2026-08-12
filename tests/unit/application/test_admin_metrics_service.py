@@ -271,16 +271,18 @@ class TestExportWeekJson:
         assert payload["status"] == "empty"
         assert payload["metrics"] == {}
 
-    async def test_export_truncates_when_over_telegram_cap(
+    async def test_export_full_json_over_telegram_cap(
         self, svc: AdminMetricsService, store: FakeLearningMetricsStore
     ) -> None:
+        """A8: shipped as a document — full payload, no 4096 truncation."""
         week = date(2026, 7, 20)
         huge = {f"metric_{i}": float(i) for i in range(500)}
         huge.update(_full_values())
         store.seed(week, huge)
         raw = await svc.export_week_json(week)
-        assert len(raw) <= 4096
-        assert "truncated" in raw.lower() or raw.endswith("…")
+        assert len(raw) > 4096
+        payload = json.loads(raw)
+        assert payload["metrics"]["metric_499"] == 499.0
 
 
 class TestNoAiogram:

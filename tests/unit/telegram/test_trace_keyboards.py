@@ -10,6 +10,7 @@ from diana.telegram.keyboards import (
     TraceCallbackData,
     draft_keyboard,
     encode_callback,
+    encode_menu,
     encode_trace_back_to_draft,
     encode_trace_detail,
     encode_trace_json,
@@ -76,6 +77,15 @@ class TestParseTraceCallback:
         assert parsed.action == "vtd"
         assert parsed.turn_id == turn_id
 
+    def test_parse_trace_view_callback_with_page(self, turn_id: UUID) -> None:
+        """A10: the current list page rides along in the view callback."""
+        data = encode_trace_view(turn_id, page=4)
+        parsed = parse_trace_callback(data)
+        assert parsed is not None
+        assert parsed.action == "vt"
+        assert parsed.turn_id == turn_id
+        assert parsed.page == 4
+
     def test_parse_trace_detail_callback(self, turn_id: UUID) -> None:
         data = encode_trace_detail(turn_id, "analyst")
         parsed = parse_trace_callback(data)
@@ -137,8 +147,26 @@ class TestTraceListKeyboard:
             page=0,
             total_pages=1,
         )
-        assert len(kb.inline_keyboard) == 1  # 1 turn row + no nav (1 page total)
+        # 1 turn row + back-to-menu (no nav on a single page).
+        assert len(kb.inline_keyboard) == 2
         assert "abc123" in kb.inline_keyboard[0][0].text
+
+    def test_back_to_menu_row_present(self) -> None:
+        """A10: the turns list always offers an escape to the owner panel."""
+        kb = trace_list_keyboard([], page=0, total_pages=1)
+        back = next(
+            b for row in kb.inline_keyboard for b in row
+            if "Volver al menú" in (b.text or "")
+        )
+        assert back.callback_data == encode_menu("root")
+
+    def test_turn_buttons_carry_current_page(self) -> None:
+        """A10: detail's 'Volver a turnos' restores the exact list page."""
+        turn_id = uuid4()
+        kb = trace_list_keyboard([(turn_id, "abc")], page=2, total_pages=3)
+        parsed = parse_trace_callback(kb.inline_keyboard[0][0].callback_data)
+        assert parsed is not None
+        assert parsed.page == 2
 
     def test_pagination_previous_hidden_on_page_0(self) -> None:
         turn_id = uuid4()
@@ -191,6 +219,15 @@ class TestTraceDetailKeyboard:
         texts = [b.text for row in kb.inline_keyboard for b in row]
         analyst_text = next(t for t in texts if "Analyst" in t)
         assert "100" in analyst_text
+
+    def test_back_to_turns_restores_page(self, turn_id: UUID) -> None:
+        """A10: 'Volver a turnos' returns to the page the owner came from."""
+        kb = trace_detail_keyboard(turn_id, page=3)
+        back = next(
+            b for row in kb.inline_keyboard for b in row
+            if b.text == "🔙 Volver a turnos"
+        )
+        assert back.callback_data == encode_trace_page(3)
 
 
 class TestTraceDetailKeyboardFromDraft:

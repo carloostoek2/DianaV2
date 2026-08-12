@@ -8,7 +8,6 @@ from typing import Any, Callable, Literal
 from uuid import UUID
 
 from aiogram import Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery
 
 from diana.application.admin_metrics_service import AdminMetricsService
@@ -44,7 +43,7 @@ ADMIN_MENU_TEXT = (
     "Botones del borrador: Aprobar / Corregir / Escalar\n"
     "/turnos — turnos recientes\n"
     "/traza <id> — detalle de traza\n"
-    "/fp <turn_id> — marar falsa alarma\n"
+    "/fp <turn_id> — marcar falsa alarma\n"
     "/resumen — métricas semanales\n"
     "/metricas — alias de /resumen\n"
     "/staging — ejemplos pendientes (promover/descartar)"
@@ -290,13 +289,19 @@ def build_callback_router(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     owner_telegram_id: int | None = None,
-    note_sessions: dict[int, int] | None = None,
+    menu_sessions: Any | None = None,
     profile_admin: ProfileAdminService | None = None,
     draft_variants: Any | None = None,
 ) -> Router:
+    """Callback router for owner drafts/traces/metrics.
+
+    ``menu_sessions`` is the shared MenuSessionStore (duck-typed here to avoid
+    an import cycle through menu.py). The add-note-from-draft flow (``an:``)
+    reuses its TTL-bound "note" session so the pending note expires and is
+    cancellable with /cancelar (A1), instead of a permanent in-memory dict.
+    """
     router = Router(name="callbacks")
     sessions = correct_sessions or CorrectSessionStore()
-    sessions_note = note_sessions or {}
 
     @router.callback_query()
     async def on_callback(query: CallbackQuery, **_: Any) -> None:
@@ -310,29 +315,53 @@ def build_callback_router(
                 await query.answer("No autorizado", show_alert=True)
                 return
             if metrics_action == "back":
+                # A10: edit the same panel back to the root menu instead of
+                # stacking a new floating message (fall back to a new one if
+                # the message can't be edited, e.g. too old).
                 if query.message:
-                    await query.message.answer(MENU_ROOT_TEXT, reply_markup=menu_root_keyboard())
+                    try:
+                        await query.message.edit_text(
+                            MENU_ROOT_TEXT, reply_markup=menu_root_keyboard()
+                        )
+                    except Exception:
+                        await query.message.answer(
+                            MENU_ROOT_TEXT, reply_markup=menu_root_keyboard()
+                        )
                 await query.answer()
                 return
             if metrics_action == "export":
                 if admin_metrics is None:
                     await query.answer("Métricas no disponibles", show_alert=True)
                     return
+                # A3: clear the spinner before the export work; A8: ship the full
+                # JSON as a document so it is never capped at Telegram's 4096.
+                try:
+                    await query.answer()
+                except Exception:
+                    logger.debug("metrics_export_early_answer_failed", exc_info=True)
                 try:
                     payload = await admin_metrics.export_week_json()
                 except Exception:
                     logger.exception("Error exporting metrics JSON")
-                    await query.answer("Error al exportar", show_alert=True)
+                    try:
+                        await query.answer("Error al exportar", show_alert=True)
+                    except Exception:
+                        logger.exception("metrics_export_error_answer_failed")
                     return
                 if query.message:
-                    await query.message.answer(payload)
-                await query.answer()
+                    buf = BufferedInputFile(
+                        payload.encode("utf-8"),
+                        filename="metricas_semanales.json",
+                    )
+                    await query.message.answer_document(
+                        buf, caption="Métricas semanales"
+                    )
                 return
 
         # ---- Add-note callback (an:<chat_id>) ----
         if data.startswith("an:"):
-            if profile_admin is None:
-                await query.answer("Gestión de perfiles no disponible", show_alert=True)
+            if menu_sessions is None or profile_admin is None:
+                await query.answer("Gestión de notas no disponible", show_alert=True)
                 return
             if actor_id is None:
                 await query.answer("No autorizado", show_alert=True)
@@ -346,10 +375,22 @@ def build_callback_router(
             if chat_id_val == 0:
                 await query.answer("No se pudo identificar el chat", show_alert=True)
                 return
-            sessions_note[actor_id] = chat_id_val
+            menu_sessions.start(
+                actor_id,
+                "note",
+                vip_user_id=chat_id_val,
+                last_chat_id=query.message.chat.id if query.message else None,
+            )
             await query.answer()
             if query.message:
-                await query.message.answer("📝 Envía el texto de la nota:")
+                prompt = await query.message.answer(
+                    "📝 Envía el texto de la nota:\n\nUsa /cancelar para abortar."
+                )
+                # Point the note session at the prompt so the confirmation
+                # edits it in place (draft message stays untouched).
+                sess = menu_sessions.get(actor_id)
+                if sess is not None:
+                    sess.last_bot_message_id = prompt.message_id
             return
 
         # ---- Trace callbacks (handled before standard dispatch) ----
@@ -375,6 +416,7 @@ def build_callback_router(
                         view.turn_id,
                         timings=view.timings,
                         from_draft=action == "vtd",
+                        page=trace_parsed.page or 0,
                     )
                     if query.message:
                         await query.message.edit_text(view.text, reply_markup=kb, parse_mode=None)
@@ -450,6 +492,13 @@ def build_callback_router(
                 return
 
         # ---- Standard owner callbacks ----
+        # A3: clear the button spinner immediately, before the heavy work
+        # (approve/correct/escalate deliver to the VIP + write the DB).
+        try:
+            await query.answer()
+        except Exception:
+            logger.debug("owner_callback_early_answer_failed", exc_info=True)
+
         # Domain dispatch only — status→Telegram UX mapping stays outside so
         # post-success I/O faults are not labeled "Error processing action."
         try:
@@ -480,7 +529,6 @@ def build_callback_router(
                 await query.answer("No autorizado", show_alert=True)
                 return
             if status == "awaiting_correct":
-                await query.answer()
                 # Follow-up chat text is best-effort: never re-answer the callback.
                 if query.message:
                     try:
@@ -494,6 +542,8 @@ def build_callback_router(
                         )
                 return
             if status == "approved":
+                # The message edit is the primary feedback; the initial empty
+                # answer already cleared the spinner (A3).
                 if query.message:
                     try:
                         original = query.message.text or query.message.caption or ""
@@ -504,19 +554,6 @@ def build_callback_router(
                         )
                     except Exception:
                         logger.exception("Error al editar mensaje aprobado")
-                try:
-                    await query.answer()
-                except TelegramBadRequest as exc:
-                    # Delivery outlasted Telegram's callback answer window
-                    # ("query is too old"); the edit above already gave feedback.
-                    logger.debug(
-                        "owner_callback_answer_stale",
-                        extra={
-                            "callback_data": data,
-                            "actor_id": actor_id,
-                            "reason": getattr(exc, "message", str(exc)),
-                        },
-                    )
                 return
             if status == "escalated":
                 if query.message:
@@ -529,19 +566,6 @@ def build_callback_router(
                         )
                     except Exception:
                         logger.exception("Error al editar mensaje escalado")
-                try:
-                    await query.answer("Escalado al superior")
-                except TelegramBadRequest as exc:
-                    # Delivery outlasted Telegram's callback answer window
-                    # ("query is too old"); the edit above already gave feedback.
-                    logger.debug(
-                        "owner_callback_answer_stale",
-                        extra={
-                            "callback_data": data,
-                            "actor_id": actor_id,
-                            "reason": getattr(exc, "message", str(exc)),
-                        },
-                    )
                 return
             if status in _APPROVE_NOOP_ALERTS:
                 await query.answer(
@@ -557,7 +581,6 @@ def build_callback_router(
                 await query.answer("Nueva versión lista")
                 return
             if status == "nav_ok":
-                await query.answer()
                 return
             if status == "blocked_regenerating":
                 await query.answer("Espera a que termine la regeneración", show_alert=True)
@@ -574,7 +597,8 @@ def build_callback_router(
             if status == "error":
                 await query.answer("No se pudo regenerar — inténtalo", show_alert=True)
                 return
-            await query.answer()
+            # Statuses without a toast (ignored, metrics_*, trace_*) rely on the
+            # initial empty answer above.
         except Exception:
             logger.exception(
                 "owner_callback_answer_failed",

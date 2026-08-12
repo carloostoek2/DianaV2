@@ -1,4 +1,8 @@
-"""Owner private commands: /start, /menu, VIP add/remove, /vip_*, /fp, /resumen."""
+"""Owner private commands: VIP add/remove, /vip_*, /fp, /resumen, /turnos, /traza, /sandbox, /grafo.
+
+The /start and /menu commands live in the menu router (panel), which wins the
+match — the legacy admin handler was removed (A12).
+"""
 
 from __future__ import annotations
 
@@ -29,7 +33,6 @@ from diana.telegram.handlers.doctrine import (
     handle_doctrine_free_text,
 )
 from diana.telegram.handlers.callbacks import (
-    ADMIN_MENU_TEXT,
     SESSION_EXPIRED_UX,
     CorrectSessionStore,
 )
@@ -63,6 +66,8 @@ async def _answer_doctrine_status(message: Message, status: str) -> None:
         )
 
 from diana.telegram.keyboards import (
+    encode_menu,
+    menu_back_keyboard,
     metrics_keyboard,
     trace_detail_keyboard,
     trace_list_keyboard,
@@ -496,7 +501,6 @@ def build_admin_router(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     profile_admin: ProfileAdminService | None = None,
-    note_sessions: dict[int, int] | None = None,
     sandbox: SandboxService | None = None,
     coordinator: TurnCoordinator | None = None,
     history_seed: object | None = None,
@@ -506,7 +510,6 @@ def build_admin_router(
 ) -> Router:
     router = Router(name="admin")
     sessions = correct_sessions or CorrectSessionStore()
-    sessions_note = note_sessions or {}
     doctrine_s = doctrine_sessions or DoctrineSessionStore()
 
     def _is_owner(message: Message) -> bool:
@@ -559,12 +562,6 @@ def build_admin_router(
             await message.answer(format_sandbox_help())
             return
         await message.answer(f"Sandbox: {token}")
-
-    @router.message(Command("start", "menu"))
-    async def on_menu(message: Message, **_: Any) -> None:
-        if not _is_owner(message):
-            return
-        await message.answer(ADMIN_MENU_TEXT)
 
     # Telegram Mini App: grafo del sistema (servido vía Cloudflare Tunnel).
     # GRAFO_URL/GRAFO_TOKEN env-overridable: el token es el mismo
@@ -853,7 +850,8 @@ def build_admin_router(
                 "Error del sistema al cargar métricas. Inténtalo más tarde."
             )
             return
-        kb = metrics_keyboard() if status == "ok" else None
+        # A10: even the empty/legacy case keeps a way back to the owner panel.
+        kb = metrics_keyboard() if status == "ok" else menu_back_keyboard(encode_menu("root"))
         await message.answer(body, reply_markup=kb)
 
     @router.message()
@@ -861,25 +859,6 @@ def build_admin_router(
         if not _is_owner(message):
             return
         actor_id = message.from_user.id if message.from_user else 0
-
-        # Pending note session takes priority.
-        if actor_id in sessions_note:
-            chat_id = sessions_note.pop(actor_id)
-            note_text = (message.text or "").strip()
-            if not note_text:
-                await message.answer("La nota no puede estar vacía")
-                return
-            if profile_admin is not None:
-                try:
-                    await profile_admin.add_note(actor_id, chat_id, note_text)
-                except OwnerAuthError:
-                    return
-                except Exception:
-                    logger.exception("Error al agregar nota")
-                    await message.answer("Error del sistema al guardar la nota")
-                    return
-            await message.answer("Nota guardada")
-            return
 
         # Pending doctrine session handling (dr: free-text response).
         if doctrine_s is not None:

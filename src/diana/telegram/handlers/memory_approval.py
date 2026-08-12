@@ -36,7 +36,9 @@ MEMORY_EMPTY_UX = "No hay hechos pendientes de aprobación"
 
 _MEMORY_TOKEN_UX: dict[str, tuple[str, bool]] = {
     "approved": ("Aprobado ✅", False),
-    "discarded": ("Descartado 🗑", False),
+    # A4: discarding a pending fact is destructive — surface it as an alert so
+    # an accidental tap is at least loud (minimal confirmation for memory).
+    "discarded": ("Descartado 🗑", True),
     "forbidden": ("Not authorized", True),
     "unavailable": (MEMORY_UNAVAILABLE_UX, True),
     "invalid": ("Invalid callback", True),

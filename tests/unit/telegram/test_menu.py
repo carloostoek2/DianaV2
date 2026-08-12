@@ -12,7 +12,15 @@ from aiogram.types import Chat, Message, User
 from diana.application.memory import InMemoryVipStore
 from diana.application.ports import VipRecord
 from diana.application.profile_admin_service import ProfileAdminResult
-from diana.telegram.handlers.menu import _dispatch_action, _format_vip_profile, MenuSessionStore
+from diana.telegram.handlers.menu import (
+    HasActiveMenuSession,
+    MenuSessionStore,
+    _dispatch_action,
+    _format_vip_profile,
+    _handle_note_text,
+    _handle_sandbox_forward,
+    build_menu_router,
+)
 from diana.telegram.keyboards import (
     MenuCallback,
     encode_menu_vip_action,
@@ -161,7 +169,7 @@ async def test_pause_without_duration_shows_picker() -> None:
     call_args = msg.edit_text.call_args
     assert call_args is not None
     assert "Pausar" in call_args[0][0]
-    assert "duracion" in call_args[0][0]
+    assert "duración" in call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -704,6 +712,8 @@ async def test_register_confirm_enqueues_backfill() -> None:
     """Registering a new VIP from the panel also enqueues its profile backfill."""
     queue = _BackfillQueueFake()
     sessions = MenuSessionStore()
+    # A7: the confirm only executes while its confirmation prompt is live.
+    sessions.record_confirmation(_OWNER_ID)
 
     msg = _msg()
     await _dispatch_action(
@@ -723,6 +733,59 @@ async def test_register_confirm_enqueues_backfill() -> None:
     assert queue.scheduled == [777]
 
 
+@pytest.mark.asyncio
+async def test_register_confirm_expired_is_rejected() -> None:
+    """A7: a Confirm tap without a live confirmation must not register the VIP."""
+    queue = _BackfillQueueFake()
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    result = await _dispatch_action(
+        msg,
+        parsed=_callback("register", "confirm", extra="777"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+        backfill_queue=queue,
+    )
+    assert result == "confirm_expired"
+    assert queue.scheduled == []
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "expiró" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_delete_confirm_expired_is_rejected() -> None:
+    """A7: a stale delete-confirm button must not deactivate the VIP."""
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    result = await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "delete_confirm", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+    assert result == "confirm_expired"
+    assert await vips.get_by_telegram_user_id(123) is not None
+
+
 def test_profile_keyboard_show_generate_button() -> None:
     """The ficha keyboard shows 'Generar perfil' only when the queue is wired."""
     from diana.telegram.keyboards import menu_vip_profile_keyboard
@@ -734,6 +797,238 @@ def test_profile_keyboard_show_generate_button() -> None:
     default = menu_vip_profile_keyboard(123)
     default_texts = [b.text for row in default.inline_keyboard for b in row]
     assert not any("Generar perfil" in t for t in default_texts)
+
+
+def test_profile_keyboard_per_item_delete_buttons() -> None:
+    """The ficha keyboard lists one delete button per fact and note (A9)."""
+    from diana.telegram.keyboards import menu_vip_profile_keyboard
+
+    kb = menu_vip_profile_keyboard(
+        123,
+        facts={"city": "BA", "age": "28"},
+        notes=["nota uno", "nota dos"],
+    )
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "🗑 city" in texts
+    assert "🗑 age" in texts
+    assert "🗑 Nota 1" in texts
+    assert "🗑 Nota 2" in texts
+    assert "m:vip:123:fact_del:city" in callbacks
+    assert "m:vip:123:fact_del:age" in callbacks
+    assert "m:vip:123:note_del:1" in callbacks
+    assert "m:vip:123:note_del:2" in callbacks
+    assert "🔙 Volver al perfil" in texts
+    assert "🔙 Inicio" in texts
+
+
+def test_profile_keyboard_no_delete_buttons_without_data() -> None:
+    """No facts/notes -> only back navigation, no delete rows (A9)."""
+    from diana.telegram.keyboards import menu_vip_profile_keyboard
+
+    kb = menu_vip_profile_keyboard(123)
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert all("🗑" not in t for t in texts)
+
+
+def test_profile_keyboard_skips_overlong_fact_key() -> None:
+    """A fact key too long for callback_data is skipped, not crashed (A9)."""
+    from diana.telegram.keyboards import menu_vip_profile_keyboard
+
+    long_key = "k" * 80
+    kb = menu_vip_profile_keyboard(123, facts={long_key: "v", "city": "BA"})
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert "🗑 city" in texts
+    assert all(f"🗑 {long_key}" not in t for t in texts)
+
+
+def _fake_profile_admin(*, content: dict | None = None) -> object:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        show_profile=AsyncMock(
+            return_value=ProfileAdminResult(
+                status="profile_ok",
+                telegram_user_id=123,
+                display_name="VIP Test",
+                content=content,
+            )
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_profile_action_shows_delete_buttons_per_item() -> None:
+    """Viewing a ficha with facts/notes shows the per-item delete buttons (A9)."""
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+    profile_admin = _fake_profile_admin(
+        content={"facts": {"city": "BA"}, "notes": ["nota uno"]}
+    )
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "profile", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=profile_admin,
+        sessions=sessions,
+    )
+
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    kb = call_args[1]["reply_markup"]
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert "🗑 city" in texts
+    assert "🗑 Nota 1" in texts
+
+
+@pytest.mark.asyncio
+async def test_note_del_from_ficha_deletes_note() -> None:
+    """The per-item note button deletes that note index and reports back (A9)."""
+    from types import SimpleNamespace
+
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+    profile_admin = SimpleNamespace(
+        delete_note=AsyncMock(
+            return_value=ProfileAdminResult(
+                status="note_deleted",
+                telegram_user_id=123,
+                display_name="VIP Test",
+                detail="2",
+            )
+        ),
+    )
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "note_del", vip_user_id=123, extra="2"),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=profile_admin,
+        sessions=sessions,
+    )
+
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "Nota 2 eliminada" in call_args[0][0]
+    profile_admin.delete_note.assert_awaited_once_with(_OWNER_ID, 123, 2)
+
+
+@pytest.mark.asyncio
+async def test_fact_del_from_ficha_deletes_fact() -> None:
+    """The per-item fact button deletes that fact key and reports back (A9)."""
+    from types import SimpleNamespace
+
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+    profile_admin = SimpleNamespace(
+        delete_fact=AsyncMock(
+            return_value=ProfileAdminResult(
+                status="fact_deleted",
+                telegram_user_id=123,
+                display_name="VIP Test",
+            )
+        ),
+    )
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "fact_del", vip_user_id=123, extra="city"),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=profile_admin,
+        sessions=sessions,
+    )
+
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "Dato 'city' eliminado" in call_args[0][0]
+    profile_admin.delete_fact.assert_awaited_once_with(_OWNER_ID, 123, "city")
+
+
+@pytest.mark.asyncio
+async def test_stale_vip_button_redirects_to_list_when_deactivated() -> None:
+    """A stale m:vip card button for a deactivated VIP redirects to the list (A13)."""
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    await vips.deactivate(123)
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "123", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "ya no existe o fue desactivado" in call_args[0][0]
+    kb = call_args[1]["reply_markup"]
+    back_data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "m:vips" in back_data
+
+
+@pytest.mark.asyncio
+async def test_active_vip_card_still_shows_actions() -> None:
+    """An active VIP still gets the detail card with its actions (A13 guard)."""
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="VIP Test")
+    sessions = MenuSessionStore()
+
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "123", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=vips,
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "Perfil de VIP Test" in call_args[0][0]
+    assert "Selecciona una acción:" in call_args[0][0]
+    kb = call_args[1]["reply_markup"]
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert any("Pausar" in t or "Reanudar" in t for t in texts)
 
 
 # --- F5 Pool 4 (F5-06): 🧠 Memoria section of the ficha ---
@@ -896,3 +1191,253 @@ def test_format_vip_profile_no_trust_no_section() -> None:
         trust_budget=[],
     )
     assert "🔐 Confianza" not in _format_vip_profile(empty_rows)
+
+
+# ---------------------------------------------------------------------------
+# A2 — wizards survive invalid input (session stays alive to retry)
+# ---------------------------------------------------------------------------
+
+
+def _text_msg(text: str, *, forward_origin: object = None) -> AsyncMock:
+    msg = AsyncMock(spec=Message)
+    msg.message_id = 1
+    msg.chat = AsyncMock(spec=Chat)
+    msg.chat.id = 42
+    msg.text = text
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    msg.forward_origin = forward_origin
+    msg.forward_from_chat = None
+    msg.forward_from = None
+    return msg
+
+
+def _bot() -> AsyncMock:
+    bot = AsyncMock()
+    bot.edit_message_text = AsyncMock()
+    return bot
+
+
+@pytest.mark.asyncio
+async def test_note_text_empty_keeps_wizard_alive() -> None:
+    """A2: an empty note must NOT kill the wizard — the next text still lands here."""
+    profile_admin = AsyncMock()
+    sessions = MenuSessionStore()
+    sessions.start(_OWNER_ID, "note", vip_user_id=777, last_bot_message_id=1, last_chat_id=42)
+    session = sessions.pop(_OWNER_ID)  # mirror on_menu_session_text
+    assert session is not None
+
+    await _handle_note_text(_text_msg("  "), _bot(), session, profile_admin, sessions)
+
+    retry = sessions.get(_OWNER_ID)
+    assert retry is not None
+    assert retry.kind == "note"
+    assert retry.vip_user_id == 777
+
+
+@pytest.mark.asyncio
+async def test_note_text_invalid_forward_keeps_sandbox_wizard_alive() -> None:
+    """A2: a non-forward during sandbox_forward must keep the wizard alive."""
+    sessions = MenuSessionStore()
+    sessions.start(_OWNER_ID, "sandbox_forward", last_bot_message_id=1, last_chat_id=42)
+    session = sessions.pop(_OWNER_ID)
+    assert session is not None
+
+    await _handle_sandbox_forward(_text_msg("hola"), _bot(), session, AsyncMock(), sessions)
+
+    retry = sessions.get(_OWNER_ID)
+    assert retry is not None
+    assert retry.kind == "sandbox_forward"
+
+
+@pytest.mark.asyncio
+async def test_has_active_menu_session_skips_commands() -> None:
+    """A2: a slash-command during an active session routes to its own handler."""
+    sessions = MenuSessionStore()
+    sessions.start(_OWNER_ID, "note", vip_user_id=777)
+    filt = HasActiveMenuSession(sessions)
+
+    assert await filt(_text_msg("/list_vips")) is False
+    assert await filt(_text_msg("texto normal")) is True
+
+
+@pytest.mark.asyncio
+async def test_has_active_menu_session_matches_forwarded_command() -> None:
+    """A forward whose content starts with '/' still reaches the wizard."""
+    sessions = MenuSessionStore()
+    sessions.start(_OWNER_ID, "sandbox_forward")
+    filt = HasActiveMenuSession(sessions)
+
+    assert await filt(_text_msg("/start", forward_origin=object())) is True
+
+
+# --- A7: destructive-confirmation TTL (delete/register) ---
+
+
+def test_confirmation_live_until_consumed() -> None:
+    sessions = MenuSessionStore()
+    assert sessions.confirmation_live(_OWNER_ID) is False
+    sessions.record_confirmation(_OWNER_ID)
+    assert sessions.confirmation_live(_OWNER_ID) is True
+    assert sessions.consume_confirmation(_OWNER_ID) is True
+    assert sessions.confirmation_live(_OWNER_ID) is False
+
+
+def test_confirmation_expires_by_ttl() -> None:
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    state = {"now": now}
+    sessions = MenuSessionStore(clock=lambda: state["now"])
+    sessions.record_confirmation(_OWNER_ID)
+    assert sessions.confirmation_live(_OWNER_ID) is True
+    state["now"] = now + timedelta(minutes=16)  # past the 15-min TTL
+    assert sessions.confirmation_live(_OWNER_ID) is False
+    assert sessions.consume_confirmation(_OWNER_ID) is False
+
+
+def test_confirmation_is_not_tied_to_active_menu_session() -> None:
+    """A pending confirmation must not make HasActiveMenuSession match text."""
+    sessions = MenuSessionStore()
+    sessions.record_confirmation(_OWNER_ID)
+    assert sessions.has_active(_OWNER_ID) is False
+
+
+# --- A5: no error leaves the owner without a back button ---
+
+
+def _rendered_keyboard(msg: AsyncMock):
+    call = msg.edit_text.await_args
+    assert call is not None
+    return call[1].get("reply_markup")
+
+
+@pytest.mark.asyncio
+async def test_profile_unavailable_has_back_keyboard() -> None:
+    """A5: 'Gestion de perfiles no disponible' offers a back button."""
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("vip", "profile", vip_user_id=123),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,  # triggers the unavailable branch
+        sessions=MenuSessionStore(),
+    )
+    assert "no disponible" in msg.edit_text.await_args[0][0].lower()
+    assert _rendered_keyboard(msg) is not None
+
+
+@pytest.mark.asyncio
+async def test_register_invalid_id_has_back_keyboard() -> None:
+    """A5: 'ID de usuario inválido' offers a back button to the VIPs menu."""
+    sessions = MenuSessionStore()
+    sessions.record_confirmation(_OWNER_ID)  # A7: confirmation must be live
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("register", "confirm", extra="abc"),  # not an int
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+    assert "inválido" in msg.edit_text.await_args[0][0]
+    assert _rendered_keyboard(msg) is not None
+
+
+class _NoActiveSandbox:
+    def get_focus_chat_id(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_off_no_active_has_back_keyboard() -> None:
+    """A5: 'No hay modo de prueba activo' offers a back button to sandbox."""
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("sandbox", "off"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=_NoActiveSandbox(),
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+    )
+    assert "No hay modo de prueba activo" in msg.edit_text.await_args[0][0]
+    assert _rendered_keyboard(msg) is not None
+
+
+# --- A6: a wizard that expired must warn, not swallow the input ---
+
+
+def test_session_status_none_live_expired() -> None:
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    state = {"now": now}
+    sessions = MenuSessionStore(clock=lambda: state["now"])
+    assert sessions.status(_OWNER_ID) == "none"
+    sessions.start(_OWNER_ID, "note", vip_user_id=777)
+    assert sessions.status(_OWNER_ID) == "live"
+    state["now"] = now + timedelta(minutes=16)  # past the 15-min TTL
+    assert sessions.status(_OWNER_ID) == "expired"
+    # status() does not consume; pop() clears the expired entry.
+    assert sessions.pop(_OWNER_ID) is None
+    assert sessions.status(_OWNER_ID) == "none"
+
+
+@pytest.mark.asyncio
+async def test_has_active_menu_session_matches_expired_for_warning() -> None:
+    """A6: expired wizard still routes plain text so the handler can warn."""
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    state = {"now": now}
+    sessions = MenuSessionStore(clock=lambda: state["now"])
+    sessions.start(_OWNER_ID, "note", vip_user_id=777)
+    filt = HasActiveMenuSession(sessions)
+    state["now"] = now + timedelta(minutes=16)
+    assert await filt(_text_msg("texto normal")) is True
+    # Commands still bypass the expired wizard.
+    assert await filt(_text_msg("/list_vips")) is False
+
+
+@pytest.mark.asyncio
+async def test_menu_session_text_expired_warns_and_clears() -> None:
+    """A6: writing after the wizard expired replies 'expiró' and clears it."""
+    now = datetime(2026, 8, 11, 12, 0, tzinfo=UTC)
+    state = {"now": now}
+    sessions = MenuSessionStore(clock=lambda: state["now"])
+    sessions.start(_OWNER_ID, "note", vip_user_id=777)
+    router = build_menu_router(
+        owner_telegram_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        menu_sessions=sessions,
+    )
+    handler = None
+    for h in router.message.handlers:
+        fo = h.filters[0]
+        if isinstance(getattr(fo, "callback", None), HasActiveMenuSession):
+            handler = h.callback
+    assert handler is not None
+
+    state["now"] = now + timedelta(minutes=16)
+    msg = _text_msg("nota tardía")
+    msg.chat.type = "private"  # satisfy the owner-DM gate
+    msg.reply = AsyncMock()
+    await handler(msg, _bot())
+
+    msg.reply.assert_awaited_once()
+    reply_text = msg.reply.await_args.args[0]
+    assert "expiró" in reply_text
+    assert sessions.status(_OWNER_ID) == "none"  # expired entry cleaned up
