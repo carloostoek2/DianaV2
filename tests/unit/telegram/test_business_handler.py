@@ -6,7 +6,19 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from aiogram.types import Audio, Chat, Message, PhotoSize, User, Video
+from aiogram.types import (
+    Animation,
+    Audio,
+    Chat,
+    Document,
+    Message,
+    PhotoSize,
+    Sticker,
+    User,
+    Video,
+    VideoNote,
+    Voice,
+)
 
 from diana.application.ports import VipInboundMessage
 from diana.telegram.handlers.business import (
@@ -65,6 +77,62 @@ def _audio_message(*, caption: str | None = None) -> Message:
         audio=Audio(file_id="f3", file_unique_id="u3", duration=1),
         caption=caption,
         business_connection_id="bc-1",
+    )
+
+
+def _media_message(kind: str, *args: object, caption: str | None = None) -> Message:
+    return Message(
+        message_id=11,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        caption=caption,
+        business_connection_id="bc-1",
+        **{kind: args[0]},
+    )
+
+
+def _voice_message(*, caption: str | None = None) -> Message:
+    return _media_message(
+        "voice", Voice(file_id="f4", file_unique_id="u4", duration=1), caption=caption
+    )
+
+
+def _video_note_message(*, caption: str | None = None) -> Message:
+    return _media_message(
+        "video_note",
+        VideoNote(file_id="f5", file_unique_id="u5", length=10, duration=1),
+        caption=caption,
+    )
+
+
+def _document_message(*, caption: str | None = None) -> Message:
+    return _media_message(
+        "document", Document(file_id="f6", file_unique_id="u6"), caption=caption
+    )
+
+
+def _animation_message(*, caption: str | None = None) -> Message:
+    return _media_message(
+        "animation",
+        Animation(file_id="f7", file_unique_id="u7", width=10, height=10, duration=1),
+        caption=caption,
+    )
+
+
+def _sticker_message(*, caption: str | None = None) -> Message:
+    return _media_message(
+        "sticker",
+        Sticker(
+            file_id="f8",
+            file_unique_id="u8",
+            type="regular",
+            width=10,
+            height=10,
+            is_animated=True,
+            is_video=False,
+        ),
+        caption=caption,
     )
 
 
@@ -254,6 +322,29 @@ async def test_video_with_caption_keeps_caption() -> None:
 @pytest.mark.asyncio
 async def test_audio_message_tagged_audio() -> None:
     await _assert_inbound_text(_audio_message(), "[audio]")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("builder", "expected"),
+    [
+        (_voice_message, "[voz]"),
+        (_video_note_message, "[video]"),
+        (_document_message, "[documento]"),
+        (_animation_message, "[gif]"),
+        (_sticker_message, "[sticker]"),
+    ],
+)
+async def test_remaining_media_types_tagged(builder, expected: str) -> None:
+    """Voice/video-note/document/gif/sticker reach the model tagged, not blank."""
+    await _assert_inbound_text(builder(), expected)
+
+
+@pytest.mark.asyncio
+async def test_remaining_media_with_caption_keeps_caption() -> None:
+    await _assert_inbound_text(
+        _document_message(caption="mi pdf"), "[documento] mi pdf"
+    )
 
 
 @pytest.mark.asyncio

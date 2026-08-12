@@ -14,15 +14,28 @@ from diana.application.turn_orchestrator import TurnOrchestrator
 
 logger = logging.getLogger("diana.telegram")
 
+# Content types that carry no text: the model sees only the tag so it knows a
+# file was sent. A message has exactly one content type, so order is cosmetic.
+_MEDIA_TAGS: tuple[tuple[str, str], ...] = (
+    ("photo", "imagen"),
+    ("video", "video"),
+    ("audio", "audio"),
+    ("voice", "voz"),
+    ("video_note", "video"),
+    ("document", "documento"),
+    ("animation", "gif"),
+    ("sticker", "sticker"),
+)
+
 
 def _inbound_text(message: Message) -> str:
     """Text for the inbound DTO; media sends get a visible type tag.
 
-    A photo/video/audio without caption has neither ``text`` nor ``caption``,
-    so the model would otherwise see an empty message. Tag the type and keep
-    the caption (if any) after the tag.
+    A media message without caption has neither ``text`` nor ``caption``, so
+    the model would otherwise see an empty message. Tag the type and keep the
+    caption (if any) after the tag.
     """
-    for kind, tag in (("photo", "imagen"), ("video", "video"), ("audio", "audio")):
+    for kind, tag in _MEDIA_TAGS:
         if getattr(message, kind) is not None:
             caption = (message.caption or "").strip()
             return f"[{tag}]" if not caption else f"[{tag}] {caption}"
