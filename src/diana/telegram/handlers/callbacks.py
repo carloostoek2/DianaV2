@@ -14,7 +14,10 @@ from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.behavior.ports import DeliveryProgressCallback, ProgressKind
 from diana.application.admin_trace_service import AdminTraceService
-from diana.application.draft_variants import build_owner_draft_text
+from diana.application.draft_variants import (
+    RegeneratingCallback,
+    build_owner_draft_text,
+)
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.telegram.keyboards import (
     MENU_ROOT_TEXT,
@@ -180,6 +183,10 @@ _DRAFT_PROGRESS_LABELS: dict[ProgressKind, str] = {
     "typing": "✍️ Escribiendo…",
 }
 
+# Live state shown while a regeneration run is in flight; replaced when the
+# new version lands (or the original body is restored on failure).
+_REGENERATING_LABEL = "♻️ Regenerando…"
+
 
 async def dispatch_owner_callback(
     *,
@@ -192,6 +199,7 @@ async def dispatch_owner_callback(
     owner_telegram_id: int | None = None,
     draft_variants: Any | None = None,
     on_delivery_progress: DeliveryProgressCallback | None = None,
+    on_regenerating: RegeneratingCallback | None = None,
 ) -> str:
     """Domain dispatch for unit tests. Returns honest status token."""
 
@@ -282,7 +290,9 @@ async def dispatch_owner_callback(
             if draft_variants is None:
                 return "ignored"
             if action == "regen":
-                result = await draft_variants.regenerate(turn_id, actor_id=actor_id)
+                result = await draft_variants.regenerate(
+                    turn_id, actor_id=actor_id, on_start=on_regenerating
+                )
             else:
                 delta = -1 if action == "prev" else 1
                 result = await draft_variants.navigate(
@@ -539,6 +549,25 @@ def build_callback_router(
             except Exception:
                 logger.debug("draft_progress_edit_failed", exc_info=True)
 
+        # Live "Regenerando" state: fired only once a regeneration run actually
+        # starts (after the draft_variants soft-lock), so blocked/stale early
+        # returns never flash it. A failed run restores the original body below.
+        regen_started = False
+
+        async def _regenerating() -> None:
+            nonlocal regen_started
+            regen_started = True
+            if query.message is None or not draft_text:
+                return
+            try:
+                await query.message.edit_text(
+                    f"{_REGENERATING_LABEL}\n\n{draft_text}",
+                    reply_markup=query.message.reply_markup,
+                    parse_mode="HTML",
+                )
+            except Exception:
+                logger.debug("draft_regen_edit_failed", exc_info=True)
+
         # Domain dispatch only — status→Telegram UX mapping stays outside so
         # post-success I/O faults are not labeled "Error processing action."
         try:
@@ -550,6 +579,7 @@ def build_callback_router(
                 admin_trace=admin_trace,
                 draft_variants=draft_variants,
                 on_delivery_progress=_progress,
+                on_regenerating=_regenerating,
             )
         except Exception:
             logger.exception(
@@ -566,6 +596,17 @@ def build_callback_router(
             return
 
         try:
+            # Regeneration started but never produced a new version (error /
+            # stale): restore the original draft body so the legend never sticks.
+            if regen_started and status != "regen_ok" and query.message:
+                try:
+                    await query.message.edit_text(
+                        draft_text,
+                        reply_markup=query.message.reply_markup,
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    logger.debug("draft_regen_restore_failed", exc_info=True)
             if status == "forbidden":
                 await query.answer("No autorizado", show_alert=True)
                 return

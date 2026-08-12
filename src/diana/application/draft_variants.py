@@ -7,6 +7,7 @@ is required. ``draft_text`` always mirrors the selected variant for approve.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
@@ -30,6 +31,10 @@ logger = logging.getLogger("diana.application")
 
 VERSIONS_KEY = "_draft_versions"
 MAX_DRAFT_VARIANTS = 10
+
+# Fires when a regeneration run actually starts (after the soft-lock), so the
+# owner sees live "Regenerando" feedback; the caller replaces it on success.
+RegeneratingCallback = Callable[[], Awaitable[None]]
 
 
 class DirectorPort(Protocol):
@@ -246,7 +251,11 @@ class DraftVariantService:
         return VariantNavResult(ok=True, token="nav_ok", approval=updated, toast="")
 
     async def regenerate(
-        self, turn_id: UUID, *, actor_id: int | None
+        self,
+        turn_id: UUID,
+        *,
+        actor_id: int | None,
+        on_start: RegeneratingCallback | None = None,
     ) -> VariantNavResult:
         self._assert_owner(actor_id)
         approval = await self._approvals.get_by_turn(turn_id)
@@ -283,6 +292,8 @@ class DraftVariantService:
                 return VariantNavResult(
                     ok=False, token="stale", toast="Borrador no disponible"
                 )
+
+            await self._notify_regenerating(on_start)
 
             vip_text = versions.get("vip_text") or ""
             if not vip_text and self._history is not None:
@@ -440,6 +451,17 @@ class DraftVariantService:
                 return str(row.get("text") or "")
         return ""
 
+    async def _notify_regenerating(
+        self, on_start: RegeneratingCallback | None
+    ) -> None:
+        """Best-effort live 'Regenerando' signal; a fault never aborts the run."""
+        if on_start is None:
+            return
+        try:
+            await on_start()
+        except Exception:
+            logger.debug("draft_regen_start_callback_failed", exc_info=True)
+
     async def _set_regenerating(
         self, approval: ApprovalRecord, flag: bool
     ) -> ApprovalRecord | None:
@@ -521,6 +543,7 @@ __all__ = [
     "MAX_DRAFT_VARIANTS",
     "VERSIONS_KEY",
     "DraftVariantService",
+    "RegeneratingCallback",
     "VariantNavResult",
     "build_owner_draft_text",
     "ensure_versions",

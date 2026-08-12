@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from aiogram.types import BufferedInputFile, CallbackQuery, Chat, Message, User
 
+from diana.application.draft_variants import VariantNavResult
 from diana.telegram.handlers.callbacks import CorrectSessionStore, build_callback_router
 from diana.telegram.handlers.menu import MenuSessionStore
 from diana.telegram.keyboards import (
@@ -344,6 +345,125 @@ async def test_approve_edits_draft_with_live_progress() -> None:
     # The original draft body is preserved across all live stages.
     assert "Propuesta" in edits[0] and "Propuesta" in edits[2]
     assert "borrador 1/1" in edits[2]
+
+
+def _regen_query(turn_id: object, *, text: str = "borrador") -> tuple:
+    """Build a Message + CallbackQuery pair for a regen button press."""
+    msg = Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text=text,
+    )
+    object.__setattr__(msg, "edit_text", AsyncMock(return_value=True))
+    cq = CallbackQuery(
+        id="cq-regen",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_callback("regen", turn_id),
+        message=msg,
+    )
+    object.__setattr__(cq, "answer", AsyncMock(return_value=True))
+    return msg, cq
+
+
+@pytest.mark.asyncio
+async def test_regen_edits_draft_with_regenerating_legend() -> None:
+    """Regen shows ♻️ Regenerando… while the run is in flight (success path)."""
+    turn_id = uuid4()
+    draft_variants = MagicMock()
+
+    async def fake_regenerate(
+        turn_id: object,
+        *,
+        actor_id: object | None = None,
+        on_start: object | None = None,
+    ) -> object:
+        if on_start is not None:
+            await on_start()
+        return VariantNavResult(ok=True, token="regen_ok", toast="")
+
+    draft_variants.regenerate = AsyncMock(side_effect=fake_regenerate)
+    router = build_callback_router(
+        admin=MagicMock(),
+        correct_sessions=CorrectSessionStore(),
+        owner_telegram_id=OWNER,
+        draft_variants=draft_variants,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+    msg, cq = _regen_query(turn_id, text="<b>Propuesta</b> — borrador 1/1")
+
+    await on_callback(cq)
+
+    draft_variants.regenerate.assert_awaited_once_with(
+        turn_id, actor_id=OWNER, on_start=ANY
+    )
+    edits = [c.args[0] for c in msg.edit_text.await_args_list]
+    assert edits == ["♻️ Regenerando…\n\n<b>Propuesta</b> — borrador 1/1"]
+
+
+@pytest.mark.asyncio
+async def test_regen_failure_restores_draft_after_regenerating_legend() -> None:
+    """Failed regen removes the ♻️ Regenerando… legend and restores the body."""
+    turn_id = uuid4()
+    draft_variants = MagicMock()
+
+    async def fake_regenerate(
+        turn_id: object,
+        *,
+        actor_id: object | None = None,
+        on_start: object | None = None,
+    ) -> object:
+        if on_start is not None:
+            await on_start()
+        return VariantNavResult(ok=False, token="error", toast="falló")
+
+    draft_variants.regenerate = AsyncMock(side_effect=fake_regenerate)
+    router = build_callback_router(
+        admin=MagicMock(),
+        correct_sessions=CorrectSessionStore(),
+        owner_telegram_id=OWNER,
+        draft_variants=draft_variants,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+    msg, cq = _regen_query(turn_id, text="<b>Propuesta</b> — borrador 1/1")
+
+    await on_callback(cq)
+
+    edits = [c.args[0] for c in msg.edit_text.await_args_list]
+    assert edits == [
+        "♻️ Regenerando…\n\n<b>Propuesta</b> — borrador 1/1",
+        "<b>Propuesta</b> — borrador 1/1",
+    ]
+    cq.answer.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regen_blocked_does_not_show_regenerating_legend() -> None:
+    """Blocked early returns never flash the legend (no on_start fired)."""
+    turn_id = uuid4()
+    draft_variants = MagicMock()
+    draft_variants.regenerate = AsyncMock(
+        return_value=VariantNavResult(
+            ok=False, token="blocked_regenerating", toast=""
+        )
+    )
+    router = build_callback_router(
+        admin=MagicMock(),
+        correct_sessions=CorrectSessionStore(),
+        owner_telegram_id=OWNER,
+        draft_variants=draft_variants,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+    msg, cq = _regen_query(turn_id)
+
+    await on_callback(cq)
+
+    msg.edit_text.assert_not_awaited()
+    draft_variants.regenerate.assert_awaited_once_with(
+        turn_id, actor_id=OWNER, on_start=ANY
+    )
 
 
 @pytest.mark.asyncio

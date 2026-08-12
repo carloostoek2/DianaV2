@@ -244,6 +244,79 @@ async def test_regenerate_cancelled_mid_llm_does_not_revive_ui() -> None:
 
 
 @pytest.mark.asyncio
+async def test_regenerate_fires_on_start_during_success() -> None:
+    """Live 'Regenerando' signal fires once, after the soft-lock, mid-run."""
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    director = FakeDirector(["segunda"])
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+    )
+    fired: list[str] = []
+
+    async def on_start() -> None:
+        fired.append("start")
+
+    r = await svc.regenerate(turn_id, actor_id=OWNER, on_start=on_start)
+    assert r.ok and r.token == "regen_ok"
+    assert fired == ["start"]
+    assert director.calls == 1
+    # Success path refreshes the owner message with the new version (legend
+    # replaced by the notifier, not left behind by the service).
+    assert any(str(t).startswith("edit_draft:") for t, _ in notifier.infos)
+
+
+@pytest.mark.asyncio
+async def test_regenerate_skips_on_start_when_early_return() -> None:
+    """Blocked/stale early returns never fire the 'Regenerando' signal."""
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture(
+        status="superseded"
+    )
+    director = FakeDirector(["no debe usarse"])
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=FakeOwnerNotifier(),
+        owner_telegram_id=OWNER,
+    )
+    fired: list[str] = []
+
+    async def on_start() -> None:
+        fired.append("start")
+
+    r = await svc.regenerate(turn_id, actor_id=OWNER, on_start=on_start)
+    assert not r.ok and r.token == "stale"
+    assert fired == []
+    assert director.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_regenerate_on_start_fault_does_not_abort() -> None:
+    """A fault inside the 'Regenerando' callback must never abort the run."""
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    director = FakeDirector(["segunda"])
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=FakeOwnerNotifier(),
+        owner_telegram_id=OWNER,
+    )
+
+    async def on_start() -> None:
+        raise RuntimeError("edit failed")
+
+    r = await svc.regenerate(turn_id, actor_id=OWNER, on_start=on_start)
+    assert r.ok and r.token == "regen_ok"
+    assert director.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_update_draft_cas_skips_non_waiting() -> None:
     OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
     await approvals.mark_status(turn_id, "cancelled")
