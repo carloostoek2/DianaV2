@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
-from aiogram.types import Chat, Message, User
+from aiogram.types import Audio, Chat, Message, PhotoSize, User, Video
 
 from diana.application.ports import VipInboundMessage
 from diana.telegram.handlers.business import (
@@ -22,6 +22,48 @@ def _biz_message() -> Message:
         chat=Chat(id=42, type="private"),
         from_user=User(id=111, is_bot=False, first_name="Vip"),
         text="hola vip",
+        business_connection_id="bc-1",
+    )
+
+
+def _photo_message(*, caption: str | None = None) -> Message:
+    return Message(
+        message_id=8,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        photo=[PhotoSize(file_id="f1", file_unique_id="u1", width=10, height=10)],
+        caption=caption,
+        business_connection_id="bc-1",
+    )
+
+
+def _video_message(*, caption: str | None = None) -> Message:
+    return Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        video=Video(
+            file_id="f2",
+            file_unique_id="u2",
+            width=10,
+            height=10,
+            duration=1,
+        ),
+        caption=caption,
+        business_connection_id="bc-1",
+    )
+
+
+def _audio_message(*, caption: str | None = None) -> Message:
+    return Message(
+        message_id=10,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        audio=Audio(file_id="f3", file_unique_id="u3", duration=1),
+        caption=caption,
         business_connection_id="bc-1",
     )
 
@@ -172,3 +214,64 @@ async def test_router_swallows_orchestrator_exception() -> None:
     assert extra.get("chat_id") == 42
     assert extra.get("telegram_message_id") == 7
     assert extra.get("business_connection_id") == "bc-1"
+
+
+async def _assert_inbound_text(msg: Message, expected: str) -> None:
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_business = router.business_message.handlers[0].callback
+    await on_business(msg)
+    orch.handle_vip_message.assert_awaited_once()
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert isinstance(arg, VipInboundMessage)
+    assert arg.text == expected
+
+
+@pytest.mark.asyncio
+async def test_photo_message_tagged_imagen() -> None:
+    """A photo without caption must reach the model as [imagen], not blank."""
+    await _assert_inbound_text(_photo_message(), "[imagen]")
+
+
+@pytest.mark.asyncio
+async def test_photo_with_caption_keeps_caption() -> None:
+    await _assert_inbound_text(_photo_message(caption="mira"), "[imagen] mira")
+
+
+@pytest.mark.asyncio
+async def test_video_message_tagged_video() -> None:
+    await _assert_inbound_text(_video_message(), "[video]")
+
+
+@pytest.mark.asyncio
+async def test_video_with_caption_keeps_caption() -> None:
+    await _assert_inbound_text(
+        _video_message(caption="ve esto"), "[video] ve esto"
+    )
+
+
+@pytest.mark.asyncio
+async def test_audio_message_tagged_audio() -> None:
+    await _assert_inbound_text(_audio_message(), "[audio]")
+
+
+@pytest.mark.asyncio
+async def test_plain_text_message_unchanged() -> None:
+    """Text messages keep the current behavior: raw text, no tag."""
+    await _assert_inbound_text(_biz_message(), "hola vip")
+
+
+@pytest.mark.asyncio
+async def test_edited_media_message_gets_tag_and_keeps_edit_flag() -> None:
+    """The edited path tags media the same way and still forwards is_edit."""
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(orchestrator=orch)
+    on_edited = router.edited_business_message.handlers[0].callback
+    await on_edited(_photo_message(caption="nueva"))
+    orch.handle_vip_message.assert_awaited_once()
+    arg = orch.handle_vip_message.await_args.args[0]
+    assert isinstance(arg, VipInboundMessage)
+    assert arg.text == "[imagen] nueva"
+    assert arg.is_edit is True

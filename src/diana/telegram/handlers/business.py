@@ -15,6 +15,20 @@ from diana.application.turn_orchestrator import TurnOrchestrator
 logger = logging.getLogger("diana.telegram")
 
 
+def _inbound_text(message: Message) -> str:
+    """Text for the inbound DTO; media sends get a visible type tag.
+
+    A photo/video/audio without caption has neither ``text`` nor ``caption``,
+    so the model would otherwise see an empty message. Tag the type and keep
+    the caption (if any) after the tag.
+    """
+    for kind, tag in (("photo", "imagen"), ("video", "video"), ("audio", "audio")):
+        if getattr(message, kind) is not None:
+            caption = (message.caption or "").strip()
+            return f"[{tag}]" if not caption else f"[{tag}] {caption}"
+    return message.text or message.caption or ""
+
+
 def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
     router = Router(name="business")
 
@@ -28,7 +42,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
         **_: Any,
     ) -> None:
         bc = business_connection_id or message.business_connection_id
-        text = message.text or message.caption or ""
+        text = _inbound_text(message)
         inbound = VipInboundMessage(
             chat_id=message.chat.id,
             text=text,
@@ -65,7 +79,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
         **_: Any,
     ) -> None:
         bc = business_connection_id or message.business_connection_id
-        text = message.text or message.caption or ""
+        text = _inbound_text(message)
         if not text:
             return
         inbound = VipInboundMessage(
