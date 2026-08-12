@@ -7,7 +7,7 @@ Diana Business Bot / Sistema de Automatización de Chats VIP
 | Nivel | Contrato de diseño e implementación para la Fase 6 |
 | Basado en | SPEC-FASE5.md v1.0 + REQUERIMIENTOS.md v2.1 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0 + AGENTS.md v1.3 + Telegram Bot API (Business Connections) |
 | Audiencia | Ingeniería (implementación con DeepSeek en terminal; revisión posterior) |
-| Versión | 1.0 — Borrador de diseño aprobado por la dueña de producto |
+| Versión | 1.0 — Aprobado por la dueña de producto (decisiones cerradas 2026-08-11) |
 | Estado | Aprobado para implementación |
 | Idioma | Español |
 
@@ -47,10 +47,16 @@ La dueña pidió investigar la forma **oficial** de conectar dos bots. Hallazgos
 1. La conexión entre Lucien y Diana se hace por la **vía business** (cuenta business de la dueña conectada a ambos bots), no por mensajes directos bot↔bot.
 2. Cuando Lucien expulsa a un suscriptor del canal VIP (kick manual del admin o expiración), **le avisa a Diana** con un mensaje business al chat de coordinación.
 3. Diana **verifica si ese usuario es VIP suyo** (tabla `vips` por `telegram_user_id` activo). No todos los suscriptores del canal son VIPs de Diana.
-4. Si es VIP de Diana → **notifica a la dueña** indicando que se expulsó a un suscriptor de Diana del canal VIP, con las opciones: **Expulsar** (baja también en Diana), **Inhabilitar** (suspensión temporal), **Mantener** (no hacer nada).
+4. Si es VIP de Diana → **notifica a la dueña** indicando que se expulsó a un suscriptor de Diana del canal VIP, con las opciones: **Expulsar** (baja también en Diana), **Inhabilitar** (inhabilitación indefinida), **Mantener** (no hacer nada).
 5. Si NO es VIP de Diana → no notifica; registra el evento y termina.
 6. De primera instancia las opciones son esas tres; no hay flujo de confirmación de vuelta a Lucien en esta Fase (fuera de alcance).
 7. Toda la Fase va detrás de un feature flag `FEATURE_LINK_ENABLED` (default `false`): apagado → comportamiento idéntico al actual.
+
+### Decisiones cerradas en revisión (2026-08-11)
+
+- **Chat de coordinación**: un **grupo privado** de coordinación (la opción recomendada), no el DM dueña↔cuenta business. Define `LINK_CHAT_ID` en ambos bots.
+- **Duración de "Inhabilitar"**: **indefinida** — el VIP queda inhabilitado sin fecha de fin (puede que nunca vuelva). Reactivación solo manual/por flujo posterior. Implementación: `frozen_until` con fecha lejana fija (el runtime ya descarta mensajes de VIPs con `frozen_until > now`, ver `FreezeCheckMiddleware`).
+- **Texto del aviso a la dueña**: "⚠️ ATENCIÓN ⚠️\nEl suscriptor {nombre} ha sido expulsado del Canal VIP. ¿Quieres inhabilitarlo aquí?" con los 3 botones Expulsar / Inhabilitar / Mantener.
 
 ---
 
@@ -80,7 +86,7 @@ Principios rectores:
 | F6-04 | Receptor en Diana: handler `business_message` filtrado por chat de coordinación + formato |
 | F6-05 | Verificación de VIP en Diana (`vips` por `telegram_user_id` activo) |
 | F6-06 | Notificación a la dueña con botones: Expulsar / Inhabilitar / Mantener |
-| F6-07 | Acciones: baja (`is_active=false`), suspensión (`paused_until`), mantener (nada) |
+| F6-07 | Acciones: baja (`is_active=false`), inhabilitación indefinida (`frozen_until`), mantener (nada) |
 | F6-08 | Registro de eventos: tabla `link_events` (migración 027) + callbacks de decisión |
 | F6-09 | Idempotencia (dedup por `event_id`) y anti-contaminación (fuera del pipeline) |
 | F6-10 | Feature flag `FEATURE_LINK_ENABLED` en ambos bots + cableado |
@@ -126,7 +132,7 @@ Principios rectores:
         │              ▼
         │   callback de la dueña: expulsar | inhabilitar | mantener
         ▼
-  aplicación sobre vips (is_active=false | paused_until=… | nada) + registro de decisión
+  aplicación sobre vips (is_active=false | frozen_until=<fecha lejana> | nada) + registro de decisión
 ```
 
 ---
@@ -186,29 +192,25 @@ Mensaje de texto enviado por Lucien al chat de coordinación, con **prefijo rese
 
 - **Qué**: mensaje al DM del bot (owner `6181290784`, patrón existente `AiogramOwnerNotifier`) con teclado inline de 3 botones.
 - **Dónde**: reutilizar `AiogramOwnerNotifier` (o su puerto) + teclado nuevo en `telegram/keyboards.py` (`link_kick_keyboard(event_id)`).
-- **Texto propuesto** (español neutro, sin voseo):
+- **Texto aprobado por la dueña** (español neutro, sin voseo):
 
 ```
-⚠️ Expulsión de suscriptor del canal VIP
-
-Lucien expulsó a un usuario del canal {channel_name}.
-El usuario es VIP de Diana: {display_name} {username} (id {user_id})
-Motivo: {motivo}
-
-¿Qué hago con su membresía en Diana?
+⚠️ ATENCIÓN ⚠️
+El suscriptor {nombre} ha sido expulsado del Canal VIP. ¿Quieres inhabilitarlo aquí?
 ```
 
+- `{nombre}` = `vips.display_name` del VIP (si existe) + `username` si vino en el payload; si no hay display_name, el id numérico. En el mensaje NO se repite el motivo (decisión de la dueña: aviso corto y directo); el detalle queda en `link_events` para consulta.
 - **Callbacks**: `link:expel:<event_id>` | `link:disable:<event_id>` | `link:keep:<event_id>` (prefijo propio, manejado en router de callbacks o en el router link, ANTES del catch-all).
-- El mensaje debe permitir identificar al VIP por nombre visible (consultar `vips.display_name`), no solo el id numérico.
 
 ### REQ-LNK-07 — Acciones de la dueña
 
 | Botón | Acción en `vips` | Detalle |
 |---|---|---|
 | Expulsar | `is_active = false` | Baja definitiva: el VIP deja de ser atendido por Diana. Se conserva el registro (trazabilidad). |
-| Inhabilitar | `paused_until = now() + 30 días` (configurable) | Suspensión temporal: no se atiende durante el período; la reactivación queda para un flujo posterior/manual. |
+| Inhabilitar | `frozen_until = <fecha lejana fija>` | **Indefinido** (decisión de la dueña: puede que nunca vuelva). El runtime ya descarta los mensajes de VIPs con `frozen_until > now` (`FreezeCheckMiddleware`), así que el efecto es inmediato y sin fin. La reactivación queda para un flujo posterior/manual (limpiar el campo). |
 | Mantener | sin cambios | El VIP sigue activo en Diana aunque ya no esté en el canal. |
 
+- Fecha lejana propuesta: `2099-12-31T00:00:00Z` (constante en settings, p. ej. `link_disable_frozen_until`).
 - Si el VIP ya no existe o ya está inactivo al momento del callback (carrera): responder "ya no aplica" y registrar `state='noop'`.
 - El callback actualiza el mensaje de la dueña (quitar botones) para indicar la decisión tomada.
 
@@ -273,10 +275,10 @@ Sin cambios en tablas existentes de Diana (`vips` ya tiene todo lo necesario).
 - [ ] Kick manual del admin en Lucien (`admin_revoke_subscription`, resultado `kicked`) → se envía el payload `[LINK]` al chat de coordinación.
 - [ ] Expiración automática en Lucien (única suscripción) → se envía el payload `[LINK]` con `reason:"expired"`.
 - [ ] Diana recibe el `business_message` del chat de coordinación, lo reconoce por `[LINK]` y lo procesa sin tocar el pipeline.
-- [ ] Si el expulsado es VIP activo de Diana → notificación a la dueña con los 3 botones (nombre visible, motivo, canal).
+- [ ] Si el expulsado es VIP activo de Diana → notificación a la dueña con el texto aprobado (REQ-LNK-06) y los 3 botones.
 - [ ] Si el expulsado NO es VIP de Diana → sin notificación; fila `link_events` con `state='ignored_not_vip'`.
 - [ ] Botón Expulsar → `vips.is_active=false`, mensaje actualizado sin botones, `state='decided_expel'`.
-- [ ] Botón Inhabilitar → `vips.paused_until` = now + 30 días (configurable), `state='decided_disable'`.
+- [ ] Botón Inhabilitar → `vips.frozen_until` = fecha lejana fija (indefinido), mensaje actualizado sin botones, `state='decided_disable'`.
 - [ ] Botón Mantener → sin cambios en `vips`, `state='decided_keep'`.
 - [ ] Mismo `event_id` reenviado → no re-notifica (dedup).
 - [ ] Payload malformado → log + descarte, sin crash.
@@ -287,9 +289,11 @@ Sin cambios en tablas existentes de Diana (`vips` ya tiene todo lo necesario).
 
 ## 9. Decisiones abiertas / pendientes
 
-1. **Chat de coordinación**: se propone un grupo privado de coordinación (p. ej. "Diana↔Lucien") donde la cuenta business de la dueña esté como miembro; Lucien publica ahí y Diana lo lee. Alternativa: usar directamente el `user_chat_id` de la conexión (DM dueña↔cuenta business). Confirmar con la dueña (afecta `LINK_CHAT_ID` en ambos).
-2. **Período de "Inhabilitar"**: 30 días propuesto; confirmar (o dejar como setting `LINK_DISABLE_DAYS`).
-3. **Texto exacto del aviso a la dueña**: propuesto arriba; ajustable en revisión.
-4. **`username`**: solo se incluye si Lucien lo tiene (el `chat_member` del ban puede traerlo; si no, `null`).
-5. **Política de reintento del emisor**: best-effort en esta Fase (1 intento, log si falla); reintentos con backoff quedan como mejora.
-6. **Actualización de docs** (README, AGENTS.md, tabla de flags) al cierre de la Fase (tarea de cierre).
+**Cerradas en revisión (2026-08-11)**: chat de coordinación = grupo privado · "Inhabilitar" = indefinido (`frozen_until` fecha lejana) · texto del aviso = el aprobado en REQ-LNK-06.
+
+Pendientes:
+
+1. **Fecha lejana de "Inhabilitar"**: `2099-12-31T00:00:00Z` propuesta; confirmar o ajustar en revisión (afecta `link_disable_frozen_until`).
+2. **`username`**: solo se incluye si Lucien lo tiene (el `chat_member` del ban puede traerlo; si no, `null`).
+3. **Política de reintento del emisor**: best-effort en esta Fase (1 intento, log si falla); reintentos con backoff quedan como mejora.
+4. **Actualización de docs** (README, AGENTS.md, tabla de flags) al cierre de la Fase (tarea de cierre).
