@@ -73,7 +73,7 @@ class LinkCoordinatorMiddleware(BaseMiddleware):
             channel_name = payload.get("channel_name")
             if channel_name is not None and not isinstance(channel_name, str):
                 channel_name = str(channel_name)
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, OverflowError) as exc:
             logger.info(
                 "link_malformed",
                 extra={"chat_id": chat_id, "error": str(exc)},
