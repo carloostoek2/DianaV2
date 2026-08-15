@@ -7,6 +7,8 @@ from uuid import UUID
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from diana.application.ports import EphemeralEventRecord
+
 # action:{uuid} — approve / correct / escalate / doctrine_respond
 _ACTION_APPROVE = "a"
 _ACTION_CORRECT = "c"
@@ -715,6 +717,50 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
     ),
 }
 
+MENU_EVENT_LIST_TEXT = (
+    "📅 Eventos temporales\n\n"
+    "Diana tendrá presente este contexto solo mientras el evento esté vigente."
+)
+MENU_EVENT_EMPTY_TEXT = (
+    "📅 No hay eventos temporales.\n\n"
+    "Crea uno para darle contexto a Diana por un tiempo limitado."
+)
+MENU_EVENT_CREATE_BODY_PROMPT = (
+    "¿Qué le digo a Diana?\n\n"
+    "Escribe el texto del evento (ej. \"este fin de semana hay promoción 2x1\").\n\n"
+    "Usa /cancelar para abortar."
+)
+MENU_EVENT_DURATION_PROMPT = (
+    "¿Cuánto tiempo debe durar?\n\n"
+    "Elige una duración o una fecha específica:"
+)
+MENU_EVENT_CUSTOM_START_PROMPT = (
+    "¿Cuándo empieza?\n\n"
+    "Escribe \"ahora\", una duración desde ahora (ej. \"2 horas\") o una fecha "
+    "(ej. \"2026-08-20 18:00\").\n\n"
+    "Usa /cancelar para abortar."
+)
+MENU_EVENT_CUSTOM_END_PROMPT = (
+    "¿Hasta cuándo?\n\n"
+    "Escribe una duración desde el inicio (ej. \"2 días\") o una fecha "
+    "(ej. \"2026-08-22\").\n\n"
+    "Usa /cancelar para abortar."
+)
+MENU_EVENT_CONFIRM_TEMPLATE = (
+    "📅 Confirma el evento:\n\n"
+    "{body}\n\n"
+    "🕐 Desde: {start}\n"
+    "🕐 Hasta: {end}"
+)
+MENU_EVENT_EDIT_BODY_PROMPT = (
+    "Escribe el nuevo texto del evento.\n\n"
+    "Usa /cancelar para abortar."
+)
+MENU_EVENT_EDIT_DURATION_PROMPT = (
+    "¿Cuánto tiempo debe durar?\n\n"
+    "Elige una duración o una fecha específica:"
+)
+
 
 @dataclass
 class MenuCallback:
@@ -723,6 +769,7 @@ class MenuCallback:
     category: str
     action: str | None = None
     vip_user_id: int | None = None
+    event_id: UUID | None = None
     extra: str | None = None  # sandbox profile name, fact key, note index
 
 
@@ -768,6 +815,22 @@ def encode_menu_persona(action: str, extra: str | None = None) -> str:
     return data
 
 
+def encode_menu_event(event_id: UUID) -> str:
+    """Build callback_data for event detail: m:event:<uuid>."""
+    data = f"{_ACTION_MENU}:event:{event_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def encode_menu_event_action(event_id: UUID, action: str) -> str:
+    """Build callback_data for an event action: m:event:<uuid>:<action>."""
+    data = f"{_ACTION_MENU}:event:{event_id}:{action}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
 def parse_menu_callback(data: str) -> MenuCallback | None:
     """Parse menu callback_data into MenuCallback, or None if not a menu callback."""
     if not data or not data.startswith(f"{_ACTION_MENU}:"):
@@ -794,6 +857,20 @@ def parse_menu_callback(data: str) -> MenuCallback | None:
         profile = ":".join(parts[2:])
         return MenuCallback(category="sandbox", action="activate_p", extra=profile)
 
+    if category == "event" and len(parts) >= 2:
+        try:
+            event_id = UUID(parts[1])
+        except ValueError:
+            # Create-mode: m:event:<action> (no event exists yet).
+            action = parts[1]
+            extra = ":".join(parts[2:]) if len(parts) > 2 else None
+            return MenuCallback(category="event", action=action, extra=extra)
+        if len(parts) == 2:
+            return MenuCallback(category="event", event_id=event_id)
+        action = parts[2]
+        extra = ":".join(parts[3:]) if len(parts) > 3 else None
+        return MenuCallback(category="event", action=action, event_id=event_id, extra=extra)
+
     action = parts[1] if len(parts) > 1 else None
     extra = ":".join(parts[2:]) if len(parts) > 2 else None
     return MenuCallback(category=category, action=action, extra=extra)
@@ -804,10 +881,10 @@ def _menu_back_row() -> list[InlineKeyboardButton]:
 
 
 def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
-    """Main menu: the 6 logical categories (VIPs, Review, Sandbox, Metrics, History, Config).
+    """Main menu: the 7 logical categories (VIPs, Review, Sandbox, Metrics, History, Events, Config).
 
     ``show_persona`` adds the "Personalidad y reglas" category (Item 3), gated by
-    ``FEATURE_PERSONA_ADMIN_ENABLED`` so the default 6-button layout is unchanged.
+    ``FEATURE_PERSONA_ADMIN_ENABLED`` so the default 7-button layout is unchanged.
     """
     rows = [
         [InlineKeyboardButton(text="👥 Mis VIPs", callback_data=encode_menu("vips"))],
@@ -815,6 +892,7 @@ def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🧪 Modo de prueba", callback_data=encode_menu("sandbox"))],
         [InlineKeyboardButton(text="📊 Métricas y aprendizaje", callback_data=encode_menu("metrics"))],
         [InlineKeyboardButton(text="🔍 Historial y diagnóstico", callback_data=encode_menu("history"))],
+        [InlineKeyboardButton(text="📅 Eventos temporales", callback_data=encode_menu("event"))],
     ]
     if show_persona:
         rows.append([
@@ -973,6 +1051,177 @@ def menu_back_keyboard(dest: str) -> InlineKeyboardMarkup:
     """Simple back-only keyboard with a single Volver button for terminal actions."""
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🔙 Volver", callback_data=dest)]]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Eventos temporales — owner admin for time-bounded context events
+# ---------------------------------------------------------------------------
+
+
+def menu_event_list_keyboard(events: list[EphemeralEventRecord]) -> InlineKeyboardMarkup:
+    """One button per open event (first 30 chars of body), plus create and home."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    for ev in events:
+        title = (ev.body or "").strip()[:30] or str(ev.id)[:8]
+        buttons.append([
+            InlineKeyboardButton(text=f"📅 {title}", callback_data=encode_menu_event(ev.id)),
+        ])
+    buttons.append([
+        InlineKeyboardButton(text="➕ Crear evento", callback_data=encode_menu("event", "create")),
+    ])
+    buttons.append([InlineKeyboardButton(text="🔙 Inicio", callback_data=encode_menu("root"))])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def menu_event_detail_keyboard(event: EphemeralEventRecord) -> InlineKeyboardMarkup:
+    """Per-event actions: pausar/reanudar, modificar, terminar, eliminar, volver."""
+    toggle_label = "▶️ Reanudar" if event.is_paused else "⏸️ Pausar"
+    toggle_action = "resume" if event.is_paused else "pause"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=toggle_label,
+                    callback_data=encode_menu_event_action(event.id, toggle_action),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Modificar",
+                    callback_data=encode_menu_event_action(event.id, "modify"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🛑 Terminar antes",
+                    callback_data=encode_menu_event_action(event.id, "terminate"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🗑️ Eliminar",
+                    callback_data=encode_menu_event_action(event.id, "delete"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Volver a la lista",
+                    callback_data=encode_menu("event"),
+                ),
+            ],
+        ]
+    )
+
+
+def menu_event_confirm_delete_keyboard(event_id: UUID) -> InlineKeyboardMarkup:
+    """Confirm or cancel event deletion."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Sí, eliminar",
+                    callback_data=encode_menu_event_action(event_id, "delete_confirm"),
+                ),
+                InlineKeyboardButton(
+                    text="❌ No, cancelar",
+                    callback_data=encode_menu_event(event_id),
+                ),
+            ],
+        ]
+    )
+
+
+def menu_event_terminate_confirm_keyboard(event_id: UUID) -> InlineKeyboardMarkup:
+    """Confirm or cancel ending an event before its end date."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Sí, terminar",
+                    callback_data=encode_menu_event_action(event_id, "terminate_confirm"),
+                ),
+                InlineKeyboardButton(
+                    text="❌ No, cancelar",
+                    callback_data=encode_menu_event(event_id),
+                ),
+            ],
+        ]
+    )
+
+
+def menu_event_duration_keyboard(event_id: UUID | None = None) -> InlineKeyboardMarkup:
+    """Quick durations: create mode (event_id=None) or edit mode (event_id set).
+
+    Create-mode callbacks carry no event id (``m:event:dur_*``); edit-mode
+    callbacks are event-scoped (``m:event:<uuid>:dur_*``) so the tapped
+    duration is applied to that event.
+    """
+    def _cb(action: str) -> str:
+        return (
+            encode_menu_event_action(event_id, action)
+            if event_id is not None
+            else encode_menu("event", action)
+        )
+
+    if event_id is not None:
+        back, back_label = encode_menu_event(event_id), "🔙 Volver"
+    else:
+        back, back_label = encode_menu("event", "create_cancel"), "🔙 Cancelar"
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Hoy", callback_data=_cb("dur_today"))],
+            [InlineKeyboardButton(text="2 días", callback_data=_cb("dur_2d"))],
+            [InlineKeyboardButton(text="3 días", callback_data=_cb("dur_3d"))],
+            [InlineKeyboardButton(text="1 semana", callback_data=_cb("dur_1w"))],
+            [InlineKeyboardButton(text="📅 Otra fecha", callback_data=_cb("dur_custom"))],
+            [InlineKeyboardButton(text=back_label, callback_data=back)],
+        ]
+    )
+
+
+def menu_event_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirm or cancel event creation."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Crear evento",
+                    callback_data=encode_menu("event", "create_confirm"),
+                ),
+                InlineKeyboardButton(
+                    text="❌ Cancelar",
+                    callback_data=encode_menu("event", "create_cancel"),
+                ),
+            ],
+        ]
+    )
+
+
+def menu_event_modify_keyboard(event_id: UUID) -> InlineKeyboardMarkup:
+    """Modify sub-menu: edit text, edit duration, back to the detail."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Editar texto",
+                    callback_data=encode_menu_event_action(event_id, "edit_text"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⏰ Editar duración",
+                    callback_data=encode_menu_event_action(event_id, "edit_duration"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Volver",
+                    callback_data=encode_menu_event(event_id),
+                ),
+            ],
+        ]
     )
 
 
@@ -1216,6 +1465,8 @@ __all__ = [
     "encode_doctrine_resolve_callback",
     "encode_doctrine_escalate_callback",
     "encode_menu",
+    "encode_menu_event",
+    "encode_menu_event_action",
     "encode_menu_persona",
     "encode_menu_sandbox_profile",
     "encode_menu_vip",
@@ -1236,6 +1487,13 @@ __all__ = [
     "menu_back_keyboard",
     "menu_config_keyboard",
     "menu_confirm_delete_keyboard",
+    "menu_event_confirm_delete_keyboard",
+    "menu_event_confirm_keyboard",
+    "menu_event_detail_keyboard",
+    "menu_event_duration_keyboard",
+    "menu_event_list_keyboard",
+    "menu_event_modify_keyboard",
+    "menu_event_terminate_confirm_keyboard",
     "menu_history_keyboard",
     "menu_metrics_keyboard",
     "menu_register_confirm_keyboard",
@@ -1264,4 +1522,13 @@ __all__ = [
     "trace_list_keyboard",
     "MENU_ROOT_TEXT",
     "MENU_CATEGORY_TEXT",
+    "MENU_EVENT_CONFIRM_TEMPLATE",
+    "MENU_EVENT_CREATE_BODY_PROMPT",
+    "MENU_EVENT_CUSTOM_END_PROMPT",
+    "MENU_EVENT_CUSTOM_START_PROMPT",
+    "MENU_EVENT_DURATION_PROMPT",
+    "MENU_EVENT_EDIT_BODY_PROMPT",
+    "MENU_EVENT_EDIT_DURATION_PROMPT",
+    "MENU_EVENT_EMPTY_TEXT",
+    "MENU_EVENT_LIST_TEXT",
 ]

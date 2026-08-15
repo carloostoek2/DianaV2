@@ -21,6 +21,11 @@ from diana.application.admin_trace_service import AdminTraceService
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.calibration_service import CalibrationService
+from diana.application.ephemeral_event_service import EphemeralEventService
+from diana.application.ephemeral_knowledge import (
+    CompositeKnowledgeAugmenter,
+    EphemeralKnowledgeAugmenter,
+)
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.metrics_service import MetricsAggregationService
 from diana.application.memory_backfill_queue import MemoryBackfillQueue
@@ -99,6 +104,7 @@ from diana.infrastructure.db.repositories.daily_message_limits import (
     SqlDailyMessageLimitStore,
 )
 from diana.infrastructure.db.repositories.atencion_cycles import SqlAtencionCycleStore
+from diana.infrastructure.db.repositories.ephemeral_events import EphemeralEventRepo
 from diana.infrastructure.db.repositories.emotional_signal import (
     SqlEmotionalSignalLogRepo,
 )
@@ -315,6 +321,7 @@ class AppContainer:
     runtime_timers: SqlRuntimeTimerStore | None = None
     business_connections: SqlBusinessConnectionStore | None = None
     persona_admin: PersonaAdminService | None = None
+    ephemeral_event_service: EphemeralEventService | None = None
     backfill_queue: MemoryBackfillQueue | None = None
     backfill_wake: asyncio.Event | None = None
     # Evo-Agente Fase 0: shadow emotional detector (None when flag off).
@@ -475,7 +482,7 @@ def build_app(
 
     # SandboxService — v1 session model + package fixture catalog (not insert_sandbox)
     sandbox = SandboxService() if feature_sandbox_enabled else None
-    knowledge_augmenter = (
+    sandbox_augmenter = (
         SandboxKnowledgeAugmenter(sandbox) if sandbox is not None else None
     )
 
@@ -613,6 +620,23 @@ def build_app(
         persona_admin_service=persona_admin_service,
     )
     persona_admin_service.set_on_change(persona_catalog_provider.invalidate)
+
+    # Ephemeral events (eventos temporales): owner-injected time-bounded context.
+    # The augmenter is ALWAYS active (independent + additive, never overwrites
+    # knowledge.profile); when sandbox is enabled both run, sandbox first.
+    ephemeral_event_repo = EphemeralEventRepo(sf)
+    ephemeral_event_service = EphemeralEventService(
+        store=ephemeral_event_repo,
+        owner_telegram_id=settings.owner_telegram_id,
+        clock=clock.now,
+    )
+    ephemeral_augmenter = EphemeralKnowledgeAugmenter(ephemeral_event_repo, clock.now)
+    if sandbox_augmenter is not None:
+        knowledge_augmenter = CompositeKnowledgeAugmenter(
+            [sandbox_augmenter, ephemeral_augmenter]
+        )
+    else:
+        knowledge_augmenter = ephemeral_augmenter
 
     # F2 Item 3: gate memory retrieval on the feature flag so the
     # ``feature_memory_enabled`` switch actually controls something.
@@ -1002,6 +1026,7 @@ def build_app(
         profile_admin=profile_admin,
         persona_admin=persona_admin_service,
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
+        ephemeral_event_service=ephemeral_event_service,
         promo=promo,
         feature_promo_enabled=feature_promo_enabled,
         feature_general_mode_enabled=feature_general_mode_enabled,
@@ -1058,6 +1083,7 @@ def build_app(
         turns=turns,
         runtime_timers=runtime_timers_store,
         business_connections=bc_store,
+        ephemeral_event_service=ephemeral_event_service,
         backfill_queue=backfill_queue,
         backfill_wake=backfill_wake,
         emotional_detector=(

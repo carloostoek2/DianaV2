@@ -15,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from uuid import UUID
 
 from aiogram import Bot, Router
 from aiogram.filters import Command, Filter
@@ -22,8 +23,13 @@ from aiogram.types import CallbackQuery, Message
 
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.ephemeral_event_service import EphemeralEventService
 from diana.application.persona_admin_service import PersonaAdminService
-from diana.application.ports import TrainingModeStore, VipStore
+from diana.application.ports import (
+    EphemeralEventRecord,
+    TrainingModeStore,
+    VipStore,
+)
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.sandbox import SandboxService
 from diana.application.staging_service import StagingService
@@ -44,6 +50,15 @@ from diana.telegram.handlers.staging import (
 )
 from diana.telegram.keyboards import (
     MENU_CATEGORY_TEXT,
+    MENU_EVENT_CONFIRM_TEMPLATE,
+    MENU_EVENT_CREATE_BODY_PROMPT,
+    MENU_EVENT_CUSTOM_END_PROMPT,
+    MENU_EVENT_CUSTOM_START_PROMPT,
+    MENU_EVENT_DURATION_PROMPT,
+    MENU_EVENT_EDIT_BODY_PROMPT,
+    MENU_EVENT_EDIT_DURATION_PROMPT,
+    MENU_EVENT_EMPTY_TEXT,
+    MENU_EVENT_LIST_TEXT,
     MENU_ROOT_TEXT,
     MenuCallback,
     encode_menu,
@@ -51,6 +66,13 @@ from diana.telegram.keyboards import (
     menu_back_keyboard,
     menu_config_keyboard,
     menu_confirm_delete_keyboard,
+    menu_event_confirm_delete_keyboard,
+    menu_event_confirm_keyboard,
+    menu_event_detail_keyboard,
+    menu_event_duration_keyboard,
+    menu_event_list_keyboard,
+    menu_event_modify_keyboard,
+    menu_event_terminate_confirm_keyboard,
     menu_history_keyboard,
     menu_metrics_keyboard,
     menu_pause_duration_keyboard,
@@ -83,6 +105,8 @@ DEFAULT_MENU_TTL = timedelta(minutes=15)
 MenuSessionKind = Literal[
     "sandbox_forward", "sandbox_profile", "note", "fact", "rename", "register_vip",
     "persona_edit",
+    "event_body", "event_duration", "event_custom_start", "event_custom_end",
+    "event_edit_body",
 ]
 
 
@@ -96,6 +120,10 @@ class MenuSession:
     persona_section: str | None = None
     persona_target: str | None = None
     persona_channel: str = "vip"
+    event_body: str | None = None
+    event_start_at: datetime | None = None
+    event_end_at: datetime | None = None
+    event_id: UUID | None = None
     last_bot_message_id: int | None = None
     last_chat_id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -466,6 +494,7 @@ def build_menu_router(
     config_store: TrainingModeStore | None = None,
     history_seed: object | None = None,
     backfill_queue: object | None = None,
+    ephemeral_event_service: EphemeralEventService | None = None,
 ) -> Router:
     """Build the router serving /start, /menu, m:* callbacks, and menu-session text."""
     router = Router(name="menu")
@@ -519,7 +548,17 @@ def build_menu_router(
             return
 
         # --- category submenu (action is None) ---
-        if parsed.action is None and parsed.category != "vip":
+        # m:event:<uuid> (detail) is a concrete event callback, so it is routed
+        # to _dispatch_action below just like m:vip:<id>.
+        if (
+            parsed.action is None
+            and parsed.category != "vip"
+            and not (parsed.category == "event" and parsed.event_id is not None)
+        ):
+            if parsed.category == "event":
+                await _render_event_list(msg, ephemeral_event_service, actor_id)
+                return
+
             if parsed.category == "vips":
                 records = await vips.list_active()
                 if not records:
@@ -589,6 +628,7 @@ def build_menu_router(
             config_store=config_store,
             history_seed=history_seed,
             backfill_queue=backfill_queue,
+            ephemeral_event_service=ephemeral_event_service,
         )
         if result == "confirm_expired":
             # A3-style late alert: the early empty answer already cleared the
@@ -657,6 +697,41 @@ def build_menu_router(
             await _handle_fact_text(message, bot, session, profile_admin, sessions)
         elif session.kind == "rename":
             await _handle_rename_text(message, bot, session, vips, sessions)
+        elif session.kind == "event_body":
+            await _handle_event_body_text(
+                message, bot, session, ephemeral_event_service, sessions
+            )
+        elif session.kind == "event_duration":
+            # The duration step is button-driven; free text re-shows the picker.
+            sessions.start(
+                owner_id,
+                "event_duration",
+                event_body=session.event_body,
+                event_start_at=session.event_start_at,
+                event_end_at=session.event_end_at,
+                event_id=session.event_id,
+                last_bot_message_id=session.last_bot_message_id,
+                last_chat_id=session.last_chat_id,
+            )
+            await _edit_or_answer(
+                bot,
+                MENU_EVENT_DURATION_PROMPT,
+                session=session,
+                fallback=message,
+                keyboard=menu_event_duration_keyboard(session.event_id),
+            )
+        elif session.kind == "event_custom_start":
+            await _handle_event_custom_start_text(
+                message, bot, session, ephemeral_event_service, sessions
+            )
+        elif session.kind == "event_custom_end":
+            await _handle_event_custom_end_text(
+                message, bot, session, ephemeral_event_service, sessions
+            )
+        elif session.kind == "event_edit_body":
+            await _handle_event_edit_body_text(
+                message, bot, session, ephemeral_event_service, sessions
+            )
 
     return router
 
@@ -683,9 +758,22 @@ async def _dispatch_action(
     config_store: TrainingModeStore | None = None,
     history_seed: object | None = None,
     backfill_queue: object | None = None,
+    ephemeral_event_service: EphemeralEventService | None = None,
 ) -> None:
     category = parsed.category
     action = parsed.action
+
+    # ==================================================================
+    # Eventos temporales — detail, actions, and the create/edit wizards
+    # ==================================================================
+    if category == "event":
+        return await _dispatch_event_action(
+            message,
+            parsed=parsed,
+            actor_id=actor_id,
+            service=ephemeral_event_service,
+            sessions=sessions,
+        )
 
     # ==================================================================
     # VIP detail & per-VIP actions
@@ -1642,6 +1730,601 @@ async def _handle_rename_text(
             "Reinténtalo o usa /cancelar.",
             session=session, fallback=message, keyboard=back_kb,
         )
+
+
+# ---------------------------------------------------------------------------
+# Eventos temporales — list/detail renderers, action dispatch, wizard steps
+# ---------------------------------------------------------------------------
+
+_EVENT_DURATION_ACTIONS = ("dur_today", "dur_2d", "dur_3d", "dur_1w")
+_EVENT_DURATION_TEXT = {
+    "dur_today": "hoy",
+    "dur_2d": "2 días",
+    "dur_3d": "3 días",
+    "dur_1w": "1 semana",
+}
+
+
+def _format_event_dt(dt: datetime) -> str:
+    """Short server-local datetime for the owner (dd/mm/yyyy HH:MM)."""
+    return dt.astimezone().strftime("%d/%m/%Y %H:%M")
+
+
+def _event_detail_text(record: EphemeralEventRecord) -> str:
+    """Body, pause state and window for the event detail card."""
+    status = "⏸️ Pausado" if record.is_paused else "🟢 Activo"
+    return (
+        f"📅 {record.body}\n\n"
+        f"Estado: {status}\n"
+        f"🕐 Desde: {_format_event_dt(record.start_at)}\n"
+        f"🕐 Hasta: {_format_event_dt(record.end_at)}\n\n"
+        "Selecciona una acción:"
+    )
+
+
+async def _render_event_list(
+    message: Message,
+    service: EphemeralEventService | None,
+    actor_id: int,
+) -> None:
+    """Render the open-events list, editing the current message in place."""
+    if service is None:
+        await _show(
+            message,
+            "Los eventos temporales no están disponibles.",
+            menu_back_keyboard(encode_menu("event")),
+        )
+        return
+    events = await service.list_open(actor_id)
+    if not events:
+        await _show(message, MENU_EVENT_EMPTY_TEXT, menu_event_list_keyboard([]))
+        return
+    await _show(message, MENU_EVENT_LIST_TEXT, menu_event_list_keyboard(events))
+
+
+async def _render_event_detail(message: Message, record: EphemeralEventRecord) -> None:
+    await _show(message, _event_detail_text(record), menu_event_detail_keyboard(record))
+
+
+async def _update_event(
+    service: EphemeralEventService,
+    actor_id: int,
+    event_id: UUID,
+    *,
+    body: str,
+    start_at: datetime,
+    end_at: datetime,
+) -> EphemeralEventRecord | None:
+    """Edit an event in place (preserves id and pause state)."""
+    return await service.update(
+        actor_id, event_id, body=body, start_at=start_at, end_at=end_at
+    )
+
+
+async def _apply_duration_selection(
+    message: Message,
+    service: EphemeralEventService,
+    actor_id: int,
+    sessions: MenuSessionStore,
+    *,
+    event_id: UUID | None,
+    duration_action: str,
+) -> None:
+    """Compute the window from a quick-duration tap and continue the flow.
+
+    Create mode (``event_id is None``) stores the window in the session and
+    shows the confirmation; edit mode applies the change immediately.
+    """
+    now = datetime.now(UTC)
+    try:
+        end_at = service.parse_relative_or_absolute(
+            _EVENT_DURATION_TEXT[duration_action], now
+        )
+    except ValueError:
+        await _show(
+            message, "Duración no válida.", menu_back_keyboard(encode_menu("event"))
+        )
+        return
+
+    if event_id is not None:
+        # Edit mode: update the window in place, preserving pause state.
+        record = await service.get(actor_id, event_id)
+        if record is None:
+            await _show(
+                message, "El evento ya no existe.",
+                menu_back_keyboard(encode_menu("event")),
+            )
+            return
+        updated = await _update_event(
+            service, actor_id, event_id,
+            body=record.body, start_at=now, end_at=end_at,
+        )
+        if updated is None:
+            await _show(
+                message, "No se pudo modificar el evento.",
+                menu_back_keyboard(encode_menu("event")),
+            )
+            return
+        await _render_event_detail(message, updated)
+        return
+
+    # Create mode: keep the body/window in the session for the confirmation.
+    session = sessions.get(actor_id)
+    body = session.event_body if session else None
+    if not body:
+        await _show(
+            message, _SESSION_EXPIRED_UX, menu_back_keyboard(encode_menu("event"))
+        )
+        return
+    sessions.start(
+        actor_id,
+        "event_duration",
+        event_body=body,
+        event_start_at=now,
+        event_end_at=end_at,
+        last_bot_message_id=message.message_id,
+        last_chat_id=message.chat.id,
+    )
+    await _show(
+        message,
+        MENU_EVENT_CONFIRM_TEMPLATE.format(
+            body=body,
+            start=_format_event_dt(now),
+            end=_format_event_dt(end_at),
+        ),
+        menu_event_confirm_keyboard(),
+    )
+
+
+async def _dispatch_event_action(
+    message: Message,
+    *,
+    parsed: MenuCallback,
+    actor_id: int,
+    service: EphemeralEventService | None,
+    sessions: MenuSessionStore,
+) -> None:
+    """Dispatch m:event:* callbacks (detail, per-event actions, create wizard).
+
+    Returns ``"confirm_expired"`` when a stale destructive-confirm button is
+    tapped (mirrors the VIP delete flow), so the caller can alert the owner.
+    """
+    event_id = parsed.event_id
+    action = parsed.action
+
+    if service is None:
+        await _show(
+            message,
+            "Los eventos temporales no están disponibles.",
+            menu_back_keyboard(encode_menu("event")),
+        )
+        return
+
+    # --- detail (m:event:<uuid>) ---
+    if event_id is not None and action is None:
+        record = await service.get(actor_id, event_id)
+        if record is None:
+            await _show(
+                message, "El evento ya no existe.",
+                menu_back_keyboard(encode_menu("event")),
+            )
+            return
+        await _render_event_detail(message, record)
+        return
+
+    # --- per-event actions ---
+    if event_id is not None:
+        if action in ("pause", "resume"):
+            await service.set_paused(actor_id, event_id, action == "pause")
+            record = await service.get(actor_id, event_id)
+            if record is None:
+                await _show(
+                    message, "El evento ya no existe.",
+                    menu_back_keyboard(encode_menu("event")),
+                )
+                return
+            await _render_event_detail(message, record)
+            return
+
+        if action == "terminate":
+            sessions.record_confirmation(actor_id)
+            await _show(
+                message,
+                "🛑 ¿Terminar este evento antes de tiempo?\n\n"
+                "Diana dejará de verlo de inmediato.",
+                menu_event_terminate_confirm_keyboard(event_id),
+            )
+            return
+
+        if action == "terminate_confirm":
+            if not sessions.consume_confirmation(actor_id):
+                await _show(
+                    message, _CONFIRM_EXPIRED_UX,
+                    menu_back_keyboard(encode_menu("event")),
+                )
+                return "confirm_expired"
+            await service.terminate(actor_id, event_id)
+            await _render_event_list(message, service, actor_id)
+            return
+
+        if action == "delete":
+            sessions.record_confirmation(actor_id)
+            await _show(
+                message,
+                "🗑️ ¿Eliminar este evento?\n\n"
+                "Se quitará de forma definitiva.",
+                menu_event_confirm_delete_keyboard(event_id),
+            )
+            return
+
+        if action == "delete_confirm":
+            if not sessions.consume_confirmation(actor_id):
+                await _show(
+                    message, _CONFIRM_EXPIRED_UX,
+                    menu_back_keyboard(encode_menu("event")),
+                )
+                return "confirm_expired"
+            await service.delete(actor_id, event_id)
+            await _render_event_list(message, service, actor_id)
+            return
+
+        if action == "modify":
+            record = await service.get(actor_id, event_id)
+            if record is None:
+                await _show(
+                    message, "El evento ya no existe.",
+                    menu_back_keyboard(encode_menu("event")),
+                )
+                return
+            await _show(
+                message, "✏️ Modificar evento\n\n¿Qué quieres cambiar?",
+                menu_event_modify_keyboard(event_id),
+            )
+            return
+
+        if action == "edit_text":
+            sessions.start(
+                actor_id,
+                "event_edit_body",
+                event_id=event_id,
+                last_bot_message_id=message.message_id,
+                last_chat_id=message.chat.id,
+            )
+            await _show(message, MENU_EVENT_EDIT_BODY_PROMPT, None)
+            return
+
+        if action == "edit_duration":
+            await _show(
+                message,
+                MENU_EVENT_EDIT_DURATION_PROMPT,
+                menu_event_duration_keyboard(event_id),
+            )
+            return
+
+        if action in _EVENT_DURATION_ACTIONS:
+            await _apply_duration_selection(
+                message, service, actor_id, sessions,
+                event_id=event_id, duration_action=action,
+            )
+            return
+
+        if action == "dur_custom":
+            sessions.start(
+                actor_id,
+                "event_custom_start",
+                event_id=event_id,
+                last_bot_message_id=message.message_id,
+                last_chat_id=message.chat.id,
+            )
+            await _show(message, MENU_EVENT_CUSTOM_START_PROMPT, None)
+            return
+
+        await _show(
+            message, "Acción no disponible.", menu_back_keyboard(encode_menu("event"))
+        )
+        return
+
+    # --- create-mode actions (no event yet) ---
+    if action == "create":
+        sessions.start(
+            actor_id,
+            "event_body",
+            last_bot_message_id=message.message_id,
+            last_chat_id=message.chat.id,
+        )
+        await _show(message, MENU_EVENT_CREATE_BODY_PROMPT, None)
+        return
+
+    if action == "create_cancel":
+        sessions.cancel(actor_id)
+        await _render_event_list(message, service, actor_id)
+        return
+
+    if action == "create_confirm":
+        session = sessions.get(actor_id)
+        if (
+            session is None
+            or not session.event_body
+            or session.event_start_at is None
+            or session.event_end_at is None
+        ):
+            await _show(
+                message, _SESSION_EXPIRED_UX, menu_back_keyboard(encode_menu("event"))
+            )
+            return
+        await service.create(
+            actor_id,
+            body=session.event_body,
+            start_at=session.event_start_at,
+            end_at=session.event_end_at,
+        )
+        sessions.cancel(actor_id)
+        await _render_event_list(message, service, actor_id)
+        return
+
+    if action in _EVENT_DURATION_ACTIONS:
+        await _apply_duration_selection(
+            message, service, actor_id, sessions,
+            event_id=None, duration_action=action,
+        )
+        return
+
+    if action == "dur_custom":
+        sessions.start(
+            actor_id,
+            "event_custom_start",
+            last_bot_message_id=message.message_id,
+            last_chat_id=message.chat.id,
+        )
+        await _show(message, MENU_EVENT_CUSTOM_START_PROMPT, None)
+        return
+
+    await _show(
+        message, "Acción no disponible.", menu_back_keyboard(encode_menu("event"))
+    )
+
+
+async def _handle_event_body_text(
+    message: Message,
+    bot: Bot,
+    session: MenuSession,
+    service: EphemeralEventService | None,
+    sessions: MenuSessionStore,
+) -> None:
+    """Create wizard step 1: capture the body, then show the duration picker."""
+
+    def _restart() -> None:
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "event_body",
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
+    if service is None:
+        await _edit_or_answer(
+            bot,
+            "Los eventos temporales no están disponibles.",
+            session=session, fallback=message,
+            keyboard=menu_back_keyboard(encode_menu("event")),
+        )
+        return
+    body = (message.text or "").strip()
+    if not body:
+        _restart()
+        await _edit_or_answer(
+            bot,
+            "El texto del evento no puede estar vacío. Escríbelo de nuevo o usa /cancelar.",
+            session=session, fallback=message,
+        )
+        return
+    sessions.start(
+        message.from_user.id,  # type: ignore[union-attr]
+        "event_duration",
+        event_body=body,
+        last_bot_message_id=session.last_bot_message_id,
+        last_chat_id=session.last_chat_id,
+    )
+    await _edit_or_answer(
+        bot, MENU_EVENT_DURATION_PROMPT, session=session, fallback=message,
+        keyboard=menu_event_duration_keyboard(),
+    )
+
+
+async def _handle_event_custom_start_text(
+    message: Message,
+    bot: Bot,
+    session: MenuSession,
+    service: EphemeralEventService | None,
+    sessions: MenuSessionStore,
+) -> None:
+    """Custom-date step 1: parse the start datetime, then ask for the end."""
+
+    def _restart() -> None:
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "event_custom_start",
+            event_body=session.event_body,
+            event_id=session.event_id,
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
+    if service is None:
+        await _edit_or_answer(
+            bot,
+            "Los eventos temporales no están disponibles.",
+            session=session, fallback=message,
+            keyboard=menu_back_keyboard(encode_menu("event")),
+        )
+        return
+    text = (message.text or "").strip()
+    now = datetime.now(UTC)
+    try:
+        start_at = now if text.lower() == "ahora" else service.parse_relative_or_absolute(text, now)
+    except ValueError as exc:
+        _restart()
+        await _edit_or_answer(bot, str(exc), session=session, fallback=message)
+        return
+    sessions.start(
+        message.from_user.id,  # type: ignore[union-attr]
+        "event_custom_end",
+        event_body=session.event_body,
+        event_start_at=start_at,
+        event_id=session.event_id,
+        last_bot_message_id=session.last_bot_message_id,
+        last_chat_id=session.last_chat_id,
+    )
+    await _edit_or_answer(
+        bot, MENU_EVENT_CUSTOM_END_PROMPT, session=session, fallback=message,
+    )
+
+
+async def _handle_event_custom_end_text(
+    message: Message,
+    bot: Bot,
+    session: MenuSession,
+    service: EphemeralEventService | None,
+    sessions: MenuSessionStore,
+) -> None:
+    """Custom-date step 2: parse the end (relative to the start) and finish."""
+
+    def _restart() -> None:
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "event_custom_end",
+            event_body=session.event_body,
+            event_start_at=session.event_start_at,
+            event_id=session.event_id,
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
+    actor_id = message.from_user.id  # type: ignore[union-attr]
+    if service is None:
+        await _edit_or_answer(
+            bot,
+            "Los eventos temporales no están disponibles.",
+            session=session, fallback=message,
+            keyboard=menu_back_keyboard(encode_menu("event")),
+        )
+        return
+    if session.event_start_at is None:
+        _restart()
+        await _edit_or_answer(
+            bot,
+            "No se encontró la fecha de inicio. Vuelve a empezar o usa /cancelar.",
+            session=session, fallback=message,
+        )
+        return
+    text = (message.text or "").strip()
+    try:
+        end_at = service.parse_relative_or_absolute(text, session.event_start_at)
+    except ValueError as exc:
+        _restart()
+        await _edit_or_answer(bot, str(exc), session=session, fallback=message)
+        return
+
+    if session.event_id is not None:
+        # Edit mode: update the window in place, preserving pause state.
+        record = await service.get(actor_id, session.event_id)
+        if record is None:
+            await _edit_or_answer(
+                bot, "El evento ya no existe.",
+                session=session, fallback=message,
+                keyboard=menu_back_keyboard(encode_menu("event")),
+            )
+            return
+        updated = await _update_event(
+            service, actor_id, session.event_id,
+            body=record.body,
+            start_at=session.event_start_at,
+            end_at=end_at,
+        )
+        sessions.cancel(actor_id)
+        await _edit_or_answer(
+            bot, _event_detail_text(updated),
+            session=session, fallback=message,
+            keyboard=menu_event_detail_keyboard(updated),
+        )
+        return
+
+    # Create mode: keep the body/window in the session for the confirmation.
+    sessions.start(
+        message.from_user.id,  # type: ignore[union-attr]
+        "event_duration",
+        event_body=session.event_body,
+        event_start_at=session.event_start_at,
+        event_end_at=end_at,
+        last_bot_message_id=session.last_bot_message_id,
+        last_chat_id=session.last_chat_id,
+    )
+    await _edit_or_answer(
+        bot,
+        MENU_EVENT_CONFIRM_TEMPLATE.format(
+            body=session.event_body,
+            start=_format_event_dt(session.event_start_at),
+            end=_format_event_dt(end_at),
+        ),
+        session=session, fallback=message,
+        keyboard=menu_event_confirm_keyboard(),
+    )
+
+
+async def _handle_event_edit_body_text(
+    message: Message,
+    bot: Bot,
+    session: MenuSession,
+    service: EphemeralEventService | None,
+    sessions: MenuSessionStore,
+) -> None:
+    """Modify wizard: capture the new body and apply the edit in place."""
+
+    def _restart() -> None:
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "event_edit_body",
+            event_id=session.event_id,
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
+    actor_id = message.from_user.id  # type: ignore[union-attr]
+    if service is None or session.event_id is None:
+        await _edit_or_answer(
+            bot,
+            "Los eventos temporales no están disponibles.",
+            session=session, fallback=message,
+            keyboard=menu_back_keyboard(encode_menu("event")),
+        )
+        return
+    new_body = (message.text or "").strip()
+    if not new_body:
+        _restart()
+        await _edit_or_answer(
+            bot,
+            "El texto del evento no puede estar vacío. Escríbelo de nuevo o usa /cancelar.",
+            session=session, fallback=message,
+        )
+        return
+    record = await service.get(actor_id, session.event_id)
+    if record is None:
+        await _edit_or_answer(
+            bot, "El evento ya no existe.",
+            session=session, fallback=message,
+            keyboard=menu_back_keyboard(encode_menu("event")),
+        )
+        return
+    updated = await _update_event(
+        service, actor_id, session.event_id,
+        body=new_body, start_at=record.start_at, end_at=record.end_at,
+    )
+    sessions.cancel(actor_id)
+    await _edit_or_answer(
+        bot, _event_detail_text(updated),
+        session=session, fallback=message,
+        keyboard=menu_event_detail_keyboard(updated),
+    )
 
 
 __all__ = [

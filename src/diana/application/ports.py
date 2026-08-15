@@ -682,6 +682,66 @@ class PersonaAdminStore(Protocol):
     ) -> PersonaVersionRecord | None: ...
 
 
+class EphemeralEventRecord(BaseModel):
+    """ephemeral_events row shape — owner-injected time-bounded context.
+
+    Active window is ``[start_at, end_at)`` (half-open): an event past its
+    ``end_at`` is simply not found by the augmenter. ``is_paused`` is a
+    reversible hold; "terminar antes" sets ``end_at = now`` (terminal).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    body: str
+    start_at: datetime
+    end_at: datetime
+    is_paused: bool = False
+    created_by: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+@runtime_checkable
+class EphemeralEventStore(Protocol):
+    """Ephemeral events persistence consumed by service + knowledge augmenter.
+
+    The SQL repo satisfies this structurally (hexagonal: application never
+    imports infrastructure).
+    """
+
+    async def create(
+        self,
+        *,
+        body: str,
+        start_at: datetime,
+        end_at: datetime,
+        created_by: int | None = None,
+    ) -> EphemeralEventRecord: ...
+
+    async def get(self, event_id: UUID) -> EphemeralEventRecord | None: ...
+
+    async def list_all(self) -> list[EphemeralEventRecord]: ...
+
+    async def update(
+        self, event_id: UUID, *, body: str, start_at: datetime, end_at: datetime
+    ) -> EphemeralEventRecord | None: ...
+
+    async def set_paused(
+        self, event_id: UUID, paused: bool
+    ) -> EphemeralEventRecord | None: ...
+
+    async def terminate_now(
+        self, event_id: UUID, now: datetime
+    ) -> EphemeralEventRecord | None: ...
+
+    async def delete(self, event_id: UUID) -> bool: ...
+
+    async def find_active_at(self, now: datetime) -> list[EphemeralEventRecord]: ...
+
+    async def list_open(self, now: datetime) -> list[EphemeralEventRecord]: ...
+
+
 class BusinessConnectionRecord(BaseModel):
     """business_connections row shape for BC lifecycle persistence."""
 

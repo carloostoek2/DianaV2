@@ -8,6 +8,7 @@ from typing import Any
 from aiogram import Dispatcher, Router
 
 from diana.application.admin_metrics_service import AdminMetricsService
+from diana.application.ephemeral_event_service import EphemeralEventService
 from diana.application.memory_approval_service import MemoryApprovalService
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.admin_service import AdminService
@@ -120,6 +121,7 @@ def build_dispatcher(
     history: object | None = None,
     backfill_queue: object | None = None,
     memory_approval: MemoryApprovalService | None = None,
+    ephemeral_event_service: EphemeralEventService | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -222,6 +224,7 @@ def build_dispatcher(
             config_store=config_store,
             history_seed=history_seed,
             backfill_queue=backfill_queue,
+            ephemeral_event_service=ephemeral_event_service,
         )
     )
     root.include_router(

@@ -26,6 +26,10 @@ from diana.infrastructure.db.repositories.emotional_signal import (
     SqlEmotionalSignalLogRepo,
     emotional_signal_log_orm_to_record,
 )
+from diana.infrastructure.db.repositories.ephemeral_events import (
+    EphemeralEventRepo,
+    ephemeral_event_orm_to_record,
+)
 from diana.infrastructure.db.repositories.turn_category import (
     SqlTurnCategoryLogRepo,
     turn_category_log_orm_to_record,
@@ -49,6 +53,8 @@ from diana.infrastructure.db.repositories.vip_trust_budget import (
 
 __all__ = [
     "SqlCalibrationDataSource",
+    "EphemeralEventRepo",
+    "ephemeral_event_orm_to_record",
     "SqlEmotionalSignalLogRepo",
     "SqlEscalationStore",
     "SqlLearningMetricsRepo",

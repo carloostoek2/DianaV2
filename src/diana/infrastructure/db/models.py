@@ -639,6 +639,33 @@ class PersonaVersion(Base):
     )
 
 
+class EphemeralEvent(Base):
+    """Time-bounded context the owner injects (eventos temporales).
+
+    Active when ``not is_paused AND start_at <= now < end_at``. Past its
+    ``end_at`` the row is ignored by the augmenter; no manual cleanup needed.
+    """
+
+    __tablename__ = "ephemeral_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_paused: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
 class DailyMessageLimit(Base):
     """Per-chat daily client-message counter (F4-02, atencion channel).
 
