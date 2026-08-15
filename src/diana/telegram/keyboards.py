@@ -692,6 +692,38 @@ def memory_pending_keyboard(fact_id: UUID) -> InlineKeyboardMarkup:
     )
 
 
+# ---- Link kick (Fase 6): link:<action>:<event_id> — ≤64 bytes ----
+_LINK_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("expel", "❌ Expulsar"),
+    ("disable", "🚫 Inhabilitar"),
+    ("keep", "✅ Mantener"),
+)
+
+
+def link_kick_keyboard(event_id: str) -> InlineKeyboardMarkup:
+    """Expel / Disable / Keep inline keyboard for a kicked-VIP notification."""
+    buttons: list[list[InlineKeyboardButton]] = []
+    for action, label in _LINK_ACTIONS:
+        data = f"link:{action}:{event_id}"
+        if len(data.encode("utf-8")) > 64:
+            raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+        buttons.append([InlineKeyboardButton(text=label, callback_data=data)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def parse_link_callback(data: str) -> tuple[str, str] | None:
+    """Parse link callback into (action, event_id) or None (A4)."""
+    if not data or not data.startswith("link:"):
+        return None
+    parts = data.split(":", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        return None
+    action, event_id = parts[1], parts[2]
+    if action not in {"expel", "disable", "keep"}:
+        return None
+    return action, event_id
+
+
 # ---- Hierarchical owner menu (buttons instead of raw slash commands) ----
 
 MENU_ROOT_TEXT = "🌸 Panel de Diana\n\nElige una categoría:"
@@ -1484,6 +1516,7 @@ __all__ = [
     "encode_trace_page",
     "encode_trace_json",
     "encode_trace_back_to_draft",
+    "link_kick_keyboard",
     "menu_back_keyboard",
     "menu_config_keyboard",
     "menu_confirm_delete_keyboard",
@@ -1511,6 +1544,7 @@ __all__ = [
     "metrics_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
+    "parse_link_callback",
     "parse_menu_callback",
     "parse_metrics_callback",
     "parse_staging_callback",

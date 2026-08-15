@@ -11,10 +11,11 @@ from diana.application.ports import (
     DoctrineNotification,
     DraftNotification,
     EscalationNotification,
+    LinkNotification,
 )
 from diana.application.escalation_labels import label_es_for_tipo
 from diana.application.draft_variants import format_draft_owner_text, read_versions
-from diana.telegram.keyboards import doctrine_keyboard, draft_keyboard
+from diana.telegram.keyboards import doctrine_keyboard, draft_keyboard, link_kick_keyboard
 
 logger = logging.getLogger("diana.telegram")
 
@@ -109,6 +110,23 @@ class AiogramOwnerNotifier:
             chat_id=self._owner_id,
             text=text,
             reply_markup=markup,
+        )
+        return int(msg.message_id)
+
+    async def notify_link(self, payload: LinkNotification) -> int | None:
+        """Send the kicked-VIP Expel/Disable/Keep notification to the owner DM."""
+        name = payload.display_name
+        if payload.username:
+            name = f"{name} @{payload.username}"
+        text = (
+            "⚠️ ATENCIÓN ⚠️\n"
+            f"El suscriptor {name} ha sido expulsado del Canal VIP. "
+            "¿Quieres inhabilitarlo aquí?"
+        )
+        msg = await self._bot.send_message(
+            chat_id=self._owner_id,
+            text=text,
+            reply_markup=link_kick_keyboard(payload.event_id),
         )
         return int(msg.message_id)
 
