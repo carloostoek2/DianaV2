@@ -110,6 +110,8 @@ class LinkCoordinator:
         )
 
     async def handle_decision(self, event_id: str, action: str) -> str:
+        if not self._enabled:
+            return "ya no aplica"
         event = await self._links.get_by_event_id(event_id)
         if event is None:
             logger.info(
