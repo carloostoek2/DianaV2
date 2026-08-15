@@ -468,6 +468,7 @@ class FakeOwnerNotifier:
         self.escalations: list[Any] = []
         self.infos: list[tuple[str, int | None]] = []
         self.doctrines: list[Any] = []
+        self.links: list[Any] = []
         self.voids: list[tuple[int, str]] = []
         self._next_message_id = 5000
 
@@ -499,6 +500,12 @@ class FakeOwnerNotifier:
 
     async def notify_doctrine(self, payload: Any) -> int | None:
         self.doctrines.append(payload)
+        mid = self._next_message_id
+        self._next_message_id += 1
+        return mid
+
+    async def notify_link(self, payload: Any) -> int | None:
+        self.links.append(payload)
         mid = self._next_message_id
         self._next_message_id += 1
         return mid

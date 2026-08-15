@@ -77,7 +77,7 @@ def test_bc_lifecycle_middleware_is_minimal() -> None:
 
 
 def test_bc_middleware_does_not_affect_main_chain() -> None:
-    """Adding BC middleware does not change the main 9-middleware chain."""
+    """Adding BC middleware does not change the main 10-middleware chain."""
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
@@ -105,6 +105,6 @@ def test_bc_middleware_does_not_affect_main_chain() -> None:
     )
 
     live_msg = extract_observer_middleware_names(wiring.dispatcher.message)
-    assert len(live_msg) == 9
+    assert len(live_msg) == 10
     assert live_msg[0] == "ErrorHandlerMiddleware"
-    assert live_msg[6] == "FreezeCheckMiddleware"
+    assert live_msg[7] == "FreezeCheckMiddleware"
