@@ -60,9 +60,27 @@ con Docker. **Datos shadow reales en producción (verif. 2026-08-11):** `turn_ca
 **Pendiente:** cola durable `synthesis_queue`, ficha perfil EA-06 completa (historial de versiones),
 `.env.example` con los flags nuevos, y la Fase 5 real (doble puerta) cuando F2 salga de shadow.
 
+### Fase 6 — Vínculo entre bots (Lucien → Diana) para aviso de expulsión VIP ✅ (IMPLEMENTADO — flag OFF, 2026-08-15)
+Spec `docs/SPEC-FASE6.md` v1.0 (REQ-LNK-01..10). Two-repo feature: cuando **Lucien** expulsa a un suscriptor
+del Canal VIP (revoke manual, expiración por scheduler, o limpieza de startup — los 3 puntos de emisión cubiertos),
+notifica a **Diana** vía chat de coordinación con un payload `[LINK]` one-line; Diana verifica si el expulsado es
+VIP activo y, si lo es, pide a la dueña **Expel / Disable / Keep** con 3 botones. Todo detrás de
+`FEATURE_LINK_ENABLED` (default `false` en ambos bots; OFF = comportamiento idéntico).
+
+- **Parte A (emisor, repo `lucienbot`):** `business_connections` table + handler, `LinkNotifier` + event bus
+  (`EVENT_VIP_KICKED`), 3 kick hooks, config flag.
+- **Parte B (receptor/decisor, DianaV2):** migración `028_link_events` + `LinkCoordinator` (dedup idempotente por
+  `event_id` → verify-VIP → notificar → decidir), `notify_link` + keyboard 3 botones, `LinkCoordinatorMiddleware`
+  que consume el `[LINK]` en la capa de middleware (antes de `OwnerDetectionMiddleware`, corrección a REQ-LNK-04),
+  callback router `link:*` owner-gated, settings `feature_link_enabled`/`link_chat_id`/`link_disable_frozen_until`.
+- **Verificado:** 4/4 ítems del pool, review loops a 0 open, `tests/unit` 2639 passed / 0 failed, purity gates 17 passed.
+- **Pendiente:** **integration spike** en deploy real (Railway+EC2) — dueña conecta su cuenta de negocio a Lucien,
+  expulsa un usuario de prueba, verifica que Diana reciba `[LINK]`. Es el acceptance step final para encender el flag.
+
 ### Otros
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria).
-- Migraciones: 001-026 aplicadas en producción (pool evo-agente desplegado). Persona sin reglas de voseo; español neutro. CHANGELOG.md creado.
+- Migraciones: 001-026 aplicadas en producción (pool evo-agente desplegado). Repo head actual: `028_link_events`
+  (027 ephemeral events + 028 link_events — pendientes de aplicar en producción). Persona sin reglas de voseo; español neutro. CHANGELOG.md creado.
 
 ---
 
@@ -80,8 +98,9 @@ con Docker. **Datos shadow reales en producción (verif. 2026-08-11):** `turn_ca
 
 ## 3. Qué falta (pendiente)
 
-### Fase 6 en adelante (nuevas fases — no definidas aún)
-- El SPEC-FASE6 no existe; los siguientes pasos de producto se deciden con la dueña.
+### Fase 6 en adelante
+- Fase 6 (vínculo Lucien→Diana) **implementada y cerrada** — ver sección 1. Queda el integration spike de deploy
+  (Railway+EC2) para encender `FEATURE_LINK_ENABLED`. Las siguientes fases se deciden con la dueña.
 
 ### Evolución de agente — pendiente del pool `evo-agente` (ver SPEC-EVOLUCION-AGENTE.md v1.2)
 - **Fase 5 real (cablear la doble puerta):** `decision.action=="send" AND can_autonomous(...)`
