@@ -170,6 +170,7 @@ class LinkCoordinator:
         elif action == "keep":
             new_state = "decided_keep"
         else:
+            await self._links.set_state(event_id, "noop")
             logger.info(
                 "link_noop",
                 extra={"reason": "unknown_action", "event_id": event_id, "action": action},
