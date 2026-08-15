@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -95,3 +96,33 @@ async def test_invalid_callback_data_alert() -> None:
 
     cq.answer.assert_awaited_once_with("Invalid callback", show_alert=True)
     link.handle_decision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_message_none_skips_keyboard_clear() -> None:
+    link = _mock_link()
+    router = _router(link)
+    handler = router.callback_query.handlers[0]
+    cq = _callback_query(user_id=OWNER, data="link:expel:evt-1")
+    object.__setattr__(cq, "message", None)
+
+    await handler.callback(cq)
+
+    link.handle_decision.assert_awaited_once_with("evt-1", "expel")
+    cq.answer.assert_awaited_once_with("Suscriptor expulsado.")
+
+
+@pytest.mark.asyncio
+async def test_edit_reply_markup_failure_is_swallowed(caplog: pytest.LogCaptureFixture) -> None:
+    link = _mock_link()
+    router = _router(link)
+    handler = router.callback_query.handlers[0]
+    cq = _callback_query(user_id=OWNER, data="link:expel:evt-1")
+    cq.message.edit_reply_markup.side_effect = Exception("boom")
+
+    with caplog.at_level(logging.DEBUG, logger="diana.telegram"):
+        await handler.callback(cq)
+
+    link.handle_decision.assert_awaited_once_with("evt-1", "expel")
+    cq.answer.assert_awaited_once_with("Suscriptor expulsado.")
+    assert any(r.getMessage() == "link_clear_keyboard_failed" for r in caplog.records)
