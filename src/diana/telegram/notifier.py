@@ -117,7 +117,7 @@ class AiogramOwnerNotifier:
         """Send the kicked-VIP Expel/Disable/Keep notification to the owner DM."""
         name = payload.display_name
         if payload.username:
-            name = f"{name} @{payload.username}"
+            name = f"{name} @{payload.username.lstrip('@')}"
         text = (
             "⚠️ ATENCIÓN ⚠️\n"
             f"El suscriptor {name} ha sido expulsado del Canal VIP. "

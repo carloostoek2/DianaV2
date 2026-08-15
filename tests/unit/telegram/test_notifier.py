@@ -114,6 +114,19 @@ async def test_notify_link_includes_approved_copy_and_buttons() -> None:
 
 
 @pytest.mark.asyncio
+async def test_notify_link_normalizes_at_prefixed_username() -> None:
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=7))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    await notifier.notify_link(
+        LinkNotification(display_name="Ana", username="@ana", event_id="evt-1")
+    )
+    body = bot.send_message.await_args.kwargs["text"]
+    assert "Ana @ana" in body
+    assert "Ana @@ana" not in body
+
+
+@pytest.mark.asyncio
 async def test_notify_link_without_username_shows_display_name_only() -> None:
     bot = MagicMock()
     bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=7))
