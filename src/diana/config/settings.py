@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
@@ -80,6 +81,12 @@ class Settings(BaseSettings):
 
     # F4 general mode (non-VIP atencion channel) — env-driven, default off.
     feature_general_mode_enabled: bool = False
+
+    # Fase 6 (vínculo Lucien→Diana): expulsiones del Canal VIP avisan a la dueña.
+    # FEATURE_LINK_ENABLED on + LINK_CHAT_ID set activates the [LINK] middleware.
+    feature_link_enabled: bool = False
+    link_chat_id: int | None = None
+    link_disable_frozen_until: datetime = datetime(2099, 12, 31, tzinfo=UTC)
 
     # Evo-Agente Fase 0 (detector de quiebre emocional) — env-driven, default off.
     feature_emotional_detector_enabled: bool = False
