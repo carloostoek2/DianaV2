@@ -7,12 +7,13 @@ from diana.telegram.middlewares.business_connection import BusinessConnectionMid
 from diana.telegram.middlewares.dedup import DedupMiddleware
 from diana.telegram.middlewares.error_handler import ErrorHandlerMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
+from diana.telegram.middlewares.link import LinkCoordinatorMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
 from diana.telegram.middlewares.rate_limit import RateLimitMiddleware
 
 # ErrorHandlerMiddleware is F3-hardener outermost (index 0).
-# Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Owner → Freeze → Auth → Forbidden
+# Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Link → Owner → Freeze → Auth → Forbidden
 # Auth before Forbidden so non-VIP business never J.4-escalates / owner-notify spam.
 F2_MIDDLEWARE_ORDER: tuple[str, ...] = (
     "ErrorHandlerMiddleware",
@@ -20,6 +21,7 @@ F2_MIDDLEWARE_ORDER: tuple[str, ...] = (
     "RateLimitMiddleware",
     "LoggingMiddleware",
     "BusinessConnectionMiddleware",
+    "LinkCoordinatorMiddleware",
     "OwnerDetectionMiddleware",
     "FreezeCheckMiddleware",
     "AuthMiddleware",
@@ -33,6 +35,7 @@ __all__ = [
     "ErrorHandlerMiddleware",
     "F2_MIDDLEWARE_ORDER",
     "ForbiddenKeywordsMiddleware",
+    "LinkCoordinatorMiddleware",
     "LoggingMiddleware",
     "OwnerDetectionMiddleware",
     "RateLimitMiddleware",

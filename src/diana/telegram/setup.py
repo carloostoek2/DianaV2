@@ -9,6 +9,7 @@ from aiogram import Dispatcher, Router
 
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.ephemeral_event_service import EphemeralEventService
+from diana.application.link import LinkCoordinator
 from diana.application.memory_approval_service import MemoryApprovalService
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.admin_service import AdminService
@@ -40,6 +41,7 @@ from diana.telegram.handlers.doctrine import (
     DoctrineSessionStore,
     build_doctrine_router,
 )
+from diana.telegram.handlers.link import build_link_callback_router
 from diana.telegram.handlers.staging import build_staging_router
 from diana.telegram.handlers.memory_approval import build_memory_approval_router
 from diana.telegram.freeze_middleware import FreezeCheckMiddleware
@@ -49,6 +51,7 @@ from diana.telegram.middlewares.business_connection import BusinessConnectionMid
 from diana.telegram.middlewares.dedup import DedupMiddleware
 from diana.telegram.middlewares.error_handler import ErrorHandlerMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
+from diana.telegram.middlewares.link import LinkCoordinatorMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
 from diana.telegram.middlewares.rate_limit import RateLimitMiddleware
@@ -122,6 +125,9 @@ def build_dispatcher(
     backfill_queue: object | None = None,
     memory_approval: MemoryApprovalService | None = None,
     ephemeral_event_service: EphemeralEventService | None = None,
+    link: LinkCoordinator | None = None,
+    link_chat_id: int | None = None,
+    feature_link_enabled: bool = False,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -129,7 +135,7 @@ def build_dispatcher(
     menu_sessions = MenuSessionStore()
 
     # first registered = outermost (aiogram wraps with reversed()).
-    # Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Owner → Freeze → Auth → Forbidden.
+    # Order: ErrorHandler → Dedup → RateLimit → Logging → BC → Link → Owner → Freeze → Auth → Forbidden.
     # Auth before Forbidden: VIP allowlist gates J.4/forbidden escalate.
     forbidden_mw = ForbiddenKeywordsMiddleware(
         keywords=forbidden_keywords,
@@ -150,6 +156,11 @@ def build_dispatcher(
         ),
         LoggingMiddleware(),
         BusinessConnectionMiddleware(),
+        LinkCoordinatorMiddleware(
+            link=link,
+            link_chat_id=link_chat_id,
+            enabled=feature_link_enabled,
+        ),
         OwnerDetectionMiddleware(
             owner_telegram_id=owner_telegram_id, coordinator=coordinator, history=history
         ),
@@ -227,6 +238,13 @@ def build_dispatcher(
             ephemeral_event_service=ephemeral_event_service,
         )
     )
+    if link is not None:
+        root.include_router(
+            build_link_callback_router(
+                link=link,
+                owner_telegram_id=owner_telegram_id,
+            )
+        )
     root.include_router(
         build_callback_router(
             admin=admin,

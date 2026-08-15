@@ -27,6 +27,7 @@ from diana.application.ephemeral_knowledge import (
     EphemeralKnowledgeAugmenter,
 )
 from diana.application.gray_zone_service import GrayZoneService
+from diana.application.link import LinkCoordinator
 from diana.application.metrics_service import MetricsAggregationService
 from diana.application.memory_backfill_queue import MemoryBackfillQueue
 from diana.application.mood_engine import MoodEngine
@@ -91,6 +92,7 @@ from diana.infrastructure.db.repositories.approvals import SqlPendingApprovalSto
 from diana.infrastructure.db.repositories.deliveries import SqlPendingDeliveryStore
 from diana.infrastructure.db.repositories.escalations import SqlEscalationStore
 from diana.infrastructure.db.repositories.history import SqlMessageHistoryRepo
+from diana.infrastructure.db.repositories.link_events import SqlLinkEventStore
 from diana.infrastructure.db.repositories.promo_executions import PromoExecutionRepo
 from diana.infrastructure.db.repositories.promo_triggers import PromoTriggerRepo
 from diana.infrastructure.db.repositories.business_connections import SqlBusinessConnectionStore
@@ -346,6 +348,9 @@ class AppContainer:
     trust_budget: object | None = None
     trust_budget_wired: bool = False
     vip_trust_budget_repo: SqlVipTrustBudgetRepo | None = None
+    # Fase 6 (vínculo Lucien→Diana): link coordinator (built ALWAYS — consumed
+    # via dispatcher gated by feature_link_enabled).
+    link_coordinator: LinkCoordinator | None = None
 
 
 def build_app(
@@ -388,6 +393,18 @@ def build_app(
         bot_inst, owner_telegram_id=settings.owner_telegram_id
     )
     clock = SystemClock()
+    # Fase 6 (vínculo Lucien→Diana): built ALWAYS (trust_budget pattern) — the
+    # dispatcher gates the link callback router + middleware via feature flag.
+    link_events_store = SqlLinkEventStore(sf)
+    link_coordinator = LinkCoordinator(
+        vips=vips,
+        links=link_events_store,
+        notifier=notifier,
+        owner_telegram_id=settings.owner_telegram_id,
+        clock=clock.now,
+        disable_frozen_until=settings.link_disable_frozen_until,
+        enabled=settings.feature_link_enabled,
+    )
     # Evo-Agente Fase 5: the trust-budget service is built ALWAYS — admin
     # (correction event), profile_admin (ficha) and load_runtime_thresholds
     # consume it even when ``feature_trust_budget`` is off (the consumers gate
@@ -1047,6 +1064,9 @@ def build_app(
         memory_approval=(
             memory_approval if settings.feature_memory_enabled else None
         ),
+        link=(link_coordinator if settings.feature_link_enabled else None),
+        link_chat_id=settings.link_chat_id,
+        feature_link_enabled=settings.feature_link_enabled,
     )
 
     return AppContainer(
@@ -1102,6 +1122,7 @@ def build_app(
         trust_budget=trust_budget_service,
         trust_budget_wired=settings.feature_trust_budget,
         vip_trust_budget_repo=vip_trust_budget_repo,
+        link_coordinator=link_coordinator,
     )
 
 
