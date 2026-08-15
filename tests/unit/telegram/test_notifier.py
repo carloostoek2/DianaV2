@@ -8,7 +8,11 @@ from uuid import uuid4
 
 import pytest
 
-from diana.application.ports import DraftNotification, EscalationNotification
+from diana.application.ports import (
+    DraftNotification,
+    EscalationNotification,
+    LinkNotification,
+)
 from diana.telegram.keyboards import encode_callback, parse_callback
 from diana.telegram.notifier import AiogramOwnerNotifier
 
@@ -86,4 +90,39 @@ async def test_notify_escalation_includes_spanish_label() -> None:
     assert "chat=42" in body
     assert "VIP: estoy molesta" in body
     assert str(turn_id) in body
+
+
+@pytest.mark.asyncio
+async def test_notify_link_includes_approved_copy_and_buttons() -> None:
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=7))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    mid = await notifier.notify_link(
+        LinkNotification(display_name="Ana", username="ana_vip", event_id="evt-1")
+    )
+    assert mid == 7
+    kwargs = bot.send_message.await_args.kwargs
+    assert kwargs["chat_id"] == 999
+    body = kwargs["text"]
+    assert "ATENCIÓN" in body
+    assert "ha sido expulsado del Canal VIP." in body
+    assert "¿Quieres inhabilitarlo aquí?" in body
+    assert "Ana @ana_vip" in body
+    markup = kwargs["reply_markup"]
+    flat = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+    assert flat == ["link:expel:evt-1", "link:disable:evt-1", "link:keep:evt-1"]
+
+
+@pytest.mark.asyncio
+async def test_notify_link_without_username_shows_display_name_only() -> None:
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=7))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    await notifier.notify_link(
+        LinkNotification(display_name="Ana", username=None, event_id="evt-1")
+    )
+    kwargs = bot.send_message.await_args.kwargs
+    body = kwargs["text"]
+    assert "Ana" in body
+    assert "@" not in body
 
