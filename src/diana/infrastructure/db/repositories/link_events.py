@@ -73,7 +73,7 @@ class SqlLinkEventStore:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
 
-    async def create(self, record: LinkEventRecord) -> LinkEventRecord:
+    async def create(self, record: LinkEventRecord) -> tuple[LinkEventRecord, bool]:
         async with self._sf() as session:
             row = LinkEvent(
                 event_id=record.event_id,
@@ -93,9 +93,9 @@ class SqlLinkEventStore:
                 result = await session.execute(
                     select(LinkEvent).where(LinkEvent.event_id == record.event_id)
                 )
-                return link_event_orm_to_record(result.scalar_one())
+                return link_event_orm_to_record(result.scalar_one()), False
             await session.refresh(row)
-            return link_event_orm_to_record(row)
+            return link_event_orm_to_record(row), True
 
     async def get_by_event_id(self, event_id: str) -> LinkEventRecord | None:
         async with self._sf() as session:

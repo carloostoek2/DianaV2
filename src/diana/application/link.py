@@ -46,7 +46,11 @@ class LinkCoordinator:
         self._notifier = notifier
         self._owner_telegram_id = owner_telegram_id
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._disable_frozen_until = disable_frozen_until
+        self._disable_frozen_until = (
+            disable_frozen_until
+            if disable_frozen_until.tzinfo is not None
+            else disable_frozen_until.replace(tzinfo=UTC)
+        )
         self._enabled = enabled
 
     async def handle_kick_event(
@@ -61,15 +65,12 @@ class LinkCoordinator:
     ) -> None:
         if not self._enabled:
             return
-        if await self._links.get_by_event_id(event_id) is not None:
-            logger.info("link_dedup", extra={"event_id": event_id})
-            return
 
         rec = await self._vips.get_by_telegram_user_id(user_id)
         is_vip = rec is not None and rec.is_active
         vip_id = rec.id if is_vip else None
 
-        await self._links.create(
+        _record, created = await self._links.create(
             LinkEventRecord(
                 event_id=event_id,
                 user_id=user_id,
@@ -81,6 +82,9 @@ class LinkCoordinator:
                 state="pending",
             )
         )
+        if not created:
+            logger.info("link_dedup", extra={"event_id": event_id})
+            return
         logger.info(
             "link_received",
             extra={
@@ -140,6 +144,7 @@ class LinkCoordinator:
         if action == "expel":
             deactivated = await self._vips.deactivate(event.user_id)
             if not deactivated:
+                await self._links.set_state(event_id, "noop")
                 logger.info(
                     "link_noop",
                     extra={"reason": "deactivate_failed", "event_id": event_id, "action": action},
@@ -155,6 +160,7 @@ class LinkCoordinator:
             try:
                 await self._vips.freeze_vip(event.vip_id, frozen_until=frozen_until)
             except ValueError:
+                await self._links.set_state(event_id, "noop")
                 logger.info(
                     "link_noop",
                     extra={"reason": "vip_missing", "event_id": event_id, "action": action},

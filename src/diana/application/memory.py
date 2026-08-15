@@ -156,16 +156,16 @@ class InMemoryLinkEventStore:
     def __init__(self) -> None:
         self._events: dict[str, LinkEventRecord] = {}
 
-    async def create(self, record: LinkEventRecord) -> LinkEventRecord:
+    async def create(self, record: LinkEventRecord) -> tuple[LinkEventRecord, bool]:
         if record.event_id in self._events:
-            return self._events[record.event_id].model_copy(deep=True)
+            return self._events[record.event_id].model_copy(deep=True), False
         stored = record.model_copy(deep=True)
         if stored.id is None:
             stored = stored.model_copy(update={"id": uuid4()})
         if stored.created_at is None:
             stored = stored.model_copy(update={"created_at": datetime.now(UTC)})
         self._events[stored.event_id] = stored
-        return stored.model_copy(deep=True)
+        return stored.model_copy(deep=True), True
 
     async def get_by_event_id(self, event_id: str) -> LinkEventRecord | None:
         rec = self._events.get(event_id)
