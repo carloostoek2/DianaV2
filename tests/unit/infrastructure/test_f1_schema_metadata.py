@@ -54,6 +54,23 @@ def test_orm_exposes_exactly_thirty_four_tables() -> None:
     assert len(Base.metadata.tables) == 34
 
 
+def test_link_events_table_registers_expected_columns() -> None:
+    assert "link_events" in Base.metadata.tables
+    assert set(Base.metadata.tables["link_events"].columns.keys()) == {
+        "id",
+        "event_id",
+        "user_id",
+        "username",
+        "channel_id",
+        "channel_name",
+        "reason",
+        "vip_id",
+        "state",
+        "decision_at",
+        "created_at",
+    }
+
+
 # Evo-Agente Fase 0: pin the 4 CHECK constraints and 6 index names offline so a
 # rename in models.py / the 024 migration is caught by ``pytest tests/unit``.
 _EVO_AGENTE_CHECKS = {

@@ -158,7 +158,7 @@ class InMemoryLinkEventStore:
 
     async def create(self, record: LinkEventRecord) -> LinkEventRecord:
         if record.event_id in self._events:
-            raise ValueError(f"link event already exists: {record.event_id}")
+            return self._events[record.event_id].model_copy(deep=True)
         stored = record.model_copy(deep=True)
         if stored.id is None:
             stored = stored.model_copy(update={"id": uuid4()})

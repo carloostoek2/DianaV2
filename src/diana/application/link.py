@@ -20,6 +20,8 @@ from diana.application.ports import (
 
 logger = logging.getLogger("diana.application.link")
 
+_DEFAULT_DISABLE_FROZEN_UNTIL = datetime(2099, 12, 31, tzinfo=UTC)
+
 
 class LinkCoordinator:
     """Orchestrates the kick-link ledger without any telegram wiring.
@@ -136,12 +138,28 @@ class LinkCoordinator:
             return "ya no aplica"
 
         if action == "expel":
-            await self._vips.deactivate(event.user_id)
+            deactivated = await self._vips.deactivate(event.user_id)
+            if not deactivated:
+                logger.info(
+                    "link_noop",
+                    extra={"reason": "deactivate_failed", "event_id": event_id, "action": action},
+                )
+                return "ya no aplica"
             new_state = "decided_expel"
         elif action == "disable":
-            await self._vips.freeze_vip(
-                event.vip_id, frozen_until=self._disable_frozen_until
+            frozen_until = (
+                self._disable_frozen_until
+                if self._disable_frozen_until > self._clock()
+                else _DEFAULT_DISABLE_FROZEN_UNTIL
             )
+            try:
+                await self._vips.freeze_vip(event.vip_id, frozen_until=frozen_until)
+            except ValueError:
+                logger.info(
+                    "link_noop",
+                    extra={"reason": "vip_missing", "event_id": event_id, "action": action},
+                )
+                return "ya no aplica"
             new_state = "decided_disable"
         elif action == "keep":
             new_state = "decided_keep"

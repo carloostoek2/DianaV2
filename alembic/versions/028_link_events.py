@@ -4,10 +4,11 @@ Revision ID: 028_link_events
 Revises: 027_ephemeral_events
 Create Date: 2026-08-15
 
-One row per ``[LINK]`` kick event received from the Lucien bot. The row is
-persisted before the VIP check so the decision lifecycle (pending → notified →
-decided_* / ignored_not_vip) is reconstructible even for non-VIP users.
-``vip_id`` is a loose UUID (no FK) resolved after the event arrives.
+One row per ``[LINK]`` kick event received from the Lucien bot. The VIP is
+resolved before the row is inserted, so ``vip_id`` is populated at insert time
+for active VIPs and left NULL for non-VIPs; the decision lifecycle
+(pending → notified → decided_* / ignored_not_vip) is reconstructible either way.
+``vip_id`` is a loose UUID (no FK).
 """
 
 from __future__ import annotations

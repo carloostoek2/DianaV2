@@ -8,6 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import BigInteger, DateTime, Text, func, select, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -85,7 +86,14 @@ class SqlLinkEventStore:
                 state=record.state,
             )
             session.add(row)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                result = await session.execute(
+                    select(LinkEvent).where(LinkEvent.event_id == record.event_id)
+                )
+                return link_event_orm_to_record(result.scalar_one())
             await session.refresh(row)
             return link_event_orm_to_record(row)
 
