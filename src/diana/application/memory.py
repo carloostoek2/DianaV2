@@ -10,6 +10,7 @@ from diana.application.ports import (
     ApprovalRecord,
     BusinessConnectionRecord,
     DeliveryRecord,
+    LinkEventRecord,
     RuntimeTimerRecord,
     TurnRecord,
     VipRecord,
@@ -147,6 +148,39 @@ class InMemoryBusinessConnectionStore:
         stored = record.model_copy(deep=True)
         self._connections[stored.business_connection_id] = stored
         return stored.model_copy(deep=True)
+
+
+class InMemoryLinkEventStore:
+    """Dict-backed LinkEventStore keyed by event_id for unit tests."""
+
+    def __init__(self) -> None:
+        self._events: dict[str, LinkEventRecord] = {}
+
+    async def create(self, record: LinkEventRecord) -> LinkEventRecord:
+        if record.event_id in self._events:
+            raise ValueError(f"link event already exists: {record.event_id}")
+        stored = record.model_copy(deep=True)
+        if stored.id is None:
+            stored = stored.model_copy(update={"id": uuid4()})
+        if stored.created_at is None:
+            stored = stored.model_copy(update={"created_at": datetime.now(UTC)})
+        self._events[stored.event_id] = stored
+        return stored.model_copy(deep=True)
+
+    async def get_by_event_id(self, event_id: str) -> LinkEventRecord | None:
+        rec = self._events.get(event_id)
+        return rec.model_copy(deep=True) if rec else None
+
+    async def set_state(
+        self, event_id: str, state: str, *, decision_at: datetime | None = None
+    ) -> None:
+        rec = self._events.get(event_id)
+        if rec is None:
+            raise KeyError(f"link event not found: {event_id}")
+        updates: dict[str, Any] = {"state": state}
+        if decision_at is not None:
+            updates["decision_at"] = decision_at
+        self._events[event_id] = rec.model_copy(update=updates)
 
 
 class InMemoryPendingApprovalStore:
@@ -625,6 +659,7 @@ __all__ = [
     "InMemoryPendingApprovalStore",
     "InMemoryPendingDeliveryStore",
     "InMemoryBusinessConnectionStore",
+    "InMemoryLinkEventStore",
     "InMemoryRuntimeTimerStore",
     "InMemoryTraceReaderWriter",
     "InMemoryTurnStore",

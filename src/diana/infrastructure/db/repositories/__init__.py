@@ -50,6 +50,10 @@ from diana.infrastructure.db.repositories.vip_trust_budget import (
     SqlVipTrustBudgetRepo,
     vip_trust_budget_orm_to_record,
 )
+from diana.infrastructure.db.repositories.link_events import (
+    SqlLinkEventStore,
+    link_event_orm_to_record,
+)
 
 __all__ = [
     "SqlCalibrationDataSource",
@@ -58,6 +62,7 @@ __all__ = [
     "SqlEmotionalSignalLogRepo",
     "SqlEscalationStore",
     "SqlLearningMetricsRepo",
+    "SqlLinkEventStore",
     "SqlMetricsDataSource",
     "SqlMessageHistoryRepo",
     "SqlOwnerMarkStore",
@@ -76,6 +81,7 @@ __all__ = [
     "vip_orm_to_record",
     "persona_version_orm_to_record",
     "emotional_signal_log_orm_to_record",
+    "link_event_orm_to_record",
     "turn_category_log_orm_to_record",
     "vip_mood_state_orm_to_record",
     "vip_profile_history_orm_to_record",

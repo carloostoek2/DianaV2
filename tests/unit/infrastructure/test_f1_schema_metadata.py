@@ -48,10 +48,10 @@ SEED_KEYS = frozenset(
 )
 
 
-def test_orm_exposes_exactly_thirty_three_tables() -> None:
-    """8 F1 + 8 F2 + 3 F3 + owner_marks + business_connections + runtime_timers + persona_versions + daily_message_limits + atencion_cycles + backfill_queue + 6 evo-agente (Fase 0) + ephemeral_events = 33 total."""
+def test_orm_exposes_exactly_thirty_four_tables() -> None:
+    """8 F1 + 8 F2 + 3 F3 + owner_marks + business_connections + runtime_timers + persona_versions + daily_message_limits + atencion_cycles + backfill_queue + 6 evo-agente (Fase 0) + ephemeral_events + link_events = 34 total."""
     assert F1_TABLES.issubset(set(Base.metadata.tables.keys()))
-    assert len(Base.metadata.tables) == 33
+    assert len(Base.metadata.tables) == 34
 
 
 # Evo-Agente Fase 0: pin the 4 CHECK constraints and 6 index names offline so a

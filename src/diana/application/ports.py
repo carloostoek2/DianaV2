@@ -119,6 +119,16 @@ class DraftNotification(BaseModel):
     reply_markup_spec: dict[str, Any] = Field(default_factory=dict)
 
 
+class LinkNotification(BaseModel):
+    """Owner DM payload for a Lucien→Diana kick link (plain data, no aiogram)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str
+    username: str | None = None
+    event_id: str
+
+
 class EscalationNotification(BaseModel):
     """Owner DM payload for escalation."""
 
@@ -130,6 +140,24 @@ class EscalationNotification(BaseModel):
     vip_text: str | None = None
     tipo: str = "semantica"
     business_connection_id: str | None = None
+
+
+class LinkEventRecord(BaseModel):
+    """link_events row shape (ledger for Lucien→Diana kick events)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID | None = None
+    event_id: str
+    user_id: int
+    username: str | None = None
+    channel_id: int | None = None
+    channel_name: str | None = None
+    reason: str
+    vip_id: UUID | None = None
+    state: str = "pending"
+    decision_at: datetime | None = None
+    created_at: datetime | None = None
 
 
 class DoctrineNotification(BaseModel):
@@ -369,6 +397,19 @@ class VipStore(Protocol):
 
 
 @runtime_checkable
+class LinkEventStore(Protocol):
+    """Persistence for the Lucien→Diana kick link ledger."""
+
+    async def create(self, record: LinkEventRecord) -> LinkEventRecord: ...
+
+    async def get_by_event_id(self, event_id: str) -> LinkEventRecord | None: ...
+
+    async def set_state(
+        self, event_id: str, state: str, *, decision_at: datetime | None = None
+    ) -> None: ...
+
+
+@runtime_checkable
 class OwnerNotifierPort(Protocol):
     """Notify the owner via DM. Never accepts aiogram types."""
 
@@ -381,6 +422,8 @@ class OwnerNotifierPort(Protocol):
     async def notify_doctrine(
         self, payload: DoctrineNotification
     ) -> int | None: ...
+
+    async def notify_link(self, payload: LinkNotification) -> int | None: ...
 
 
 @runtime_checkable
@@ -1079,6 +1122,9 @@ __all__ = [
     "EscalationStore",
     "GrayZoneQueryView",
     "GrayZoneServicePort",
+    "LinkEventRecord",
+    "LinkEventStore",
+    "LinkNotification",
     "MemoryInsert",
     "MessageHistoryWriter",
     "OwnerNotifierPort",
