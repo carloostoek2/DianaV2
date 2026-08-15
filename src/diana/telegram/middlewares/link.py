@@ -35,41 +35,58 @@ class LinkCoordinatorMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        # Pass-through: flag off, no link, no chat, not a Message, or not a
-        # business message. Message-only no-op on message/callback observers.
+        # Pass-through: flag off, no link, no chat, or not a Message.
+        # Message-only no-op on message/callback observers.
         if not self._enabled or self._link is None or self._link_chat_id is None:
             return await handler(event, data)
         if not isinstance(event, Message):
-            return await handler(event, data)
-        bc = data.get("business_connection_id") or getattr(
-            event, "business_connection_id", None
-        )
-        if not bc:
             return await handler(event, data)
         chat = getattr(event, "chat", None)
         chat_id = getattr(chat, "id", None) if chat else None
         text = getattr(event, "text", None) or ""
         if chat_id != self._link_chat_id or not text.startswith("[LINK]"):
             return await handler(event, data)
-        # Coordination traffic: consume unconditionally (return None), so it
-        # never reaches TurnOrchestrator / message_history / history.append.
+        # Coordination traffic: parse and validate only. Consume unconditionally
+        # (return None) so it never reaches TurnOrchestrator / message_history /
+        # history.append. The coordinator call runs OUTSIDE the try so real
+        # application errors propagate to ErrorHandlerMiddleware instead of being
+        # mislabeled link_malformed.
         try:
             payload = json.loads(text[len("[LINK]") :])
+            if not isinstance(payload, dict):
+                raise ValueError("payload is not an object")
             if payload.get("event") != "vip_kicked":
                 raise ValueError("unexpected event")
-            await self._link.handle_kick_event(
-                event_id=str(payload["event_id"]),
-                user_id=int(payload["user_id"]),
-                username=payload.get("username"),
-                reason=str(payload["reason"]),
-                channel_id=payload.get("channel_id"),
-                channel_name=payload.get("channel_name"),
-            )
+            event_id = payload["event_id"]
+            reason = payload["reason"]
+            if not isinstance(event_id, str) or not event_id:
+                raise ValueError("invalid event_id")
+            if not isinstance(reason, str) or not reason:
+                raise ValueError("invalid reason")
+            user_id = int(payload["user_id"])
+            username = payload.get("username")
+            if username is not None and not isinstance(username, str):
+                username = str(username)
+            channel_id = payload.get("channel_id")
+            if channel_id is not None:
+                channel_id = int(channel_id)
+            channel_name = payload.get("channel_name")
+            if channel_name is not None and not isinstance(channel_name, str):
+                channel_name = str(channel_name)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             logger.info(
                 "link_malformed",
                 extra={"chat_id": chat_id, "error": str(exc)},
             )
+            return None
+        await self._link.handle_kick_event(
+            event_id=event_id,
+            user_id=user_id,
+            username=username,
+            reason=reason,
+            channel_id=channel_id,
+            channel_name=channel_name,
+        )
         return None
 
 
