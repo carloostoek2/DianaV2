@@ -70,7 +70,7 @@ def test_bc_lifecycle_middleware_is_minimal() -> None:
     assert live_bc == ("ErrorHandlerMiddleware", "LoggingMiddleware")
     assert "FreezeCheckMiddleware" not in live_bc
 
-    # Other observers must remain unchanged (9-middleware chain).
+    # Other observers must remain unchanged (10-middleware chain).
     live_msg = extract_observer_middleware_names(wiring.dispatcher.business_message)
     assert live_msg[0] == "ErrorHandlerMiddleware"
     assert "FreezeCheckMiddleware" in live_msg

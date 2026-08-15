@@ -104,10 +104,11 @@ async def test_notify_link_includes_approved_copy_and_buttons() -> None:
     kwargs = bot.send_message.await_args.kwargs
     assert kwargs["chat_id"] == 999
     body = kwargs["text"]
-    assert "ATENCIÓN" in body
-    assert "ha sido expulsado del Canal VIP." in body
-    assert "¿Quieres inhabilitarlo aquí?" in body
-    assert "Ana @ana_vip" in body
+    assert body == (
+        "⚠️ ATENCIÓN ⚠️\n"
+        "El suscriptor Ana @ana_vip ha sido expulsado del Canal VIP. "
+        "¿Quieres inhabilitarlo aquí?"
+    )
     markup = kwargs["reply_markup"]
     flat = [btn.callback_data for row in markup.inline_keyboard for btn in row]
     assert flat == ["link:expel:evt-1", "link:disable:evt-1", "link:keep:evt-1"]

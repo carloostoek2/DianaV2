@@ -42,7 +42,9 @@ async def _seed_event(
 
 
 def _coordinator(
-    *, enabled: bool = True,
+    *,
+    enabled: bool = True,
+    disable_frozen_until: datetime = DISABLE_FROZEN_UNTIL,
 ) -> tuple[
     LinkCoordinator,
     InMemoryVipStore,
@@ -58,7 +60,7 @@ def _coordinator(
         notifier=notifier,
         owner_telegram_id=999001,
         clock=lambda: CLOCK_NOW,
-        disable_frozen_until=DISABLE_FROZEN_UNTIL,
+        disable_frozen_until=disable_frozen_until,
         enabled=enabled,
     )
     return coord, vips, links, notifier
@@ -162,6 +164,50 @@ async def test_handle_kick_event_flag_off_noop() -> None:
     )
     assert await links.get_by_event_id("evt-1") is None
     assert notifier.links == []
+
+
+@pytest.mark.asyncio
+async def test_handle_kick_event_inactive_vip_ignored(
+    coordinator: tuple,
+) -> None:
+    coord, vips, links, notifier = coordinator
+    await vips.add(12345, display_name="Ana")
+    await vips.deactivate(12345)
+    await coord.handle_kick_event(
+        event_id="evt-1",
+        user_id=12345,
+        username="@ana",
+        reason="r",
+        channel_id=777,
+        channel_name="Canal VIP",
+    )
+    rec = await links.get_by_event_id("evt-1")
+    assert rec is not None
+    assert rec.state == "ignored_not_vip"
+    assert rec.vip_id is None
+    assert notifier.links == []
+
+
+@pytest.mark.asyncio
+async def test_handle_kick_event_vip_without_display_name_uses_user_id(
+    coordinator: tuple,
+) -> None:
+    coord, vips, links, notifier = coordinator
+    await vips.add(12345)  # display_name defaults to None
+    await coord.handle_kick_event(
+        event_id="evt-1",
+        user_id=12345,
+        username="@ana",
+        reason="r",
+        channel_id=777,
+        channel_name="Canal VIP",
+    )
+    rec = await links.get_by_event_id("evt-1")
+    assert rec is not None
+    assert rec.state == "notified"
+    assert notifier.links == [
+        LinkNotification(display_name="12345", username="@ana", event_id="evt-1")
+    ]
 
 
 # --- handle_decision ---
@@ -317,3 +363,30 @@ async def test_handle_decision_flag_off_noop_no_mutation() -> None:
     updated = await vips.get_by_telegram_user_id(12345)
     assert updated is not None
     assert updated.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_handle_decision_event_not_found_returns_noop(
+    coordinator: tuple,
+) -> None:
+    coord, vips, links, _ = coordinator
+    reply = await coord.handle_decision("missing-evt", "expel")
+    assert reply == "ya no aplica"
+    assert await links.get_by_event_id("missing-evt") is None
+
+
+@pytest.mark.asyncio
+async def test_handle_decision_disable_falls_back_to_default_when_config_past() -> None:
+    coord, vips, links, _ = _coordinator(
+        disable_frozen_until=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    ana = await vips.add(12345, display_name="Ana")
+    await _seed_event(links, event_id="evt-1", vip_id=ana.id)
+    reply = await coord.handle_decision("evt-1", "disable")
+    assert reply == "VIP inhabilitado."
+    rec = await links.get_by_event_id("evt-1")
+    assert rec is not None
+    assert rec.state == "decided_disable"
+    updated = await vips.get_by_telegram_user_id(12345)
+    assert updated is not None
+    assert updated.frozen_until == datetime(2099, 12, 31, tzinfo=UTC)
