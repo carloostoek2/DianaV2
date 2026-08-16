@@ -365,3 +365,30 @@ async def test_handle_mark_gold_and_reprimand_reject_non_owner() -> None:
             scope="global",
             actor_id=OTHER_USER,
         )
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_with_candidate_returns_delivery_and_uuid() -> None:
+    import inspect
+
+    from diana.application.admin_service import AdminService
+    from diana.application.ports import DeliveryResult
+
+    staging, _ = _real_staging()
+    g, turn, staging, _ = await _pending_vip_draft(staging=staging)
+    delivery, candidate_id = await g["admin"].handle_correct_with_candidate(
+        turn.id, "fixed text", actor_id=OWNER_ID
+    )
+    assert delivery is not None and delivery.success
+    assert candidate_id is not None
+
+    staging2, _ = _real_staging()
+    g2, turn2, _, _ = await _pending_vip_draft(staging=staging2)
+    only_delivery = await g2["admin"].handle_correct(
+        turn2.id, "also fixed", actor_id=OWNER_ID
+    )
+    assert not isinstance(only_delivery, tuple)
+    assert only_delivery is not None and hasattr(only_delivery, "success")
+
+    ann = inspect.signature(AdminService.handle_correct).return_annotation
+    assert ann == DeliveryResult | None or "tuple" not in str(ann).lower()

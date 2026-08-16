@@ -36,6 +36,7 @@ from diana.telegram.handlers.callbacks import (
     SESSION_EXPIRED_UX,
     CorrectSessionStore,
 )
+from diana.telegram.keyboards import reprimand_combo_keyboard
 
 DOCTRINE_SESSION_EXPIRED_UX = (
     "Sesión de doctrina expirada — presiona Responder consulta de nuevo"
@@ -309,9 +310,37 @@ async def handle_admin_text(
     # Free-text correct follow-up takes priority when session is open.
     # resolve distinguishes expired (UX) vs never-started (silent ignore).
     state, pending_turn = correct_sessions.resolve(actor_id)
+    if state == "expired_combo" and not stripped.startswith("/"):
+        return "reprimand_lesson_not_saved"
     if state == "expired" and not stripped.startswith("/"):
         return "session_expired"
     if state == "live" and pending_turn is not None and not stripped.startswith("/"):
+        sess = correct_sessions.get_session(actor_id)
+        if sess is not None and sess.mode == "reprimand" and sess.phase == "reprimand_combo":
+            return "reprimand_combo_use_buttons"
+        if sess is not None and sess.mode == "reprimand":
+            try:
+                delivery, candidate_id = await admin.handle_correct_with_candidate(
+                    pending_turn, stripped, actor_id=actor_id
+                )
+            except OwnerAuthError:
+                correct_sessions.cancel(actor_id)
+                return "forbidden"
+            except ValueError:
+                return "invalid_correct"
+            if delivery is None or getattr(delivery, "cancelled", False):
+                correct_sessions.cancel(actor_id)
+                correct_sessions.cancel_turn(pending_turn)
+                return "stale"
+            if candidate_id is None:
+                correct_sessions.cancel(actor_id)
+                return "reprimand_lesson_not_saved"
+            correct_sessions.capture_reprimand(
+                actor_id,
+                candidate_id=candidate_id,
+                corrected_text=stripped,
+            )
+            return "awaiting_reprimand_combo"
         try:
             result = await admin.handle_correct(
                 pending_turn, stripped, actor_id=actor_id
@@ -887,6 +916,11 @@ def build_admin_router(
         if state == "expired":
             await message.answer(SESSION_EXPIRED_UX)
             return
+        if state == "expired_combo":
+            await message.answer(
+                "No se guardó la lección. El texto ya se envió al VIP."
+            )
+            return
         status = await handle_admin_text(
             text=message.text or "",
             actor_id=message.from_user.id if message.from_user else None,
@@ -907,6 +941,21 @@ def build_admin_router(
             await message.answer("Error al enviar — inténtalo de nuevo desde los botones del borrador")
         elif status == "session_expired":
             await message.answer(SESSION_EXPIRED_UX)
+        elif status == "awaiting_reprimand_combo":
+            turn_id = sessions.get(actor_id)
+            markup = reprimand_combo_keyboard(turn_id) if turn_id is not None else None
+            await message.answer(
+                "Texto enviado al VIP. Elige cómo guardar la lección:",
+                reply_markup=markup,
+            )
+        elif status == "reprimand_combo_use_buttons":
+            await message.answer(
+                "Usa los botones para guardar la lección. El texto ya se envió."
+            )
+        elif status == "reprimand_lesson_not_saved":
+            await message.answer(
+                "No se guardó la lección. El texto ya se envió al VIP."
+            )
 
     return router
 

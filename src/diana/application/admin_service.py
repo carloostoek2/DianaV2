@@ -165,6 +165,10 @@ class AdminService:
         self._trust_budget = trust_budget
         self._feature_quality_feedback_enabled = bool(feature_quality_feedback_enabled)
 
+    @property
+    def quality_feedback_enabled(self) -> bool:
+        return self._feature_quality_feedback_enabled
+
     def set_post_turn_hook(
         self,
         hook: Callable[[UUID, int], Awaitable[None]] | None,
@@ -673,6 +677,17 @@ class AdminService:
             turn_id, corrected_text, actor_id=actor_id
         )
         return delivery
+
+    async def handle_correct_with_candidate(
+        self,
+        turn_id: UUID,
+        corrected_text: str,
+        *,
+        actor_id: int | None = None,
+    ) -> tuple[DeliveryResult | None, UUID | None]:
+        return await self._correct_core(
+            turn_id, corrected_text, actor_id=actor_id
+        )
 
     async def handle_mark_gold(
         self,

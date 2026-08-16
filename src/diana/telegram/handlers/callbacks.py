@@ -344,6 +344,22 @@ async def dispatch_owner_callback(
                 return await admin.classify_approve_noop(turn_id)
             correct_sessions.start(actor_id, turn_id)
             return "awaiting_correct"
+        if action == "reprimand":
+            if actor_id is None:
+                raise OwnerAuthError("missing actor")
+            admin._assert_owner(actor_id)  # noqa: SLF001 — intentional thin gate
+            if not await admin.is_pending_approval(turn_id):
+                correct_sessions.cancel_turn(turn_id)
+                return await admin.classify_approve_noop(turn_id)
+            if not admin.quality_feedback_enabled:
+                return "quality_feedback_disabled"
+            approval = await admin.get_approval(turn_id)
+            if approval is None or approval.vip_id is None:
+                return "quality_feedback_not_vip"
+            correct_sessions.start(
+                actor_id, turn_id, mode="reprimand", chat_id=approval.chat_id
+            )
+            return "awaiting_reprimand"
         if action == "escalate":
             applied = await admin.handle_owner_escalate(turn_id, actor_id=actor_id)
             correct_sessions.cancel_turn(turn_id)
@@ -680,6 +696,19 @@ def build_callback_router(
                     try:
                         await query.message.answer(
                             f"Envía el texto corregido para el turno {data.split(':', 1)[-1]}"
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_callback_followup_failed",
+                            extra={"callback_data": data, "actor_id": actor_id},
+                        )
+                return
+            if status == "awaiting_reprimand":
+                if query.message:
+                    try:
+                        await query.message.answer(
+                            "Envía el texto corregido. El VIP lo recibe al instante; "
+                            "después eliges cómo guardar la lección."
                         )
                     except Exception:
                         logger.exception(
