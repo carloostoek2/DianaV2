@@ -1,7 +1,7 @@
 ---
 title: LLM Provider
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 type: entity
 tags: [modulo, decision]
 sources: [../../AGENTS.md, ../../docs/SPEC-1.1.md]
@@ -19,7 +19,7 @@ Abstracción de proveedores de modelo de lenguaje (ADR-006). Interfaz abstracta 
 ## Proveedores
 
 - **Primario:** DeepSeek (LLM principal del sistema).
-- **Secundario:** Anthropic (Claude) — respaldo configurable.
+- **Secundario:** Anthropic (Claude) — respaldo de diseño, **no implementado**.
 
 ## Reglas
 
@@ -27,8 +27,13 @@ Abstracción de proveedores de modelo de lenguaje (ADR-006). Interfaz abstracta 
 - Los prompts de negocio viven en el Constructor de Contexto ([[pipeline-cognitivo]]), no en el provider.
 - Generación estructurada (Pydantic v2) para objetos como la Comprensión y el [[perfil-evaluacion-multidimensional]].
 
-## Implementación real (2026-08)
+## Implementación real (2026-08-11, actualizado 2026-08-16)
 
-`llm/` tiene 2 archivos: `deepseek.py` (cliente OpenAI-compatible vía httpx, solo I/O) y `fake.py` (FakeLLM scriptable para tests). **Solo DeepSeek está implementado** — Anthropic queda como respaldo de diseño no implementado. La generación estructurada (Pydantic) alimenta Comprensión y perfil de evaluación.
+`llm/` sigue con **2** archivos: `deepseek.py` (cliente OpenAI-compatible vía httpx, solo I/O) y `fake.py` (FakeLLM scriptable para tests). **Solo DeepSeek está implementado** — no hay cliente Anthropic en el árbol. Sin commits en `llm/` desde 2026-08-11.
 
-^[src/diana/llm/*, docs/SPEC-1.1.md §1]
+Toggle de thinking (landed 2026-08-09, omitido en el inventario del 11): `DeepSeekProvider(thinking_enabled=...)` cableado a `settings.llm_thinking_enabled` (default `True`).
+
+- `generate` (borradores de texto libre): envía `"thinking": {"type": "enabled"|"disabled"}`. Con thinking on, timeout mínimo 120 s y `max_tokens` default 4096 (si no, 1024). Nunca usa `reasoning_content` como draft.
+- `generate_structured` (Analista / Evaluador y demás JSON): **siempre** `"thinking": {"type": "disabled"}`, independiente del flag — el CoT puede agotar tokens y dejar `content` vacío.
+
+^[src/diana/llm/*, src/diana/config/settings.py, docs/SPEC-1.1.md §1]

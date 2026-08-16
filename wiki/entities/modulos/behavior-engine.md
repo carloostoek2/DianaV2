@@ -1,7 +1,7 @@
 ---
 title: Behavior Engine
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 type: entity
 tags: [modulo, contrato]
 sources: [../../AGENTS.md, ../../docs/SPEC-1.1.md, ../../docs/REQUERIMIENTOS.md]
@@ -34,8 +34,10 @@ Módulo de **actuación human-like** — infraestructura pura, **fuera de la cog
 - Cancelación: se aborta la asyncio.Task y se marca `cancelled` en `pending_deliveries`.
 - FakeDelivery para Sandbox (BR-06: no contamina producción).
 
-## Implementación real (2026-08)
+## Implementación real (2026-08-11, actualizado 2026-08-16)
 
-`behavior/` tiene 6 archivos: `engine.py` (entrega human-like, nunca decide ni llama LLM), `ports.py` (puertos I/O, sin LLM ni módulos cognitivos), `quirks.py` (helpers puros de quirks, H3.6), `split.py` (helpers puros de división de texto, H3.6), `timer_manager.py` (mapa en proceso de tareas de entrega por chat_id), `fake.py` (dobles de test).
+`behavior/` sigue con **6** archivos (sin altas ni bajas desde el freeze): `engine.py` (entrega human-like, nunca decide ni llama LLM), `ports.py` (puertos I/O, sin LLM ni módulos cognitivos), `quirks.py` (helpers puros de quirks, H3.6), `split.py` (helpers puros de división de texto, H3.6), `timer_manager.py` (mapa en proceso de tareas de entrega por chat_id), `fake.py` (dobles de test).
+
+Cambio post-freeze (2026-08-12, `ecd6d79`): `ports.py` exporta `ProgressKind` (`"reading"` | `"typing"`) y `DeliveryProgressCallback`. `BehaviorEngine.deliver(..., on_progress=)` notifica esas etapas en best-effort; un fallo del callback no aborta la entrega. La capa Telegram usa esto para el progreso en vivo del borrador (leer → escribiendo → enviado) sin que el engine conozca aiogram. Ver [[telegram-layer]] y [[application-services]].
 
 ^[src/diana/behavior/*, AGENTS.md §2.1]

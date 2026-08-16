@@ -1,6 +1,6 @@
 # Product Clarification — Owner Admin, Real VIP Profiles & Sandbox
 
-**Status:** **IMPLEMENTED** (pool `owner-admin-sandbox` closed 2026-07-27)  
+**Status:** **IMPLEMENTED** (pool `owner-admin-sandbox` closed 2026-07-27) · **menu + UX harden live** (2026-08-12) · **quality feedback gated** (2026-08-16, default OFF)  
 **Planning lock:** clarified 2026-07-27 · product rules below remain the source of truth  
 **Project:** DianaV2  
 **Source:** owner conversation + residual inventory (post `residuals-polish`) + v1 reference repo `../diana`  
@@ -16,7 +16,18 @@
 | Sandbox catalog + session | item3 sandbox-core | `src/diana/config/sandbox_profiles.json` (6 keys), `SandboxService` |
 | Sandbox admin + isolation | item4 sandbox-admin | `/sandbox *`, auth bypass, fixture inject, real delivery under session, learning/`should_persist` skip, recontact skip |
 
-Feature flag: `FEATURE_SANDBOX_ENABLED` / `feature_sandbox_enabled` (default **false**). Owner VIP admin commands are always-on (owner + private DM).
+Feature flags (defaults **false** unless noted):
+
+| Flag | Default | What it gates |
+|---|---|---|
+| `FEATURE_SANDBOX_ENABLED` | **false** | Sandbox menu section + `/sandbox *` |
+| `FEATURE_QUALITY_FEEDBACK_ENABLED` | **false** | Destacar / Reprender on **VIP drafts only** |
+| `FEATURE_PERSONA_ADMIN_ENABLED` | **false** | “Personalidad y reglas” in the owner menu |
+| `FEATURE_GRAY_ZONE_ENABLED` | **false** | Doctrine consult DM (`dr:` / `dx:` / `de:`) |
+| `FEATURE_STAGING_ENABLED` | **false** | Staging queue (promote / two-step discard) |
+| `LLM_THINKING_ENABLED` | **true** | DeepSeek thinking on free-text drafts only (not a menu button) |
+
+Owner VIP admin (list / add / rename / facts / notes) is always-on (owner + private DM). Slash commands remain as aliases; the **owner menu is the primary surface**.
 
 ---
 
@@ -25,10 +36,11 @@ Feature flag: `FEATURE_SANDBOX_ENABLED` / `feature_sandbox_enabled` (default **f
 | # | Rule |
 |---|------|
 | G1 | **Owner is the only operator** of subscribers: add, edit, delete, and all administrative actions. No self-serve VIP admin; no automatic promotion of real subscriber data without owner path. |
-| G2 | **All admin/ops UX is via Telegram.** Start with **commands**; target state is a **single owner menu** that contains every admin function (including sandbox as a section). |
+| G2 | **All admin/ops UX is via Telegram.** The primary surface is the **owner menu** (`/start` or `/menu` → `🌸 Panel de Diana`). Slash commands (`/add_vip`, `/vip_*`, `/sandbox`, `/turnos`, `/fp`, `/resumen`, `/staging`) stay as owner-only aliases. Draft approve/correct/escalate (and gated Destacar/Reprender) live on the draft DM, not in the menu. |
 | G3 | **Day-0 may have zero real subscribers.** Real users appear only when the owner adds them. No production seed of real VIP rows is required. |
 | G4 | **Sandbox uses configured test profiles** (fixtures), separate from real subscriber lifecycle. |
 | G5 | Layer limits in `AGENTS.md` still apply (Director deterministic, Behavior only acts, Learning post-turn only, feature flags for gated surfaces). |
+| G6 | **Quality feedback is VIP-scoped and flag-gated.** Destacar / Reprender never appear on atención drafts. With the flag off, Aprobar / Corregir / Escalar is unchanged. Reprender delivers the corrected text immediately; the follow-up combo only promotes the lesson (it does not send again). |
 
 ---
 
@@ -125,7 +137,7 @@ Repo: `/home/ubuntu/repos/diana` (v1)
 
 Owner-only, fail-closed (same as other admin commands).
 
-Long-term: same actions as **buttons under owner `/menu` → Sandbox**.
+**Current (2026-08):** the same actions live under owner `/menu` → **🧪 Modo de prueba** (forward a chat to activate, then pick a fixture). `/sandbox *` remains as the command alias. The section is hidden/no-op when `FEATURE_SANDBOX_ENABLED=false`.
 
 ### 4.4 Isolation decision (chosen)
 
@@ -143,6 +155,8 @@ Long-term: same actions as **buttons under owner `/menu` → Sandbox**.
 
 **Rejected for v1 of this work:** separate Postgres schema/DB for sandbox (heavier ops). Can revisit if multi-tenant compliance demands it.
 
+Quality feedback follows the same isolation: Destacar / Reprender **deliver** in sandbox but **do not insert** gold examples or promote lessons (`should_persist` false).
+
 ### 4.5 How fixtures feed the cognitive pipeline
 
 When a message arrives for a `chat_id` with active sandbox session:
@@ -158,22 +172,28 @@ Exact injection point (ContextBuilder vs retriever stub override) is an implemen
 
 ## 5. Unified admin flow (same product slice)
 
-One owner-facing **admin system** (commands → menu), not separate apps:
+One owner-facing **admin system**. The menu is live; commands are aliases.
 
 ```
 Owner DM (Telegram)
-  └── Admin (owner-only)
-        ├── Subscribers (real VIP CRUD)
-        │     ├── add / list / remove / rename (fixed fields)
-        │     └── profile: facts + notes (enrichable only)
-        ├── Sandbox (test panel)
-        │     ├── on / off / perfil / perfiles / estado / reset
-        │     └── frozen catalog (ported from v1)
-        ├── Existing: traces, metrics, doctrine, /fp, approve flows, …
-        └── Future menu: all of the above as sections
+  └── /start | /menu  →  🌸 Panel de Diana
+        ├── 👥 Mis VIPs — register / list / ficha (facts+notes+per-item delete) / rename / pause / deactivate
+        ├── 💬 Revisar mensajes — pointer to draft buttons; 🚩 marcar falsa alarma
+        ├── 🧪 Modo de prueba — on / off / perfiles / estado / reset  (FEATURE_SANDBOX_ENABLED)
+        ├── 📊 Métricas y aprendizaje — weekly summary + JSON document export; staging queue
+        ├── 🔍 Historial y diagnóstico — recent turns + trace detail (back-to-draft from the approval DM)
+        ├── 📅 Eventos temporales — time-bounded owner-injected context
+        ├── 🎭 Personalidad y reglas — persona catalog per channel  (FEATURE_PERSONA_ADMIN_ENABLED)
+        ├── ⚙️ Configuración — training mode toggle
+        └── Draft DMs (not a menu section)
+              ├── ✅ Aprobar / ✏️ Corregir / ⚠️ Escalar  (always)
+              ├── Destacar / Reprender  (FEATURE_QUALITY_FEEDBACK_ENABLED + VIP only)
+              ├── versions + ♻️ Regenerar (live “Regenerando…”)
+              ├── 🔍 Traza (returns to this draft) / 📝 Agregar nota (TTL + /cancelar)
+              └── live delivery progress on approve: leído → escribiendo → enviado
 ```
 
-**Scope for the upcoming plan:** implement **subscribers enrichable profile write + full VIP CRUD gaps + sandbox catalog + commands/panel**, under the same admin router patterns. Menu section can be thin wrappers over the same pure handlers.
+Gray-zone DMs (when `FEATURE_GRAY_ZONE_ENABLED`): **Responder consulta** (`dr:` free-text, 15 min) / **Usar borrador** / **Escalar**. If the VIP doctrine DM fails to send, the VIP is unfrozen and the turn demotes to a normal approve draft (`vip_doctrine_notify_failed`).
 
 ---
 
@@ -197,6 +217,7 @@ Owner DM (Telegram)
 - Auto-creating real VIPs from sandbox sessions  
 - Naturalness multi-retry / schedule REAL (other residuals)  
 - Full rich FakeDelivery product UX beyond safe non-send (unless already supported by `global_mode`)  
+- Retroactive Destacar / Reprender on already-delivered history (via `/traza`) — out of scope for quality-feedback v1  
 
 ---
 
@@ -220,7 +241,7 @@ Owner DM (Telegram)
 | 2 | Sandbox session **does not** write enrichable learning/staging as if real | **met** |
 | 3 | Owner can add a real VIP and edit **facts/notes** only; fixed identity fields remain outside that editor | **met** |
 | 4 | Fixture list matches v1 keys (6 profiles) with adapted content | **met** |
-| 5 | All actions owner-only via Telegram commands; menu can call the same handlers | **met** (+ private DM gate) |
+| 5 | All actions owner-only via Telegram commands; menu can call the same handlers | **met** (+ private DM gate; menu is now the primary surface) |
 | 6 | `FEATURE_SANDBOX_ENABLED=false` hides/no-ops sandbox surface | **met** |
 
 ---
@@ -231,11 +252,25 @@ Owner DM (Telegram)
 - v1 command surface: `/home/ubuntu/repos/diana/handlers/admin_auth.py` (`_handle_sandbox_command`)  
 - v1 fixture shapes: `/home/ubuntu/repos/diana/tests/unit/test_sandbox_service.py`  
 - DianaV2 implementation: `src/diana/application/sandbox.py`, `sandbox_knowledge.py`, `profile_admin_service.py`, `profile_content.py`, `src/diana/config/sandbox_profiles.json`, admin `/vip_*` `/list_vips` `/rename_vip` `/sandbox`  
+- Owner menu + draft UX: `src/diana/telegram/handlers/menu.py`, `callbacks.py`, `keyboards.py`, `docs/UX.md`  
+- Quality feedback: `docs/SPEC-FEEDBACK.md`, `AdminService.handle_mark_gold` / `handle_reprimand`  
 - Architecture limits: `AGENTS.md`  
 - Pool close: `.planning/quick/owner-admin-sandbox/POOL-SUMMARY.md`  
 - Prior residual close: `.planning/quick/residuals-polish/`
 
 ---
 
+## 11. Current owner control (2026-08-16) — what landed after the pool
+
+Product-facing, not a second admin app:
+
+- **Display name on drafts.** The approval DM header uses the VIP `display_name` (fallback: `chat_id`).
+- **Honest no-ops.** Stale Aprobar / Corregir / Escalar toasts say whether the turn was replaced, already sent, resolved, cancelled, missing, or frozen.
+- **Live approve / regen.** Approve edits the same message (read → typing → sent). Regen shows `♻️ Regenerando…` only after the run actually starts.
+- **Media inbound tags.** Photos/videos/files arrive as `[imagen]`, `[video]`, `[audio]`, `[voz]`, `[documento]`, `[gif]`, `[sticker]` plus caption, so the model never sees a blank turn.
+- **Menu harden (A1–A13).** Note-from-draft has TTL + `/cancelar`. Wizards survive bad input. Callback spinner clears first. Staging discard is two-step. Errors keep a Back button. Expired sessions warn. Metrics export is a document. Ficha can delete notes/facts. Stale VIP buttons redirect to the list.
+- **Destacar / Reprender** — see G6. Flag default **OFF**. Gold-first retrieval and `vip_id` visibility on examples/policies are always in the schema (migration `029_feedback_quality`); the buttons are what the flag hides.
+- **Doctrine parachute (VIP).** Notify failure unfreezes and demotes to approve; the owner still gets a draft instead of a silent 24h freeze.
+
 **Document owner:** Architecture / Product  
-**Next step:** ops gradual enablement of `FEATURE_SANDBOX_ENABLED` when ready; product-driven admin follow-ups (freeze/pause cmds, staging composition wire) only if asked.
+**Next step:** ops gradual enablement of `FEATURE_SANDBOX_ENABLED` and, separately, `FEATURE_QUALITY_FEEDBACK_ENABLED` when the owner wants Destacar/Reprender in production. Do not turn quality feedback on for atención.

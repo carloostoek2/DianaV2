@@ -1,7 +1,7 @@
 ---
 title: Aprendizaje Post-Turno
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 type: concept
 tags: [aprendizaje, contrato, flujo]
 sources: [../../docs/REQUERIMIENTOS.md, ../../AGENTS.md]
@@ -21,12 +21,15 @@ El aprendizaje ocurre **siempre después de terminar el turno**, nunca durante e
 
 ## Staging Area (REQ-TRN-07, BR-13, REQ-NFR-16)
 
-Toda corrección entra primero a una zona intermedia de candidatos (tabla `staging_candidates`). Solo pasa al banco vivo de ejemplos tras **confirmación explícita** de la dueña (botón "usar como ejemplo"). **Nunca se promueve automáticamente.**
+La corrección clásica entra primero a una zona intermedia (`staging_candidates`) y solo pasa al banco vivo tras **confirmación explícita** de la dueña. **Nunca se promueve solo.**
+
+Excepción controlada ([[calidad-feedback]]): **Destacar** inserta un ejemplo `quality=gold` **sin** candidato de staging, porque la dueña ya confirmó. **Reprender** entrega el texto al VIP al instante y el combo posterior promociona el contraejemplo (tampoco espera la cola de revisión). Atención no puede destacar ni reprender.
 
 ## Reglas de oro
 
 - El banco de Ejemplos y la Memoria por VIP tienen reglas de acceso separadas ([[anti-contaminacion]]).
-- El retrieval de few-shots prioriza: similitud semántica → recencia → limpieza (aprobados sin corrección antes que correcciones); puede incluir un contraejemplo explícito junto al positivo.
+- El retrieval de few-shots es **gold-first** (destacados antes que standard) + similitud; si hay match, siempre anexa 1 contraejemplo. Ya no hay sorteo al 10 %.
+- Un ejemplo o una política puede ser global (`vip_id` vacío) o de un VIP. Atención solo ve globales.
 - La extracción de hechos nuevos (REQ-MEM-02) clasifica en el tipo correcto de conocimiento; nada entra sin revisión cuando corresponde.
 
 ^[docs/REQUERIMIENTOS.md §9.9, AGENTS.md §1]

@@ -1,6 +1,28 @@
 # DianaV2 Changelog
 
-Highlights of what's new and fixed in Diana, from her early releases through the latest agent-evolution work.
+Highlights of what's new and fixed in Diana, from her early releases through the latest work.
+
+## Owner control, Lucien link, and quality feedback — 2026-08-16
+
+*These shipped in code after the 2026-08-11 wiki freeze. Destacar/Reprender and the Lucien link stay off until their flags are turned on. Temporary events have no flag.*
+
+### ✨ New Features
+- **Destacar / Reprender on VIP drafts** (flag `FEATURE_QUALITY_FEEDBACK_ENABLED`, default off): the owner can mark a good reply as gold or send a correction now and later save the lesson for that VIP or for everyone. Attention-channel drafts never show these buttons.
+- **Gold-first example bank**: highlighted replies are retrieved before ordinary ones. Lessons can be global or VIP-scoped. This retrieval is live even when the buttons are off.
+- **Lucien → Diana VIP-kick notice** (flag `FEATURE_LINK_ENABLED`, default off): when Lucien removes a subscriber, Diana asks the owner to expel, disable, or keep that VIP.
+- **Temporary events**: the owner can inject a dated context note (start/end). It reaches the model as short-lived context and never mixes into VIP memory or the example bank.
+- **Live delivery feedback**: approving a draft shows seen → typing → sent; regenerate shows “Regenerando…”.
+- **Honest stale-button toasts** when Approve/Correct/Escalate no longer apply.
+- **VIP name on the owner draft**, inbound media type tags, and free-text doctrine replies.
+
+### 🔧 Improvements
+- Owner menu is the primary control surface (slash commands remain as aliases). A1–A13 menu UX items are closed.
+- If a VIP doctrine query fails to reach the owner, Diana unfreezes the VIP and sends the draft to approval instead of leaving them stuck.
+- Startup recovery handlers run as background tasks and never auto-send.
+
+### ⚠️ Ops notes
+- Repo database head is migration **029**. Production was last verified at **026** (2026-08-11). Apply 027 → 028 → 029 before relying on temporary events, the Lucien link, or quality columns.
+- Turning on Destacar/Reprender or the Lucien link is an owner decision, not automatic.
 
 ## Agent Evolution (Shadow) — 2026-08-07
 

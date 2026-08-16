@@ -6,7 +6,7 @@ Diana Business Bot / Sistema de Automatización de Chats VIP
 
 Campo Valor
 Nivel Operación para agentes de desarrollo (humanos o IA)
-Basado en REQUERIMIENTOS.md v2.1 + SPEC.md v1.5 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0
+Basado en REQUERIMIENTOS.md v2.1 + SPEC.md v1.5 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0 + SPEC-FASE6 + SPEC-FEEDBACK
 Audiencia Chat con el usuario: dueño/a de producto. Cuerpo técnico de este doc: agentes de código y revisores.
 Versión 1.3 — Fase 3 (Producto Completo) + regla de comunicación con producto
 Idioma Español
@@ -97,7 +97,7 @@ Principios rectores (no negociables):
 6. Toda decisión es reconstruible a partir de objetos persistidos.
 7. El Turn Coordinator garantiza la serialización por chat (REQ-NFR-02).
 
-Regla de oro: Todos los nuevos comportamientos de Fase 3 están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR). Si un flag está desactivado, el sistema se comporta como en Fase 2.
+Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
 ---
 
@@ -247,6 +247,48 @@ BehaviorEngine.deliver() verifica ctx.allow_split
           - Dividir mensaje de forma "natural"
 ```
 
+4.13 Feedback de calidad — Destacar / Reprender (FEATURE_QUALITY_FEEDBACK_ENABLED)
+
+```
+Borrador VIP (nunca Atención) + flag ON
+  → Fila Destacar / Reprender en el teclado de la dueña
+  → Destacar: confirma alcance (este VIP / global) → inserta example quality=gold (sin staging)
+  → Reprender: entrega el texto de corrección YA; el combo posterior solo promociona el contraejemplo
+  → Combo se cancela si llega un mensaje nuevo del mismo chat
+  → Flag OFF: teclado clásico Aprobar/Corregir/Escalar (el retrieval gold-first sigue activo)
+```
+
+Invariante: Atención no puede destacar ni reprender (REQ-ATN-13). El retrieval gold-first + visibilidad vip_id no depende del flag.
+
+4.14 Vínculo Lucien → Diana (FEATURE_LINK_ENABLED)
+
+```
+Chat de coordinación recibe una línea [LINK] vip_kicked
+  → LinkCoordinatorMiddleware (antes de OwnerDetection) consume el payload
+  → Dedup por event_id → ¿es VIP activo? → DM a la dueña: Expulsar / Desactivar / Mantener
+  → Flag OFF: middleware inerte; no hay router de callbacks; comportamiento idéntico al anterior
+```
+
+Nunca usa LLM. No entra al pipeline cognitivo. Ver docs/SPEC-FASE6.md (migración real: 028, no 027).
+
+4.15 Eventos temporales (sin flag)
+
+```
+Dueña crea/edita/pausa un evento con ventana [start_at, end_at)
+  → Se guarda en ephemeral_events (migración 027)
+  → KnowledgeAugmenter inyecta knowledge.ephemeral al contexto (global, no por VIP)
+  → No contamina memoria VIP ni el banco de ejemplos
+```
+
+4.16 Paracaídas de zona gris (VIP y Atención)
+
+```
+consult_doctrine → freeze → send_doctrine_query a la dueña
+  → Si el DM falla: discard_and_close (descongela) + demote a approve
+    reason=vip_doctrine_notify_failed | atencion_doctrine_notify_failed
+  → Si el DM ok: el VIP/chat sigue congelado hasta que la dueña responda
+```
+
 ---
 
 4. Contratos críticos que ningún agente puede romper
@@ -264,7 +306,9 @@ Prioridad Condición Acción
 5 Modo autónomo activo Y umbrales superados Enviar
 6 Ninguna de las anteriores Aprobar
 
-Notas sobre prioridad 4: la redraft de naturalidad es **secuenciación del Director** (pre-Decisor), no una acción del Decisor. El orden de **acciones** del Decisor sigue siendo seguridad → zona gris → frustracion → risk → send autónomo → approve; el paso 4 del Decisor es no-op (redraft ya ocurrió upstream si correspondía).
+Notas sobre prioridad 4: la redraft de naturalidad es **secuenciación del Director** (pre-Decisor), no una acción del Decisor. El orden de **acciones** del Decisor sigue siendo seguridad → zona gris → escalate (frustración o risk) → send autónomo → approve; el paso 4 del Decisor es no-op (redraft ya ocurrió upstream si correspondía).
+
+Nota de implementación (2026-08-16): el código evalúa `risk=alto` antes que `emotion=molesta`. Si ambas aplican, la acción sigue siendo Escalar y el `reason` queda `risk_high` (visible en `/traza`). La fila 2b del contrato se conserva: molesta sola escala sin esperar acumulación de risk. No cambiar esta tabla para “seguir al código” sin decisión de producto.
 
 Justificación de la prioridad 2 sobre la 3 (BR-02 modificado): La zona gris se evalúa antes que risk=alto porque la falta de doctrina es una causa tratable que, una vez resuelta, elimina la necesidad de escalación futura. La escalación por risk=alto solo se ejecuta cuando no hay doctrina pendiente.
 
@@ -403,12 +447,16 @@ REQUERIMIENTOS.md Qué debe cumplir el sistema (producto)
 SPEC.md v1.5 Cómo se implementa la Fase 1 (diseño técnico)
 SPEC-FASE2.md Cómo se implementa la Fase 2 (MVP+)
 SPEC-FASE3.md Cómo se implementa la Fase 3 (Producto Completo)
+SPEC-FASE4.md Atención general (canal no-VIP)
+SPEC-FASE5.md Perfil de memoria por VIP
+SPEC-FASE6.md Vínculo Lucien→Diana (migración real 028)
+SPEC-FEEDBACK.md Destacar/Reprender y bancos gold/vip (migración real 029)
 Anexos_contratos.md Contratos detallados de todos los nodos
 Anexo T Sistema de trazabilidad interactiva
 AGENTS.md (este) Límites que ningún agente puede cruzar al tocar el código, clasificados por fase; más regla de comunicación con dueño de producto (sección 0)
 
 ---
 
-Fin de AGENTS.md v1.3 (Fase 3)
-Última actualización: Julio 2026
+Fin de AGENTS.md v1.4 (Fase 3 + flujos 4.13–4.16 documentados 2026-08-16)
+Última actualización: Agosto 2026
 Equipo de Arquitectura — Producto completo listo para desarrollo.

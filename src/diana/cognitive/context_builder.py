@@ -161,7 +161,7 @@ def _format_schedule_body(value: dict[str, Any]) -> str | None:
         hora = value.get("hora_actual", "")
         return (
             f"Diana está ahora: {actividad} (día: {dia}, hora: {hora}). "
-            "Hecho de agenda; redactá en su voz alrededor de esto."
+            "Hecho de agenda; redacta en su voz alrededor de esto."
         )
     if tipo == "respuesta_libre":
         sugerida = value.get("respuesta_sugerida", "")

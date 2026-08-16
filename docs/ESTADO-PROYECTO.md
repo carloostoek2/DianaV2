@@ -1,9 +1,10 @@
 # Estado del proyecto — Diana Business Bot (DianaV2)
 
-**Fecha:** 2026-08-11
-**Rama:** main · **Head:** `4d30d1f` (pusheado; origin/main = local).
-**Bot en producción:** corriendo (PID 204716, tmux prod) — arranque limpio, polling activo.
-**Base de datos:** migraciones al día en producción (head `026_agent_evolution_turn_category_columns`).
+**Fecha:** 2026-08-16
+**Rama:** main · **Head:** `a80e0d9` (docs de feedback cerrados; origin/main = local al inicio de esta auditoría).
+**Bot en producción:** no re-verificado en esta fecha. El snapshot del 2026-08-11 (PID 204716, tmux prod) **no se da por vigente**.
+**Base de datos (repo):** Alembic head `029_feedback_quality` (cadena 001→029).
+**Base de datos (producción):** último snapshot verificado = `026` (2026-08-11). Apply de **027 / 028 / 029 en producción: SIN VERIFICAR**.
 
 ---
 
@@ -64,7 +65,7 @@ con Docker. **Datos shadow reales en producción (verif. 2026-08-11):** `turn_ca
 Spec `docs/SPEC-FASE6.md` v1.0 (REQ-LNK-01..10). Two-repo feature: cuando **Lucien** expulsa a un suscriptor
 del Canal VIP (revoke manual, expiración por scheduler, o limpieza de startup — los 3 puntos de emisión cubiertos),
 notifica a **Diana** vía chat de coordinación con un payload `[LINK]` one-line; Diana verifica si el expulsado es
-VIP activo y, si lo es, pide a la dueña **Expel / Disable / Keep** con 3 botones. Todo detrás de
+VIP activo y, si lo es, pide a la dueña **Expulsar / Desactivar / Mantener** con 3 botones. Todo detrás de
 `FEATURE_LINK_ENABLED` (default `false` en ambos bots; OFF = comportamiento idéntico).
 
 - **Parte A (emisor, repo `lucienbot`):** `business_connections` table + handler, `LinkNotifier` + event bus
@@ -76,31 +77,54 @@ VIP activo y, si lo es, pide a la dueña **Expel / Disable / Keep** con 3 botone
 - **Verificado:** 4/4 ítems del pool, review loops a 0 open, `tests/unit` 2639 passed / 0 failed, purity gates 17 passed.
 - **Pendiente:** **integration spike** en deploy real (Railway+EC2) — dueña conecta su cuenta de negocio a Lucien,
   expulsa un usuario de prueba, verifica que Diana reciba `[LINK]`. Es el acceptance step final para encender el flag.
+  Migración real de `link_events`: **028** (el SPEC aún cita 027; 027 se usó para eventos temporales).
+
+### Feedback de calidad — Destacar / Reprender ✅ (IMPLEMENTADO — flag OFF, 2026-08-16)
+Spec `docs/SPEC-FEEDBACK.md`. Pool `feedback-calidad` cerrado (4 ítems). **No está encendido** hasta que la dueña active `FEATURE_QUALITY_FEEDBACK_ENABLED` (default `false`; ahora documentado en `.env.example`).
+
+- En borradores **VIP** (nunca Atención): botones Destacar / Reprender.
+- **Destacar:** confirma alcance (este VIP o global) y guarda el ejemplo como oro. No pasa por la cola de staging.
+- **Reprender:** el texto de corrección **se entrega ya** al VIP; después se elige si esa lección queda para este VIP o para todas.
+- El banco de ejemplos ya ordena primero los destacados (gold-first) y separa lecciones por VIP, aunque el flag esté apagado.
+- Si falla el aviso de consulta de doctrina al VIP, el sistema **descongela** y manda el borrador a aprobación (no deja al VIP trabado).
+- Migración **029** (`examples.quality`, `examples.vip_id`, `policies.vip_id`). Apply en producción: SIN VERIFICAR.
+
+### Eventos temporales ✅ (IMPLEMENTADO — sin flag, 2026-08-12)
+La dueña puede cargar un dato de contexto con fecha de inicio y fin (menú 📅 Eventos temporales). Entra al contexto como `knowledge.ephemeral` (global, no por VIP). No se mezcla con la memoria del VIP ni con el banco de ejemplos. Migración **027**. Siempre cableado.
+
+### UX de la dueña (A1–A13) ✅ cerrado 2026-08-12
+Menú unificado como superficie principal. Progreso en vivo al aprobar (visto → escribiendo → enviado), “Regenerando…” al pedir otra versión, avisos honestos si el botón ya no aplica, nombre del VIP en el borrador, tipos de archivo etiquetados, doctrina en texto libre (`dr:`). Detalle en `docs/UX.md`.
 
 ### Otros
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria).
-- Migraciones: 001-026 aplicadas en producción (pool evo-agente desplegado). Repo head actual: `028_link_events`
-  (027 ephemeral events + 028 link_events — pendientes de aplicar en producción). Persona sin reglas de voseo; español neutro. CHANGELOG.md creado.
+- Migraciones en repo: **001–029**. En producción, verificado hasta **026** (2026-08-11). **027 ephemeral + 028 link + 029 quality: apply en producción SIN VERIFICAR.**
+- Persona sin reglas de voseo; español neutro. CHANGELOG.md vigente.
+- Auditoría de documentación 2026-08-16: wiki + estado alineados al código post-11-ago. Informes en `.planning/quick/docs-audit-2026-08-16/`.
 
 ---
 
-## 2. Estado de operación (verificado 2026-08-11)
+## 2. Estado de operación
 
-- Bot corriendo con Fase 5 completa + pool evo-agente en modo medición (PID 204716, tmux prod).
-- Cola de backfill activa: los VIPs con historial se perfilan de a uno por hora (sin intervención).
-- Memoria en producción: 81 filas en `memories` (52 auto, 18 discarded, 11 approved); 10 backfills completados.
-- Verificación de suites: **2441 unit + e2e (Docker) verdes** (incl. `test_sql_repo_shapes.py` 10/10, ya reparado), purity gates 3/3.
-- **Pool `evo-agente` DESPLEGADO en producción** (migraciones 024-026 aplicadas; flags en `.env` activos en modo
-  medición). El bot sigue 100% supervisado: `FEATURE_AUTONOMOUS_MODE=false` y la doble puerta no está cableada a
-  ningún envío real (los hooks solo miden y registran).
+### Snapshot verificado 2026-08-11 (no re-medido el 16)
+- Bot con Fase 5 + evo-agente en modo medición (PID 204716 en ese momento).
+- Memoria: 81 filas en `memories` (52 auto, 18 discarded, 11 approved); 10 backfills.
+- Suite de entonces: 2441 unit + e2e verdes. El pool feedback posterior reportó suites más grandes (p. ej. 2639 en el cierre de Fase 6); **no se re-corrió la suite en esta auditoría de docs**.
+
+### Lo que cambió en el repo desde ese snapshot (verificado en código, 2026-08-16)
+- Fase 6, eventos temporales, Destacar/Reprender y el arreglo de menú **están en `main`**.
+- El bot **sigue 100 % supervisado** si `FEATURE_AUTONOMOUS_MODE=false` (la doble puerta de envío autónomo no está cableada).
+- Destacar/Reprender y el aviso Lucien **no actúan** hasta encender sus flags.
+- Eventos temporales **sí actúan** en cuanto exista la tabla 027 (no tienen interruptor).
 
 ---
 
 ## 3. Qué falta (pendiente)
 
-### Fase 6 en adelante
-- Fase 6 (vínculo Lucien→Diana) **implementada y cerrada** — ver sección 1. Queda el integration spike de deploy
-  (Railway+EC2) para encender `FEATURE_LINK_ENABLED`. Las siguientes fases se deciden con la dueña.
+### Fase 6 / feedback / datos
+- Fase 6 **implementada y cerrada en código** — queda el integration spike de deploy para encender `FEATURE_LINK_ENABLED`.
+- Destacar/Reprender **implementado y cerrado en código** — queda decidir cuándo encender `FEATURE_QUALITY_FEEDBACK_ENABLED` (y aplicar 029 en producción).
+- Aplicar en producción, en orden: **027** (eventos temporales, siempre activos al existir la tabla) → **028** (link) → **029** (calidad). Hoy: SIN VERIFICAR.
+- Las siguientes fases se deciden con la dueña.
 
 ### Evolución de agente — pendiente del pool `evo-agente` (ver SPEC-EVOLUCION-AGENTE.md v1.2)
 - **Fase 5 real (cablear la doble puerta):** `decision.action=="send" AND can_autonomous(...)`
@@ -109,7 +133,7 @@ VIP activo y, si lo es, pide a la dueña **Expel / Disable / Keep** con 3 botone
   confiable; hoy los flags están ON en modo medición, la puerta no está cableada a ningún envío.
 - **Cola durable `synthesis_queue`** para la resíntesis de memoria (hoy guard en memoria).
 - **Ficha perfil EA-06 completa** (historial de versiones de `vip_profile_history`).
-- **`.env.example`** — documentar los flags/keys nuevos de Fase 0-5.
+- ~~**`.env.example`** flags evo-agente~~ — ✅ ya estaban. El 2026-08-16 se añadió `FEATURE_QUALITY_FEEDBACK_ENABLED`.
 - ~~**Fixture de `test_sql_repo_shapes.py`**~~ — ✅ resuelto: el commit `4d30d1f` (repair CI unit suite) ya lo arregló
   (10/10 pasando).
 - **Fase 4 (iniciativa contextual)** — diferida por decisión del usuario; queda especificada en el SPEC v1.2.
@@ -125,7 +149,8 @@ VIP activo y, si lo es, pide a la dueña **Expel / Disable / Keep** con 3 botone
 
 ## 4. Referencias
 
-- SPECs: `docs/SPEC-FASE4.md`, `docs/SPEC-FASE5.md`, `docs/SPEC-EVOLUCION-AGENTE.md` (v1.2, pool evo-agente F0-F5 shadow) (contratos vigentes).
+- SPECs: `docs/SPEC-FASE4.md`, `docs/SPEC-FASE5.md`, `docs/SPEC-FASE6.md`, `docs/SPEC-FEEDBACK.md`, `docs/SPEC-EVOLUCION-AGENTE.md` (v1.2, pool evo-agente F0-F5 shadow).
+- Auditoría docs 2026-08-16: `.planning/quick/docs-audit-2026-08-16/`.
 - Trazabilidad del pipeline: `.planning/quick/20260805-f5-perfil-vip/` (PLAN-POOL2/3/4.md, SUMMARYs, AUDITs, REVIEWs, SECURITYs).
 - Logs de agentes: `.planning/quick/gsd-*.log`.
 - Repo legacy (v1, patrón de extracción): `repos/diana/services/history_backfill.py`.

@@ -1,7 +1,7 @@
 ---
 title: Jobs
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 type: entity
 tags: [modulo, operacion, contrato]
 sources: [../../AGENTS.md, ../../docs/SPEC-1.1.md]
@@ -28,9 +28,9 @@ Tareas periódicas programadas del sistema.
 - La calibración nunca corre dentro del pipeline (AGENTS.md §4.5).
 - Jobs → Application Services (dirección de dependencia obligatoria).
 
-## Implementación real (2026-08)
+## Implementación real (2026-08-11, verificado 2026-08-16)
 
-`jobs/` tiene 8 jobs, todos envolviendo servicios de aplicación (nunca lógica directa):
+`jobs/` sigue con **8** jobs (0 archivos nuevos o borrados desde 2026-08-11). Todos envuelven servicios de [[application-services]] (nunca lógica cognitiva directa):
 
 - `recontact.py` — loop periódico de recontacto por silencio.
 - `calibration.py` — calibración dual de umbrales + drift.
@@ -40,5 +40,7 @@ Tareas periódicas programadas del sistema.
 - `metrics.py` — agregación semanal de learning_metrics.
 - `trace_purge.py` — purga TTL de pipeline_traces.
 - `agent_data_purge.py` — purga TTL de tablas de evolución de agente.
+
+No hay job de [[vinculo-lucien]] ni de [[eventos-temporales]]: el vínculo es middleware + `LinkCoordinator`; los eventos expiran por ventana `[start_at, end_at)` en el augmenter.
 
 ^[src/diana/jobs/*, AGENTS.md §2.1]

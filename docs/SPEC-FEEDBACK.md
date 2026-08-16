@@ -1,5 +1,7 @@
 # Spec de implementación — Feedback de calidad + fix zona gris (DianaV2) — v1.0
 
+**Estado (2026-08-16):** implementado en `main` (`a80e0d9`). Fase 0 (paracaídas VIP) está en `turn_orchestrator.py`. Destacar/Reprender viven detrás de `FEATURE_QUALITY_FEEDBACK_ENABLED` (default **OFF**). Desvíos vs este texto de diseño: migración **029** (no 027); Reprender **entrega al instante** y el combo es solo promoción; botones solo en borradores VIP; labels sin emoji. El detalle de producto está en `docs/UX.md`.
+
 **Objetivo:** (1) cerrar una laguna real detectada en auditoría externa donde un VIP puede quedar congelado hasta 24h sin resolución si falla la notificación de zona gris; (2) dar a la dueña dos palancas de feedback más allá de Aprobar/Corregir — **destacar** una respuesta excepcional y **reprender** una respuesta que no debe repetirse, con severidad elegible caso por caso.
 
 **Principio guía (heredado de AGENTS.md / SPEC-EVOLUCION-AGENTE):** cada pieza nueva debe poder activarse/desactivarse por feature flag y dejar traza auditable. Nada se libera sin poder revertirse.

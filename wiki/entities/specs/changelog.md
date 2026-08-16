@@ -1,7 +1,7 @@
 ---
 title: Changelog
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-16
 type: entity
 tags: [estado, operacion]
 sources: [../../CHANGELOG.md]
@@ -11,6 +11,14 @@ confidence: high
 # Changelog
 
 Historial de cambios del sistema (CHANGELOG.md).
+
+## Control de la dueña, vínculo Lucien y calidad — 2026-08-16
+
+- [[calidad-feedback]]: Destacar/Reprender en borradores VIP (flag OFF); banco gold-first.
+- [[vinculo-lucien]]: aviso de expulsión Lucien→Diana (flag OFF).
+- [[eventos-temporales]]: contexto con fecha, sin flag.
+- Menú unificado, progreso en vivo al aprobar, paracaídas si falla el aviso de doctrina.
+- Ops: repo en migración 029; producción verificada hasta 026.
 
 ## Evolución de agente (shadow) — 2026-08-07
 

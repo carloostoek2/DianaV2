@@ -71,3 +71,22 @@
 - Infraestructura: servidor estático systemd user (diana-graph-web.service, 127.0.0.1:8081) + Cloudflare Tunnel systemd user (cloudflared-diana-graph.service → grafo.srtakinky.pics), ambos con linger
 - Bot: comando /grafo (owner-only) en admin.py con botón web_app → abre la mini app dentro de Telegram; bot reiniciado (PID nuevo, polling OK)
 - Repo GitHub diana-graph (privado) creado como respaldo del dashboard (Pages no disponible en plan Free para privados)
+
+## [2026-08-16] ingest | Auditoría profunda post-freeze (5 agentes por dominio)
+
+- Dominio: docs vs código desde el freeze 2026-08-11 (`a80e0d9`)
+- Informes: `.planning/quick/docs-audit-2026-08-16/{duena-telegram-feedback,vinculo-eventos,cognicion-conocimiento,esquema-flags,modulos}.md`
+- Creadas 6 páginas:
+  - Concepts: calidad-feedback, vinculo-lucien, eventos-temporales
+  - Specs: spec-fase6, spec-feedback
+  - Tablas: esquema-fase6 (link_events / 028)
+- Actualizadas páginas de módulos (telegram, application, jobs, behavior, llm, turn-coordinator, cognitive-core, learning, infrastructure), conceptos (anti-contaminacion, capability-registry, zona-gris, decisor, feature-flags, aprendizaje-post-turno), tablas 001-026 corregidas a columnas reales + 027/029, superficie-admin
+- Fuentes `docs/`: ESTADO-PROYECTO, UX, PRODUCT_OWNER_ADMIN_SANDBOX, CHANGELOG, SPEC-FEEDBACK (banner), AGENTS.md (flujos 4.13-4.16 + flags)
+- index.md: 48 páginas
+- Grafo Understand-Anything **no** regenerado (residual)
+
+## [2026-08-16] update | Estado y operación
+
+- estado-del-proyecto y changelog de wiki alineados al snapshot 2026-08-16
+- Apply prod 027-029 marcado SIN VERIFICAR
+- Flags Destacar/Reprender y Lucien documentados como OFF por default

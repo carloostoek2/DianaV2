@@ -2,7 +2,7 @@
 
 > Catálogo de contenido. Toda página de la wiki listada bajo su tipo con un resumen de una línea.
 > Leer primero para encontrar páginas relevantes ante cualquier consulta.
-> Last updated: 2026-08-11 | Total pages: 42
+> Last updated: 2026-08-16 | Total pages: 48
 
 ## Entities — Specs
 
@@ -14,33 +14,36 @@
 - [[spec-fase4]] — Fase 4: Atención al Cliente General (canal no-VIP), perfil de canal
 - [[spec-fase5]] — Fase 5: Perfil de VIP con memoria (backfill + mantenimiento)
 - [[spec-evolucion-agente]] — Evolución de agente v1.2: perfil evolutivo, trust budget, detector emocional, mood
-- [[estado-del-proyecto]] — estado verificado 2026-08-11: F4 activa, F5 completa, evo-agente shadow, flags, pendientes
+- [[spec-fase6]] — Fase 6: aviso Lucien→Diana cuando expulsan a un VIP (flag OFF)
+- [[spec-feedback]] — Destacar/Reprender, gold-first, bancos por VIP (flag OFF)
+- [[estado-del-proyecto]] — estado 2026-08-16: F4/F5 activas, evo-agente shadow, F6+feedback en código, apply 027-029 sin verificar
 - [[changelog]] — historial de cambios del sistema
 - [[informe-auditoria]] — auditoría 161 reqs: 139 ✅, 14 ⚠️, 6 🔍, 2 ❌ (AUTH-03, AUTH-07)
 
 ## Entities — Módulos
 
-- [[telegram-layer]] — capa de adaptación aiogram: middlewares Auth/Forbidden/Freeze, I/O
-- [[turn-coordinator]] — serialización por chat, máquina de estados del Turn, cancelación de obsoletos
-- [[cognitive-core]] — pipeline de decisión puro: Director → Analista → … → Decisor
-- [[behavior-engine]] — actuación human-like (delay, read, typing, split, quirks); fuera de la cognición
-- [[learning]] — aprendizaje post-turno: extracción, staging, destilación, métricas
-- [[llm-provider]] — DeepSeek primario / Anthropic respaldo, hot-swap
-- [[application-services]] — orquestación de casos de uso (admin, sandbox, recontact, promo, calibración)
-- [[infrastructure-persistence]] — PostgreSQL único almacén durable, SQLAlchemy async, Alembic
-- [[jobs]] — tareas periódicas (recontacto, calibración, purga)
+- [[telegram-layer]] — capa aiogram: stack real (Link antes de Owner), handlers de admin/link/calidad
+- [[turn-coordinator]] — lock por chat en proceso; máquina de estados del Turn
+- [[cognitive-core]] — pipeline puro: Director → … → Decisor; gold-first; augmenter ephemeral
+- [[behavior-engine]] — delay, read, typing, split, quirks; progreso de entrega en vivo
+- [[learning]] — post-turno; staging + Destacar directo a gold
+- [[llm-provider]] — DeepSeek (Anthropic no implementado); thinking solo en drafts
+- [[application-services]] — admin, sandbox, recontact, promo, calibración, link, eventos temporales
+- [[infrastructure-persistence]] — PostgreSQL; Alembic 001–029; 34 tablas
+- [[jobs]] — recontacto, calibración, purga (sin jobs nuevos post-11-ago)
 
 ## Entities — Comandos
 
-- [[superficie-admin]] — superficie de la dueña en DM: handlers reales, aprobación, doctrina, staging, memoria, persona
+- [[superficie-admin]] — menú de la dueña: aprobación, doctrina `dr:`, staging, memoria, Destacar/Reprender, link, eventos
 
 ## Entities — Tablas
 
 - [[esquema-fase1]] — base F1: vips, message_history, pipeline_traces, turns, escalations, business_connections
-- [[esquema-conocimiento]] — F2: memories, policies, examples, staging_candidates, gray_zone_queries
+- [[esquema-conocimiento]] — F2 + 027/029: memories, policies+vip_id, examples+quality/vip_id, staging, gray_zone, ephemeral_events
 - [[esquema-fase3]] — F3: recontact_schedules, promo_triggers/executions, learning_metrics, system_config
 - [[esquema-fase4]] — F4: persona_versions.channel_type, daily_message_limits, atencion_cycles
 - [[esquema-evolucion]] — evolución de agente: vip_profile(_history), mood, trust_budget, turn_category, emotional_signal, backfill_queue
+- [[esquema-fase6]] — F6: link_events (migración 028)
 
 ## Concepts
 
@@ -48,10 +51,10 @@
 - [[director-cognitivo]] — orquestador 100 % determinista; conoce capacidades, no módulos
 - [[pipeline-cognitivo]] — flujo canónico completo y sus variantes; objeto de Comprensión
 - [[perfil-evaluacion-multidimensional]] — vector 7D sin score único; calibración empírica
-- [[decisor]] — orden de prioridades: seguridad → zona gris → frustración → risk → send → approve
-- [[capability-registry]] — sustituibilidad total; capacidades knowledge.* y retrievers por fase
-- [[aprendizaje-post-turno]] — nunca durante el pipeline; Staging Area + confirmación explícita
-- [[anti-contaminacion]] — Memoria VIP privada; banco de ejemplos separado (BR-15)
+- [[decisor]] — acciones: seguridad → zona gris → escalate (risk/frustración) → send → approve
+- [[capability-registry]] — knowledge.* reales; gold-first; visibilidad vip_id; context = historial
+- [[aprendizaje-post-turno]] — post-pipeline; staging + Destacar a gold (confirmación explícita)
+- [[anti-contaminacion]] — Memoria VIP privada; bancos examples/policies con eje vip_id (BR-15)
 - [[modos-de-operacion]] — supervisado/autónomo/sandbox/pausa/congelación; modos filtran
 - [[escalacion]] — cortocircuito determinístico + escalación semántica; triage de la dueña
 - [[zona-gris-y-politicas]] — consulta de doctrina, congelación, destilación estructurada
@@ -64,6 +67,9 @@
 - [[canal-atencion]] — perfil no-VIP: supervisado, límite 20/día, guiones como doctrina, anti-contaminación entre canales
 - [[memoria-vip]] — ficha del VIP por secciones; backfill idempotente + mantenimiento post-turno; aprobación de sensibles
 - [[ops-single-instance]] — un solo proceso activo; estado process-local; consecuencias multi-réplica
+- [[calidad-feedback]] — Destacar/Reprender; gold-first; flag default OFF; Atención bloqueada
+- [[vinculo-lucien]] — aviso de expulsión Lucien→Diana; 3 botones; flag default OFF
+- [[eventos-temporales]] — contexto con fecha de la dueña; sin flag; no contamina memoria ni ejemplos
 
 ## Comparisons
 
