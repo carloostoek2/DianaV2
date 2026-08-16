@@ -317,6 +317,221 @@ async def test_promote_to_policy_wrong_status(
     repos["policies"].insert.assert_not_awaited()
 
 
+# --- promote_to_counter_example / insert_gold_example / policy vip_id ---
+
+
+@pytest.mark.asyncio
+async def test_promote_to_counter_example_happy_path(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    candidate_id = uuid4()
+    vip_id = uuid4()
+    payload = {
+        "original_draft": "old draft",
+        "corrected_text": "new text",
+        "context": {"turn_text": "VIP says hi"},
+        "channel_type": "vip",
+    }
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload=payload
+    )
+    fake_example = _fake_example_row()
+    repos["examples"].insert.return_value = fake_example
+    repos["staging"].update_status.return_value = True
+
+    result = await service.promote_to_counter_example(
+        candidate_id=candidate_id, vip_id=vip_id
+    )
+
+    repos["examples"].insert.assert_awaited_once_with(
+        turn_text="VIP says hi",
+        draft_text="old draft",
+        corrected_text="new text",
+        context=payload["context"],
+        is_counter_example=True,
+        vip_id=vip_id,
+    )
+    repos["staging"].update_status.assert_awaited_once_with(candidate_id, "promoted")
+    assert result is fake_example
+
+
+@pytest.mark.asyncio
+async def test_promote_to_counter_example_blocks_atencion_candidate(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    """REQ-ATN-13: atencion-originated candidates never reach the VIP bank."""
+    candidate_id = uuid4()
+    payload = {
+        "original_draft": "old draft",
+        "corrected_text": "new text",
+        "context": {"turn_text": "cliente dice hola"},
+        "channel_type": "atencion",
+    }
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload=payload
+    )
+
+    with pytest.raises(AtencionPromoteBlocked, match="atencion candidates"):
+        await service.promote_to_counter_example(candidate_id=candidate_id)
+
+    repos["examples"].insert.assert_not_awaited()
+    repos["staging"].update_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_promote_to_counter_example_candidate_not_found(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    repos["staging"].get_by_id.return_value = None
+
+    with pytest.raises(ValueError, match="not found"):
+        await service.promote_to_counter_example(candidate_id=uuid4())
+
+    repos["examples"].insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_promote_to_counter_example_wrong_status(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    repos["staging"].get_by_id.return_value = _fake_staging_row(status="promoted")
+
+    with pytest.raises(ValueError, match="expected 'pending'"):
+        await service.promote_to_counter_example(candidate_id=uuid4())
+
+    repos["examples"].insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_promote_to_policy_forwards_vip_id(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    candidate_id = uuid4()
+    vip_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload={}
+    )
+    repos["policies"].insert.return_value = _fake_orm_policy()
+
+    await service.promote_to_policy(
+        candidate_id=candidate_id,
+        trigger="test trigger",
+        rule="test rule",
+        vip_id=vip_id,
+    )
+
+    repos["policies"].insert.assert_awaited_once()
+    kwargs = repos["policies"].insert.await_args.kwargs
+    assert kwargs["vip_id"] == vip_id
+    assert kwargs["scope"] == "all"
+
+
+@pytest.mark.asyncio
+async def test_insert_gold_example_happy_path(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    vip_id = uuid4()
+    fake_example = _fake_example_row()
+    repos["examples"].insert.return_value = fake_example
+
+    result = await service.insert_gold_example(
+        turn_text="VIP says hi",
+        draft_text="draft",
+        corrected_text="draft",
+        context={"turn_text": "VIP says hi"},
+        vip_id=vip_id,
+        channel_type="vip",
+        chat_id=42,
+    )
+
+    repos["examples"].insert.assert_awaited_once_with(
+        turn_text="VIP says hi",
+        draft_text="draft",
+        corrected_text="draft",
+        context={"turn_text": "VIP says hi"},
+        is_counter_example=False,
+        quality="gold",
+        vip_id=vip_id,
+    )
+    assert result is fake_example
+
+
+@pytest.mark.asyncio
+async def test_insert_gold_example_blocks_atencion(
+    service: StagingService, repos: dict[str, AsyncMock]
+) -> None:
+    with pytest.raises(AtencionPromoteBlocked, match="atencion candidates"):
+        await service.insert_gold_example(
+            turn_text="hola",
+            draft_text="draft",
+            corrected_text="draft",
+            context={},
+            channel_type="atencion",
+            chat_id=99,
+        )
+
+    repos["examples"].insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_insert_gold_example_skips_when_sandbox_active(
+    repos: dict[str, AsyncMock],
+) -> None:
+    from diana.application.sandbox import SandboxService
+
+    MINIMAL_SIX = {
+        "nuevo": {"label": "Usuario nuevo", "description": "", "facts": {}, "notes": []},
+        "cercano": {
+            "label": "VIP cercano",
+            "description": "",
+            "facts": {"name": "Mateo", "personality": "confiado"},
+            "notes": [{"date": "2026-05-10", "text": "Le gusta el trato cercano"}],
+        },
+        "distante": {
+            "label": "VIP reservado",
+            "description": "",
+            "facts": {"personality": "formal"},
+            "notes": [],
+        },
+        "intenso": {
+            "label": "VIP emocional",
+            "description": "",
+            "facts": {"relationship": "recién separado"},
+            "notes": [],
+        },
+        "vip_largo": {
+            "label": "VIP largo",
+            "description": "",
+            "facts": {"name": "Sofía"},
+            "notes": [],
+        },
+        "inyeccion_previa": {
+            "label": "Fixture adversarial",
+            "description": "",
+            "facts": {"name": "TestUser"},
+            "notes": [],
+        },
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(42, "nuevo")
+    service = StagingService(
+        staging_repo=repos["staging"],
+        examples_repo=repos["examples"],
+        policies_repo=repos["policies"],
+        sandbox=sandbox,
+    )
+    result = await service.insert_gold_example(
+        turn_text="VIP says hi",
+        draft_text="draft",
+        corrected_text="draft",
+        context={},
+        channel_type="vip",
+        chat_id=42,
+    )
+    assert result is None
+    repos["examples"].insert.assert_not_awaited()
+
+
 # --- discard ---
 
 

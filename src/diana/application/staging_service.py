@@ -142,12 +142,102 @@ class StagingService:
         )
         return example
 
+    async def promote_to_counter_example(
+        self,
+        candidate_id: UUID,
+        *,
+        vip_id: UUID | None = None,
+    ) -> object:
+        """Promote a pending candidate to a counter-example in the bank."""
+        candidate = await self._staging.get_by_id(candidate_id)
+        if candidate is None:
+            raise ValueError(f"StagingCandidate {candidate_id} not found")
+        if candidate.status != "pending":
+            raise ValueError(
+                f"StagingCandidate {candidate_id} status is {candidate.status!r}, "
+                f"expected 'pending'"
+            )
+        if candidate.candidate_type != "example":
+            raise ValueError(
+                f"StagingCandidate {candidate_id} type is "
+                f"{candidate.candidate_type!r}, expected 'example'"
+            )
+
+        # REQ-ATN-13 anti-contamination: atencion corrections must NEVER reach
+        # the VIP example bank. Blocked BEFORE any insert so the candidate
+        # stays pending (owner can still discard it).
+        payload = candidate.payload
+        if payload.get("channel_type") == "atencion":
+            logger.info(
+                "staging_atencion_promote_blocked",
+                extra={"candidate_id": str(candidate_id)},
+            )
+            raise AtencionPromoteBlocked(
+                "atencion candidates cannot be promoted to the VIP example bank"
+            )
+
+        example = await self._examples.insert(
+            turn_text=payload.get("context", {}).get("turn_text", ""),
+            draft_text=payload.get("original_draft", ""),
+            corrected_text=payload.get("corrected_text", ""),
+            context=payload.get("context", {}),
+            is_counter_example=True,
+            vip_id=vip_id,
+        )
+        await self._staging.update_status(candidate_id, "promoted")
+        logger.info(
+            "counter_example_promoted",
+            extra={
+                "candidate_id": str(candidate_id),
+                "example_id": str(example.id),
+                "vip_id": str(vip_id) if vip_id else None,
+            },
+        )
+        return example
+
+    async def insert_gold_example(
+        self,
+        *,
+        turn_text: str,
+        draft_text: str,
+        corrected_text: str,
+        context: dict,
+        vip_id: UUID | None = None,
+        channel_type: str | None = None,
+        chat_id: int | None = None,
+    ) -> object | None:
+        """Insert a gold example after Destacar (no staging candidate required)."""
+        if (
+            chat_id is not None
+            and self._sandbox is not None
+            and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
+        ):
+            logger.info(
+                "gold_example_skipped_sandbox",
+                extra={"chat_id": chat_id},
+            )
+            return None
+        if channel_type == "atencion":
+            raise AtencionPromoteBlocked(
+                "atencion candidates cannot be promoted to the VIP example bank"
+            )
+        return await self._examples.insert(
+            turn_text=turn_text,
+            draft_text=draft_text,
+            corrected_text=corrected_text,
+            context=context,
+            is_counter_example=False,
+            quality="gold",
+            vip_id=vip_id,
+        )
+
     async def promote_to_policy(
         self,
         candidate_id: UUID,
         trigger: str,
         rule: str,
         scope: str = "all",
+        vip_id: UUID | None = None,
     ) -> PolicyDomain:
         """Promote a staging candidate to a live policy.
 
@@ -163,13 +253,16 @@ class StagingService:
                 f"expected 'pending'"
             )
 
-        orm_policy = await self._policies.insert(
-            trigger_description=trigger,
-            rule=rule,
-            scope=scope,
-            is_active=True,
-            source_query_id=candidate.payload.get("query_id"),
-        )
+        insert_kwargs: dict = {
+            "trigger_description": trigger,
+            "rule": rule,
+            "scope": scope,
+            "is_active": True,
+            "source_query_id": candidate.payload.get("query_id"),
+        }
+        if vip_id is not None:
+            insert_kwargs["vip_id"] = vip_id
+        orm_policy = await self._policies.insert(**insert_kwargs)
         await self._staging.update_status(candidate_id, "promoted")
         logger.info(
             "policy_promoted",
