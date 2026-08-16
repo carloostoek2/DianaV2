@@ -527,6 +527,16 @@ def test_composition_admin_receives_staging_when_enabled(_comp_src: str) -> None
     assert "history=history" in admin_block
 
 
+def test_composition_quality_feedback_flag_wired(_comp_src: str) -> None:
+    admin_start = _comp_src.find("admin = AdminService(")
+    assert admin_start != -1
+    admin_block = _comp_src[admin_start : admin_start + 900]
+    assert (
+        "feature_quality_feedback_enabled=settings.feature_quality_feedback_enabled"
+        in admin_block
+    )
+
+
 def test_composition_dispatcher_receives_staging(_comp_src: str) -> None:
     """REQ-ADM-08: staging service is passed into build_dispatcher for queue UI."""
     disp_start = _comp_src.find("wiring = build_dispatcher(")

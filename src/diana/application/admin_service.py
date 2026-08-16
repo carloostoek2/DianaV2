@@ -7,7 +7,7 @@ import os
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from diana.application.observability import log_swallowed
@@ -36,7 +36,7 @@ from diana.application.memory_extraction_service import (
     _POST_TURN_EXTRACTABLE_STATUSES,  # noqa: PLC2701 — extraction gate, single source (R3)
 )
 from diana.application.owner_history import append_owner_delivery_history
-from diana.application.staging_service import StagingService
+from diana.application.staging_service import AtencionPromoteBlocked, StagingService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.models import (
@@ -101,6 +101,10 @@ class OwnerAuthError(PermissionError):
     """Raised when a non-owner actor attempts an owner-only admin action."""
 
 
+class QualityFeedbackDisabled(ValueError):
+    """FEATURE_QUALITY_FEEDBACK_ENABLED is off."""
+
+
 def _eval_summary(decision: Decision) -> str:
     """Display-only summary string; never fed back into Decider."""
     e = decision.evaluation
@@ -138,6 +142,7 @@ class AdminService:
         history: MessageHistoryWriter | None = None,
         post_turn: Callable[[UUID, int], Awaitable[None]] | None = None,
         trust_budget: object | None = None,
+        feature_quality_feedback_enabled: bool = False,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -158,6 +163,7 @@ class AdminService:
         # Evo-Agente Fase 5: trust-budget service (flag-gated; None when flag
         # off → the correction event is a no-op, byte-identical).
         self._trust_budget = trust_budget
+        self._feature_quality_feedback_enabled = bool(feature_quality_feedback_enabled)
 
     def set_post_turn_hook(
         self,
@@ -176,6 +182,19 @@ class AdminService:
             raise OwnerAuthError(
                 f"actor_id {actor_id!r} is not the configured owner"
             )
+
+    def _require_quality_feedback(self) -> None:
+        if not self._feature_quality_feedback_enabled:
+            raise QualityFeedbackDisabled("FEATURE_QUALITY_FEEDBACK_ENABLED is off")
+
+    def _scope_vip_id(
+        self, turn: Any, scope: Literal["global", "vip"]
+    ) -> UUID | None:
+        if scope == "global":
+            return None
+        if turn.vip_id is None:
+            raise ValueError("scope='vip' requires turn.vip_id")
+        return turn.vip_id
 
     def _sandbox_prefix(self, chat_id: int) -> str:
         if self._sandbox is None or not self._sandbox.is_active(chat_id):
@@ -581,19 +600,20 @@ class AdminService:
         # Live turn + open approval but claim lost (concurrent owner action).
         return "stale"
 
-    async def handle_correct(
+    async def _correct_core(
         self,
         turn_id: UUID,
         corrected_text: str,
         *,
         actor_id: int | None = None,
-    ) -> DeliveryResult | None:
+    ) -> tuple[DeliveryResult | None, UUID | None]:
         self._assert_owner(actor_id)
         if not (corrected_text or "").strip():
             raise ValueError("corrected_text must be non-empty")
         stripped = corrected_text.strip()
         # H7.1 timing A: capture correction before claim/deliver (orphan pending OK).
         correction_persisted = False
+        candidate_id: UUID | None = None
         if self._staging is not None:
             turn = await self._turns.get(turn_id)
             approval = await self._approvals.get_by_turn(turn_id)
@@ -616,6 +636,8 @@ class AdminService:
                     # Sandbox skips persistence (returns None without insert);
                     # only a genuinely persisted correction counts (S6).
                     correction_persisted = saved is not None
+                    if saved is not None:
+                        candidate_id = saved.id
                 except Exception:
                     logger.exception(
                         "staging_save_correction_failed",
@@ -637,7 +659,121 @@ class AdminService:
                     "trust_budget_correction_failed",
                     extra={"turn_id": str(turn_id)},
                 )
-        return await self._resolve_and_deliver(turn_id, corrected_text=stripped)
+        delivery = await self._resolve_and_deliver(turn_id, corrected_text=stripped)
+        return delivery, candidate_id
+
+    async def handle_correct(
+        self,
+        turn_id: UUID,
+        corrected_text: str,
+        *,
+        actor_id: int | None = None,
+    ) -> DeliveryResult | None:
+        delivery, _ = await self._correct_core(
+            turn_id, corrected_text, actor_id=actor_id
+        )
+        return delivery
+
+    async def handle_mark_gold(
+        self,
+        turn_id: UUID,
+        *,
+        scope: Literal["global", "vip"],
+        actor_id: int,
+    ) -> DeliveryResult | None:
+        self._assert_owner(actor_id)
+        self._require_quality_feedback()
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            return None
+        if turn.channel_type == "atencion":
+            raise AtencionPromoteBlocked(
+                "atencion candidates cannot be promoted to the VIP example bank"
+            )
+        approval = await self._approvals.get_by_turn(turn_id)
+        draft = approval.draft_text if approval is not None else ""
+        turn_text = await self._resolve_trigger_text(turn.chat_id, turn.trigger_message_id)
+        delivery = await self.handle_approve(turn_id, actor_id=actor_id)
+        if delivery is None or delivery.cancelled:
+            return delivery
+        if self._staging is None:
+            return delivery
+        await self._staging.insert_gold_example(
+            turn_text=turn_text,
+            draft_text=draft,
+            corrected_text=draft,
+            context={"chat_id": turn.chat_id, "turn_text": turn_text},
+            vip_id=self._scope_vip_id(turn, scope),
+            channel_type=turn.channel_type,
+            chat_id=turn.chat_id,
+        )
+        logger.info(
+            "gold_example_marked",
+            extra={
+                "turn_id": str(turn_id),
+                "scope": scope,
+            },
+        )
+        return delivery
+
+    async def handle_reprimand(
+        self,
+        turn_id: UUID,
+        corrected_text: str,
+        *,
+        mode: Literal["policy", "counter_example"],
+        scope: Literal["global", "vip"],
+        actor_id: int,
+        candidate_id: UUID | None = None,
+    ) -> DeliveryResult | None:
+        self._assert_owner(actor_id)
+        self._require_quality_feedback()
+        if mode not in {"policy", "counter_example"} or scope not in {"global", "vip"}:
+            raise ValueError("invalid mode/scope")
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            return None
+        if turn.channel_type == "atencion":
+            raise AtencionPromoteBlocked(
+                "atencion candidates cannot be promoted to the VIP example bank"
+            )
+        delivery: DeliveryResult | None
+        if candidate_id is None:
+            delivery, candidate_id = await self._correct_core(
+                turn_id, corrected_text, actor_id=actor_id
+            )
+            if delivery is None or delivery.cancelled:
+                return delivery
+        else:
+            delivery = None  # promote-only; item 4 already delivered
+        if candidate_id is None or self._staging is None:
+            return delivery
+        vip_id = self._scope_vip_id(turn, scope)
+        if mode == "counter_example":
+            await self._staging.promote_to_counter_example(candidate_id, vip_id=vip_id)
+        else:
+            turn_text = await self._resolve_trigger_text(
+                turn.chat_id, turn.trigger_message_id
+            )
+            trigger = " ".join((turn_text or "").split())
+            trigger = trigger[:80] if trigger else "reprimenda"
+            await self._staging.promote_to_policy(
+                candidate_id,
+                trigger=trigger,
+                rule=(corrected_text or "").strip(),
+                scope="all",
+                vip_id=vip_id,
+            )
+        logger.info(
+            "reprimand_promoted",
+            extra={
+                "turn_id": str(turn_id),
+                "candidate_id": str(candidate_id),
+                "mode": mode,
+                "scope": scope,
+            },
+        )
+        return delivery
 
     async def _resolve_trigger_text(
         self,

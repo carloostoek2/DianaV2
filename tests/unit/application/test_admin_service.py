@@ -161,6 +161,7 @@ def _decision(action: str = "approve", draft: str = "hola VIP") -> Decision:
 def _admin_graph(
     *,
     feature_advanced_behavior: bool = False,
+    feature_quality_feedback_enabled: bool = False,
     behavior_override: object | None = None,
     vip_store: object | None = None,
     delivery_mode: str = "supervised",
@@ -210,6 +211,7 @@ def _admin_graph(
         staging=staging,  # type: ignore[arg-type]
         history=history,  # type: ignore[arg-type]
         trust_budget=trust_budget,  # type: ignore[arg-type]
+        feature_quality_feedback_enabled=feature_quality_feedback_enabled,
     )
     return {
         "admin": admin,

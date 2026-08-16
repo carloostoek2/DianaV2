@@ -615,6 +615,7 @@ def build_app(
         trust_budget=(
             trust_budget_service if settings.feature_trust_budget else None
         ),
+        feature_quality_feedback_enabled=settings.feature_quality_feedback_enabled,
     )
 
     catalog = get_persona_catalog()
