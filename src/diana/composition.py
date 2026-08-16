@@ -47,7 +47,7 @@ from diana.application.recovery_startup import (
 from diana.application.sandbox import SandboxService
 from diana.application.sandbox_knowledge import SandboxKnowledgeAugmenter
 from diana.application.staging_service import StagingService
-from diana.application.turn_classifier import TurnClassifier
+from diana.application.turn_classifier import TurnClassifier, make_pure_greeting_cut
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.trust_budget_service import TrustBudgetService
@@ -683,22 +683,7 @@ def build_app(
     )
     # Single TurnClassifier instance (Director pure-greeting cut + orchestrator shadow).
     classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)
-
-    def _is_pure_greeting(text: str, comprehension: Any) -> bool:
-        # intent==saludar + confident fático; fail open → full pipeline.
-        raw_intent = (
-            comprehension.get("intent")
-            if isinstance(comprehension, dict)
-            else getattr(comprehension, "intent", None)
-        )
-        intent = str(raw_intent).strip().lower() if raw_intent is not None else ""
-        if intent != "saludar":
-            return False
-        classification = classifier.classify(text, comprehension)
-        return (
-            classification.category == "fatico"
-            and classifier.is_confident(classification)
-        )
+    pure_greeting_cut = make_pure_greeting_cut(classifier)
 
     # H6: IA-only pre-pipeline TemplateGate; pure saludo is post-Analyst cut.
     deteccion_ia = TemplateRule(
@@ -742,7 +727,7 @@ def build_app(
         recent_intents=traces,
         repetition_guard=None,
         template_gate=template_gate,
-        pure_greeting_cut=_is_pure_greeting,
+        pure_greeting_cut=pure_greeting_cut,
         saludo_response_pool=saludo_response_pool,
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),

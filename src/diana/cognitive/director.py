@@ -339,7 +339,8 @@ class CognitiveDirector:
             and self._saludo_response_pool
         ):
             if self._pure_greeting_cut(turn.text, comprehension):
-                pool = [t for t in self._saludo_response_pool if t]
+                # Whitespace-only entries do not count — fail open to full pipeline.
+                pool = [t for t in self._saludo_response_pool if t and str(t).strip()]
                 if pool:
                     draft = self._saludo_rng.choice(pool)
                     logger.info(

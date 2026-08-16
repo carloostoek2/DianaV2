@@ -16,6 +16,7 @@ only ``cognitive.models`` + stdlib (no chat-framework or persistence imports).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -234,8 +235,52 @@ class TurnClassifier:
         return any(t in lower for t in _EMOTIONAL_TEXT_TERMS)
 
 
+def is_pure_greeting(
+    text: str,
+    comprehension: dict[str, Any] | Comprehension | None,
+    *,
+    classifier: TurnClassifier,
+) -> bool:
+    """True when Director may cut after Analyst for pure VIP saludo.
+
+    Contract (PLAN A1): intent == ``saludar`` AND TurnClassifier category is
+    ``fatico`` AND ``is_confident``. Fail open (False) on any other shape.
+    Thanks/goodbye phatic intents are excluded by the saludar gate.
+    """
+    if isinstance(comprehension, Comprehension):
+        raw_intent = comprehension.intent
+    elif isinstance(comprehension, dict):
+        raw_intent = comprehension.get("intent")
+    else:
+        return False
+    intent = str(raw_intent).strip().lower() if raw_intent is not None else ""
+    if intent != "saludar":
+        return False
+    classification = classifier.classify(text, comprehension)
+    return (
+        classification.category == "fatico"
+        and classifier.is_confident(classification)
+    )
+
+
+def make_pure_greeting_cut(
+    classifier: TurnClassifier,
+) -> Callable[[str, dict[str, Any] | Comprehension | None], bool]:
+    """Bind a TurnClassifier into a Director-injectable pure-greeting predicate."""
+
+    def _cut(
+        text: str,
+        comprehension: dict[str, Any] | Comprehension | None,
+    ) -> bool:
+        return is_pure_greeting(text, comprehension, classifier=classifier)
+
+    return _cut
+
+
 __all__ = [
     "CLASSIFIER_CONFIDENCE_MIN",
     "TurnClassification",
     "TurnClassifier",
+    "is_pure_greeting",
+    "make_pure_greeting_cut",
 ]

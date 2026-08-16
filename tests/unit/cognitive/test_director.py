@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from diana.application.turn_classifier import TurnClassifier
+from diana.application.turn_classifier import TurnClassifier, make_pure_greeting_cut
 from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
@@ -62,23 +62,8 @@ def _h6_template_gate() -> TemplateGate:
 def _pure_greeting_cut_using_tc(
     classifier: TurnClassifier | None = None,
 ):
-    """A1 predicate: intent=saludar + confident fático via real TurnClassifier."""
-    tc = classifier or TurnClassifier()
-
-    def _is_pure_greeting(text: str, comprehension: Any) -> bool:
-        if isinstance(comprehension, Comprehension):
-            intent = (comprehension.intent or "").strip().lower()
-        elif isinstance(comprehension, dict):
-            raw = comprehension.get("intent")
-            intent = str(raw).strip().lower() if raw is not None else ""
-        else:
-            return False
-        if intent != "saludar":
-            return False
-        classification = tc.classify(text, comprehension)
-        return classification.category == "fatico" and tc.is_confident(classification)
-
-    return _is_pure_greeting
+    """Production adapter bound to a real TurnClassifier (same helper as composition)."""
+    return make_pure_greeting_cut(classifier or TurnClassifier())
 
 
 def _profile(**overrides: float) -> EvaluationProfile:
@@ -115,14 +100,15 @@ def _comprehension(**overrides) -> Comprehension:
 
 def _saludo_comprehension(**overrides) -> Comprehension:
     """Analyst comprehension fixture for pure greeting cut tests."""
-    return _comprehension(
-        intent="saludar",
-        emotion="neutral",
-        urgency="baja",
-        risk="bajo",
-        topics=["apertura"],
-        **overrides,
-    )
+    data = {
+        "intent": "saludar",
+        "emotion": "neutral",
+        "urgency": "baja",
+        "risk": "bajo",
+        "topics": ["apertura"],
+    }
+    data.update(overrides)
+    return _comprehension(**data)
 
 
 def _turn(*, chat_id: int = 42, text: str = "hola Diana") -> IncomingTurn:
@@ -1656,6 +1642,132 @@ async def test_h6_non_saludar_intent_runs_full_pipeline() -> None:
     assert decision.reason != "plantilla_saludo"
     assert decision.draft_text == "Non-saludar draft"
     assert trace.get(turn.turn_id, "plan") is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pool",
+    [
+        [],
+        ["", "  "],
+    ],
+    ids=["empty_list", "whitespace_only"],
+)
+async def test_h6_empty_saludo_pool_fails_open_to_full_pipeline(pool: list[str]) -> None:
+    """A5/Task2: empty or blank-only pool disables cut → full pipeline."""
+    llm = FakeLLM(
+        structured_responses=[_saludo_comprehension(), _profile(safety=0.5)],
+        text_responses=["Empty pool draft"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(pool),
+    )
+    turn = _turn(text="Hola")
+    decision = await director.handle_turn(turn)
+
+    assert decision.reason != "plantilla_saludo"
+    assert decision.draft_text == "Empty pool draft"
+    assert trace.get(turn.turn_id, "comprehension") is not None
+    assert trace.get(turn.turn_id, "plan") is not None
+    assert any(name == "generate" for name, _ in llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_h6_saludo_con_afecto_carinosa_still_cuts() -> None:
+    """A1: saludo_con_afecto (emotion=cariñosa, conf 0.7 == min) still pure-cuts."""
+    llm = FakeLLM(
+        structured_responses=[_saludo_comprehension(emotion="cariñosa")],
+        text_responses=["should-not-generate"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+        saludo_rng=random.Random(0),
+    )
+    _wire_stage_spies(director)
+
+    turn = _turn(text="Hola amor")
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "approve"
+    assert decision.reason == "plantilla_saludo"
+    assert decision.draft_text in SALUDO_POOL
+    assert trace.get(turn.turn_id, "plan") is None
+    director._analyst.analyze.assert_called_once()  # type: ignore[attr-defined]
+    director._planner.plan.assert_not_called()  # type: ignore[attr-defined]
+    director._decider.decide.assert_not_called()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_h6_texto_muy_corto_fails_open_to_full_pipeline() -> None:
+    """A1: texto_muy_corto (len ≤2) is not confident → full pipeline."""
+    llm = FakeLLM(
+        structured_responses=[_saludo_comprehension(), _profile(safety=0.5)],
+        text_responses=["Short text draft"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+    )
+    turn = _turn(text="hi")  # len 2 → TC conf ≤0.5
+    decision = await director.handle_turn(turn)
+
+    assert decision.reason != "plantilla_saludo"
+    assert decision.draft_text == "Short text draft"
+    assert trace.get(turn.turn_id, "plan") is not None
+    assert any(name == "generate" for name, _ in llm.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("intent", "text"),
+    [
+        ("agradecer", "gracias"),
+        ("despedirse", "adiós"),
+    ],
+)
+async def test_h6_phatic_non_saludo_intents_skip_saludo_pool_cut(
+    intent: str, text: str
+) -> None:
+    """DoD: TC fático includes thanks/goodbye; saludo pool cut is saludar-only.
+
+    Without intent==saludar gate, real TurnClassifier returns confident fático
+    for these intents and would wrongly hit plantilla_saludo.
+    """
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(
+                intent=intent,
+                emotion="neutral",
+                urgency="baja",
+                risk="bajo",
+                topics=["cierre"],
+            ),
+            _profile(safety=0.5),
+        ],
+        text_responses=[f"Pipeline draft for {intent}"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+    )
+    turn = _turn(text=text)
+    decision = await director.handle_turn(turn)
+
+    assert decision.reason != "plantilla_saludo"
+    assert decision.draft_text == f"Pipeline draft for {intent}"
+    assert decision.draft_text not in SALUDO_POOL
+    assert trace.get(turn.turn_id, "plan") is not None
+    assert any(name == "generate" for name, _ in llm.calls)
 
 
 @pytest.mark.asyncio

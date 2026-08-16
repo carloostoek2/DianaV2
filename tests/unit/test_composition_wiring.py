@@ -457,6 +457,7 @@ def test_composition_template_gate_wired(_comp_src: str) -> None:
     assert "pure_greeting_cut=" in _comp_src
     assert "saludo_response_pool=" in _comp_src
     assert "Holis 😁" in _comp_src
+    assert "make_pure_greeting_cut" in _comp_src
     # Single TurnClassifier constructed before Director (reuse for cut + shadow).
     assert "TurnClassifier(confidence_min=" in _comp_src
     classifier_pos = _comp_src.find("classifier = TurnClassifier(")

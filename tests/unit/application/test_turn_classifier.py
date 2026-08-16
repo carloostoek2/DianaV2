@@ -14,6 +14,8 @@ from diana.application.turn_classifier import (
     CLASSIFIER_CONFIDENCE_MIN,
     TurnClassification,
     TurnClassifier,
+    is_pure_greeting,
+    make_pure_greeting_cut,
 )
 
 
@@ -246,3 +248,38 @@ def test_import_purity() -> None:
         assert token not in text, token
     root = Path(diana.__file__).resolve().parent
     assert root.name == "diana"
+
+
+def test_is_pure_greeting_saludar_confident(clf: TurnClassifier) -> None:
+    assert is_pure_greeting("Hola", _comp(intent="saludar"), classifier=clf) is True
+
+
+def test_is_pure_greeting_rejects_agradecer(clf: TurnClassifier) -> None:
+    assert is_pure_greeting("gracias", _comp(intent="agradecer"), classifier=clf) is False
+
+
+def test_is_pure_greeting_rejects_ambiguous_and_short(clf: TurnClassifier) -> None:
+    amb = _comp(intent="saludar")
+    assert (
+        is_pure_greeting("Hola, es que no sé si contarte algo", amb, classifier=clf)
+        is False
+    )
+    assert is_pure_greeting("hi", amb, classifier=clf) is False
+
+
+def test_is_pure_greeting_carinosa_boundary(clf: TurnClassifier) -> None:
+    """saludo_con_afecto (0.7 == default min) remains pure greeting."""
+    assert (
+        is_pure_greeting(
+            "Hola amor",
+            _comp(intent="saludar", emotion="cariñosa"),
+            classifier=clf,
+        )
+        is True
+    )
+
+
+def test_make_pure_greeting_cut_binds_classifier(clf: TurnClassifier) -> None:
+    cut = make_pure_greeting_cut(clf)
+    assert cut("Hola", _comp(intent="saludar")) is True
+    assert cut("gracias", _comp(intent="agradecer")) is False
