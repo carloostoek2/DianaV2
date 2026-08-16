@@ -277,6 +277,24 @@ def test_settings_feature_flag_defaults_are_false(
     # Evo-Agente Fase 2/3
     assert settings.feature_phatic_autonomy is False
     assert settings.feature_mood_engine is False
+    # Pure greeting auto-delivery (plantilla_saludo) — independent kill-switch
+    assert settings.feature_phatic_auto_send is False
+
+
+def test_settings_feature_phatic_auto_send_env_true(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FEATURE_PHATIC_AUTO_SEND=true maps to Settings.feature_phatic_auto_send."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("FEATURE_PHATIC_AUTO_SEND", "true")
+    settings = Settings()
+    assert settings.feature_phatic_auto_send is True
+    # Isolation: does not flip shadow phatic autonomy or full AMS
+    assert settings.feature_phatic_autonomy is False
+    assert settings.feature_autonomous_mode is False
 
 
 def test_settings_evo_agente_fase_2_3_threshold_defaults(

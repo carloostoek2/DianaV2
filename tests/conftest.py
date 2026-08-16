@@ -45,6 +45,8 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "PROFILE_SYNTHESIS_CONFIDENCE_MIN",
         # Evo-Agente Fase 2 (phatic shadow) + Fase 3 (mood shadow) flags/thresholds
         "FEATURE_PHATIC_AUTONOMY",
+        # Real plantilla_saludo auto-delivery (not shadow; independent of phatic_autonomy)
+        "FEATURE_PHATIC_AUTO_SEND",
         "CLASSIFIER_CONFIDENCE_MIN",
         "PHATIC_TRUST_MIN",
         "FEATURE_MOOD_ENGINE",

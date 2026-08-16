@@ -134,6 +134,7 @@ def make_director(
     saludo_rng: Any | None = None,
     naturalness_min: float | None = None,
     persona_catalog_provider: Any | None = None,
+    phatic_auto_send: bool = False,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -168,6 +169,7 @@ def make_director(
         template_gate=template_gate,
         pure_greeting_cut=pure_greeting_cut,
         saludo_response_pool=saludo_response_pool,
+        phatic_auto_send=phatic_auto_send,
         **director_kwargs,
     )
     return director, trace, history
@@ -1588,6 +1590,47 @@ async def test_h6_short_hola_runs_analyst_then_saludo_template_cut() -> None:
     director._decider.decide.assert_not_called()  # type: ignore[attr-defined]
     assert not any(name == "generate" for name, _ in llm.calls)
     assert any(name == "generate_structured" for name, _ in llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_h6_saludo_cut_sends_when_phatic_auto_send() -> None:
+    """Pure greeting cut emits send when injected phatic_auto_send is True."""
+    llm = FakeLLM(
+        structured_responses=[_saludo_comprehension()],
+        text_responses=["should-not-generate"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+        saludo_rng=random.Random(0),
+        phatic_auto_send=True,
+    )
+    _wire_stage_spies(director)
+
+    turn = _turn(text="Hola")
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "send"
+    assert decision.reason == "plantilla_saludo"
+    assert decision.draft_text in SALUDO_POOL
+    assert decision.draft_text
+    _assert_zero_evaluation(decision.evaluation)
+    assert decision.mode_restriction_applied is None
+
+    assert trace.get(turn.turn_id, "comprehension") is not None
+    assert trace.get(turn.turn_id, "decision") is not None
+    assert trace.get(turn.turn_id, "generated_text") == decision.draft_text
+    assert trace.get(turn.turn_id, "plan") is None
+    assert trace.get(turn.turn_id, "evaluation") is None
+
+    director._analyst.analyze.assert_called_once()  # type: ignore[attr-defined]
+    director._planner.plan.assert_not_called()  # type: ignore[attr-defined]
+    director._generator.generate.assert_not_called()  # type: ignore[attr-defined]
+    director._evaluator.evaluate.assert_not_called()  # type: ignore[attr-defined]
+    director._decider.decide.assert_not_called()  # type: ignore[attr-defined]
+    assert not any(name == "generate" for name, _ in llm.calls)
 
 
 @pytest.mark.asyncio

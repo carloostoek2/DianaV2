@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     # RESERVADO para Fase 5 (ítem 4) — este ítem NO lee vip_trust_budget (shadow).
     phatic_trust_min: float = 0.9
 
+    # Pure VIP greeting auto-delivery (plantilla_saludo). Default off.
+    # Real delivery kill-switch — NOT shadow. Independent of feature_phatic_autonomy
+    # (classifier) and feature_autonomous_mode (full AMS).
+    feature_phatic_auto_send: bool = False
+
     # Evo-Agente Fase 3 (motor de mood, shadow) — env-driven, default off.
     feature_mood_engine: bool = False
     # Promedio móvil con retorno a base:

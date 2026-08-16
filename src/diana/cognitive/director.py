@@ -168,6 +168,9 @@ class CognitiveDirector:
         pure_greeting_cut: PureGreetingCutPort | None = None,
         saludo_response_pool: Sequence[str] | None = None,
         saludo_rng: Any = random,
+        # When True, pure-greeting cut emits action=send; else approve (supervised).
+        # Injected bool — never import Settings inside cognitive.
+        phatic_auto_send: bool = False,
         # Supervised naturalness redraft min; not autonomous send gate.
         naturalness_min: float | None = None,
         knowledge_augmenter: KnowledgeAugmenter | None = None,
@@ -193,6 +196,7 @@ class CognitiveDirector:
         self._pure_greeting_cut = pure_greeting_cut
         self._saludo_response_pool = saludo_response_pool
         self._saludo_rng = saludo_rng
+        self._phatic_auto_send = bool(phatic_auto_send)
         self._naturalness_min = (
             float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"])
             if naturalness_min is None
@@ -332,7 +336,7 @@ class CognitiveDirector:
             comprehension.risk,
         )
 
-        # Post-Analyst pure-greeting cut: approve-only pool draft (never send).
+        # Post-Analyst pure-greeting cut: pool draft; send when phatic_auto_send.
         # Prefer before H4 so pure saludo never escalates as pregunta_repetida.
         if (
             self._pure_greeting_cut is not None
@@ -343,11 +347,13 @@ class CognitiveDirector:
                 pool = [t for t in self._saludo_response_pool if t and str(t).strip()]
                 if pool:
                     draft = self._saludo_rng.choice(pool)
+                    action = "send" if self._phatic_auto_send else "approve"
                     logger.info(
-                        "⚡ Plantilla saludo post-Analyst — plantilla_saludo"
+                        "⚡ Plantilla saludo post-Analyst — plantilla_saludo action=%s",
+                        action,
                     )
                     decision = Decision(
-                        action="approve",
+                        action=action,
                         reason="plantilla_saludo",
                         evaluation=_early_exit_evaluation(),
                         draft_text=draft,
