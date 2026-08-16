@@ -2225,23 +2225,63 @@ class TurnOrchestrator:
                     chat_id=turn_ctx.chat_id,
                     business_connection_id=turn_ctx.business_connection_id,
                 )
-                await self._admin.send_doctrine_query(
-                    turn_ctx, decision, turn_id, query
-                )
-                await self._coordinator.transition(
-                    turn_id, TurnStatus.GRAY_ZONE
-                )
-                logger.info(
-                    "consult_doctrine_completed",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "vip_id": str(turn_ctx.vip_id),
-                        "query_id": str(query.id)
-                        if hasattr(query, "id")
-                        else None,
-                    },
-                )
+                try:
+                    await self._admin.send_doctrine_query(
+                        turn_ctx, decision, turn_id, query
+                    )
+                except Exception:
+                    # F6 VIP: notify failure must not leave a 24h orphan freeze
+                    # without an owner DM. Discard (unfreeze) + demote approve.
+                    try:
+                        await self._gray_zone.discard_and_close(query.id)
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "vip_doctrine_discard_failed",
+                            turn_id=str(turn_id),
+                            vip_id=str(turn_ctx.vip_id),
+                            query_id=str(query.id)
+                            if hasattr(query, "id")
+                            else None,
+                        )
+                    demoted = decision.model_copy(
+                        update={
+                            "action": "approve",
+                            "reason": "vip_doctrine_notify_failed",
+                        }
+                    )
+                    await self._coordinator.transition(
+                        turn_id, TurnStatus.PENDING_APPROVAL
+                    )
+                    await self._admin.send_draft_for_approval(
+                        turn_ctx, demoted, turn_id
+                    )
+                    logger.warning(
+                        "vip_doctrine_notify_failed",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "vip_id": str(turn_ctx.vip_id),
+                            "query_id": str(query.id)
+                            if hasattr(query, "id")
+                            else None,
+                        },
+                    )
+                else:
+                    await self._coordinator.transition(
+                        turn_id, TurnStatus.GRAY_ZONE
+                    )
+                    logger.info(
+                        "consult_doctrine_completed",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "vip_id": str(turn_ctx.vip_id),
+                            "query_id": str(query.id)
+                            if hasattr(query, "id")
+                            else None,
+                        },
+                    )
                 # CRITICAL: never call behavior.deliver — VIP is frozen
+                # (or unfrozen after demote; still no auto-deliver)
         elif decision.action == "escalate":
             try:
                 await self._coordinator.transition(
