@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Literal
 from uuid import UUID
@@ -59,7 +60,20 @@ logger = logging.getLogger("diana.telegram")
 
 DEFAULT_CORRECT_TTL = timedelta(minutes=15)
 ClockFn = Callable[[], datetime]
-ResolveState = Literal["live", "expired", "none"]
+ResolveState = Literal["live", "expired", "expired_combo", "none"]
+
+
+@dataclass
+class CorrectSession:
+    """In-process owner correct / reprimand wait state."""
+
+    turn_id: UUID
+    started_at: datetime
+    mode: str = "correct"
+    phase: str = "await_text"
+    candidate_id: UUID | None = None
+    corrected_text: str | None = None
+    chat_id: int | None = None
 
 
 class CorrectSessionStore:
@@ -77,18 +91,32 @@ class CorrectSessionStore:
         ttl: timedelta = DEFAULT_CORRECT_TTL,
         clock: ClockFn | None = None,
     ) -> None:
-        self._awaiting: dict[int, tuple[UUID, datetime]] = {}
+        self._awaiting: dict[int, CorrectSession] = {}
         self._ttl = ttl
         self._clock: ClockFn = clock or (lambda: datetime.now(UTC))
 
-    def start(self, owner_id: int, turn_id: UUID) -> None:
-        self._awaiting[owner_id] = (turn_id, self._clock())
+    def start(
+        self,
+        owner_id: int,
+        turn_id: UUID,
+        *,
+        mode: str = "correct",
+        chat_id: int | None = None,
+    ) -> None:
+        self._awaiting[owner_id] = CorrectSession(
+            turn_id=turn_id,
+            started_at=self._clock(),
+            mode=mode,
+            phase="await_text",
+            chat_id=chat_id,
+        )
         logger.info(
             "correct_session_started",
             extra={
                 "owner_id": owner_id,
                 "turn_id": str(turn_id),
                 "ttl_s": int(self._ttl.total_seconds()),
+                "mode": mode,
             },
         )
 
@@ -96,10 +124,9 @@ class CorrectSessionStore:
         item = self._awaiting.pop(owner_id, None)
         if item is None:
             return None
-        turn_id, started = item
-        if self._clock() - started > self._ttl:
+        if self._clock() - item.started_at > self._ttl:
             return None
-        return turn_id
+        return item.turn_id
 
     def get(self, owner_id: int) -> UUID | None:
         """Live UUID, or None when missing or expired (pop-on-TTL)."""
@@ -108,30 +135,41 @@ class CorrectSessionStore:
             return turn_id
         return None
 
+    def get_session(self, owner_id: int) -> CorrectSession | None:
+        """Live session payload, or None when missing or expired."""
+        state, _ = self.resolve(owner_id)
+        if state != "live":
+            return None
+        return self._awaiting.get(owner_id)
+
     def resolve(
         self, owner_id: int
     ) -> tuple[ResolveState, UUID | None]:
         """Gate helper for free-text correct.
 
         - live: within TTL; UUID returned; entry KEPT (does not consume)
-        - expired: TTL exceeded; entry POPPED; log correct_session_expired once
+        - expired: TTL exceeded on await-text; entry POPPED; log once
+        - expired_combo: TTL exceeded on reprimand_combo; entry POPPED
         - none: missing; no log
         """
         item = self._awaiting.get(owner_id)
         if item is None:
             return ("none", None)
-        turn_id, started = item
-        if self._clock() - started > self._ttl:
+        if self._clock() - item.started_at > self._ttl:
             self._awaiting.pop(owner_id, None)
             logger.info(
                 "correct_session_expired",
                 extra={
                     "owner_id": owner_id,
-                    "turn_id": str(turn_id),
+                    "turn_id": str(item.turn_id),
+                    "mode": item.mode,
+                    "phase": item.phase,
                 },
             )
-            return ("expired", turn_id)
-        return ("live", turn_id)
+            if item.phase == "reprimand_combo":
+                return ("expired_combo", item.turn_id)
+            return ("expired", item.turn_id)
+        return ("live", item.turn_id)
 
     def cancel(self, owner_id: int) -> None:
         self._awaiting.pop(owner_id, None)
@@ -139,11 +177,37 @@ class CorrectSessionStore:
     def cancel_turn(self, turn_id: UUID) -> int:
         """Clear any correct sessions awaiting this turn (supersede / terminal)."""
         removed = 0
-        for oid, (tid, _) in list(self._awaiting.items()):
-            if tid == turn_id:
+        for oid, sess in list(self._awaiting.items()):
+            if sess.turn_id == turn_id:
                 self._awaiting.pop(oid, None)
                 removed += 1
         return removed
+
+    def refresh(self, owner_id: int) -> None:
+        sess = self._awaiting.get(owner_id)
+        if sess is not None:
+            sess.started_at = self._clock()
+
+    def capture_reprimand(
+        self,
+        owner_id: int,
+        *,
+        candidate_id: UUID,
+        corrected_text: str,
+    ) -> None:
+        sess = self._awaiting.get(owner_id)
+        if sess is None:
+            return
+        sess.phase = "reprimand_combo"
+        sess.candidate_id = candidate_id
+        sess.corrected_text = corrected_text
+        sess.started_at = self._clock()
+
+    def cancel_combo_for_chat(self, chat_id: int) -> None:
+        """Drop live reprimand_combo sessions for this VIP chat only."""
+        for oid, sess in list(self._awaiting.items()):
+            if sess.phase == "reprimand_combo" and sess.chat_id == chat_id:
+                self._awaiting.pop(oid, None)
 
 
 def _map_delivery_status(result: Any, *, success_token: str) -> str:

@@ -65,6 +65,9 @@ class TestStagingKeyboards:
         assert parse_callback(encode_staging_discard(cid)) is None
         assert parse_callback(encode_staging_discard_confirm(cid)) is None
         assert parse_callback(encode_staging_discard_cancel(cid)) is None
+        # Quality confirm prefixes must not be claimed by the generic parser.
+        assert parse_callback(f"gdc:{cid}:g") is None
+        assert parse_callback(f"rpc:{cid}:pol:g") is None
 
     def test_keyboard_buttons_spanish(self) -> None:
         cid = uuid4()

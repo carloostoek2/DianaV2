@@ -42,6 +42,14 @@ _ACTION_MEMORY_APPROVE = "mp"
 _ACTION_MEMORY_DISCARD = "md"
 # Hierarchical owner menu (m:<category> or m:<category>:<action>) — ≤64 bytes
 _ACTION_MENU = "m"
+# Quality feedback on VIP drafts (gd/rp tap; gdc/rpc confirm) — ≤64 bytes
+_ACTION_GOLD = "gd"
+_ACTION_REPRIMAND = "rp"
+_ACTION_GOLD_CONFIRM = "gdc"
+_ACTION_REPRIMAND_CONFIRM = "rpc"
+
+_GOLD_SCOPE = {"g": "global", "v": "vip"}
+_REPRIMAND_MODE = {"pol": "policy", "ex": "counter_example"}
 
 
 def encode_callback(action: str, turn_id: UUID) -> str:
@@ -53,6 +61,8 @@ def encode_callback(action: str, turn_id: UUID) -> str:
         "regen": _ACTION_REGEN,
         "prev": _ACTION_PREV,
         "next": _ACTION_NEXT,
+        "gold": _ACTION_GOLD,
+        "reprimand": _ACTION_REPRIMAND,
     }.get(action, action)
     data = f"{code}:{turn_id}"
     if len(data.encode("utf-8")) > 64:
@@ -98,6 +108,8 @@ def parse_callback(data: str) -> tuple[str, UUID] | None:
         _ACTION_REGEN: "regen",
         _ACTION_PREV: "prev",
         _ACTION_NEXT: "next",
+        _ACTION_GOLD: "gold",
+        _ACTION_REPRIMAND: "reprimand",
     }.get(code)
     if action is None:
         return None
@@ -134,24 +146,148 @@ def parse_doctrine_callback(data: str, prefix: str | None = None) -> UUID | None
         return None
 
 
-def draft_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+def draft_keyboard(
+    turn_id: UUID, *, show_quality_feedback: bool = False
+) -> InlineKeyboardMarkup:
     """Aprobar / Corregir / Escalar inline keyboard for owner DM."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="✅ Aprobar",
+                callback_data=encode_callback("approve", turn_id),
+            ),
+            InlineKeyboardButton(
+                text="✏️ Corregir",
+                callback_data=encode_callback("correct", turn_id),
+            ),
+            InlineKeyboardButton(
+                text="⚠️ Escalar",
+                callback_data=encode_callback("escalate", turn_id),
+            ),
+        ]
+    ]
+    if show_quality_feedback:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Destacar",
+                    callback_data=encode_callback("gold", turn_id),
+                ),
+                InlineKeyboardButton(
+                    text="Reprender",
+                    callback_data=encode_callback("reprimand", turn_id),
+                ),
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def encode_gold_confirm(turn_id: UUID, scope: str) -> str:
+    """Build callback_data: gdc:<uuid>:g|v|x."""
+    if scope not in {"g", "v", "x"}:
+        raise ValueError(f"invalid gold scope: {scope!r}")
+    data = f"{_ACTION_GOLD_CONFIRM}:{turn_id}:{scope}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_gold_confirm(data: str) -> tuple[UUID, str] | str | None:
+    """Parse gdc:<uuid>:g|v|x → (tid, global|vip) or 'cancel'."""
+    if not data or not data.startswith(f"{_ACTION_GOLD_CONFIRM}:"):
+        return None
+    rest = data.split(":", 1)[1]
+    if ":" not in rest:
+        return None
+    raw_id, scope = rest.rsplit(":", 1)
+    try:
+        turn_id = UUID(raw_id)
+    except ValueError:
+        return None
+    if scope == "x":
+        return "cancel"
+    mapped = _GOLD_SCOPE.get(scope)
+    if mapped is None:
+        return None
+    return turn_id, mapped
+
+
+def encode_reprimand_confirm(turn_id: UUID, mode: str, scope: str) -> str:
+    """Build callback_data: rpc:<uuid>:pol|ex:g|v."""
+    if mode not in _REPRIMAND_MODE or scope not in _GOLD_SCOPE:
+        raise ValueError(f"invalid reprimand confirm: {mode!r}/{scope!r}")
+    data = f"{_ACTION_REPRIMAND_CONFIRM}:{turn_id}:{mode}:{scope}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_reprimand_confirm(data: str) -> tuple[UUID, str, str] | None:
+    """Parse rpc:<uuid>:pol|ex:g|v → (tid, policy|counter_example, global|vip)."""
+    if not data or ":" not in data:
+        return None
+    parts = data.split(":")
+    if len(parts) != 4 or parts[0] != _ACTION_REPRIMAND_CONFIRM:
+        return None
+    try:
+        turn_id = UUID(parts[1])
+    except ValueError:
+        return None
+    mode = _REPRIMAND_MODE.get(parts[2])
+    scope = _GOLD_SCOPE.get(parts[3])
+    if mode is None or scope is None:
+        return None
+    return turn_id, mode, scope
+
+
+def gold_scope_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+    """General / Este VIP + Volver for Destacar confirm."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Aprobar",
-                    callback_data=encode_callback("approve", turn_id),
+                    text="🌍 General",
+                    callback_data=encode_gold_confirm(turn_id, "g"),
                 ),
                 InlineKeyboardButton(
-                    text="✏️ Corregir",
-                    callback_data=encode_callback("correct", turn_id),
+                    text="👤 Este VIP",
+                    callback_data=encode_gold_confirm(turn_id, "v"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Volver",
+                    callback_data=encode_gold_confirm(turn_id, "x"),
+                ),
+            ],
+        ]
+    )
+
+
+def reprimand_combo_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+    """Promote-only lesson combo after reprimand text is already delivered."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Regla dura · General",
+                    callback_data=encode_reprimand_confirm(turn_id, "pol", "g"),
                 ),
                 InlineKeyboardButton(
-                    text="⚠️ Escalar",
-                    callback_data=encode_callback("escalate", turn_id),
+                    text="Regla dura · Este VIP",
+                    callback_data=encode_reprimand_confirm(turn_id, "pol", "v"),
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="No repetir · General",
+                    callback_data=encode_reprimand_confirm(turn_id, "ex", "g"),
+                ),
+                InlineKeyboardButton(
+                    text="No repetir · Este VIP",
+                    callback_data=encode_reprimand_confirm(turn_id, "ex", "v"),
+                ),
+            ],
         ]
     )
 
@@ -457,9 +593,11 @@ def step_detail_keyboard(turn_id: UUID, from_draft: bool = False) -> InlineKeybo
 _draft_base = draft_keyboard
 
 
-def draft_keyboard(turn_id: UUID, chat_id: int | None = None) -> InlineKeyboardMarkup:
+def draft_keyboard(
+    turn_id: UUID, chat_id: int | None = None, *, show_quality_feedback: bool = False
+) -> InlineKeyboardMarkup:
     """Aprobar / Corregir / Escalar + versiones + Traza / Nota."""
-    base = _draft_base(turn_id)
+    base = _draft_base(turn_id, show_quality_feedback=show_quality_feedback)
     # Version nav row (v1 port): prev | regenerate | next
     base.inline_keyboard.append(
         [
