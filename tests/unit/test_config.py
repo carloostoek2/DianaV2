@@ -273,6 +273,7 @@ def test_settings_feature_flag_defaults_are_false(
     assert settings.feature_persona_admin_enabled is False
     # F4
     assert settings.feature_general_mode_enabled is False
+    assert settings.feature_quality_feedback_enabled is False
     # Evo-Agente Fase 2/3
     assert settings.feature_phatic_autonomy is False
     assert settings.feature_mood_engine is False
@@ -357,6 +358,21 @@ def test_settings_f3_flag_env_override_true(
     ):
         if other != attr:
             assert getattr(settings, other) is False
+
+
+def test_settings_quality_feedback_flag_env_override_true(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FEATURE_QUALITY_FEEDBACK_ENABLED flips only that flag."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("FEATURE_QUALITY_FEEDBACK_ENABLED", "true")
+    settings = Settings()
+    assert settings.feature_quality_feedback_enabled is True
+    assert settings.feature_general_mode_enabled is False
+    assert settings.feature_staging_enabled is False
 
 
 def test_random_delay_policy_rejects_invalid_ranges() -> None:

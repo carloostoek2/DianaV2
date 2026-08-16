@@ -138,6 +138,7 @@ class PolicyRetriever:
                     threshold=DEFAULT_POLICY_THRESHOLD,
                     scope=db_scope,
                     limit=DEFAULT_POLICY_LIMIT,
+                    vip_id=turn.vip_id,
                 )
                 for row in rows or []:
                     if not isinstance(row, dict):

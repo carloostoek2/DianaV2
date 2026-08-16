@@ -12,7 +12,6 @@ Pure cognitive module: does NOT import from ``diana.infrastructure``.
 from __future__ import annotations
 
 import logging
-import random
 from typing import Any
 
 from diana.cognitive.models import Comprehension, IncomingTurn
@@ -24,18 +23,16 @@ DEFAULT_EXAMPLES_LIMIT = 5
 
 
 class ExamplesRetriever:
-    """Curated example retriever. Optionally includes a counter-example (~10%)."""
+    """Curated example retriever. Always appends a matching counter-example when one exists."""
 
     def __init__(
         self,
         *,
         embedding_service: Any = None,
         repo: Any = None,
-        counter_example_chance: float = 0.1,
     ) -> None:
         self._embed = embedding_service
         self._repo = repo
-        self._counter_example_chance = counter_example_chance
 
     async def fetch(
         self,
@@ -44,7 +41,7 @@ class ExamplesRetriever:
     ) -> Any | None:
         """Return formatted examples, or None if unavailable.
 
-        Optionally includes one counter-example at ~10% probability.
+        Always appends a matching counter-example when one exists.
         """
         if self._repo is None or self._embed is None:
             logger.debug("ExamplesRetriever: deps not configured, returning None")
@@ -57,10 +54,8 @@ class ExamplesRetriever:
             threshold=DEFAULT_EXAMPLES_THRESHOLD,
             limit=DEFAULT_EXAMPLES_LIMIT,
             counter_example=False,
+            vip_id=turn.vip_id,
         )
-        if not rows:
-            logger.debug("ExamplesRetriever: no examples found")
-            return []
 
         out: list[str] = []
         for row in rows:
@@ -68,20 +63,19 @@ class ExamplesRetriever:
                 f"Turn: {row['turn_text']} | Draft: {row['draft_text']} | Corrected: {row['corrected_text']}"
             )
 
-        # Optionally append a counter-example.
-        if random.random() < self._counter_example_chance:
-            counter_rows = await self._repo.find_by_similarity(
-                embedding,
-                threshold=DEFAULT_EXAMPLES_THRESHOLD,
-                limit=1,
-                counter_example=True,
+        counter_rows = await self._repo.find_by_similarity(
+            embedding,
+            threshold=DEFAULT_EXAMPLES_THRESHOLD,
+            limit=1,
+            counter_example=True,
+            vip_id=turn.vip_id,
+        )
+        if counter_rows:
+            logger.debug("ExamplesRetriever: counter-example appended")
+            cr = counter_rows[0]
+            out.append(
+                f"[COUNTER-EXAMPLE] Turn: {cr['turn_text']} | Draft: {cr['draft_text']} | Corrected: {cr['corrected_text']}"
             )
-            if counter_rows:
-                logger.debug("ExamplesRetriever: counter-example appended")
-                cr = counter_rows[0]
-                out.append(
-                    f"[COUNTER-EXAMPLE] Turn: {cr['turn_text']} | Draft: {cr['draft_text']} | Corrected: {cr['corrected_text']}"
-                )
 
         return out
 

@@ -336,6 +336,14 @@ def test_examples_stub_has_no_memory_imports_ast() -> None:
                 for bad in forbidden_substrings:
                     assert bad not in alias.name, alias.name
 
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    assert "random" not in imported
+
 
 def test_retrievers_have_no_cross_peer_imports_ast() -> None:
     """H.4: retriever modules must not import peer retrievers (no shared snapshot)."""
@@ -553,27 +561,41 @@ async def test_examples_retriever_returns_empty_on_no_results() -> None:
 
 @pytest.mark.asyncio
 async def test_examples_retriever_formats_results() -> None:
-    """ExamplesRetriever formats repo rows into turn/draft/corrected strings."""
+    """ExamplesRetriever formats repo rows; always issues the counter query."""
     from unittest.mock import AsyncMock, MagicMock
 
     embed = MagicMock()
     embed.embed = AsyncMock(return_value=[0.1] * 384)
     repo = AsyncMock()
     repo.find_by_similarity = AsyncMock(
-        return_value=[
-            {"turn_text": "hello", "draft_text": "hi", "corrected_text": "hello there"},
+        side_effect=[
+            [
+                {
+                    "turn_text": "hello",
+                    "draft_text": "hi",
+                    "corrected_text": "hello there",
+                },
+            ],
+            [],
         ]
     )
-    retriever = ExamplesRetriever(embedding_service=embed, repo=repo, counter_example_chance=0.0)
+    retriever = ExamplesRetriever(embedding_service=embed, repo=repo)
     result = await retriever.fetch(_turn(), _comprehension())
     assert result == [
         "Turn: hello | Draft: hi | Corrected: hello there",
     ]
+    assert repo.find_by_similarity.await_count == 2
+    first, second = repo.find_by_similarity.await_args_list
+    assert first.kwargs.get("counter_example") is False
+    assert second.kwargs.get("counter_example") is True
+    assert second.kwargs.get("limit") == 1
+    assert first.kwargs.get("vip_id") is None
+    assert second.kwargs.get("vip_id") is None
 
 
 @pytest.mark.asyncio
 async def test_examples_retriever_counter_example() -> None:
-    """ExamplesRetriever includes [COUNTER-EXAMPLE] prefix when counter_example_chance=1.0."""
+    """ExamplesRetriever always appends [COUNTER-EXAMPLE] when a match exists."""
     from unittest.mock import AsyncMock, MagicMock
 
     embed = MagicMock()
@@ -585,6 +607,7 @@ async def test_examples_retriever_counter_example() -> None:
         threshold: float,
         limit: int,
         counter_example: bool = False,
+        vip_id=None,
     ) -> list[dict[str, str]]:
         if counter_example:
             return [
@@ -598,16 +621,116 @@ async def test_examples_retriever_counter_example() -> None:
             {"turn_text": "hello", "draft_text": "hi", "corrected_text": "hello there"},
         ]
 
-    repo.find_by_similarity = find_by_similarity
-    retriever = ExamplesRetriever(
-        embedding_service=embed, repo=repo, counter_example_chance=1.0,
-    )
+    repo.find_by_similarity = AsyncMock(side_effect=find_by_similarity)
+    retriever = ExamplesRetriever(embedding_service=embed, repo=repo)
     result = await retriever.fetch(_turn(), _comprehension())
     assert result is not None
     assert len(result) == 2
     assert result[0] == "Turn: hello | Draft: hi | Corrected: hello there"
     assert "[COUNTER-EXAMPLE]" in result[1]
     assert "bad example" in result[1]
+    assert repo.find_by_similarity.await_count == 2
+    first, second = repo.find_by_similarity.await_args_list
+    assert first.kwargs.get("counter_example") is False
+    assert second.kwargs.get("counter_example") is True
+
+
+@pytest.mark.asyncio
+async def test_examples_retriever_counter_only_when_standard_empty() -> None:
+    """A matching counter-example is returned even if the standard bank is empty."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_by_similarity = AsyncMock(
+        side_effect=[
+            [],
+            [
+                {
+                    "turn_text": "only counter",
+                    "draft_text": "wrong",
+                    "corrected_text": "right",
+                }
+            ],
+        ]
+    )
+    retriever = ExamplesRetriever(embedding_service=embed, repo=repo)
+    result = await retriever.fetch(_turn(), _comprehension())
+    assert result == [
+        "[COUNTER-EXAMPLE] Turn: only counter | Draft: wrong | Corrected: right",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_examples_retriever_forwards_vip_id() -> None:
+    """VIP turns pass IncomingTurn.vip_id to both example queries."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+
+    vip_id = uuid4()
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_by_similarity = AsyncMock(return_value=[])
+    retriever = ExamplesRetriever(embedding_service=embed, repo=repo)
+    turn = _turn()
+    turn.vip_id = vip_id
+    result = await retriever.fetch(turn, _comprehension())
+    assert result == []
+    assert repo.find_by_similarity.await_count == 2
+    for call in repo.find_by_similarity.await_args_list:
+        assert call.kwargs.get("vip_id") == vip_id
+
+
+@pytest.mark.asyncio
+async def test_examples_and_policy_atencion_forward_vip_id_none() -> None:
+    """Atención retrieval asks repos for vip_id=None; policies keep scope='all'."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    examples_repo = AsyncMock()
+    examples_repo.find_by_similarity = AsyncMock(return_value=[])
+    policies_repo = AsyncMock()
+    policies_repo.find_active_by_similarity = AsyncMock(return_value=[])
+
+    turn = _turn()
+    turn.channel_type = "atencion"
+    turn.vip_id = None
+
+    examples = ExamplesRetriever(embedding_service=embed, repo=examples_repo)
+    policies = PolicyRetriever(embedding_service=embed, repo=policies_repo)
+    await examples.fetch(turn, _comprehension())
+    await policies.fetch(turn, _comprehension())
+
+    for call in examples_repo.find_by_similarity.await_args_list:
+        assert "vip_id" in call.kwargs
+        assert call.kwargs["vip_id"] is None
+    policy_kwargs = policies_repo.find_active_by_similarity.await_args.kwargs
+    assert "vip_id" in policy_kwargs
+    assert policy_kwargs["vip_id"] is None
+    assert policy_kwargs.get("scope") == "all"
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_forwards_scope_and_vip_id() -> None:
+    """VIP policy lookup stays unfiltered on scope and forwards turn.vip_id."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+
+    vip_id = uuid4()
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(return_value=[])
+    retriever = PolicyRetriever(embedding_service=embed, repo=repo)
+    turn = _turn()
+    turn.vip_id = vip_id
+    await retriever.fetch(turn, _comprehension())
+    kwargs = repo.find_active_by_similarity.await_args.kwargs
+    assert kwargs.get("scope") is None
+    assert kwargs.get("vip_id") == vip_id
 
 
 

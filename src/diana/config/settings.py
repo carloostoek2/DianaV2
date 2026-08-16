@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # F4 general mode (non-VIP atencion channel) — env-driven, default off.
     feature_general_mode_enabled: bool = False
 
+    # Quality feedback (Destacar / Reprender). Writes are gated; retrieval
+    # always uses quality/vip_id columns (defaults match pre-flag behavior).
+    feature_quality_feedback_enabled: bool = False
+
     # Fase 6 (vínculo Lucien→Diana): expulsiones del Canal VIP avisan a la dueña.
     # FEATURE_LINK_ENABLED on + LINK_CHAT_ID set activates the [LINK] middleware.
     feature_link_enabled: bool = False
