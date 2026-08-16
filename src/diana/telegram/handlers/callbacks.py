@@ -345,6 +345,14 @@ async def dispatch_owner_callback(
             if not admin.quality_feedback_enabled:
                 return "quality_feedback_disabled"
             if gold_parsed == "cancel":
+                parts = callback_data.split(":")
+                try:
+                    cancel_tid = UUID(parts[1])
+                except (IndexError, ValueError):
+                    return "quality_feedback_not_vip"
+                approval = await admin.get_approval(cancel_tid)
+                if approval is None or approval.vip_id is None:
+                    return "quality_feedback_not_vip"
                 return "gold_scope_cancel"
             turn_id, scope = gold_parsed
             approval = await admin.get_approval(turn_id)
@@ -377,7 +385,12 @@ async def dispatch_owner_callback(
             if approval is None or approval.vip_id is None:
                 return "quality_feedback_not_vip"
             sess = correct_sessions.get_session(actor_id)
-            if sess is None or sess.candidate_id is None:
+            if (
+                sess is None
+                or sess.candidate_id is None
+                or sess.phase != "reprimand_combo"
+                or sess.turn_id != turn_id
+            ):
                 return "reprimand_lesson_not_saved"
             try:
                 result = await admin.handle_reprimand(
@@ -458,6 +471,9 @@ async def dispatch_owner_callback(
             approval = await admin.get_approval(turn_id)
             if approval is None or approval.vip_id is None:
                 return "quality_feedback_not_vip"
+            prior = correct_sessions.get_session(actor_id)
+            if prior is not None and prior.phase == "reprimand_combo":
+                correct_sessions.cancel(actor_id)
             correct_sessions.start(
                 actor_id, turn_id, mode="reprimand", chat_id=approval.chat_id
             )
@@ -846,12 +862,17 @@ def build_callback_router(
                 if query.message and turn_id is not None:
                     approval = await admin.get_approval(turn_id)
                     chat_id = approval.chat_id if approval is not None else None
+                    show_quality = (
+                        admin.quality_feedback_enabled
+                        and approval is not None
+                        and approval.vip_id is not None
+                    )
                     try:
                         await query.message.edit_reply_markup(
                             reply_markup=draft_keyboard(
                                 turn_id,
                                 chat_id=chat_id,
-                                show_quality_feedback=True,
+                                show_quality_feedback=show_quality,
                             )
                         )
                     except Exception:
@@ -878,7 +899,14 @@ def build_callback_router(
                         await query.message.edit_reply_markup(reply_markup=None)
                     except Exception:
                         logger.debug("quality_strip_markup_failed", exc_info=True)
-                await query.answer(_QUALITY_ALERTS[status], show_alert=True)
+                if query.message:
+                    try:
+                        await query.message.answer(_QUALITY_ALERTS[status])
+                    except Exception:
+                        logger.exception(
+                            "owner_callback_followup_failed",
+                            extra={"callback_data": data, "actor_id": actor_id},
+                        )
                 return
             if status == "approved":
                 # The message edit is the primary feedback; the initial empty

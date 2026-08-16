@@ -332,6 +332,9 @@ async def handle_admin_text(
                 correct_sessions.cancel(actor_id)
                 correct_sessions.cancel_turn(pending_turn)
                 return "stale"
+            if not getattr(delivery, "success", False):
+                correct_sessions.cancel(actor_id)
+                return "deliver_failed"
             if candidate_id is None:
                 correct_sessions.cancel(actor_id)
                 return "reprimand_lesson_not_saved"

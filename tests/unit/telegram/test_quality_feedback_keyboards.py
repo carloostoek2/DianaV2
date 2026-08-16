@@ -106,6 +106,21 @@ class TestGoldAndReprimandKeyboards:
         for blob in blobs:
             assert _VOSEO.search(blob) is None, blob
 
+    def test_owner_quality_alerts_have_no_voseo(self) -> None:
+        from diana.telegram.handlers.callbacks import (
+            _APPROVE_NOOP_ALERTS,
+            _QUALITY_ALERTS,
+        )
+
+        blob = " ".join(_QUALITY_ALERTS.values())
+        assert _VOSEO.search(blob) is None, blob
+        assert _QUALITY_ALERTS["reprimand_promoted"] == "Lección guardada."
+        assert (
+            _QUALITY_ALERTS["reprimand_promoted"]
+            not in _APPROVE_NOOP_ALERTS.values()
+        )
+        assert "reprimand_promoted" not in _APPROVE_NOOP_ALERTS
+
 
 class TestQualityParsers:
     def test_parse_callback_ignores_confirm_prefixes(self) -> None:
