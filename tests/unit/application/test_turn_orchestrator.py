@@ -150,12 +150,16 @@ class FakeGrayZone:
     """Fake GrayZoneService for consult_doctrine tests."""
 
     def __init__(
-        self, *, existing_chat_query: object | None = None
+        self,
+        *,
+        existing_chat_query: object | None = None,
+        vip_store: InMemoryVipStore | None = None,
     ) -> None:
         self.queries: list[dict] = []
         self.next_query_id: UUID = uuid4()
         self.discarded: list[UUID] = []
         self._existing_chat_query = existing_chat_query
+        self._vip_store = vip_store
 
     async def create_query(
         self,
@@ -174,6 +178,10 @@ class FakeGrayZone:
             "chat_id": kwargs.get("chat_id"),
             "business_connection_id": kwargs.get("business_connection_id"),
         })
+        if vip_id is not None and self._vip_store is not None:
+            await self._vip_store.freeze_vip(
+                vip_id, datetime.now(UTC) + timedelta(hours=24)
+            )
         # Return a simple object matching GrayZoneQueryView protocol (id: UUID).
         return type("_Query", (), {"id": self.next_query_id})()
 
@@ -181,9 +189,13 @@ class FakeGrayZone:
         return self._existing_chat_query
 
     async def discard_and_close(self, query_id: UUID) -> object:
+        found = next((q for q in self.queries if q.get("id") == query_id), None)
+        vip_id = found.get("vip_id") if found is not None else None
         self.discarded.append(query_id)
         self.queries = [q for q in self.queries if q.get("id") != query_id]
-        return type("_Query", (), {"id": query_id, "vip_id": None})()
+        if vip_id is not None and self._vip_store is not None:
+            await self._vip_store.unfreeze_vip(vip_id)
+        return type("_Query", (), {"id": query_id, "vip_id": vip_id})()
 
 
 class _FakeTraceReader:
@@ -2873,6 +2885,46 @@ async def test_consult_doctrine_atencion_notify_failure_discards_and_demotes() -
     assert len(g["notifier"].drafts) == 1
     assert g["notifier"].drafts[0].reason == "atencion_doctrine_notify_failed"
     assert g["gray_zone"].queries == []
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_vip_notify_failure_discards_and_demotes() -> None:
+    """VIP doctrine notify failure discards the query, unfreezes, demotes to approve."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="need policy",
+    )
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    gz = FakeGrayZone(vip_store=vip_store)
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=gz,
+        feature_gray_zone_enabled=True,
+        vip_store=vip_store,
+    )
+
+    async def boom(payload: object) -> None:
+        raise RuntimeError("tg down")
+
+    g["notifier"].notify_doctrine = boom  # type: ignore[method-assign]
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None
+    assert turn.status == "pending_approval"
+    assert len(gz.discarded) == 1
+    assert gz.discarded[0] == gz.next_query_id
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "vip_doctrine_notify_failed"
+    assert g["notifier"].doctrines == []
+    assert g["actuator"].send_count() == 0
+    stored = await vip_store.get_by_id(rec.id)
+    assert stored is not None
+    assert stored.frozen_until is None
+    # Do NOT set feature_general_mode_enabled (Atención-only).
 
 
 class _FlakyRecheckGrayZone(FakeGrayZone):
