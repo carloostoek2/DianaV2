@@ -269,9 +269,9 @@ Actualmente están implementadas las principales capacidades de:
 | Sandbox | Listo |
 | Staging / revisión humana | Listo |
 | Métricas y trazabilidad | Listo |
-| Feedback de calidad | Implementado, apagado |
+| Feedback de calidad | Listo |
 | Eventos temporales | Listo |
-| Integración Lucien → Diana | Implementada, apagada |
+| Integración Lucien → Diana | Listo |
 | Autonomía conversacional | En evolución |
 | Autoenvío autónomo | No habilitado |
 
