@@ -681,7 +681,26 @@ def build_app(
         clock=clock,
         persona_catalog_provider=persona_catalog_provider,
     )
-    # H6: pure TemplateGate pre-pipeline (deteccion_ia before saludo_constante).
+    # Single TurnClassifier instance (Director pure-greeting cut + orchestrator shadow).
+    classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)
+
+    def _is_pure_greeting(text: str, comprehension: Any) -> bool:
+        # intent==saludar + confident fático; fail open → full pipeline.
+        raw_intent = (
+            comprehension.get("intent")
+            if isinstance(comprehension, dict)
+            else getattr(comprehension, "intent", None)
+        )
+        intent = str(raw_intent).strip().lower() if raw_intent is not None else ""
+        if intent != "saludar":
+            return False
+        classification = classifier.classify(text, comprehension)
+        return (
+            classification.category == "fatico"
+            and classifier.is_confident(classification)
+        )
+
+    # H6: IA-only pre-pipeline TemplateGate; pure saludo is post-Analyst cut.
     deteccion_ia = TemplateRule(
         id="deteccion_ia",
         trigger_patterns=[
@@ -696,27 +715,8 @@ def build_app(
         response_pool=[IA_TEMPLATE],
         reason="plantilla_deteccion_ia",
     )
-    saludo_constante = TemplateRule(
-        id="saludo_constante",
-        trigger_patterns=[
-            "hola",
-            "holaa",
-            "holis",
-            "buenas",
-            "buenos días",
-            "buenos dias",
-            "buenas tardes",
-            "buenas noches",
-            "hey",
-            "qué tal",
-            "que tal",
-        ],
-
-        max_words=4,
-        response_pool=["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"],
-        reason="plantilla_saludo",
-    )
-    template_gate = TemplateGate(rules=[deteccion_ia, saludo_constante])
+    saludo_response_pool = ["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"]
+    template_gate = TemplateGate(rules=[deteccion_ia])
     director = CognitiveDirector(
         analyst=Analyst(provider),
         planner=Planner(),
@@ -742,6 +742,8 @@ def build_app(
         recent_intents=traces,
         repetition_guard=None,
         template_gate=template_gate,
+        pure_greeting_cut=_is_pure_greeting,
+        saludo_response_pool=saludo_response_pool,
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
         knowledge_augmenter=knowledge_augmenter,
@@ -769,9 +771,8 @@ def build_app(
     # Evo-Agente Fase 0: build the detector ALWAYS (pure constants); flag OFF
     # → emotional_detector=None → the orchestrator hook is a no-op (A8).
     detector = EmotionalSignalDetector()
-    # Evo-Agente Fase 2/3: pure classifier + mood engine built ALWAYS (A8);
-    # flag OFF → None injected → the orchestrator hooks are no-op (byte-identical).
-    classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)
+    # Evo-Agente Fase 2/3: mood engine built ALWAYS (A8); classifier built above
+    # and reused for Director pure-greeting cut + orchestrator injection.
     mood = MoodEngine(
         return_rate=settings.mood_return_rate,
         signal_weight=settings.mood_signal_weight,

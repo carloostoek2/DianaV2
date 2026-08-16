@@ -442,23 +442,27 @@ def test_composition_repetition_guard_disabled(_comp_src: str) -> None:
 
 
 def test_composition_template_gate_wired(_comp_src: str) -> None:
-    """H6: Director receives TemplateGate with deteccion_ia before saludo_constante."""
+    """H6: IA-only TemplateGate; pure saludo via Director injectables."""
     assert "from diana.cognitive.template_gate import TemplateGate, TemplateRule" in _comp_src
     assert 'id="deteccion_ia"' in _comp_src
-    assert 'id="saludo_constante"' in _comp_src
     assert "template_gate=" in _comp_src
     assert "TemplateGate(rules=" in _comp_src
-    # Rule order: deteccion_ia constructed/listed before saludo in rules list
-    ia_pos = _comp_src.find('id="deteccion_ia"')
-    saludo_pos = _comp_src.find('id="saludo_constante"')
-    assert ia_pos != -1 and saludo_pos != -1
-    assert ia_pos < saludo_pos
     rules_list_pos = _comp_src.find("TemplateGate(rules=")
     assert rules_list_pos != -1
-    rules_block = _comp_src[rules_list_pos : rules_list_pos + 120]
+    rules_block = _comp_src[rules_list_pos : rules_list_pos + 80]
     assert "deteccion_ia" in rules_block
-    assert "saludo_constante" in rules_block
-    assert rules_block.find("deteccion_ia") < rules_block.find("saludo_constante")
+    # Production gate must not route saludo pre-pipeline.
+    assert "saludo_constante" not in rules_block
+    assert "TemplateGate(rules=[deteccion_ia, saludo_constante])" not in _comp_src
+    assert "pure_greeting_cut=" in _comp_src
+    assert "saludo_response_pool=" in _comp_src
+    assert "Holis 😁" in _comp_src
+    # Single TurnClassifier constructed before Director (reuse for cut + shadow).
+    assert "TurnClassifier(confidence_min=" in _comp_src
+    classifier_pos = _comp_src.find("classifier = TurnClassifier(")
+    director_pos = _comp_src.find("director = CognitiveDirector(")
+    assert classifier_pos != -1 and director_pos != -1
+    assert classifier_pos < director_pos
 
 
 def test_persona_reglas_estilo_no_j2_examples_note() -> None:
