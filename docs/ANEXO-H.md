@@ -68,7 +68,7 @@ Si en el futuro esto crece mucho (decenas/cientos de hechos) o quieres que la du
 | Hito | Qué es | Estado |
 |---|---|---|
 | H0–H5 | persona_facts + voice_patterns + escalación (frustración/repetición) | ✅ **Implementado** — catálogo `persona_diana.json` (9 facts + 11 patterns), retrievers, wiring Planner/Registry/ContextBuilder/Analyst, `frustracion_directa` en Decider, `RepetitionGuard` + `get_recent_intents` en Director, composition + tests unitarios. |
-| H6 | Plantillas deterministas (saludo constante + "¿eres una IA?") | ✅ **Implementado** — `cognitive/template_gate.py`, reglas en `composition.py`, early-exit en `CognitiveDirector.handle_turn`, tests en `test_template_gate.py` / `test_director.py`. |
+| H6 | Plantillas deterministas (saludo puro + "¿eres una IA?") | ✅ **Implementado** (actualizado 2026-08-16). IA: pre-pipeline `TemplateGate` (`deteccion_ia`). Saludo puro VIP: post-Analyst cut → pool `plantilla_saludo` (Planner→Decider saltados). Flag `FEATURE_PHATIC_AUTO_SEND` (default false): OFF = approve supervisado; ON = send VIP sin AMS. Atención nunca autoenvía. Commits pool: `141adc5`…`21ab08b`. |
 | H7 | Captura de correcciones + historial de salida | ✅ **Implementado** — `handle_correct` → `StagingService.save_correction` (timing A); owner history `role="owner"` en admin (approve/correct) y orquestador autónomo; gate sandbox `should_persist`; `feature_staging_enabled` wire en composition. Commits núcleo: `b7b61da` · `3ee7607` · `f149665` · `212213e`. **Residuales 2026-07-28:** VIP inbound history bajo sandbox (`0cb21db`/`a8212b1`); multi-segment owner history 1 fila/segmento (`16773ee`..`50178c4`); recontact owner history post-deliver (`84fcf69`/`73eaea6`); Promote UI REQ-ADM-08 (`df0f5fc`..`caa8cf4`). Promo **no** escribe history. |
 | H8 | Importar `diana_training.db` → tabla `examples` | ✅ **YA EJECUTADO** — 4,348 filas importadas, 455 saltadas por `contenido_pricing_excluido`. Script en `scripts/import_v1_training.py`. **No volver a correr** sin `--limit` salvo que se trunque la tabla `examples` a propósito — no hay chequeo de idempotencia (duplicaría filas). |
 | H9 | `knowledge.schedule` real (agenda semanal) | ✅ **Implementado** — `ScheduleRetriever` real (`fuente=agenda_semanal_fija`), catálogo `schedule` en `persona_diana.json`, `ClockPort` cognitivo, ContextBuilder typed render, ContextRetriever day/time CDMX, Analyst needs_schedule, `UNIMPLEMENTED_CAPABILITIES` vacío. Commits núcleo: `e6aaf47` · `08be3d4` · `d217e0e` · `0f4aa69` · `410ab74`. **Residual H9.5 (2026-07-28):** `is_first_message_of_day` alineado a día civil America/Mexico_City (`65dcc22`/`5aae5be`). |
@@ -245,7 +245,7 @@ Antes de dar por cerrado el trabajo, además de la Verificación de H0–H5 y la
 
 1. `pytest tests/ -x` completo pasa (979 tests previos + los nuevos de cada hito).
 2. Arranque de `composition.py` no falla (fail-fast del Capability Registry con las capacidades nuevas: `persona_facts`, `voice_patterns`, `schedule` ya no en `UNIMPLEMENTED_CAPABILITIES`).
-3. Un turno de prueba real por cada hito nuevo (saludo corto → plantilla; "¿eres una IA?" → plantilla; pregunta de actividad en horario de servicio → agenda real; pregunta de actividad en hueco → una de las 3 respuestas libres; corrección de un borrador → aparece en `staging_candidates` y en `message_history`).
+3. Un turno de prueba real por cada hito nuevo (saludo puro → Analyst + plantilla `plantilla_saludo` con approve o send según `FEATURE_PHATIC_AUTO_SEND`; "¿eres una IA?" → plantilla pre-pipeline; pregunta de actividad en horario de servicio → agenda real; pregunta de actividad en hueco → una de las 3 respuestas libres; corrección de un borrador → aparece en `staging_candidates` y en `message_history`).
 4. **No tocar `scripts/import_v1_training.py` ni volver a ejecutarlo** — H8 ya está hecho (ver tabla de Estado actual arriba).
 
 ## Nota aparte (fuera de este plan, mencionada por completitud)
@@ -254,11 +254,22 @@ La plantilla fija para "¿eres una IA?" (Anexo J.4) usa el mismo mecanismo de `F
 
 ---
 
-## H6: Plantillas deterministas — saludo constante + "¿eres una IA?"
+## H6: Plantillas deterministas — saludo puro + "¿eres una IA?"
+
+> **Estado de código (2026-08-16, pool saludo-cognitivo):**  
+> - **"¿eres una IA?"** sigue en `TemplateGate` **pre-pipeline** (`deteccion_ia` only en producción): 0 Analyst, `action=approve`, `reason=plantilla_deteccion_ia`.  
+> - **Saludo puro VIP** ya **no** es short-circuit pre-Analyst ni `saludo_constante` en el gate de producción. Flujo: Analyst → predicado inyectado (`intent==saludar` + fático confiable vía `TurnClassifier` en composition) → pool de saludo → `reason=plantilla_saludo`. Planner / Generator / Evaluator / Decider no corren en el corte.  
+> - **`FEATURE_PHATIC_AUTO_SEND`** (default **false** en Settings; deploy puede poner `true`): OFF → `action=approve` (cola de la dueña); ON → `action=send` solo VIP, entrega en TurnOrchestrator por `_prepare_phatic_template_send` (**sin** AMS L1/L2, **sin** trust_budget). Atención (`vip_id is None`) demote a approve. Congelado / pausado / draft vacío → fail-closed.  
+> - **No** reutilizar `FEATURE_PHATIC_AUTONOMY` (shadow del clasificador) como interruptor de envío.  
+> - Tabla Decider AGENTS.md §4.1 **sin cambios** (el corte es pre-Decider).
 
 ### H6.1 Por qué NO van en `ForbiddenKeywordsMiddleware`
 
-Ese middleware corre en la capa de Telegram, antes de que exista un `Turn`/`IncomingTurn` formal, y su único camino de salida es "escalar en silencio, sin respuesta al VIP" (`handle_deterministic_escalation`). Ni el saludo ni "¿eres una IA?" quieren eso — quieren **una respuesta real, que sigue pasando por la cola de aprobación de la dueña** (modo supervisado no tiene excepciones, ni siquiera para texto 100% fijo — Anexo F.4). Así que el lugar correcto es dentro de `CognitiveDirector.handle_turn`, como un primer chequeo antes de invocar al Analista, no en el middleware.
+Ese middleware corre en la capa de Telegram, antes de que exista un `Turn`/`IncomingTurn` formal, y su único camino de salida es "escalar en silencio, sin respuesta al VIP" (`handle_deterministic_escalation`). Ni el saludo ni "¿eres una IA?" quieren eso — quieren **una respuesta real** (texto de plantilla), no un silencio de escalación. El lugar correcto es `CognitiveDirector.handle_turn` / pipeline, no el middleware.
+
+**IA (sin cambio de capa):** primer chequeo pre-Analyst vía `TemplateGate` → borrador fijo → cola de aprobación (`approve`).
+
+**Saludo (2026-08-16):** el producto exige que **todo saludo entre al Analista** (comprender si es puro o mixto). Solo el saludo **puro** corta a plantilla después de guardar comprehension; saludos con carga / ambigüedad siguen el pipeline completo. Con flag de auto-send OFF el borrador sigue yendo a la dueña; con flag ON el VIP recibe el pool sin pasar por AMS.
 
 ### H6.2 Nuevo componente puro: `cognitive/template_gate.py`
 
@@ -294,71 +305,82 @@ class TemplateGate:
 
 `_kw_hit` reutiliza la misma lógica de `match_forbidden_keywords` (regex de palabra completa o frase) — no hace falta inventar un matcher nuevo.
 
-### H6.3 Las dos reglas concretas
+### H6.3 Reglas: producción vs diseño histórico
+
+**Producción (composition, 2026-08-16):**
 
 ```python
-saludo_constante = TemplateRule(
-    id="saludo_constante",
-    trigger_patterns=["hola", "holaa", "holis", "buenas", "buenos días",
-                       "buenas tardes", "buenas noches", "hey", "qué tal"],
-    max_words=4,   # evita falso positivo en "hola, tengo una duda sobre..."
-    response_pool=["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"],
-    reason="plantilla_saludo",
-)
-
+# TemplateGate de producción: SOLO IA (pre-pipeline)
 deteccion_ia = TemplateRule(
     id="deteccion_ia",
     trigger_patterns=["eres una ia", "eres un bot", "eres ia",
                        "hablo con una ia", "hablo con un bot", "eres real"],
     max_words=None,
-    response_pool=["jsjsj si y sólo vivo en tu mente 😏"],   # texto único, exacto
+    response_pool=["jsjsj si y sólo vivo en tu mente 😏"],
     reason="plantilla_deteccion_ia",
 )
+template_gate = TemplateGate(rules=[deteccion_ia])
+
+# Pool de saludo (inyectado al Director; NO va al TemplateGate de producción)
+saludo_response_pool = ["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"]
+
+# Predicado de corte (composition adapta un único TurnClassifier → PureGreetingCutPort)
+# intent == "saludar" + category fático + is_confident  (NO agradecer/despedirse)
 ```
 
-`max_words=4` en el saludo es el candado contra falsos positivos — sin él, "hola, quería preguntarte algo importante sobre el contenido" también dispararía la plantilla, que es justo lo que no quieres.
+**Diseño histórico (H6 original):** existía `TemplateRule` `saludo_constante` con keywords + `max_words=4` en el gate pre-pipeline. La clase `TemplateGate` aún soporta esa forma (tests unitarios del gate); **producción ya no la cablea**. El candado anti-mixto es ahora comprehension + clasificador (`ambiguedad_saludo_mas_carga` / no confiable → pipeline completo), no el contador de palabras del gate.
 
-### H6.4 Integración en `CognitiveDirector.handle_turn`
+### H6.4 Integración en `CognitiveDirector` (estado actual)
 
-```python
-async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
-    turn = turn_context
-    turn_id = turn.turn_id
-    try:
-        rule = self._template_gate.match(turn.text)
-        if rule is not None:
-            return await self._handle_template(turn, rule)
-        return await self._run_pipeline(turn)
-    except Exception:
-        await self._status.transition(turn_id, TurnStatus.FAILED)
-        raise
+```text
+handle_turn:
+  if template_gate.match(text):          # producción: solo deteccion_ia
+    return _handle_template(...)         # approve + plantilla_deteccion_ia; 0 Analyst
+  return _run_pipeline(turn)
 
-async def _handle_template(self, turn: IncomingTurn, rule: TemplateRule) -> Decision:
-    text = self._template_gate.render(rule)
-    decision = Decision(
-        action="approve",
-        reason=rule.reason,
-        evaluation=None,          # no hubo Evaluador — no hay perfil que mostrar
-        draft_text=text,
-        mode_restriction_applied=None,
-    )
-    await self._store(turn.turn_id, "decision", decision)
-    return decision
+_run_pipeline:
+  Analyst → store comprehension
+  if pure_greeting_cut(text, comprehension) and saludo_pool:
+     draft = choice(pool)
+     action = "send" if phatic_auto_send else "approve"
+     Decision(action, reason="plantilla_saludo", draft_text=draft, eval zeros)
+     store generated_text + decision; return   # skip Planner…Decider
+  # … H4 / Planner → … → Decider
 ```
 
-**Punto clave — no toqué `TurnOrchestrator`.** `Decision.action == "approve"` ya es el camino que existe hoy (`turn_orchestrator.py`, rama `if decision.action == "approve":`) — transiciona a `PENDING_APPROVAL` y llama a `admin_service.send_draft_for_approval` exactamente igual que un turno generado normal. La dueña ve el borrador en su cola con `reason: "plantilla_saludo"` o `"plantilla_deteccion_ia"` visible — eso ya cumple la función de "que se entere" que buscábamos con la idea original de escalar; no hace falta una segunda escalación en paralelo (y crear dos turnos por un mismo mensaje rompería la invariante del Turn Coordinator).
+**IA:** `_handle_template` sigue emitiendo siempre `action=approve` (nunca send/escalate en plantilla de IA).
 
-### H6.5 Qué se salta (y por qué es la ganancia real)
+**Saludo + orquestador:**
 
-Con `rule` detectada: **Analista, Planificador, Retrievers, Constructor de Contexto, Generador y Evaluador nunca se ejecutan.** El turno pasa de ~11.5s (como en tu trace) a milisegundos, y de una llamada LLM cara (Analista) + otra (Generador) + otra (Evaluador) a cero llamadas LLM. Es la misma lógica de ahorro que ya aplicamos a la repetición 3x (H4) — cuando ya sabes la respuesta, no le pagues a un modelo por reinventarla.
+| Flag / canal | Director | TurnOrchestrator |
+|--------------|----------|------------------|
+| `FEATURE_PHATIC_AUTO_SEND=false` | `approve` + `plantilla_saludo` | Cola de la dueña (igual que cualquier approve) |
+| flag true + VIP | `send` + `plantilla_saludo` | `_prepare_phatic_template_send` → BehaviorEngine (sin AMS) |
+| flag true + Atención | puede emitir send en corte* | demote `phatic_auto_send_atencion` → approve |
+| frozen / paused | — | fail-closed (`vip_frozen` / `vip_paused`) |
 
-### H6.6 Verificación adicional
+\*La defensa dura de Atención está en el orquestador; el corte cognitivo no filtra canal.
 
-1. "Hola" → `Decision.reason == "plantilla_saludo"`, `draft_text` es una de las 3 variantes, Analyst/Generator/Evaluator no se llaman (mock `assert_not_called`).
-2. "Hola, tengo una pregunta sobre el contenido" (5+ palabras) → **no** dispara la plantilla, sigue el pipeline completo normal (valida el candado `max_words`).
-3. "eres una ia?" → `draft_text == "jsjsj si y sólo vivo en tu mente 😏"` exacto, siempre (no hay pool que variar aquí).
-4. El borrador de plantilla sigue pasando por `/traza` y por la cola de aprobación normal — la dueña puede corregir/aprobar igual que cualquier otro turno.
-5. Limpieza de `config/persona_diana.yaml`: quitar el `(ver J.2 / examples)` de `reglas_estilo` (hallazgo de esta sesión).
+La traza conserva `reason: plantilla_saludo` / `plantilla_deteccion_ia` visible en `/traza`. No hay segunda escalación en paralelo (invariante del Turn Coordinator).
+
+### H6.5 Qué se salta (y por qué)
+
+| Camino | Analyst | Planner→Decider | LLM costo | Entrega |
+|--------|---------|-----------------|-----------|---------|
+| IA template pre-pipeline | no | no | 0 | approve (dueña) |
+| Saludo puro post-Analyst | **sí (1×)** | no | 1× Analyst | approve o send (flag) |
+| Saludo mixto / no-saludar | sí | sí (pipeline) | completo | Decider normal |
+
+Ganancia del corte de saludo: se evita Planner + Generator + Evaluator + Decider en el saludo puro, a cambio de **siempre** pagar el Analista (tradeoff de producto: clasificar puro vs mixto). La plantilla IA sigue siendo 0 LLM.
+
+### H6.6 Verificación adicional (contrato 2026-08-16)
+
+1. "Hola" puro → Analyst **una vez**; `reason == plantilla_saludo`; `draft_text` ∈ pool; Planner/Generator/Evaluator/Decider **no** se llaman; con flag OFF `action=approve`; con flag ON `action=send`.
+2. Saludo con carga / ambigüedad / intent ≠ `saludar` (p. ej. agradecer, despedirse) → **pipeline completo**, no pool de saludo.
+3. "eres una ia?" → pre-pipeline, 0 Analyst, `draft_text` exacto del pool IA, `action=approve`.
+4. Flag ON + Atención → no entrega autónoma (demote a approve). Flag ON + VIP congelado/pausado → no envía.
+5. `FEATURE_PHATIC_AUTONOMY` no dispara envío; import purity cognitive↛application en verde.
+6. Limpieza de `config/persona_diana.yaml`: quitar el `(ver J.2 / examples)` de `reglas_estilo` (hallazgo de la sesión original H6).
 
 ---
 

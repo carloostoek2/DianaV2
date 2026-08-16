@@ -62,11 +62,27 @@ No está en `.env.example`.
 |------|---------|--------|
 | `FEATURE_EMOTIONAL_DETECTOR_ENABLED` | false | Detector emocional → `emotional_signal_log` |
 | `FEATURE_PROFILE_SYNTHESIS_ENABLED` | false | Resíntesis → `vip_profile` + job LLM |
-| `FEATURE_PHATIC_AUTONOMY` | false | Clasificador de turno → `turn_category_log` |
+| `FEATURE_PHATIC_AUTONOMY` | false | Clasificador de turno → `turn_category_log` (solo medición/sombra) |
 | `FEATURE_MOOD_ENGINE` | false | Motor de mood → `vip_mood_state` |
 | `FEATURE_TRUST_BUDGET` | false | Presupuesto de confianza. **Inerte** sin `FEATURE_PHATIC_AUTONOMY` |
 
-Encender evo-agente solo mide/registra. El autoenvío real exige además `FEATURE_AUTONOMOUS_MODE` y la doble puerta (aún no cableada a envío).
+Encender evo-agente solo mide/registra. **No** usa estas flags para entregar mensajes al VIP.
+
+### Saludo puro (entrega acotada)
+
+| Flag | Default | Efecto |
+|------|---------|--------|
+| `FEATURE_PHATIC_AUTO_SEND` | false | Autoentrega del borrador de **saludo puro VIP** (`reason=plantilla_saludo`) tras el corte post-Analyst. OFF = cola de la dueña (approve). ON = `action=send` + deliver en orquestador **sin** AMS L1/L2 y **sin** trust_budget. Atención nunca. Congelado/pausado fail-closed. |
+
+**Distinción obligatoria:**
+
+| Flag | Rol |
+|------|-----|
+| `FEATURE_PHATIC_AUTONOMY` | Shadow del clasificador (`turn_category_log` / would_autonomous). **Nunca** es kill-switch de envío. |
+| `FEATURE_PHATIC_AUTO_SEND` | Envío real **solo** de plantilla de saludo puro VIP. Independiente de AMS. |
+| `FEATURE_AUTONOMOUS_MODE` | Envío autónomo del pipeline completo (Decider + AMS). Default false; el saludo auto-send **no** lo enciende. |
+
+Documentado en `.env.example`. Pool saludo-cognitivo 2026-08-16 (`e10d4cd`…`21ab08b`).
 
 ### Sin flag
 
