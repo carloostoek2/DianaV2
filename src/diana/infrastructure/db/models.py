@@ -383,6 +383,9 @@ class Policy(Base):
     """Vector-indexed business policy (active + scope-filtered at query time)."""
 
     __tablename__ = "policies"
+    __table_args__ = (
+        Index("ix_policies_vip_id", "vip_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
@@ -400,6 +403,9 @@ class Policy(Base):
         # Intentionally no FK: gray_zone_queries may be cleaned independently.
         # Loose coupling avoids circular deletion constraints during staging.
     )
+    vip_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id"), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
@@ -409,6 +415,9 @@ class Example(Base):
     """Curated example pool (never populated from memory — staging bridge only)."""
 
     __tablename__ = "examples"
+    __table_args__ = (
+        Index("ix_examples_vip_id", "vip_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
@@ -420,6 +429,15 @@ class Example(Base):
     context: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     is_counter_example: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"),
+    )
+    quality: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="standard",
+        server_default=text("'standard'"),
+    )
+    vip_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id"), nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
