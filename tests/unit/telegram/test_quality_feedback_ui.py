@@ -313,3 +313,267 @@ async def test_expired_combo_text_is_lesson_not_saved() -> None:
     )
     assert token == "reprimand_lesson_not_saved"
     assert token != "session_expired"
+
+
+@pytest.mark.asyncio
+async def test_gd_does_not_write_gold_or_approve() -> None:
+    g = _graph(feature_on=True)
+    turn = await _queue_draft(g, vip_id=uuid4())
+    gold = AsyncMock(wraps=g["admin"].handle_mark_gold)
+    approve = AsyncMock(wraps=g["admin"].handle_approve)
+    g["admin"].handle_mark_gold = gold  # type: ignore[method-assign]
+    g["admin"].handle_approve = approve  # type: ignore[method-assign]
+    status = await _dispatch(g, "gold", turn.id)
+    assert status == "awaiting_gold_scope"
+    gold.assert_not_awaited()
+    approve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gdc_global_marks_gold_once() -> None:
+    from diana.telegram.keyboards import encode_gold_confirm
+
+    staging, _ = _real_staging()
+    g, turn, _, _ = await _pending_vip_draft(staging=staging, vip_id=uuid4())
+    gold = AsyncMock(wraps=g["admin"].handle_mark_gold)
+    g["admin"].handle_mark_gold = gold  # type: ignore[method-assign]
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=CorrectSessionStore(),
+        callback_data=encode_gold_confirm(turn.id, "g"),
+        actor_id=OWNER,
+    )
+    assert status == "gold_marked"
+    gold.assert_awaited_once()
+    assert gold.await_args.kwargs["scope"] == "global"
+    assert g["actuator"].send_count() >= 1
+
+
+@pytest.mark.asyncio
+async def test_gdc_vip_scope() -> None:
+    from diana.telegram.keyboards import encode_gold_confirm
+
+    staging, _ = _real_staging()
+    vid = uuid4()
+    g, turn, _, _ = await _pending_vip_draft(staging=staging, vip_id=vid)
+    gold = AsyncMock(wraps=g["admin"].handle_mark_gold)
+    g["admin"].handle_mark_gold = gold  # type: ignore[method-assign]
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=CorrectSessionStore(),
+        callback_data=encode_gold_confirm(turn.id, "v"),
+        actor_id=OWNER,
+    )
+    assert status == "gold_marked"
+    assert gold.await_args.kwargs["scope"] == "vip"
+
+
+@pytest.mark.asyncio
+async def test_gdc_cancel_restores_without_writes() -> None:
+    from diana.telegram.keyboards import encode_gold_confirm
+
+    g = _graph(feature_on=True)
+    turn = await _queue_draft(g, vip_id=uuid4())
+    gold = AsyncMock(wraps=g["admin"].handle_mark_gold)
+    approve = AsyncMock(wraps=g["admin"].handle_approve)
+    g["admin"].handle_mark_gold = gold  # type: ignore[method-assign]
+    g["admin"].handle_approve = approve  # type: ignore[method-assign]
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_gold_confirm(turn.id, "x"),
+        actor_id=OWNER,
+    )
+    assert status == "gold_scope_cancel"
+    gold.assert_not_awaited()
+    approve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_flag_off_quality_buttons_toast_no_writes() -> None:
+    from diana.telegram.keyboards import encode_gold_confirm, encode_reprimand_confirm
+
+    g = _graph(feature_on=False)
+    turn = await _queue_draft(g, vip_id=uuid4())
+    gold = AsyncMock(wraps=g["admin"].handle_mark_gold)
+    reprimand = AsyncMock(wraps=g["admin"].handle_reprimand)
+    g["admin"].handle_mark_gold = gold  # type: ignore[method-assign]
+    g["admin"].handle_reprimand = reprimand  # type: ignore[method-assign]
+    sessions = g["sessions"]
+    sessions.start(OWNER, turn.id, mode="reprimand", chat_id=42)
+    sessions.capture_reprimand(OWNER, candidate_id=uuid4(), corrected_text="x")
+    for data in (
+        encode_callback("gold", turn.id),
+        encode_gold_confirm(turn.id, "g"),
+        encode_reprimand_confirm(turn.id, "ex", "g"),
+    ):
+        status = await dispatch_owner_callback(
+            admin=g["admin"],
+            correct_sessions=sessions,
+            callback_data=data,
+            actor_id=OWNER,
+        )
+        assert status == "quality_feedback_disabled"
+    gold.assert_not_awaited()
+    reprimand.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atencion_forced_quality_buttons_not_vip() -> None:
+    from diana.telegram.keyboards import encode_reprimand_confirm
+
+    g = _graph(feature_on=True)
+    turn = await _queue_draft(g, vip_id=None, channel_type="atencion")
+    assert await _dispatch(g, "gold", turn.id) == "quality_feedback_not_vip"
+    assert (
+        await dispatch_owner_callback(
+            admin=g["admin"],
+            correct_sessions=g["sessions"],
+            callback_data=encode_reprimand_confirm(turn.id, "pol", "g"),
+            actor_id=OWNER,
+        )
+        == "quality_feedback_not_vip"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rpc_promotes_only_after_reprimand_text() -> None:
+    from diana.application.memory import InMemoryVipStore
+    from diana.telegram.keyboards import encode_reprimand_confirm
+
+    staging, repo = _real_staging()
+    save_spy = AsyncMock(wraps=staging.save_correction)
+    staging.save_correction = save_spy  # type: ignore[method-assign]
+    trust = _FakeTrustBudgetAdmin()
+    g, turn, staging, repo = await _pending_vip_draft(
+        staging=staging, trust_budget=trust, vip_id=uuid4()
+    )
+    sessions = CorrectSessionStore()
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=sessions,
+        callback_data=encode_callback("reprimand", turn.id),
+        actor_id=OWNER,
+    )
+    await handle_admin_text(
+        text="fixed now",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=sessions,
+    )
+    sess = sessions.get_session(OWNER)
+    assert sess is not None and sess.candidate_id is not None
+    candidate_id = sess.candidate_id
+    repo.get_by_id.return_value = type(repo.get_by_id.return_value)(
+        id=candidate_id,
+        status="pending",
+        candidate_type="example",
+        payload={
+            "original_draft": "original draft",
+            "corrected_text": "fixed now",
+            "context": {"turn_text": "vip trigger text"},
+            "channel_type": "vip",
+        },
+    )
+    reprimand = AsyncMock(wraps=g["admin"].handle_reprimand)
+    g["admin"].handle_reprimand = reprimand  # type: ignore[method-assign]
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=sessions,
+        callback_data=encode_reprimand_confirm(turn.id, "ex", "g"),
+        actor_id=OWNER,
+    )
+    assert status == "reprimand_promoted"
+    assert save_spy.await_count == 1
+    assert trust.correction_calls == [turn.id]
+    reprimand.assert_awaited_once()
+    assert reprimand.await_args.kwargs["candidate_id"] == candidate_id
+    assert reprimand.await_args.kwargs["mode"] == "counter_example"
+    assert reprimand.await_args.kwargs["scope"] == "global"
+
+
+@pytest.mark.asyncio
+async def test_rpc_without_session_does_not_use_approve_noop() -> None:
+    from diana.telegram.keyboards import encode_reprimand_confirm
+
+    g = _graph(feature_on=True)
+    turn = await _queue_draft(g, vip_id=uuid4())
+    noop = AsyncMock(wraps=g["admin"].classify_approve_noop)
+    g["admin"].classify_approve_noop = noop  # type: ignore[method-assign]
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_reprimand_confirm(turn.id, "ex", "g"),
+        actor_id=OWNER,
+    )
+    assert status == "reprimand_lesson_not_saved"
+    noop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rpc_double_tap_already_saved() -> None:
+    from diana.telegram.keyboards import encode_reprimand_confirm
+
+    staging, repo = _real_staging()
+    g, turn, staging, repo = await _pending_vip_draft(
+        staging=staging, vip_id=uuid4()
+    )
+    candidate_id = uuid4()
+    pending = repo.get_by_id.return_value
+    pending.id = candidate_id
+    pending.status = "pending"
+
+    async def _update(_cid, status):
+        pending.status = status
+        return True
+
+    repo.update_status = AsyncMock(side_effect=_update)
+    sessions = CorrectSessionStore()
+    sessions.start(OWNER, turn.id, mode="reprimand", chat_id=42)
+    sessions.capture_reprimand(
+        OWNER, candidate_id=candidate_id, corrected_text="fixed"
+    )
+    data = encode_reprimand_confirm(turn.id, "ex", "g")
+    first = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=sessions,
+        callback_data=data,
+        actor_id=OWNER,
+    )
+    assert first == "reprimand_promoted"
+    sessions.start(OWNER, turn.id, mode="reprimand", chat_id=42)
+    sessions.capture_reprimand(
+        OWNER, candidate_id=candidate_id, corrected_text="fixed"
+    )
+    second = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=sessions,
+        callback_data=data,
+        actor_id=OWNER,
+    )
+    assert second == "reprimand_already_saved"
+
+
+@pytest.mark.asyncio
+async def test_rpc_quality_disabled_exception_toasts() -> None:
+    from diana.application.admin_service import QualityFeedbackDisabled
+    from diana.telegram.keyboards import encode_reprimand_confirm
+
+    g = _graph(feature_on=True)
+    turn = await _queue_draft(g, vip_id=uuid4())
+    g["sessions"].start(OWNER, turn.id, mode="reprimand", chat_id=42)
+    g["sessions"].capture_reprimand(
+        OWNER, candidate_id=uuid4(), corrected_text="x"
+    )
+    g["admin"].handle_reprimand = AsyncMock(  # type: ignore[method-assign]
+        side_effect=QualityFeedbackDisabled("FEATURE_QUALITY_FEEDBACK_ENABLED is off")
+    )
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_reprimand_confirm(turn.id, "pol", "v"),
+        actor_id=OWNER,
+    )
+    assert status == "quality_feedback_disabled"

@@ -12,7 +12,12 @@ from aiogram import Router
 from aiogram.types import BufferedInputFile, CallbackQuery
 
 from diana.application.admin_metrics_service import AdminMetricsService
-from diana.application.admin_service import AdminService, OwnerAuthError
+from diana.application.admin_service import (
+    AdminService,
+    OwnerAuthError,
+    QualityFeedbackDisabled,
+)
+from diana.application.staging_service import AtencionPromoteBlocked
 from diana.behavior.ports import DeliveryProgressCallback, ProgressKind
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.draft_variants import (
@@ -23,9 +28,12 @@ from diana.application.profile_admin_service import ProfileAdminService
 from diana.telegram.keyboards import (
     MENU_ROOT_TEXT,
     draft_keyboard,
+    gold_scope_keyboard,
     menu_root_keyboard,
     parse_callback,
+    parse_gold_confirm,
     parse_metrics_callback,
+    parse_reprimand_confirm,
     parse_trace_callback,
     step_detail_keyboard,
     trace_detail_keyboard,
@@ -240,6 +248,18 @@ _APPROVE_NOOP_ALERTS: dict[str, str] = {
     "vip_frozen": "El VIP está en pausa/congelado — no se envió.",
 }
 
+_QUALITY_ALERTS: dict[str, str] = {
+    "quality_feedback_disabled": "Esta acción no está disponible.",
+    "quality_feedback_not_vip": (
+        "Destacar y Reprender solo aplican a borradores VIP."
+    ),
+    "reprimand_promoted": "Lección guardada.",
+    "reprimand_already_saved": "La lección ya se guardó.",
+    "reprimand_lesson_not_saved": (
+        "No se guardó la lección. El texto ya se envió al VIP."
+    ),
+}
+
 # Live delivery stages shown on the draft message while the human-like
 # simulation runs after approval (edited in place, buttons kept until the end).
 _DRAFT_PROGRESS_LABELS: dict[ProgressKind, str] = {
@@ -316,6 +336,75 @@ async def dispatch_owner_callback(
                 return "trace_export"
             return "trace_invalid"
 
+    gold_parsed = parse_gold_confirm(callback_data)
+    if gold_parsed is not None:
+        try:
+            if actor_id is None:
+                raise OwnerAuthError("missing actor")
+            admin._assert_owner(actor_id)  # noqa: SLF001 — intentional thin gate
+            if not admin.quality_feedback_enabled:
+                return "quality_feedback_disabled"
+            if gold_parsed == "cancel":
+                return "gold_scope_cancel"
+            turn_id, scope = gold_parsed
+            approval = await admin.get_approval(turn_id)
+            if approval is None or approval.vip_id is None:
+                return "quality_feedback_not_vip"
+            result = await admin.handle_mark_gold(
+                turn_id, scope=scope, actor_id=actor_id
+            )
+            if result is None:
+                correct_sessions.cancel_turn(turn_id)
+                return await admin.classify_approve_noop(turn_id)
+            return _map_delivery_status(result, success_token="gold_marked")
+        except OwnerAuthError:
+            return "forbidden"
+        except QualityFeedbackDisabled:
+            return "quality_feedback_disabled"
+        except AtencionPromoteBlocked:
+            return "quality_feedback_not_vip"
+
+    rp_confirm = parse_reprimand_confirm(callback_data)
+    if rp_confirm is not None:
+        try:
+            if actor_id is None:
+                raise OwnerAuthError("missing actor")
+            admin._assert_owner(actor_id)  # noqa: SLF001 — intentional thin gate
+            if not admin.quality_feedback_enabled:
+                return "quality_feedback_disabled"
+            turn_id, mode, scope = rp_confirm
+            approval = await admin.get_approval(turn_id)
+            if approval is None or approval.vip_id is None:
+                return "quality_feedback_not_vip"
+            sess = correct_sessions.get_session(actor_id)
+            if sess is None or sess.candidate_id is None:
+                return "reprimand_lesson_not_saved"
+            try:
+                result = await admin.handle_reprimand(
+                    turn_id,
+                    sess.corrected_text or "",
+                    mode=mode,
+                    scope=scope,
+                    actor_id=actor_id,
+                    candidate_id=sess.candidate_id,
+                )
+            except QualityFeedbackDisabled:
+                return "quality_feedback_disabled"
+            except AtencionPromoteBlocked:
+                return "quality_feedback_not_vip"
+            except ValueError as exc:
+                msg = str(exc)
+                if "promoted" in msg or "status is" in msg:
+                    correct_sessions.cancel(actor_id)
+                    return "reprimand_already_saved"
+                correct_sessions.cancel(actor_id)
+                return "reprimand_lesson_not_saved"
+            correct_sessions.cancel(actor_id)
+            _ = result  # promote-only success is None — not stale
+            return "reprimand_promoted"
+        except OwnerAuthError:
+            return "forbidden"
+
     # Standard owner callbacks.
     parsed = parse_callback(callback_data)
     if parsed is None:
@@ -344,6 +433,19 @@ async def dispatch_owner_callback(
                 return await admin.classify_approve_noop(turn_id)
             correct_sessions.start(actor_id, turn_id)
             return "awaiting_correct"
+        if action == "gold":
+            if actor_id is None:
+                raise OwnerAuthError("missing actor")
+            admin._assert_owner(actor_id)  # noqa: SLF001 — intentional thin gate
+            if not await admin.is_pending_approval(turn_id):
+                correct_sessions.cancel_turn(turn_id)
+                return await admin.classify_approve_noop(turn_id)
+            if not admin.quality_feedback_enabled:
+                return "quality_feedback_disabled"
+            approval = await admin.get_approval(turn_id)
+            if approval is None or approval.vip_id is None:
+                return "quality_feedback_not_vip"
+            return "awaiting_gold_scope"
         if action == "reprimand":
             if actor_id is None:
                 raise OwnerAuthError("missing actor")
@@ -715,6 +817,61 @@ def build_callback_router(
                             "owner_callback_followup_failed",
                             extra={"callback_data": data, "actor_id": actor_id},
                         )
+                return
+            if status == "awaiting_gold_scope":
+                parsed_gold = parse_callback(data)
+                if query.message and parsed_gold is not None:
+                    try:
+                        await query.message.edit_reply_markup(
+                            reply_markup=gold_scope_keyboard(parsed_gold[1])
+                        )
+                    except Exception:
+                        logger.exception("gold_scope_edit_failed")
+                return
+            if status == "gold_scope_cancel":
+                parts = data.split(":")
+                turn_id = None
+                if len(parts) >= 2:
+                    try:
+                        turn_id = UUID(parts[1])
+                    except ValueError:
+                        turn_id = None
+                if query.message and turn_id is not None:
+                    approval = await admin.get_approval(turn_id)
+                    chat_id = approval.chat_id if approval is not None else None
+                    try:
+                        await query.message.edit_reply_markup(
+                            reply_markup=draft_keyboard(
+                                turn_id,
+                                chat_id=chat_id,
+                                show_quality_feedback=True,
+                            )
+                        )
+                    except Exception:
+                        logger.exception("gold_scope_cancel_edit_failed")
+                return
+            if status == "gold_marked":
+                if query.message:
+                    try:
+                        await query.message.edit_text(
+                            f"✅ <b>Enviado</b>\n\n{draft_text}",
+                            reply_markup=None,
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        logger.exception("Error al editar mensaje destacado")
+                return
+            if status in _QUALITY_ALERTS:
+                if query.message and status in {
+                    "reprimand_promoted",
+                    "reprimand_already_saved",
+                    "reprimand_lesson_not_saved",
+                }:
+                    try:
+                        await query.message.edit_reply_markup(reply_markup=None)
+                    except Exception:
+                        logger.debug("quality_strip_markup_failed", exc_info=True)
+                await query.answer(_QUALITY_ALERTS[status], show_alert=True)
                 return
             if status == "approved":
                 # The message edit is the primary feedback; the initial empty
