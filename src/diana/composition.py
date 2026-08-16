@@ -729,6 +729,8 @@ def build_app(
         template_gate=template_gate,
         pure_greeting_cut=pure_greeting_cut,
         saludo_response_pool=saludo_response_pool,
+        # Real plantilla_saludo auto-delivery kill-switch (not phatic shadow).
+        phatic_auto_send=settings.feature_phatic_auto_send,
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
         knowledge_augmenter=knowledge_augmenter,
@@ -816,6 +818,7 @@ def build_app(
         traces=traces,
         delivery_mode=settings.global_mode,
         feature_advanced_behavior=feature_advanced_behavior,
+        feature_phatic_auto_send=settings.feature_phatic_auto_send,
         sandbox=sandbox,
         delay_policy=policy,
         runtime_timers=runtime_timers_store,

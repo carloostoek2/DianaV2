@@ -466,6 +466,27 @@ def test_composition_template_gate_wired(_comp_src: str) -> None:
     assert classifier_pos < director_pos
 
 
+def test_composition_phatic_auto_send_wired_from_settings_not_autonomy(
+    _comp_src: str,
+) -> None:
+    """FEATURE_PHATIC_AUTO_SEND is the real deliver gate — not phatic autonomy."""
+    director_start = _comp_src.find("director = CognitiveDirector(")
+    orch_start = _comp_src.find("orchestrator = TurnOrchestrator(")
+    assert director_start != -1 and orch_start != -1
+    director_block = _comp_src[director_start:orch_start]
+    orch_block = _comp_src[orch_start : orch_start + 1200]
+
+    assert "phatic_auto_send=settings.feature_phatic_auto_send" in director_block
+    assert (
+        "feature_phatic_auto_send=settings.feature_phatic_auto_send" in orch_block
+    )
+    # Isolation: never bind auto-send kwargs from the shadow classifier flag.
+    assert "phatic_auto_send=settings.feature_phatic_autonomy" not in _comp_src
+    assert (
+        "feature_phatic_auto_send=settings.feature_phatic_autonomy" not in _comp_src
+    )
+
+
 def test_persona_reglas_estilo_no_j2_examples_note() -> None:
     """H6.6.5: persona JSON style rules drop the (ver J.2 / examples) note."""
     import json
