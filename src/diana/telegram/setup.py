@@ -274,7 +274,12 @@ def build_dispatcher(
             gray_zone=gray_zone,
         )
     )
-    root.include_router(build_business_router(orchestrator=orchestrator))
+    root.include_router(
+        build_business_router(
+            orchestrator=orchestrator,
+            on_vip_inbound=sessions.cancel_combo_for_chat,
+        )
+    )
     if bc_store is not None:
         root.include_router(build_business_connection_router(store=bc_store))
     dp.include_router(root)

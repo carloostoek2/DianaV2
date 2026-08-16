@@ -1022,6 +1022,7 @@ def build_app(
         owner_telegram_id=settings.owner_telegram_id,
         history=history,
         vips=vips,
+        feature_quality_feedback_enabled=settings.feature_quality_feedback_enabled,
     )
 
     wiring = build_dispatcher(
@@ -1357,6 +1358,7 @@ async def run_app_startup_recovery(app: AppContainer) -> Any:
         traces=app.trace_store,
         timers=app.runtime_timers,
         promo=app.promo,
+        feature_quality_feedback_enabled=app.settings.feature_quality_feedback_enabled,
     )
 
 

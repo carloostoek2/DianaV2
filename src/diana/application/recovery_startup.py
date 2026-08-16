@@ -104,6 +104,7 @@ async def run_startup_recovery(
     traces: TraceReader | None = None,
     timers: RuntimeTimerStore | None = None,
     promo: PromoFinalizePort | None = None,
+    feature_quality_feedback_enabled: bool = False,
 ) -> RecoveryStartupReport:
     """Safe F1 recovery on process start.
 
@@ -206,7 +207,11 @@ async def run_startup_recovery(
                         },
                     )
                 continue
-        mid = await _renotify_approval(notifier, approval)
+        mid = await _renotify_approval(
+            notifier,
+            approval,
+            feature_quality_feedback_enabled=feature_quality_feedback_enabled,
+        )
         if mid is not None:
             try:
                 await approvals.set_owner_message_id(approval.turn_id, mid)
@@ -545,7 +550,10 @@ async def _notify_recovery_summary(
 
 
 async def _renotify_approval(
-    notifier: OwnerNotifierPort, approval: ApprovalRecord
+    notifier: OwnerNotifierPort,
+    approval: ApprovalRecord,
+    *,
+    feature_quality_feedback_enabled: bool = False,
 ) -> int | None:
     """Re-send draft keyboard; return new owner message id when available."""
     return await notifier.notify_draft(
@@ -562,6 +570,9 @@ async def _renotify_approval(
                 "actions": ["approve", "correct", "escalate"],
                 "turn_id": str(approval.turn_id),
             },
+            show_quality_feedback=(
+                feature_quality_feedback_enabled and approval.vip_id is not None
+            ),
         )
     )
 

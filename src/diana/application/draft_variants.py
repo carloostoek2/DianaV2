@@ -203,6 +203,7 @@ class DraftVariantService:
         history: MessageHistoryWriter | None = None,
         vips: VipStore | None = None,
         max_variants: int = MAX_DRAFT_VARIANTS,
+        feature_quality_feedback_enabled: bool = False,
     ) -> None:
         self._approvals = approvals
         self._turns = turns
@@ -212,6 +213,9 @@ class DraftVariantService:
         self._history = history
         self._vips = vips
         self._max = max(1, int(max_variants))
+        self._feature_quality_feedback_enabled = bool(
+            feature_quality_feedback_enabled
+        )
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -531,6 +535,10 @@ class DraftVariantService:
                 text=text,
                 turn_id=approval.turn_id,
                 chat_id=approval.chat_id,
+                show_quality_feedback=(
+                    self._feature_quality_feedback_enabled
+                    and approval.vip_id is not None
+                ),
             )
         except Exception:
             logger.exception(

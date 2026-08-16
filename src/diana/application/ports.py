@@ -117,6 +117,7 @@ class DraftNotification(BaseModel):
     evaluation: dict[str, Any] | None = None
     business_connection_id: str
     reply_markup_spec: dict[str, Any] = Field(default_factory=dict)
+    show_quality_feedback: bool = False
 
 
 class LinkNotification(BaseModel):

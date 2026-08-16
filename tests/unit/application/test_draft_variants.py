@@ -119,6 +119,57 @@ async def test_navigate_prev_next() -> None:
     assert r3.approval.draft_text == "v1"
 
 
+@pytest.mark.asyncio
+async def test_edit_draft_forwards_quality_feedback_flag() -> None:
+    OWNER = 99
+    approvals = InMemoryPendingApprovalStore()
+    turns = InMemoryTurnStore()
+    turn_id = uuid4()
+    vip_id = uuid4()
+    await turns.create(
+        TurnRecord(
+            id=turn_id,
+            chat_id=1,
+            status="pending_approval",
+            vip_id=vip_id,
+            trigger_message_id=10,
+        )
+    )
+    eval_dict = ensure_versions(
+        {},
+        draft_text="v1",
+        reason="r1",
+        vip_text="user said hi",
+    )
+    eval_dict["_draft_versions"]["items"].append({"text": "v2", "reason": "r2"})
+    await approvals.create_waiting(
+        ApprovalRecord(
+            id=uuid4(),
+            turn_id=turn_id,
+            chat_id=1,
+            business_connection_id="bc",
+            draft_text="v1",
+            evaluation=eval_dict,
+            owner_message_id=500,
+            trigger_message_id=10,
+            vip_id=vip_id,
+        )
+    )
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=FakeDirector(["x"]),
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+        feature_quality_feedback_enabled=True,
+    )
+    r = await svc.navigate(turn_id, actor_id=OWNER, delta=1)
+    assert r.ok
+    assert notifier.draft_edits
+    assert notifier.draft_edits[-1]["show_quality_feedback"] is True
+
+
 async def _pending_approval_fixture(
     *,
     draft: str = "primera",

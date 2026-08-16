@@ -51,7 +51,11 @@ class AiogramOwnerNotifier:
         msg = await self._bot.send_message(
             chat_id=self._owner_id,
             text=text,
-            reply_markup=draft_keyboard(turn_id, chat_id=payload.chat_id),
+            reply_markup=draft_keyboard(
+                turn_id,
+                chat_id=payload.chat_id,
+                show_quality_feedback=payload.show_quality_feedback,
+            ),
             parse_mode="HTML",
         )
         return int(msg.message_id)
@@ -63,13 +67,18 @@ class AiogramOwnerNotifier:
         text: str,
         turn_id: UUID,
         chat_id: int,
+        show_quality_feedback: bool = False,
     ) -> None:
         """Update the existing owner draft message in place (regen / prev / next)."""
         await self._bot.edit_message_text(
             chat_id=self._owner_id,
             message_id=owner_message_id,
             text=text,
-            reply_markup=draft_keyboard(turn_id, chat_id=chat_id),
+            reply_markup=draft_keyboard(
+                turn_id,
+                chat_id=chat_id,
+                show_quality_feedback=show_quality_feedback,
+            ),
             parse_mode="HTML",
         )
 

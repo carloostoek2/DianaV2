@@ -470,6 +470,7 @@ class FakeOwnerNotifier:
         self.doctrines: list[Any] = []
         self.links: list[Any] = []
         self.voids: list[tuple[int, str]] = []
+        self.draft_edits: list[dict[str, Any]] = []
         self._next_message_id = 5000
 
     async def notify_draft(self, payload: Any) -> int | None:
@@ -491,8 +492,17 @@ class FakeOwnerNotifier:
         text: str,
         turn_id: Any,
         chat_id: int,
+        show_quality_feedback: bool = False,
     ) -> None:
         self.infos.append((f"edit_draft:{owner_message_id}:{text[:40]}", chat_id))
+        self.draft_edits.append(
+            {
+                "owner_message_id": owner_message_id,
+                "turn_id": turn_id,
+                "chat_id": chat_id,
+                "show_quality_feedback": show_quality_feedback,
+            }
+        )
 
     async def void_draft(self, *, owner_message_id: int, text: str) -> None:
         """Record voided draft DMs (keyboard stripped / no longer applicable)."""

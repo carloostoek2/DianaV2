@@ -577,3 +577,89 @@ async def test_rpc_quality_disabled_exception_toasts() -> None:
         actor_id=OWNER,
     )
     assert status == "quality_feedback_disabled"
+
+
+@pytest.mark.asyncio
+async def test_send_draft_sets_quality_flag_only_for_vip() -> None:
+    g_vip, _, _, _ = await _pending_vip_draft(feature_on=True, vip_id=uuid4())
+    assert g_vip["notifier"].drafts[-1].show_quality_feedback is True
+    g_atn, _, _, _ = await _pending_vip_draft(
+        feature_on=True, vip_id=None, channel_type="atencion"
+    )
+    assert g_atn["notifier"].drafts[-1].show_quality_feedback is False
+
+
+@pytest.mark.asyncio
+async def test_tb_rebuilds_quality_row_when_flag_and_vip() -> None:
+    from unittest.mock import MagicMock
+
+    from aiogram.types import CallbackQuery, Chat, Message, User
+
+    from diana.telegram.handlers.callbacks import build_callback_router
+    from diana.telegram.keyboards import encode_trace_back_to_draft
+
+    g = _graph(feature_on=True)
+    turn = await _queue_draft(g, vip_id=uuid4())
+    router = build_callback_router(
+        admin=g["admin"],
+        owner_telegram_id=OWNER,
+        admin_trace=MagicMock(),
+    )
+    on_cb = router.callback_query.handlers[0].callback
+    msg = Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="draft",
+    )
+    object.__setattr__(msg, "edit_text", AsyncMock(return_value=True))
+    query = CallbackQuery(
+        id="cq-tb",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_trace_back_to_draft(turn.id),
+        message=msg,
+    )
+    object.__setattr__(query, "answer", AsyncMock(return_value=True))
+    await on_cb(query)
+    kb = msg.edit_text.await_args.kwargs["reply_markup"]
+    cbs = [b.callback_data or "" for row in kb.inline_keyboard for b in row]
+    assert any(cb.startswith("gd:") for cb in cbs)
+
+
+@pytest.mark.asyncio
+async def test_inbound_cancels_combo_before_rpc() -> None:
+    from aiogram.types import Chat, Message, User
+
+    from diana.telegram.handlers.business import build_business_router
+    from diana.telegram.keyboards import encode_reprimand_confirm
+
+    g = _graph(feature_on=True)
+    turn = await _queue_draft(g, vip_id=uuid4())
+    g["sessions"].start(OWNER, turn.id, mode="reprimand", chat_id=42)
+    g["sessions"].capture_reprimand(
+        OWNER, candidate_id=uuid4(), corrected_text="x"
+    )
+    orch = AsyncMock()
+    orch.handle_vip_message = AsyncMock(return_value=uuid4())
+    router = build_business_router(
+        orchestrator=orch, on_vip_inbound=g["sessions"].cancel_combo_for_chat
+    )
+    on_business = router.business_message.handlers[0].callback
+    msg = Message(
+        message_id=7,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        text="nuevo",
+        business_connection_id="bc-1",
+    )
+    await on_business(msg)
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_reprimand_confirm(turn.id, "ex", "g"),
+        actor_id=OWNER,
+    )
+    assert status == "reprimand_lesson_not_saved"

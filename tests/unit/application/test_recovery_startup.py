@@ -944,3 +944,24 @@ async def test_resume_pre_delay_corrupt_payload_does_not_abort_pass() -> None:
     bad = await turns.get(bad_turn_id)
     assert bad is not None and bad.status == "failed"
     assert bad.error == "crash_recovery"
+
+
+@pytest.mark.asyncio
+async def test_renotify_sets_quality_flag_for_vip_when_enabled() -> None:
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    vip_id = uuid4()
+    rec = _approval()
+    rec.vip_id = vip_id
+    await approvals.create_waiting(rec)
+    await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(now=now),
+        feature_quality_feedback_enabled=True,
+    )
+    assert notifier.drafts
+    assert notifier.drafts[-1].show_quality_feedback is True

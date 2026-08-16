@@ -50,6 +50,30 @@ async def test_notify_draft_includes_markup_with_turn_id() -> None:
     assert any(f"a:{turn_id}" == d for d in flat)
     assert any(f"c:{turn_id}" == d for d in flat)
     assert any(f"e:{turn_id}" == d for d in flat)
+    assert not any((d or "").startswith("gd:") or (d or "").startswith("rp:") for d in flat)
+
+
+@pytest.mark.asyncio
+async def test_notify_draft_quality_row_when_flagged() -> None:
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=9))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    turn_id = uuid4()
+    await notifier.notify_draft(
+        DraftNotification(
+            turn_id=turn_id,
+            chat_id=42,
+            vip_text="hi",
+            draft_text="draft",
+            reason="ok",
+            business_connection_id="bc",
+            show_quality_feedback=True,
+        )
+    )
+    markup = bot.send_message.await_args.kwargs["reply_markup"]
+    flat = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+    assert any(f"gd:{turn_id}" == d for d in flat)
+    assert any(f"rp:{turn_id}" == d for d in flat)
 
 
 @pytest.mark.asyncio

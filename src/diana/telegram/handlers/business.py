@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -42,8 +43,22 @@ def _inbound_text(message: Message) -> str:
     return message.text or message.caption or ""
 
 
-def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
+def build_business_router(
+    *,
+    orchestrator: TurnOrchestrator,
+    on_vip_inbound: Callable[[int], None] | None = None,
+) -> Router:
     router = Router(name="business")
+
+    def _notify_inbound(chat_id: int) -> None:
+        if on_vip_inbound is None:
+            return
+        try:
+            on_vip_inbound(chat_id)
+        except Exception:
+            logger.exception(
+                "vip_inbound_hook_failed", extra={"chat_id": chat_id}
+            )
 
     @router.business_message()
     async def on_business_message(
@@ -65,6 +80,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             channel_type=channel_type,
             counts_toward_limit=atencion_limit_counted,
         )
+        _notify_inbound(inbound.chat_id)
         try:
             turn_id = await orchestrator.handle_vip_message(inbound)
             logger.info(
@@ -105,6 +121,7 @@ def build_business_router(*, orchestrator: TurnOrchestrator) -> Router:
             channel_type=channel_type,
             counts_toward_limit=atencion_limit_counted,
         )
+        _notify_inbound(inbound.chat_id)
         try:
             # Same path as new message: bumps VIP epoch → cancels in-flight
             # turn for the original text; history upsert keeps only latest text.

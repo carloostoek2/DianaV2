@@ -272,6 +272,10 @@ class AdminService:
                     "actions": ["approve", "correct", "escalate"],
                     "turn_id": str(turn_id),
                 },
+                show_quality_feedback=(
+                    self._feature_quality_feedback_enabled
+                    and turn.vip_id is not None
+                ),
             )
         )
         if owner_mid is not None:

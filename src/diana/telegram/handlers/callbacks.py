@@ -657,7 +657,14 @@ def build_callback_router(
                         approval.vip_id, approval.chat_id
                     )
                     text = build_owner_draft_text(approval, vip_name=vip_name)
-                    kb = draft_keyboard(turn_id, chat_id=approval.chat_id)
+                    kb = draft_keyboard(
+                        turn_id,
+                        chat_id=approval.chat_id,
+                        show_quality_feedback=(
+                            admin.quality_feedback_enabled
+                            and approval.vip_id is not None
+                        ),
+                    )
                     if query.message:
                         await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
                     await query.answer()

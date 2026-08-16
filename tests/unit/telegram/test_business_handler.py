@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -282,6 +282,24 @@ async def test_router_swallows_orchestrator_exception() -> None:
     assert extra.get("chat_id") == 42
     assert extra.get("telegram_message_id") == 7
     assert extra.get("business_connection_id") == "bc-1"
+
+
+@pytest.mark.asyncio
+async def test_router_calls_on_vip_inbound_before_orchestrator() -> None:
+    orch = AsyncMock()
+    order: list[str] = []
+    hook = MagicMock(side_effect=lambda chat_id: order.append(f"hook:{chat_id}"))
+
+    async def _handle(inbound):
+        order.append(f"orch:{inbound.chat_id}")
+        return uuid4()
+
+    orch.handle_vip_message = AsyncMock(side_effect=_handle)
+    router = build_business_router(orchestrator=orch, on_vip_inbound=hook)
+    on_business = router.business_message.handlers[0].callback
+    await on_business(_biz_message())
+    hook.assert_called_once_with(42)
+    assert order == ["hook:42", "orch:42"]
 
 
 async def _assert_inbound_text(msg: Message, expected: str) -> None:
