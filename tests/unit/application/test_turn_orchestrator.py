@@ -2645,16 +2645,18 @@ async def test_consult_doctrine_happy_path() -> None:
         evaluation=_eval(),
         draft_text="need policy",
     )
-    gz = FakeGrayZone()
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    gz = FakeGrayZone(vip_store=vip_store)
     g = _build(
         FakeDirector(decision),
         gray_zone=gz,
         feature_gray_zone_enabled=True,
+        vip_store=vip_store,
     )
-    vip_id = uuid4()
-    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
     assert len(gz.queries) == 1
-    assert gz.queries[0]["vip_id"] == vip_id
+    assert gz.queries[0]["vip_id"] == rec.id
     assert gz.queries[0]["turn_id"] == turn_id
     assert gz.queries[0]["question"] == "hola diana"
     assert gz.queries[0]["draft"] == "need policy"
@@ -2664,6 +2666,11 @@ async def test_consult_doctrine_happy_path() -> None:
     stored = await g["turns"].get(turn_id)
     assert stored is not None and stored.status == "gray_zone"
     assert g["actuator"].send_count() == 0
+    stored_vip = await vip_store.get_by_id(rec.id)
+    assert stored_vip is not None
+    assert stored_vip.frozen_until is not None
+    assert stored_vip.frozen_until > datetime.now(UTC)
+    assert gz.discarded == []
 
 
 @pytest.mark.asyncio
