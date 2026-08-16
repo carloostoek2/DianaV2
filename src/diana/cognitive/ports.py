@@ -73,6 +73,21 @@ class PersonaCatalogProvider(Protocol):
 
 
 @runtime_checkable
+class PureGreetingCutPort(Protocol):
+    """Post-Analyst pure-greeting predicate injected into the Director.
+
+    Composition binds a TurnClassifier-backed adapter. Cognitive core must not
+    import ``diana.application``.
+    """
+
+    def __call__(
+        self,
+        text: str,
+        comprehension: Comprehension | dict[str, Any],
+    ) -> bool: ...
+
+
+@runtime_checkable
 class LLMProvider(Protocol):
     """Swapable LLM I/O surface used by Analyst, Generator, Evaluator."""
 
@@ -299,6 +314,7 @@ __all__ = [
     "MessageHistoryPort",
     "NoOpTurnStatusSink",
     "PersonaCatalogProvider",
+    "PureGreetingCutPort",
     "RecentIntentsPort",
     "Retriever",
     "TraceStore",

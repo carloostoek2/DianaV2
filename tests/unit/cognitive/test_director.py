@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
 
+from diana.application.turn_classifier import TurnClassifier
 from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
@@ -39,7 +41,7 @@ SALUDO_POOL = ["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"]
 
 
 def _h6_template_gate() -> TemplateGate:
-    """Production-shaped rules (IA first); fixed RNG for stable pool picks."""
+    """Production-shaped IA-only TemplateGate (saludo is post-Analyst cut)."""
     deteccion_ia = TemplateRule(
         id="deteccion_ia",
         trigger_patterns=[
@@ -54,28 +56,29 @@ def _h6_template_gate() -> TemplateGate:
         response_pool=[IA_TEMPLATE],
         reason="plantilla_deteccion_ia",
     )
-    saludo = TemplateRule(
-        id="saludo_constante",
-        trigger_patterns=[
-            "hola",
-            "holaa",
-            "holis",
-            "buenas",
-            "buenos días",
-            "buenos dias",
-            "buenas tardes",
-            "buenas noches",
-            "hey",
-            "qué tal",
-            "que tal",
-        ],
-        max_words=4,
-        response_pool=list(SALUDO_POOL),
-        reason="plantilla_saludo",
-    )
+    return TemplateGate(rules=[deteccion_ia], rng=random.Random(0))
 
-    return TemplateGate(rules=[deteccion_ia, saludo], rng=random.Random(0))
 
+def _pure_greeting_cut_using_tc(
+    classifier: TurnClassifier | None = None,
+):
+    """A1 predicate: intent=saludar + confident fático via real TurnClassifier."""
+    tc = classifier or TurnClassifier()
+
+    def _is_pure_greeting(text: str, comprehension: Any) -> bool:
+        if isinstance(comprehension, Comprehension):
+            intent = (comprehension.intent or "").strip().lower()
+        elif isinstance(comprehension, dict):
+            raw = comprehension.get("intent")
+            intent = str(raw).strip().lower() if raw is not None else ""
+        else:
+            return False
+        if intent != "saludar":
+            return False
+        classification = tc.classify(text, comprehension)
+        return classification.category == "fatico" and tc.is_confident(classification)
+
+    return _is_pure_greeting
 
 
 def _profile(**overrides: float) -> EvaluationProfile:
@@ -110,6 +113,18 @@ def _comprehension(**overrides) -> Comprehension:
     return Comprehension(**data)
 
 
+def _saludo_comprehension(**overrides) -> Comprehension:
+    """Analyst comprehension fixture for pure greeting cut tests."""
+    return _comprehension(
+        intent="saludar",
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        topics=["apertura"],
+        **overrides,
+    )
+
+
 def _turn(*, chat_id: int = 42, text: str = "hola Diana") -> IncomingTurn:
     return IncomingTurn(turn_id=uuid4(), chat_id=chat_id, text=text)
 
@@ -128,6 +143,9 @@ def make_director(
     recent_intents: InMemoryRecentIntents | None = None,
     repetition_guard: RepetitionGuard | None = None,
     template_gate: TemplateGate | None = None,
+    pure_greeting_cut: Any | None = None,
+    saludo_response_pool: list[str] | None = None,
+    saludo_rng: Any | None = None,
     naturalness_min: float | None = None,
     persona_catalog_provider: Any | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
@@ -143,6 +161,8 @@ def make_director(
         director_kwargs["naturalness_min"] = naturalness_min
     if persona_catalog_provider is not None:
         director_kwargs["persona_catalog_provider"] = persona_catalog_provider
+    if saludo_rng is not None:
+        director_kwargs["saludo_rng"] = saludo_rng
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),
@@ -160,6 +180,8 @@ def make_director(
         recent_intents=recent_intents,
         repetition_guard=repetition_guard,
         template_gate=template_gate,
+        pure_greeting_cut=pure_greeting_cut,
+        saludo_response_pool=saludo_response_pool,
         **director_kwargs,
     )
     return director, trace, history
@@ -1520,7 +1542,7 @@ async def test_naturalness_custom_min_via_ctor() -> None:
     assert decision.draft_text == "better"
 
 
-# ── H6 TemplateGate pre-pipeline early-exit ────────────────────────────
+# ── H6 post-Analyst pure saludo cut + IA TemplateGate ───────────────────
 
 
 def _assert_zero_evaluation(evaluation: EvaluationProfile) -> None:
@@ -1533,19 +1555,29 @@ def _assert_zero_evaluation(evaluation: EvaluationProfile) -> None:
     assert evaluation.empathy == 0.0
 
 
-@pytest.mark.asyncio
-async def test_h6_short_hola_template_approve_skips_pipeline() -> None:
-    """H6.6.1: short greeting → plantilla_saludo approve; 0 LLM; decision+generated_text."""
-    llm = FakeLLM(
-        structured_responses=[_comprehension(), _profile()],
-        text_responses=["should-not-run"],
-    )
-    director, trace, _ = make_director(llm, template_gate=_h6_template_gate())
+def _wire_stage_spies(director: CognitiveDirector) -> None:
     director._analyst.analyze = AsyncMock(side_effect=director._analyst.analyze)  # type: ignore[method-assign]
     director._planner.plan = MagicMock(side_effect=director._planner.plan)  # type: ignore[method-assign]
     director._generator.generate = AsyncMock(side_effect=director._generator.generate)  # type: ignore[method-assign]
     director._evaluator.evaluate = AsyncMock(side_effect=director._evaluator.evaluate)  # type: ignore[method-assign]
     director._decider.decide = MagicMock(side_effect=director._decider.decide)  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_h6_short_hola_runs_analyst_then_saludo_template_cut() -> None:
+    """H6.6.1: pure greeting runs Analyst once then saludo cut (no Planner+)."""
+    llm = FakeLLM(
+        structured_responses=[_saludo_comprehension()],
+        text_responses=["should-not-generate"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+        saludo_rng=random.Random(0),
+    )
+    _wire_stage_spies(director)
 
     turn = _turn(text="Hola")
     decision = await director.handle_turn(turn)
@@ -1557,40 +1589,73 @@ async def test_h6_short_hola_template_approve_skips_pipeline() -> None:
     _assert_zero_evaluation(decision.evaluation)
     assert decision.mode_restriction_applied is None
 
+    assert trace.get(turn.turn_id, "comprehension") is not None
     assert trace.get(turn.turn_id, "decision") is not None
     assert trace.get(turn.turn_id, "generated_text") == decision.draft_text
-    assert trace.get(turn.turn_id, "comprehension") is None
     assert trace.get(turn.turn_id, "plan") is None
     assert trace.get(turn.turn_id, "evaluation") is None
 
-    director._analyst.analyze.assert_not_called()  # type: ignore[attr-defined]
+    director._analyst.analyze.assert_called_once()  # type: ignore[attr-defined]
     director._planner.plan.assert_not_called()  # type: ignore[attr-defined]
     director._generator.generate.assert_not_called()  # type: ignore[attr-defined]
     director._evaluator.evaluate.assert_not_called()  # type: ignore[attr-defined]
     director._decider.decide.assert_not_called()  # type: ignore[attr-defined]
-    assert llm.calls == []
+    assert not any(name == "generate" for name, _ in llm.calls)
+    assert any(name == "generate_structured" for name, _ in llm.calls)
 
 
 @pytest.mark.asyncio
-async def test_h6_long_hola_does_not_template_runs_pipeline() -> None:
-    """H6.6.2: long hola message skips template; full pipeline still runs."""
+async def test_h6_mixed_saludo_with_emotional_load_runs_full_pipeline() -> None:
+    """H6.6.2: ambiguous saludo+carga fails pure cut → full pipeline."""
+    mixed_text = "Hola, es que no sé si contarte algo"
     llm = FakeLLM(
-        structured_responses=[_comprehension(risk="medio"), _profile(safety=0.5)],
-        text_responses=["Long path draft"],
+        structured_responses=[
+            _saludo_comprehension(),
+            _profile(safety=0.5),
+        ],
+        text_responses=["Mixed path draft"],
     )
-    director, trace, _ = make_director(llm, template_gate=_h6_template_gate())
-    long_text = "Hola, tengo una pregunta sobre el contenido"
-    turn = _turn(text=long_text)
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+    )
+    turn = _turn(text=mixed_text)
     decision = await director.handle_turn(turn)
 
     assert decision.action == "approve"
     assert decision.reason != "plantilla_saludo"
-    assert decision.draft_text == "Long path draft"
+    assert decision.draft_text == "Mixed path draft"
     assert trace.get(turn.turn_id, "comprehension") is not None
     assert trace.get(turn.turn_id, "plan") is not None
     methods = [name for name, _ in llm.calls]
     assert "generate_structured" in methods
     assert "generate" in methods
+
+
+@pytest.mark.asyncio
+async def test_h6_non_saludar_intent_runs_full_pipeline() -> None:
+    """Greeting-like text with non-saludar intent never takes saludo pool cut."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="chat", risk="medio"),
+            _profile(safety=0.5),
+        ],
+        text_responses=["Non-saludar draft"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+    )
+    turn = _turn(text="Hola")
+    decision = await director.handle_turn(turn)
+
+    assert decision.reason != "plantilla_saludo"
+    assert decision.draft_text == "Non-saludar draft"
+    assert trace.get(turn.turn_id, "plan") is not None
 
 
 @pytest.mark.asyncio
@@ -1601,11 +1666,7 @@ async def test_h6_ia_probe_template_exact_draft() -> None:
         text_responses=["should-not-run"],
     )
     director, trace, _ = make_director(llm, template_gate=_h6_template_gate())
-    director._analyst.analyze = AsyncMock(side_effect=director._analyst.analyze)  # type: ignore[method-assign]
-    director._planner.plan = MagicMock(side_effect=director._planner.plan)  # type: ignore[method-assign]
-    director._generator.generate = AsyncMock(side_effect=director._generator.generate)  # type: ignore[method-assign]
-    director._evaluator.evaluate = AsyncMock(side_effect=director._evaluator.evaluate)  # type: ignore[method-assign]
-    director._decider.decide = MagicMock(side_effect=director._decider.decide)  # type: ignore[method-assign]
+    _wire_stage_spies(director)
 
     turn = _turn(text="eres una ia?")
     decision = await director.handle_turn(turn)
@@ -1627,31 +1688,45 @@ async def test_h6_ia_probe_template_exact_draft() -> None:
 
 @pytest.mark.asyncio
 async def test_h6_template_decision_never_send_or_escalate() -> None:
-    """H6.6.4: template Decision is supervised approve only (no send/escalate)."""
-    llm = FakeLLM(structured_responses=[], text_responses=[])
-    director, _, _ = make_director(llm, template_gate=_h6_template_gate())
+    """H6.6.4: saludo cut + IA templates are supervised approve only (no send/escalate)."""
+    # Pure "Hola" needs Analyst comprehension; IA paths stay 0 LLM.
+    llm = FakeLLM(
+        structured_responses=[_saludo_comprehension()],
+        text_responses=[],
+    )
+    director, _, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+        saludo_rng=random.Random(0),
+    )
 
-    for text in ("Hola", "eres una ia?", "hola eres una ia"):
+    hola = await director.handle_turn(_turn(text="Hola"))
+    assert hola.action == "approve"
+    assert hola.action not in ("send", "escalate")
+    assert hola.reason == "plantilla_saludo"
+    assert hola.draft_text in SALUDO_POOL
+    _assert_zero_evaluation(hola.evaluation)
+
+    for text in ("eres una ia?", "hola eres una ia"):
         decision = await director.handle_turn(_turn(text=text))
         assert decision.action == "approve"
         assert decision.action not in ("send", "escalate")
         assert decision.draft_text
         assert decision.evaluation is not None
         _assert_zero_evaluation(decision.evaluation)
-    mixed = await director.handle_turn(_turn(text="hola eres una ia"))
-    assert mixed.reason == "plantilla_deteccion_ia"
-    assert llm.calls == []
-
+        assert decision.reason == "plantilla_deteccion_ia"
 
 
 @pytest.mark.asyncio
 async def test_h6_default_gate_none_does_not_false_fire_hola_diana() -> None:
-    """Default template_gate=None keeps fixture text 'hola Diana' on full pipeline."""
+    """Without cut injectables, fixture 'hola Diana' stays on full pipeline."""
     llm = FakeLLM(
         structured_responses=[_comprehension(risk="medio"), _profile(safety=0.5)],
         text_responses=["Fixture path draft"],
     )
-    director, _, _ = make_director(llm)  # no template_gate
+    director, _, _ = make_director(llm)  # no template_gate / pure_greeting_cut
     decision = await director.handle_turn(_turn(text="hola Diana"))
     assert decision.draft_text == "Fixture path draft"
     assert decision.reason != "plantilla_saludo"

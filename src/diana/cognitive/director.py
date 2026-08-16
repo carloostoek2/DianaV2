@@ -14,6 +14,8 @@ into ``IncomingTurn`` at the application layer.
 from __future__ import annotations
 
 import logging
+import random
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -42,6 +44,7 @@ from diana.cognitive.ports import (
     MessageHistoryPort,
     NoOpTurnStatusSink,
     PersonaCatalogProvider,
+    PureGreetingCutPort,
     RecentIntentsPort,
     TraceStore,
     TurnStatusSink,
@@ -161,6 +164,10 @@ class CognitiveDirector:
         recent_intents: RecentIntentsPort | None = None,
         repetition_guard: RepetitionGuard | None = None,
         template_gate: TemplateGate | None = None,
+        # Post-Analyst pure-greeting cut (injected; no cognitive→application import).
+        pure_greeting_cut: PureGreetingCutPort | None = None,
+        saludo_response_pool: Sequence[str] | None = None,
+        saludo_rng: Any = random,
         # Supervised naturalness redraft min; not autonomous send gate.
         naturalness_min: float | None = None,
         knowledge_augmenter: KnowledgeAugmenter | None = None,
@@ -183,6 +190,9 @@ class CognitiveDirector:
         self._recent_intents = recent_intents
         self._repetition_guard = repetition_guard
         self._template_gate = template_gate
+        self._pure_greeting_cut = pure_greeting_cut
+        self._saludo_response_pool = saludo_response_pool
+        self._saludo_rng = saludo_rng
         self._naturalness_min = (
             float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"])
             if naturalness_min is None
@@ -321,6 +331,30 @@ class CognitiveDirector:
             comprehension.urgency,
             comprehension.risk,
         )
+
+        # Post-Analyst pure-greeting cut: approve-only pool draft (never send).
+        # Prefer before H4 so pure saludo never escalates as pregunta_repetida.
+        if (
+            self._pure_greeting_cut is not None
+            and self._saludo_response_pool
+        ):
+            if self._pure_greeting_cut(turn.text, comprehension):
+                pool = [t for t in self._saludo_response_pool if t]
+                if pool:
+                    draft = self._saludo_rng.choice(pool)
+                    logger.info(
+                        "⚡ Plantilla saludo post-Analyst — plantilla_saludo"
+                    )
+                    decision = Decision(
+                        action="approve",
+                        reason="plantilla_saludo",
+                        evaluation=_early_exit_evaluation(),
+                        draft_text=draft,
+                        mode_restriction_applied=None,
+                    )
+                    await self._store(turn_id, "generated_text", draft)
+                    await self._store(turn_id, "decision", decision)
+                    return decision
 
         # H4: 3+ consecutive same intent → Decision-only escalate (no Planner+).
         if self._recent_intents is not None and self._repetition_guard is not None:
