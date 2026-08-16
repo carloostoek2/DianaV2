@@ -201,6 +201,8 @@ class TurnOrchestrator:
         traces: DeliveryResultWriter | None = None,
         delivery_mode: DeliveryMode = "supervised",
         feature_advanced_behavior: bool = False,
+        # Pure plantilla_saludo auto-delivery (independent of AMS / phatic autonomy).
+        feature_phatic_auto_send: bool = False,
         sandbox: object | None = None,
         delay_policy: DelayPolicy | None = None,
         runtime_timers: RuntimeTimerStore | None = None,
@@ -234,6 +236,7 @@ class TurnOrchestrator:
         self._traces = traces
         self._delivery_mode = delivery_mode
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
+        self._feature_phatic_auto_send = bool(feature_phatic_auto_send)
         self._sandbox = sandbox
         self._delay_policy = delay_policy
         self._runtime_timers = runtime_timers
@@ -1562,9 +1565,11 @@ class TurnOrchestrator:
 
         # Near-threshold notify only when finalize confirmed DELIVERED
         # (not raw actuator success — mid-flight supersede must not notify).
+        # plantilla_saludo uses zero evaluation — skip AMS near-threshold spam.
         if (
             delivered
             and self._autonomous_mode is not None
+            and pending_deliver.decision.reason != "plantilla_saludo"
         ):
             await self._autonomous_mode.notify_if_needed(
                 turn_id,
@@ -2301,12 +2306,20 @@ class TurnOrchestrator:
                 )
                 raise
         elif decision.action == "send":
-            job = await self._prepare_autonomous_send(
-                turn_id=turn_id,
-                turn_ctx=turn_ctx,
-                decision=decision,
-                incoming=incoming,
-            )
+            if decision.reason == "plantilla_saludo":
+                job = await self._prepare_phatic_template_send(
+                    turn_id=turn_id,
+                    turn_ctx=turn_ctx,
+                    decision=decision,
+                    incoming=incoming,
+                )
+            else:
+                job = await self._prepare_autonomous_send(
+                    turn_id=turn_id,
+                    turn_ctx=turn_ctx,
+                    decision=decision,
+                    incoming=incoming,
+                )
             if job is not None:
                 return turn_id, job
         else:
@@ -2340,6 +2353,167 @@ class TurnOrchestrator:
             },
         )
         return turn_id, None
+
+    async def _prepare_phatic_template_send(
+        self,
+        *,
+        turn_id: UUID,
+        turn_ctx: IncomingTurn,
+        decision: Decision,
+        incoming: VipInboundMessage,
+    ) -> _AutonomousDeliverJob | None:
+        """Deliver pure plantilla_saludo without AMS/trust gates.
+
+        Fail-closed on Atención / frozen / paused / empty draft / no behavior.
+        Flag off or Atención demotes to owner approval draft.
+        """
+        if not self._feature_phatic_auto_send:
+            logger.info(
+                "phatic_auto_send_disabled",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": incoming.chat_id,
+                },
+            )
+            demoted = decision.model_copy(
+                update={
+                    "action": "approve",
+                    "reason": "phatic_auto_send_disabled",
+                }
+            )
+            await self._coordinator.transition(
+                turn_id, TurnStatus.PENDING_APPROVAL
+            )
+            await self._admin.send_draft_for_approval(
+                turn_ctx, demoted, turn_id
+            )
+            return None
+
+        if incoming.vip_id is None:
+            logger.info(
+                "phatic_auto_send_atencion",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": incoming.chat_id,
+                },
+            )
+            demoted = decision.model_copy(
+                update={
+                    "action": "approve",
+                    "reason": "phatic_auto_send_atencion",
+                }
+            )
+            await self._coordinator.transition(
+                turn_id, TurnStatus.PENDING_APPROVAL
+            )
+            await self._admin.send_draft_for_approval(
+                turn_ctx, demoted, turn_id
+            )
+            return None
+
+        if await self._is_vip_frozen(incoming.vip_id):
+            logger.info(
+                "phatic_template_vip_frozen",
+                extra={
+                    "turn_id": str(turn_id),
+                    "vip_id": str(incoming.vip_id),
+                },
+            )
+            try:
+                await self._coordinator.mark_failed(turn_id, error="vip_frozen")
+            except Exception:
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
+            await self._safe_notify_info(
+                f"Turn {turn_id} failed: vip_frozen",
+                chat_id=incoming.chat_id,
+                event="owner_notify_failed_after_vip_frozen",
+                turn_id=str(turn_id),
+            )
+            return None
+
+        if await self._is_vip_paused(incoming.vip_id):
+            logger.info(
+                "phatic_template_vip_paused",
+                extra={
+                    "turn_id": str(turn_id),
+                    "vip_id": str(incoming.vip_id),
+                },
+            )
+            try:
+                await self._coordinator.mark_failed(turn_id, error="vip_paused")
+            except Exception:
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
+            await self._safe_notify_info(
+                f"Turn {turn_id} failed: vip_paused",
+                chat_id=incoming.chat_id,
+                event="owner_notify_failed_after_vip_paused",
+                turn_id=str(turn_id),
+            )
+            return None
+
+        draft = (decision.draft_text or "").strip()
+        if not draft:
+            logger.info(
+                "phatic_template_empty_draft",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+            try:
+                await self._coordinator.mark_failed(turn_id, error="empty_draft")
+            except Exception:
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
+            await self._safe_notify_info(
+                f"Turn {turn_id} failed: empty_draft",
+                chat_id=incoming.chat_id,
+                event="owner_notify_failed_after_empty_draft",
+                turn_id=str(turn_id),
+            )
+            return None
+
+        if self._behavior is None:
+            logger.error(
+                "phatic_behavior_not_wired",
+                extra={"turn_id": str(turn_id)},
+            )
+            try:
+                await self._coordinator.mark_failed(
+                    turn_id, error="phatic_behavior_not_wired"
+                )
+            except Exception:
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
+            return None
+
+        advanced = self._feature_advanced_behavior
+        mode = self._effective_delivery_mode(incoming.chat_id)
+        if mode == "fake_delivery":
+            logger.info(
+                "delivery_mode_fake",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+        ctx = DeliveryContext(
+            chat_id=incoming.chat_id,
+            business_connection_id=str(turn_ctx.business_connection_id).strip(),
+            vip_id=incoming.vip_id,
+            telegram_message_id=incoming.telegram_message_id,
+            mode=mode,
+            is_frozen=False,
+            skip_initial_delay=True,
+            allow_split=advanced,
+            allow_human_quirks=advanced,
+            split_chars=4096,
+        )
+        return _AutonomousDeliverJob(text=draft, ctx=ctx, decision=decision)
 
     async def _prepare_autonomous_send(
         self,
@@ -2504,6 +2678,19 @@ class TurnOrchestrator:
         if frozen.tzinfo is None:
             frozen = frozen.replace(tzinfo=UTC)
         return frozen > now
+
+    async def _is_vip_paused(self, vip_id: UUID | None) -> bool:
+        """True if vip_store says paused_until > now(UTC). Missing store/id → False."""
+        if self._vip_store is None or vip_id is None:
+            return False
+        vip = await self._vip_store.get_by_id(vip_id)
+        if vip is None or vip.paused_until is None:
+            return False
+        now = datetime.now(UTC)
+        paused = vip.paused_until
+        if paused.tzinfo is None:
+            paused = paused.replace(tzinfo=UTC)
+        return paused > now
 
     async def _finalize_autonomous_delivery(
         self,

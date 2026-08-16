@@ -220,6 +220,7 @@ def _build(
     feature_general_mode_enabled: bool = False,
     wire_autonomous: bool = False,
     feature_autonomous_mode: bool = False,
+    feature_phatic_auto_send: bool = False,
     feature_advanced_behavior: bool = False,
     global_mode: str = "supervised",
     delivery_mode: str = "supervised",
@@ -286,6 +287,8 @@ def _build(
             vip_store=vips,
             notifier=notifier,
         )
+    # Plantilla auto-send needs behavior/vip_store/traces without AMS L1.
+    wire_deliver = bool(feature_phatic_auto_send or wire_autonomous)
     orch = TurnOrchestrator(
         coordinator=coordinator,
         director=director,  # type: ignore[arg-type]
@@ -295,12 +298,13 @@ def _build(
         gray_zone=gray_zone,
         feature_gray_zone_enabled=feature_gray_zone_enabled,
         feature_general_mode_enabled=feature_general_mode_enabled,
-        behavior=behavior if wire_autonomous else None,  # type: ignore[arg-type]
+        behavior=behavior if wire_deliver else None,  # type: ignore[arg-type]
         autonomous_mode=ams,
-        vip_store=vips if wire_autonomous else None,
-        traces=traces if wire_autonomous else None,
+        vip_store=vips if wire_deliver else None,
+        traces=traces if wire_deliver else None,
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
         feature_advanced_behavior=feature_advanced_behavior,
+        feature_phatic_auto_send=feature_phatic_auto_send,
         delay_policy=delay_policy,
         daily_message_limit_store=daily_limit,
         turns=turns,
@@ -1007,6 +1011,122 @@ async def test_send_ams_disabled_falls_back_to_approve() -> None:
     assert len(g["notifier"].drafts) == 1
     assert g["notifier"].drafts[0].reason == "autonomous_mode_disabled"
     assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_plantilla_saludo_delivers_without_ams() -> None:
+    """send+plantilla_saludo with FEATURE_PHATIC_AUTO_SEND delivers without AMS."""
+    decision = Decision(
+        action="send",
+        reason="plantilla_saludo",
+        evaluation=_eval(),
+        draft_text="Holis 😁",
+    )
+    g = _build(
+        FakeDirector(decision),
+        feature_phatic_auto_send=True,
+        # AMS intentionally off / not wired
+        wire_autonomous=False,
+        feature_autonomous_mode=False,
+    )
+    assert g["ams"] is None
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert g["actuator"].send_count() >= 1
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert g["learning"].calls == [turn_id]
+    assert g["traces"].get_delivery_result(turn_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_plantilla_saludo_flag_off_demotes_to_approve() -> None:
+    decision = Decision(
+        action="send",
+        reason="plantilla_saludo",
+        evaluation=_eval(),
+        draft_text="Holis 😁",
+    )
+    g = _build(
+        FakeDirector(decision),
+        feature_phatic_auto_send=False,
+        wire_autonomous=False,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "phatic_auto_send_disabled"
+    assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_plantilla_saludo_atencion_never_auto_sends() -> None:
+    decision = Decision(
+        action="send",
+        reason="plantilla_saludo",
+        evaluation=_eval(),
+        draft_text="Holis 😁",
+    )
+    g = _build(
+        FakeDirector(decision),
+        feature_phatic_auto_send=True,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=None))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].reason == "phatic_auto_send_atencion"
+
+
+@pytest.mark.asyncio
+async def test_plantilla_saludo_frozen_vip_fail_closed() -> None:
+    decision = Decision(
+        action="send",
+        reason="plantilla_saludo",
+        evaluation=_eval(),
+        draft_text="Holis 😁",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(6001)
+    await store.freeze_vip(vip.id, datetime.now(UTC) + timedelta(hours=2))
+    g = _build(
+        FakeDirector(decision),
+        feature_phatic_auto_send=True,
+        vip_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip.id))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error == "vip_frozen"
+
+
+@pytest.mark.asyncio
+async def test_plantilla_saludo_paused_vip_fail_closed() -> None:
+    decision = Decision(
+        action="send",
+        reason="plantilla_saludo",
+        evaluation=_eval(),
+        draft_text="Holis 😁",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(6002)
+    await store.pause_vip(vip.id, datetime.now(UTC) + timedelta(hours=2))
+    g = _build(
+        FakeDirector(decision),
+        feature_phatic_auto_send=True,
+        vip_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip.id))
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.error == "vip_paused"
 
 
 @pytest.mark.asyncio
