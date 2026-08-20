@@ -288,9 +288,7 @@ class MemoryBackfillQueue:
         enqueued = 0
         active = await self._vips.list_active()
         for vip in active:
-            has_history = bool(
-                await self._history.list_all(vip.telegram_user_id, page_size=1)
-            )
+            has_history = (await self._history.count(vip.telegram_user_id)) > 0
             if not has_history:
                 continue
             if await self._memories.has_profile(vip.id):
