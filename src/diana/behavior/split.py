@@ -5,7 +5,41 @@ Never mutates meaning beyond boundary selection. No I/O, no LLM.
 
 from __future__ import annotations
 
+import re
+
 _BREAK_CHARS = frozenset(".,\n")
+_BLANK_LINE_RE = re.compile(r"\n\s*\n")
+# Single-newline fallback: each line must look like a real paragraph, not
+# a short chat burst ("Hola" / "qué onda").
+_MIN_SOFT_PARAGRAPH_LEN = 40
+
+
+def split_paragraphs(text: str) -> list[str]:
+    """Split conversational text into paragraph bubbles.
+
+    Preference:
+    1. Blank-line blocks — the model already chose paragraphs.
+    2. Single newlines only when every non-empty line is long enough to be
+       a paragraph (not a short two-line greeting).
+    3. Otherwise keep a single bubble.
+
+    Empty / whitespace-only inputs yield ``[]``. Segments are stripped.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return []
+
+    blank_parts = [p.strip() for p in _BLANK_LINE_RE.split(stripped) if p.strip()]
+    if len(blank_parts) >= 2:
+        return blank_parts
+
+    lines = [ln.strip() for ln in stripped.split("\n") if ln.strip()]
+    if (
+        len(lines) >= 2
+        and all(len(ln) >= _MIN_SOFT_PARAGRAPH_LEN for ln in lines)
+    ):
+        return lines
+    return [stripped]
 
 
 def split_text(text: str, max_chars: int) -> list[str]:

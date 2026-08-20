@@ -18,7 +18,7 @@ from diana.application.admin_service import (
     QualityFeedbackDisabled,
 )
 from diana.application.staging_service import AtencionPromoteBlocked
-from diana.behavior.ports import DeliveryProgressCallback, ProgressKind
+from diana.behavior.ports import DeliveryProgress, DeliveryProgressCallback
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.draft_variants import (
     RegeneratingCallback,
@@ -262,7 +262,7 @@ _QUALITY_ALERTS: dict[str, str] = {
 
 # Live delivery stages shown on the draft message while the human-like
 # simulation runs after approval (edited in place, buttons kept until the end).
-_DRAFT_PROGRESS_LABELS: dict[ProgressKind, str] = {
+_DRAFT_PROGRESS_LABELS: dict[str, str] = {
     "reading": "👀 Mensaje visto",
     "typing": "✍️ Escribiendo…",
 }
@@ -359,7 +359,10 @@ async def dispatch_owner_callback(
             if approval is None or approval.vip_id is None:
                 return "quality_feedback_not_vip"
             result = await admin.handle_mark_gold(
-                turn_id, scope=scope, actor_id=actor_id
+                turn_id,
+                scope=scope,
+                actor_id=actor_id,
+                on_progress=on_delivery_progress,
             )
             if result is None:
                 correct_sessions.cancel_turn(turn_id)
@@ -739,10 +742,17 @@ def build_callback_router(
         # draft in place (leído → escribiendo) keeping the buttons until the
         # final status replaces them. Faults are best-effort (engine already
         # guards its own callback).
-        async def _progress(kind: ProgressKind) -> None:
+        async def _progress(event: DeliveryProgress) -> None:
             if query.message is None or not draft_text:
                 return
-            label = _DRAFT_PROGRESS_LABELS.get(kind)
+            if (
+                event.kind == "sending"
+                and event.index is not None
+                and event.total is not None
+            ):
+                label = f"📤 Enviando mensaje {event.index}/{event.total}"
+            else:
+                label = _DRAFT_PROGRESS_LABELS.get(event.kind)
             if label is None:
                 return
             try:

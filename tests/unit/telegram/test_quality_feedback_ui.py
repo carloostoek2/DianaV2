@@ -369,6 +369,31 @@ async def test_gdc_vip_scope() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gdc_forwards_delivery_progress_to_mark_gold() -> None:
+    """Gold confirm wires the live delivery progress callback like approve."""
+    from diana.telegram.keyboards import encode_gold_confirm
+
+    staging, _ = _real_staging()
+    g, turn, _, _ = await _pending_vip_draft(staging=staging, vip_id=uuid4())
+    gold = AsyncMock(wraps=g["admin"].handle_mark_gold)
+    g["admin"].handle_mark_gold = gold  # type: ignore[method-assign]
+
+    async def progress(event: object) -> None:
+        pass
+
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=CorrectSessionStore(),
+        callback_data=encode_gold_confirm(turn.id, "g"),
+        actor_id=OWNER,
+        on_delivery_progress=progress,
+    )
+    assert status == "gold_marked"
+    gold.assert_awaited_once()
+    assert gold.await_args.kwargs["on_progress"] is progress
+
+
+@pytest.mark.asyncio
 async def test_gdc_cancel_restores_without_writes() -> None:
     from diana.telegram.keyboards import encode_gold_confirm
 

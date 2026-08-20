@@ -27,8 +27,20 @@ def test_pick_quirk_p_one_returns_one_of_kinds() -> None:
     kinds = {pick_quirk(rng, 1.0) for _ in range(60)}
     assert None not in kinds
     assert kinds <= {"pause", "natural_split", "typo_correct"}
-    # With enough draws, expect more than one kind (uniform).
+    # With enough draws, expect more than one kind.
     assert len(kinds) >= 2
+
+
+def test_pick_quirk_prefers_typo_correct() -> None:
+    """Typo+correction is the visible human mark; it must win the lottery."""
+    rng = random.Random(0)
+    draws = [pick_quirk(rng, 1.0) for _ in range(300)]
+    typo = draws.count("typo_correct")
+    pause = draws.count("pause")
+    split = draws.count("natural_split")
+    assert typo > pause
+    assert typo > split
+    assert typo > 120  # 60% of 300 → ~180; 120 is a loose floor
 
 
 def test_pick_quirk_force_invalid_fail_closed_pause() -> None:

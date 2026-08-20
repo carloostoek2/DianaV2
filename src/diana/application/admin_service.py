@@ -699,6 +699,7 @@ class AdminService:
         *,
         scope: Literal["global", "vip"],
         actor_id: int,
+        on_progress: DeliveryProgressCallback | None = None,
     ) -> DeliveryResult | None:
         self._assert_owner(actor_id)
         self._require_quality_feedback()
@@ -712,7 +713,9 @@ class AdminService:
         approval = await self._approvals.get_by_turn(turn_id)
         draft = approval.draft_text if approval is not None else ""
         turn_text = await self._resolve_trigger_text(turn.chat_id, turn.trigger_message_id)
-        delivery = await self.handle_approve(turn_id, actor_id=actor_id)
+        delivery = await self.handle_approve(
+            turn_id, actor_id=actor_id, on_progress=on_progress
+        )
         if delivery is None or delivery.cancelled:
             return delivery
         if self._staging is None:

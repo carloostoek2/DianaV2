@@ -237,14 +237,15 @@ Job programado (ej. cada domingo a las 3 AM):
 
 ```
 BehaviorEngine.deliver() verifica ctx.allow_split
-  → Si True y len(texto) > split_chars:
-      → Divide el texto por puntos, comas o saltos de línea
+  → Si True:
+      → Divide por párrafos (líneas en blanco; o saltos simples si cada bloque es un párrafo)
+      → Si un segmento sigue > split_chars: divide por puntos, comas o saltos
       → Envía cada segmento con delays intermedios y typing
   → Si allow_human_quirks=True:
-      → Con probabilidad baja (ej. 5%):
+      → Con probabilidad ~20%, priorizando typo+corrección (~1 de cada 8 envíos):
+          - Enviar corrección tipográfica (*palabra)
           - Añadir pausa extra
-          - Enviar corrección tipográfica
-          - Dividir mensaje de forma "natural"
+          - Dividir mensaje de forma "natural" (raro; el split por párrafos ya cubre lo visible)
 ```
 
 4.13 Feedback de calidad — Destacar / Reprender (FEATURE_QUALITY_FEEDBACK_ENABLED)

@@ -31,6 +31,7 @@ from diana.behavior.ports import (
     Clock,
     DelayPolicy,
     DeliveryContext,
+    DeliveryProgress,
     DeliveryProgressCallback,
     DeliveryResult,
     ProgressKind,
@@ -39,7 +40,7 @@ from diana.behavior.ports import (
     TurnStatusReader,
 )
 from diana.behavior.quirks import QuirkKind, apply_typo, natural_split_text, pick_quirk
-from diana.behavior.split import split_text
+from diana.behavior.split import split_paragraphs, split_text
 from diana.behavior.timer_manager import TimerManager, TimerManagerProtocol
 
 logger = logging.getLogger("diana.behavior")
@@ -290,6 +291,14 @@ class BehaviorEngine:
                     if abort is not None:
                         return abort
 
+                    if len(texts) > 1:
+                        await self._notify_progress(
+                            on_progress,
+                            "sending",
+                            index=index + 1,
+                            total=len(texts),
+                        )
+
                     send_result = await self._send_with_retries(
                         delivery_id=delivery_id,
                         turn_id=turn_id,
@@ -424,10 +433,10 @@ class BehaviorEngine:
     def _prepare_texts(
         self, texts: list[str], ctx: DeliveryContext
     ) -> tuple[list[str], bool]:
-        """Normalize + optional dual-gate length split. Returns (texts, inter_gap).
+        """Normalize + optional dual-gate paragraph/length split.
 
-        Inter-gap is True only when length-split expansion produced multi-segment
-        (A2). Caller multi-text without expand stays False.
+        Inter-gap is True when expansion produced multi-segment (A2).
+        Caller multi-text without expand stays False.
         """
         normalized = [t for t in (x.strip() if isinstance(x, str) else x for x in texts) if t]
         if not (self._advanced and ctx.allow_split):
@@ -436,13 +445,17 @@ class BehaviorEngine:
         expanded: list[str] = []
         did_expand = False
         for t in normalized:
-            if len(t) > ctx.split_chars:
-                parts = split_text(t, ctx.split_chars)
-                if len(parts) > 1:
-                    did_expand = True
-                expanded.extend(parts if parts else [t])
-            else:
-                expanded.append(t)
+            pieces = split_paragraphs(t) or [t]
+            if len(pieces) > 1:
+                did_expand = True
+            for piece in pieces:
+                if len(piece) > ctx.split_chars:
+                    parts = split_text(piece, ctx.split_chars)
+                    if len(parts) > 1:
+                        did_expand = True
+                    expanded.extend(parts if parts else [piece])
+                else:
+                    expanded.append(piece)
 
         if did_expand:
             logger.info(
@@ -593,12 +606,15 @@ class BehaviorEngine:
         self,
         on_progress: DeliveryProgressCallback | None,
         kind: ProgressKind,
+        *,
+        index: int | None = None,
+        total: int | None = None,
     ) -> None:
         """Best-effort live progress callback; a fault never affects delivery."""
         if on_progress is None:
             return
         try:
-            await on_progress(kind)
+            await on_progress(DeliveryProgress(kind=kind, index=index, total=total))
         except Exception:
             logger.debug("delivery_progress_callback_failed", exc_info=True)
 

@@ -20,7 +20,7 @@ from diana.behavior.fake import (
     ImmediateClock,
     SequenceTurnStatusReader,
 )
-from diana.behavior.ports import DeliveryContext, TransientSendError
+from diana.behavior.ports import DeliveryContext, DeliveryProgress, TransientSendError
 
 
 @pytest.fixture
@@ -572,6 +572,56 @@ async def test_split_short_text_still_one_send() -> None:
     assert sends[0]["text"] == "short ok"
 
 
+_THREE_PARAS = (
+    "Oye, estuve pensando en lo que me contaste ayer en la noche.\n\n"
+    "La verdad tiene mucho sentido, no lo había visto de esa forma.\n\n"
+    "Cuando puedas cuéntame cómo te fue hoy, me da curiosidad."
+)
+
+
+@pytest.mark.asyncio
+async def test_split_three_paragraphs_under_limit_three_sends() -> None:
+    """Conversational 3-paragraph draft must become 3 Telegram bubbles."""
+    assert len(_THREE_PARAS) < 4096
+    engine, actuator, store, _ = _engine(
+        feature_advanced_behavior=True,
+        initial=0.0,
+        typing=0.0,
+    )
+    result = await engine.deliver(
+        [_THREE_PARAS],
+        _ctx(allow_split=True, split_chars=4096, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert [s["text"] for s in sends] == [
+        "Oye, estuve pensando en lo que me contaste ayer en la noche.",
+        "La verdad tiene mucho sentido, no lo había visto de esa forma.",
+        "Cuando puedas cuéntame cómo te fue hoy, me da curiosidad.",
+    ]
+    rows = await store.list_all()
+    assert rows and len(rows[0].texts) == 3
+
+
+@pytest.mark.asyncio
+async def test_split_three_paragraphs_flag_off_single_send() -> None:
+    engine, actuator, _, _ = _engine(
+        feature_advanced_behavior=False,
+        initial=0.0,
+        typing=0.0,
+    )
+    result = await engine.deliver(
+        [_THREE_PARAS],
+        _ctx(allow_split=True, split_chars=4096, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] == _THREE_PARAS
+
+
 @pytest.mark.asyncio
 async def test_split_expand_adds_inter_message_gap() -> None:
     text = "Hello world. This is fine, really.\nMore here."
@@ -1076,8 +1126,8 @@ async def test_deliver_reports_progress_reading_then_typing(
     engine, _, _, _ = engine_bundle
     seen: list[str] = []
 
-    async def on_progress(kind: str) -> None:
-        seen.append(kind)
+    async def on_progress(event: DeliveryProgress) -> None:
+        seen.append(event.kind)
 
     result = await engine.deliver(["hola"], _ctx(), uuid4(), on_progress=on_progress)
 
@@ -1093,8 +1143,8 @@ async def test_deliver_no_reading_progress_without_trigger_message(
     engine, _, _, _ = engine_bundle
     seen: list[str] = []
 
-    async def on_progress(kind: str) -> None:
-        seen.append(kind)
+    async def on_progress(event: DeliveryProgress) -> None:
+        seen.append(event.kind)
 
     result = await engine.deliver(
         ["hola"], _ctx(telegram_message_id=None), uuid4(), on_progress=on_progress
@@ -1111,10 +1161,42 @@ async def test_deliver_progress_callback_fault_does_not_break_delivery(
     """A fault inside the progress callback must never fail the delivery."""
     engine, actuator, _, _ = engine_bundle
 
-    async def on_progress(kind: str) -> None:
+    async def on_progress(event: DeliveryProgress) -> None:
         raise RuntimeError("edit failed")
 
     result = await engine.deliver(["hola"], _ctx(), uuid4(), on_progress=on_progress)
 
     assert result.success is True
     assert actuator.send_count() >= 1
+
+
+@pytest.mark.asyncio
+async def test_deliver_split_reports_sending_progress_with_fraction() -> None:
+    """Split delivery surfaces ``sending`` events carrying 1-based index/total."""
+    engine, _, _, _ = _engine(
+        feature_advanced_behavior=True,
+        initial=0.0,
+        typing=0.0,
+    )
+    seen: list[tuple[str, int | None, int | None]] = []
+
+    async def on_progress(event: DeliveryProgress) -> None:
+        seen.append((event.kind, event.index, event.total))
+
+    text = "Hello world. This is fine, really.\nMore here."
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_split=True, split_chars=20, telegram_message_id=None),
+        uuid4(),
+        on_progress=on_progress,
+    )
+
+    assert result.success is True
+    sending = [e for e in seen if e[0] == "sending"]
+    assert len(sending) >= 2
+    assert sending[0] == ("sending", 1, len(sending))
+    assert sending[-1] == ("sending", len(sending), len(sending))
+    # No fraction payload on reading/typing stages.
+    for kind, index, total in seen:
+        if kind != "sending":
+            assert index is None and total is None

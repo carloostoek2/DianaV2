@@ -12,6 +12,7 @@ English ↔ Anexo I (docstring map only):
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
@@ -24,10 +25,25 @@ class TransientSendError(Exception):
 
 
 # Progress stages the owner sees while a supervised delivery is in flight.
-# "sent" is not reported here: the caller maps the DeliveryResult itself.
-ProgressKind = Literal["reading", "typing"]
+# "sending" carries the 1-based segment position + total when a delivery is
+# split into multiple messages. "sent" is not reported: the caller maps the
+# DeliveryResult itself to the final "Enviado" state.
+ProgressKind = Literal["reading", "typing", "sending"]
 
-DeliveryProgressCallback = Callable[[ProgressKind], Awaitable[None]]
+
+@dataclass(frozen=True)
+class DeliveryProgress:
+    """Single live progress event surfaced to the owner during delivery.
+
+    ``index``/``total`` are only set for ``kind == "sending"`` (1-based).
+    """
+
+    kind: ProgressKind
+    index: int | None = None
+    total: int | None = None
+
+
+DeliveryProgressCallback = Callable[[DeliveryProgress], Awaitable[None]]
 
 
 @runtime_checkable
@@ -94,6 +110,7 @@ __all__ = [
     "DelayPolicy",
     "DeliveryContext",
     "DeliveryMode",
+    "DeliveryProgress",
     "DeliveryProgressCallback",
     "DeliveryResult",
     "ProgressKind",

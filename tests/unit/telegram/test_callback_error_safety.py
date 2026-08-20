@@ -9,6 +9,7 @@ import pytest
 from aiogram.types import BufferedInputFile, CallbackQuery, Chat, Message, User
 
 from diana.application.draft_variants import VariantNavResult
+from diana.behavior.ports import DeliveryProgress
 from diana.telegram.handlers.callbacks import CorrectSessionStore, build_callback_router
 from diana.telegram.handlers.menu import MenuSessionStore
 from diana.telegram.keyboards import (
@@ -308,8 +309,8 @@ async def test_approve_edits_draft_with_live_progress() -> None:
         on_progress: object | None = None,
     ) -> object:
         if on_progress is not None:
-            await on_progress("reading")
-            await on_progress("typing")
+            await on_progress(DeliveryProgress(kind="reading"))
+            await on_progress(DeliveryProgress(kind="typing"))
         return MagicMock(success=True)
 
     admin.handle_approve = AsyncMock(side_effect=fake_approve)

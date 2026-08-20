@@ -197,8 +197,9 @@ def test_composition_advanced_behavior_wired(_comp_src: str) -> None:
     assert "feature_advanced_behavior = settings.feature_advanced_behavior" in _comp_src
     assert "feature_advanced_behavior=feature_advanced_behavior" in _comp_src
     assert "BehaviorEngine(" in _comp_src
-    # Engine gets advanced kill-switch + prod quirk probability when flag on.
-    assert "quirk_probability=" in _comp_src
+    # Engine gets advanced kill-switch + noticeable quirk rate when flag on.
+    # 0.20 × typo weight ≈ 1 visible typo+correction every ~8 sends.
+    assert "quirk_probability=0.20 if feature_advanced_behavior else 0.0" in _comp_src
     # Orch + admin builders receive the same flag for DeliveryContext allow_*.
     assert "AdminService(" in _comp_src
     assert "TurnOrchestrator(" in _comp_src

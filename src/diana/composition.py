@@ -447,7 +447,7 @@ def build_app(
         max_send_attempts=settings.delivery_max_send_attempts,
         retry_backoff_seconds=settings.delivery_retry_backoff_seconds,
         feature_advanced_behavior=feature_advanced_behavior,
-        quirk_probability=0.05 if feature_advanced_behavior else 0.0,
+        quirk_probability=0.20 if feature_advanced_behavior else 0.0,
         runtime_timer_store=runtime_timers_store,
     )
 

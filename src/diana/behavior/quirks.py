@@ -13,6 +13,13 @@ from typing import Literal
 QuirkKind = Literal["pause", "natural_split", "typo_correct"]
 
 _QUIRK_KINDS: tuple[QuirkKind, ...] = ("pause", "natural_split", "typo_correct")
+# Typo+correction is the only quirk the VIP actually sees. Pause is nearly
+# invisible; natural_split is a rare extra after paragraph delivery split.
+_QUIRK_WEIGHTS: dict[QuirkKind, float] = {
+    "typo_correct": 0.60,
+    "pause": 0.25,
+    "natural_split": 0.15,
+}
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 # Latin letters + Spanish accented (áéíóúñü and uppercase).
 _WORD_RE = re.compile(
@@ -44,7 +51,9 @@ def pick_quirk(
         return None
     if rng.random() >= p:
         return None
-    return rng.choice(list(_QUIRK_KINDS))
+    kinds = list(_QUIRK_WEIGHTS)
+    weights = [_QUIRK_WEIGHTS[k] for k in kinds]
+    return rng.choices(kinds, weights=weights, k=1)[0]
 
 
 def natural_split_text(text: str) -> list[str]:
