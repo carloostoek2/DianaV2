@@ -48,3 +48,9 @@ wiki/.ua/intermediate/
 .ua/intermediate/
 .ua/.trash-*/
 
+
+# Understand-Anything (root) — logs locales de la herramienta (no se versionan)
+.ua/*.log
+
+# Supabase CLI local (config de desarrollo local, no del producto)
+supabase/

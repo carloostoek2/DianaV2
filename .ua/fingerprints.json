@@ -1,16 +1,16 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "393651e7f666fc9fe2e923e78f7b8dc5ac8ee661",
-  "generatedAt": "2026-08-11T07:39:20.705Z",
+  "gitCommitHash": "be34d62aa5ba0af161ffa74db5aa0809bb4bdb68",
+  "generatedAt": "2026-08-18T06:55:57.400Z",
   "files": {
     ".env.example": {
       "filePath": ".env.example",
-      "contentHash": "d40c105159d48adb9621fa57ec99355e1adb820a48da81d944f23d98fcf24c80",
+      "contentHash": "c5983cab84773c31b9b96dc2577be2edb7efbbc674fc8df7199bb81cee1184ce",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 88,
+      "totalLines": 101,
       "hasStructuralAnalysis": true
     },
     ".github/workflows/ci.yml": {
@@ -695,32 +695,32 @@
     },
     "AGENTS.md": {
       "filePath": "AGENTS.md",
-      "contentHash": "e419a11abedb147e0f2792e9235cf06f34db4225da2aa992ea0614cfd5159edc",
+      "contentHash": "86c0afe9fbf7a9a39e7147ad80ff11c5d2102552ce75316f3973cd02e66b115f",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 415,
+      "totalLines": 481,
       "hasStructuralAnalysis": true
     },
     "CHANGELOG.md": {
       "filePath": "CHANGELOG.md",
-      "contentHash": "10b57d14f23180dbda895d7e1f3e6bb49509c8fb56f9a25f5b6383fd3b677973",
+      "contentHash": "f4ae8133fb91eb83511f0c32bb83a7390262c7b136629c66b0dea12ecea73cfb",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 61,
+      "totalLines": 83,
       "hasStructuralAnalysis": true
     },
     "README.md": {
       "filePath": "README.md",
-      "contentHash": "377bb83f8660590296aad70d965b7921ea8e2b9a8d4f2af41139a6d97a47fafd",
+      "contentHash": "5d1c25456f8e163b1f86bc7b1a16ba0b0e012346bf406df072a97c98a0ac270e",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 147,
+      "totalLines": 477,
       "hasStructuralAnalysis": true
     },
     "alembic.ini": {
@@ -2182,12 +2182,12 @@
     },
     "docs/ANEXO-H.md": {
       "filePath": "docs/ANEXO-H.md",
-      "contentHash": "1d4aefcf7efe0abea51a70a588aaaa9913da1926b66d0f733766a79609e9c524",
+      "contentHash": "049beaf5497c2c5c1a494c2f0e13b3a54e3432dc99e741c28e897e888df48d0a",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 547,
+      "totalLines": 572,
       "hasStructuralAnalysis": true
     },
     "docs/ANEXO_J-SYSTEM_PROMPT.md": {
@@ -2222,12 +2222,12 @@
     },
     "docs/ESTADO-PROYECTO.md": {
       "filePath": "docs/ESTADO-PROYECTO.md",
-      "contentHash": "9c81040b760de7801af48848ea8ba83027cfc4f02c61f92530981f4afb0817b3",
+      "contentHash": "b28566c034b8919903a9b9e0fdc0f3ecba2c1461a2489cf10336ea9db0469e7a",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 113,
+      "totalLines": 157,
       "hasStructuralAnalysis": true
     },
     "docs/INFORME_AUDITORIA.md": {
@@ -2282,12 +2282,12 @@
     },
     "docs/PRODUCT_OWNER_ADMIN_SANDBOX.md": {
       "filePath": "docs/PRODUCT_OWNER_ADMIN_SANDBOX.md",
-      "contentHash": "4d93d22a504aa15bd20c3ef457ca97e65469cf98997fd6b1ed363515b092c05a",
+      "contentHash": "43673e017a1f8c649f8ce501864abd303e93e752d6a12b7aefdd9dea3e69f416",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 242,
+      "totalLines": 277,
       "hasStructuralAnalysis": true
     },
     "docs/PRODUCT_OWNER_PERSONALIDAD.md": {
@@ -2382,12 +2382,12 @@
     },
     "docs/SPEC-FASE6.md": {
       "filePath": "docs/SPEC-FASE6.md",
-      "contentHash": "72ca9e23a300f8e65aa14c8195683903b7b9c9beb8b865e56803ce5a8d088864",
+      "contentHash": "e3ac7a8a595d3948f714da066f3a8f99cfeb08bb13f11c45e4c9b83b17687881",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 296,
+      "totalLines": 300,
       "hasStructuralAnalysis": true
     },
     "docs/SPEC-SYSTEM_PROMPT.md": {
@@ -2418,26 +2418,6 @@
       "imports": [],
       "exports": [],
       "totalLines": 225,
-      "hasStructuralAnalysis": true
-    },
-    "docs/prompt-llm-turno-7c298f19.md": {
-      "filePath": "docs/prompt-llm-turno-7c298f19.md",
-      "contentHash": "00522a39be172b5c3b831cacd93ec80076441af62c5a1e5d96ec605d0d507eb6",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 47,
-      "hasStructuralAnalysis": true
-    },
-    "docs/prompt-llm-turno-8cc2bde0.md": {
-      "filePath": "docs/prompt-llm-turno-8cc2bde0.md",
-      "contentHash": "2cf78965e3517680317f0cd531cc2564de647352e0867b9d63bf634d3a0a1e7a",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 48,
       "hasStructuralAnalysis": true
     },
     "dryrun_output.txt": {
@@ -3027,7 +3007,7 @@
     },
     "src/diana/application/admin_metrics_service.py": {
       "filePath": "src/diana/application/admin_metrics_service.py",
-      "contentHash": "d3da029f56b13ad82355266e99a96b9f5e0da2ede407c72e34cc7cf22812e30d",
+      "contentHash": "3813be15d8a28a10e8d08c5e5ef4957a8fd3c8abcc5e59db5f5bd36c1a60ee4d",
       "functions": [
         {
           "name": "format_week_range_label",
@@ -3124,7 +3104,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 123
+          "lineCount": 120
         }
       ],
       "imports": [
@@ -3186,12 +3166,12 @@
         "_false_positive_count",
         "AdminMetricsService"
       ],
-      "totalLines": 226,
+      "totalLines": 222,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/admin_service.py": {
       "filePath": "src/diana/application/admin_service.py",
-      "contentHash": "8b88fbcc0e0d3a5c773097963a72f4fea1640a07d4fccc20cd99bb3142662f1b",
+      "contentHash": "d4b5b58c576d7f422a7a63837c5094ab574e47187d0ede9d01b58a39eebaf471",
       "functions": [
         {
           "name": "_ensure_escalation_file_handler",
@@ -3219,11 +3199,21 @@
           "lineCount": 2
         },
         {
+          "name": "QualityFeedbackDisabled",
+          "methods": [],
+          "properties": [],
+          "exported": true,
+          "lineCount": 2
+        },
+        {
           "name": "AdminService",
           "methods": [
             "__init__",
+            "quality_feedback_enabled",
             "set_post_turn_hook",
             "_assert_owner",
+            "_require_quality_feedback",
+            "_scope_vip_id",
             "_sandbox_prefix",
             "_sandbox_reason",
             "_effective_delivery_mode",
@@ -3235,7 +3225,11 @@
             "send_doctrine_query",
             "handle_approve",
             "classify_approve_noop",
+            "_correct_core",
             "handle_correct",
+            "handle_correct_with_candidate",
+            "handle_mark_gold",
+            "handle_reprimand",
             "_resolve_trigger_text",
             "is_pending_approval",
             "get_approval",
@@ -3249,7 +3243,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 990
+          "lineCount": 1149
         }
       ],
       "imports": [
@@ -3288,7 +3282,8 @@
         {
           "source": "typing",
           "specifiers": [
-            "Any"
+            "Any",
+            "Literal"
           ]
         },
         {
@@ -3339,6 +3334,12 @@
           ]
         },
         {
+          "source": "diana.behavior.ports",
+          "specifiers": [
+            "DeliveryProgressCallback"
+          ]
+        },
+        {
           "source": "diana.application.memory_extraction_service",
           "specifiers": [
             "_POST_TURN_EXTRACTABLE_STATUSES"
@@ -3353,6 +3354,7 @@
         {
           "source": "diana.application.staging_service",
           "specifiers": [
+            "AtencionPromoteBlocked",
             "StagingService"
           ]
         },
@@ -3382,10 +3384,11 @@
       "exports": [
         "_ensure_escalation_file_handler",
         "OwnerAuthError",
+        "QualityFeedbackDisabled",
         "_eval_summary",
         "AdminService"
       ],
-      "totalLines": 1103,
+      "totalLines": 1267,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/admin_trace_service.py": {
@@ -4252,7 +4255,7 @@
     },
     "src/diana/application/draft_variants.py": {
       "filePath": "src/diana/application/draft_variants.py",
-      "contentHash": "472b800793376604bb95b58834e6b97571b1f9c9dc46fd43a181d210df462d9f",
+      "contentHash": "204dc6287afc9f02e0d8e7ac637d60ad0eab2fb039d45bb85a89039d583c7aa0",
       "functions": [
         {
           "name": "ensure_versions",
@@ -4352,13 +4355,14 @@
             "navigate",
             "regenerate",
             "_resolve_vip_text",
+            "_notify_regenerating",
             "_set_regenerating",
             "_apply_selection",
             "_refresh_owner_message"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 331
+          "lineCount": 356
         }
       ],
       "imports": [
@@ -4366,6 +4370,13 @@
           "source": "logging",
           "specifiers": [
             "logging"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Awaitable",
+            "Callable"
           ]
         },
         {
@@ -4419,7 +4430,7 @@
         "format_draft_owner_text",
         "DraftVariantService"
       ],
-      "totalLines": 532,
+      "totalLines": 563,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/emotional_signal_detector.py": {
@@ -4702,7 +4713,7 @@
     },
     "src/diana/application/memory.py": {
       "filePath": "src/diana/application/memory.py",
-      "contentHash": "bbe329fef561ed84579552b6bd992a28a838b5d095d10f34ce94824b15d532f8",
+      "contentHash": "14ae7edf58d1731972c99633682ed9a76c285d3706802c55eab777e6e54138ad",
       "functions": [
         {
           "name": "_is_terminal",
@@ -4752,6 +4763,18 @@
           "properties": [],
           "exported": true,
           "lineCount": 10
+        },
+        {
+          "name": "InMemoryLinkEventStore",
+          "methods": [
+            "__init__",
+            "create",
+            "get_by_event_id",
+            "set_state"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 31
         },
         {
           "name": "InMemoryPendingApprovalStore",
@@ -4835,11 +4858,12 @@
             "notify_info",
             "edit_draft",
             "void_draft",
-            "notify_doctrine"
+            "notify_doctrine",
+            "notify_link"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 42
+          "lineCount": 59
         },
         {
           "name": "InMemoryVipStore",
@@ -4892,6 +4916,7 @@
             "ApprovalRecord",
             "BusinessConnectionRecord",
             "DeliveryRecord",
+            "LinkEventRecord",
             "RuntimeTimerRecord",
             "TurnRecord",
             "VipRecord"
@@ -4917,6 +4942,7 @@
         "InMemoryTurnStore",
         "InMemoryRuntimeTimerStore",
         "InMemoryBusinessConnectionStore",
+        "InMemoryLinkEventStore",
         "InMemoryPendingApprovalStore",
         "InMemoryPendingDeliveryStore",
         "InMemoryEscalationStore",
@@ -4925,7 +4951,7 @@
         "FakeOwnerNotifier",
         "InMemoryVipStore"
       ],
-      "totalLines": 633,
+      "totalLines": 685,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/memory_approval_service.py": {
@@ -6306,7 +6332,7 @@
     },
     "src/diana/application/ports.py": {
       "filePath": "src/diana/application/ports.py",
-      "contentHash": "0c9383f62d77e065662249f278d92626aad85afae4a35d2b812b77dc7c767503",
+      "contentHash": "0ffda6ea0ff4c3b701ee90396489577197fb7fabe518c008e766f97187378eda",
       "functions": [],
       "classes": [
         {
@@ -6394,10 +6420,22 @@
             "evaluation_summary",
             "evaluation",
             "business_connection_id",
-            "reply_markup_spec"
+            "reply_markup_spec",
+            "show_quality_feedback"
           ],
           "exported": true,
-          "lineCount": 15
+          "lineCount": 16
+        },
+        {
+          "name": "LinkNotification",
+          "methods": [],
+          "properties": [
+            "display_name",
+            "username",
+            "event_id"
+          ],
+          "exported": true,
+          "lineCount": 8
         },
         {
           "name": "EscalationNotification",
@@ -6412,6 +6450,25 @@
           ],
           "exported": true,
           "lineCount": 11
+        },
+        {
+          "name": "LinkEventRecord",
+          "methods": [],
+          "properties": [
+            "id",
+            "event_id",
+            "user_id",
+            "username",
+            "channel_id",
+            "channel_name",
+            "reason",
+            "vip_id",
+            "state",
+            "decision_at",
+            "created_at"
+          ],
+          "exported": true,
+          "lineCount": 16
         },
         {
           "name": "DoctrineNotification",
@@ -6565,16 +6622,28 @@
           "lineCount": 67
         },
         {
+          "name": "LinkEventStore",
+          "methods": [
+            "create",
+            "get_by_event_id",
+            "set_state"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 10
+        },
+        {
           "name": "OwnerNotifierPort",
           "methods": [
             "notify_draft",
             "notify_escalation",
             "notify_info",
-            "notify_doctrine"
+            "notify_doctrine",
+            "notify_link"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 12
+          "lineCount": 14
         },
         {
           "name": "TurnStore",
@@ -6771,6 +6840,39 @@
           "lineCount": 30
         },
         {
+          "name": "EphemeralEventRecord",
+          "methods": [],
+          "properties": [
+            "id",
+            "body",
+            "start_at",
+            "end_at",
+            "is_paused",
+            "created_by",
+            "created_at",
+            "updated_at"
+          ],
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "EphemeralEventStore",
+          "methods": [
+            "create",
+            "get",
+            "list_all",
+            "update",
+            "set_paused",
+            "terminate_now",
+            "delete",
+            "find_active_at",
+            "list_open"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 37
+        },
+        {
           "name": "BusinessConnectionRecord",
           "methods": [],
           "properties": [
@@ -6850,7 +6952,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 10
+          "lineCount": 12
         },
         {
           "name": "TraceabilityReader",
@@ -7037,7 +7139,9 @@
         "ApprovalRecord",
         "DeliveryRecord",
         "DraftNotification",
+        "LinkNotification",
         "EscalationNotification",
+        "LinkEventRecord",
         "DoctrineNotification",
         "GrayZoneQueryView",
         "GrayZoneServicePort",
@@ -7047,6 +7151,7 @@
         "VipRecord",
         "BackfillJobRecord",
         "VipStore",
+        "LinkEventStore",
         "OwnerNotifierPort",
         "TurnStore",
         "PendingApprovalStore",
@@ -7062,6 +7167,8 @@
         "TurnCategoryLogRecord",
         "EmotionalSignalRecord",
         "PersonaAdminStore",
+        "EphemeralEventRecord",
+        "EphemeralEventStore",
         "BusinessConnectionRecord",
         "BusinessConnectionStore",
         "EscalationStore",
@@ -7082,7 +7189,7 @@
         "PromoExecutionStore",
         "MemoryInsert"
       ],
-      "totalLines": 1049,
+      "totalLines": 1158,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/profile_admin_service.py": {
@@ -7808,7 +7915,7 @@
     },
     "src/diana/application/recovery_startup.py": {
       "filePath": "src/diana/application/recovery_startup.py",
-      "contentHash": "ae51b3817961c45884fa7477c9dc3b5042f40992fde8a65383f3656f06c8b2ac",
+      "contentHash": "f5b71d542ab14ba89ca99d3cc285d5188d19f3656a0544ee237341f567fbd03f",
       "functions": [
         {
           "name": "_clock_sleep",
@@ -7834,11 +7941,12 @@
             "turns",
             "traces",
             "timers",
-            "promo"
+            "promo",
+            "feature_quality_feedback_enabled"
           ],
           "returnType": "RecoveryStartupReport",
           "exported": true,
-          "lineCount": 167
+          "lineCount": 172
         },
         {
           "name": "_is_promo_delivery",
@@ -7905,11 +8013,12 @@
           "name": "_renotify_approval",
           "params": [
             "notifier",
-            "approval"
+            "approval",
+            "feature_quality_feedback_enabled"
           ],
           "returnType": "int | None",
           "exported": true,
-          "lineCount": 20
+          "lineCount": 26
         },
         {
           "name": "_spawn_pre_delay",
@@ -8078,7 +8187,7 @@
         "wait_pre_delay_recovery_tasks",
         "resume_pre_delay_timers"
       ],
-      "totalLines": 775,
+      "totalLines": 786,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/runtime_thresholds.py": {
@@ -8228,7 +8337,7 @@
     },
     "src/diana/application/staging_service.py": {
       "filePath": "src/diana/application/staging_service.py",
-      "contentHash": "1268d03b2967832c1f84c4971593272a7329b379c5a4f56906e58e3f959ceffb",
+      "contentHash": "ac403e930a3074d52471b71c0862ed818bc889861089ba5ebbc9471b533216b4",
       "functions": [],
       "classes": [
         {
@@ -8244,13 +8353,15 @@
             "__init__",
             "save_correction",
             "promote_to_example",
+            "promote_to_counter_example",
+            "insert_gold_example",
             "promote_to_policy",
             "discard",
             "list_pending_examples"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 188
+          "lineCount": 281
         }
       ],
       "imports": [
@@ -8295,7 +8406,7 @@
         "AtencionPromoteBlocked",
         "StagingService"
       ],
-      "totalLines": 219,
+      "totalLines": 312,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/strong_signal_heuristics.py": {
@@ -8435,8 +8546,29 @@
     },
     "src/diana/application/turn_classifier.py": {
       "filePath": "src/diana/application/turn_classifier.py",
-      "contentHash": "c0b618b700b1a7c4621f56b7d7a9f6ae0864fdae1b7729f93b7058b0a5d11ea2",
-      "functions": [],
+      "contentHash": "07a0148a6793160560c38241364b715df92d9b3ba5abcd0ae208b17db16e0b5a",
+      "functions": [
+        {
+          "name": "is_pure_greeting",
+          "params": [
+            "text",
+            "comprehension",
+            "classifier"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 29
+        },
+        {
+          "name": "make_pure_greeting_cut",
+          "params": [
+            "classifier"
+          ],
+          "returnType": "Callable[[str, dict[str, Any] | Comprehension | None], bool]",
+          "exported": true,
+          "lineCount": 12
+        }
+      ],
       "classes": [
         {
           "name": "TurnClassification",
@@ -8475,6 +8607,12 @@
           ]
         },
         {
+          "source": "collections.abc",
+          "specifiers": [
+            "Callable"
+          ]
+        },
+        {
           "source": "dataclasses",
           "specifiers": [
             "dataclass"
@@ -8492,13 +8630,21 @@
             "Comprehension",
             "TurnCategory"
           ]
+        },
+        {
+          "source": "diana.cognitive.template_gate",
+          "specifiers": [
+            "looks_like_pure_greeting_text"
+          ]
         }
       ],
       "exports": [
         "TurnClassification",
-        "TurnClassifier"
+        "TurnClassifier",
+        "is_pure_greeting",
+        "make_pure_greeting_cut"
       ],
-      "totalLines": 242,
+      "totalLines": 291,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/turn_coordinator.py": {
@@ -8688,7 +8834,7 @@
     },
     "src/diana/application/turn_orchestrator.py": {
       "filePath": "src/diana/application/turn_orchestrator.py",
-      "contentHash": "815ad3cee7bab7c7f7724cf696e92b27018b547260de968d22828f11cf607008",
+      "contentHash": "b73602a648a066ea0c571658a90acc67ab4d708cd5fa630329fae0aa9d086c5d",
       "functions": [
         {
           "name": "_detect_payment_intent",
@@ -8786,13 +8932,15 @@
             "_run_cognitive_after_delay",
             "_handle_vip_message_locked",
             "_apply_decision_after_director",
+            "_prepare_phatic_template_send",
             "_prepare_autonomous_send",
             "_is_vip_frozen",
+            "_is_vip_paused",
             "_finalize_autonomous_delivery"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 2398
+          "lineCount": 2625
         }
       ],
       "imports": [
@@ -8953,7 +9101,7 @@
         "_AutonomousDeliverJob",
         "TurnOrchestrator"
       ],
-      "totalLines": 2577,
+      "totalLines": 2804,
       "hasStructuralAnalysis": true
     },
     "src/diana/application/vip_history_seed.py": {
@@ -9082,7 +9230,7 @@
     },
     "src/diana/behavior/engine.py": {
       "filePath": "src/diana/behavior/engine.py",
-      "contentHash": "895404ff7e68616d852bd2d174290135d116b93042fb9e6ae6d8cb0e4c42c725",
+      "contentHash": "19b16e838ef79f7b05aa85168f7f2c13cfe604ef57c31345d7bf8f5a47a7eebb",
       "functions": [],
       "classes": [
         {
@@ -9101,6 +9249,7 @@
             "_frozen_abort_pending",
             "_deliver_fake",
             "_presend_abort_if_not_live",
+            "_notify_progress",
             "_show_typing",
             "_send_with_retries",
             "cancel_pending",
@@ -9109,7 +9258,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 659
+          "lineCount": 696
         }
       ],
       "imports": [
@@ -9159,7 +9308,10 @@
             "Clock",
             "DelayPolicy",
             "DeliveryContext",
+            "DeliveryProgress",
+            "DeliveryProgressCallback",
             "DeliveryResult",
+            "ProgressKind",
             "TelegramActuatorPort",
             "TransientSendError",
             "TurnStatusReader"
@@ -9177,6 +9329,7 @@
         {
           "source": "diana.behavior.split",
           "specifiers": [
+            "split_paragraphs",
             "split_text"
           ]
         },
@@ -9191,7 +9344,7 @@
       "exports": [
         "BehaviorEngine"
       ],
-      "totalLines": 715,
+      "totalLines": 755,
       "hasStructuralAnalysis": true
     },
     "src/diana/behavior/fake.py": {
@@ -9302,7 +9455,7 @@
     },
     "src/diana/behavior/ports.py": {
       "filePath": "src/diana/behavior/ports.py",
-      "contentHash": "f6d6ba81a2a1bc1cee7cff9cadab680d8715d735dab1ae8e63c633ea71249a9d",
+      "contentHash": "e2687cb68bdd3073cc4e88478fab53f4e0c2532d6aaddab19e2adb6435ec7d57",
       "functions": [],
       "classes": [
         {
@@ -9311,6 +9464,17 @@
           "properties": [],
           "exported": true,
           "lineCount": 2
+        },
+        {
+          "name": "DeliveryProgress",
+          "methods": [],
+          "properties": [
+            "kind",
+            "index",
+            "total"
+          ],
+          "exported": true,
+          "lineCount": 9
         },
         {
           "name": "TelegramActuatorPort",
@@ -9358,6 +9522,19 @@
       ],
       "imports": [
         {
+          "source": "collections.abc",
+          "specifiers": [
+            "Awaitable",
+            "Callable"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
+          ]
+        },
+        {
           "source": "datetime",
           "specifiers": [
             "datetime"
@@ -9366,6 +9543,7 @@
         {
           "source": "typing",
           "specifiers": [
+            "Literal",
             "Protocol",
             "runtime_checkable"
           ]
@@ -9387,17 +9565,18 @@
       ],
       "exports": [
         "TransientSendError",
+        "DeliveryProgress",
         "TelegramActuatorPort",
         "Clock",
         "DelayPolicy",
         "TurnStatusReader"
       ],
-      "totalLines": 94,
+      "totalLines": 121,
       "hasStructuralAnalysis": true
     },
     "src/diana/behavior/quirks.py": {
       "filePath": "src/diana/behavior/quirks.py",
-      "contentHash": "94471205742224b69b4efd81629d603db430ecbae96a734eaa43cb805c7538b9",
+      "contentHash": "616db4cafc8db0f070abcc7504d9f6bdae257a1774efec183b362f59dbb75422",
       "functions": [
         {
           "name": "pick_quirk",
@@ -9408,7 +9587,7 @@
           ],
           "returnType": "QuirkKind | None",
           "exported": true,
-          "lineCount": 22
+          "lineCount": 24
         },
         {
           "name": "natural_split_text",
@@ -9466,13 +9645,22 @@
         "apply_typo",
         "_first_real_swap"
       ],
-      "totalLines": 113,
+      "totalLines": 122,
       "hasStructuralAnalysis": true
     },
     "src/diana/behavior/split.py": {
       "filePath": "src/diana/behavior/split.py",
-      "contentHash": "41b3071edebd8e7c78c82bc3e9eaa8277c99807a7d2c5d6116fe96f9e78db698",
+      "contentHash": "e465bff361d4963216802fdcac415bb26fe0183c633710ad31d56f911c424681",
       "functions": [
+        {
+          "name": "split_paragraphs",
+          "params": [
+            "text"
+          ],
+          "returnType": "list[str]",
+          "exported": true,
+          "lineCount": 26
+        },
         {
           "name": "split_text",
           "params": [
@@ -9494,12 +9682,20 @@
         }
       ],
       "classes": [],
-      "imports": [],
+      "imports": [
+        {
+          "source": "re",
+          "specifiers": [
+            "re"
+          ]
+        }
+      ],
       "exports": [
+        "split_paragraphs",
         "split_text",
         "_find_cut"
       ],
-      "totalLines": 58,
+      "totalLines": 92,
       "hasStructuralAnalysis": true
     },
     "src/diana/behavior/timer_manager.py": {
@@ -9595,7 +9791,7 @@
     },
     "src/diana/cognitive/analyst.py": {
       "filePath": "src/diana/cognitive/analyst.py",
-      "contentHash": "a2589d5c6d2d24bb3a4e438f47be5973645c7d2af2b7c2e985d76554a094d07a",
+      "contentHash": "a3c71fbfb92d7a5be5f72e774014b643536c40ac72af660b7413cb53ce1d723b",
       "functions": [
         {
           "name": "_is_schema_class_failure",
@@ -9657,12 +9853,12 @@
         "_is_schema_class_failure",
         "Analyst"
       ],
-      "totalLines": 152,
+      "totalLines": 158,
       "hasStructuralAnalysis": true
     },
     "src/diana/cognitive/context_builder.py": {
       "filePath": "src/diana/cognitive/context_builder.py",
-      "contentHash": "2e2974ecd0e9031fe1fdc74ad878c33a96bb009fdd9a02011c8fe22626cffe56",
+      "contentHash": "2d079357afa4c7a48fe07c7572ef4e8e2c0f91382a3c83dce05177ac8d4c80b1",
       "functions": [
         {
           "name": "_is_null_like",
@@ -9760,7 +9956,7 @@
         "_format_knowledge_body",
         "_fence_for"
       ],
-      "totalLines": 234,
+      "totalLines": 240,
       "hasStructuralAnalysis": true
     },
     "src/diana/cognitive/decider.py": {
@@ -9816,7 +10012,7 @@
     },
     "src/diana/cognitive/director.py": {
       "filePath": "src/diana/cognitive/director.py",
-      "contentHash": "373b19bf43a34cb9473142bf8d6565760ffea2ee9624684d6635447339e2e525",
+      "contentHash": "7568b0cac7690eba5df9bdee560f8b8073a61dca134cbfc5a9d68293fca6ddd7",
       "functions": [
         {
           "name": "_clip",
@@ -9871,7 +10067,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 449
+          "lineCount": 487
         }
       ],
       "imports": [
@@ -9879,6 +10075,18 @@
           "source": "logging",
           "specifiers": [
             "logging"
+          ]
+        },
+        {
+          "source": "random",
+          "specifiers": [
+            "random"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Sequence"
           ]
         },
         {
@@ -9973,6 +10181,7 @@
             "MessageHistoryPort",
             "NoOpTurnStatusSink",
             "PersonaCatalogProvider",
+            "PureGreetingCutPort",
             "RecentIntentsPort",
             "TraceStore",
             "TurnStatusSink",
@@ -9999,7 +10208,7 @@
         "_early_exit_evaluation",
         "CognitiveDirector"
       ],
-      "totalLines": 591,
+      "totalLines": 632,
       "hasStructuralAnalysis": true
     },
     "src/diana/cognitive/embedding.py": {
@@ -10629,7 +10838,7 @@
     },
     "src/diana/cognitive/ports.py": {
       "filePath": "src/diana/cognitive/ports.py",
-      "contentHash": "0d5bc7b732c62fe23655e25cb3e28f36f6a184848f051e0b62f4893e480810a6",
+      "contentHash": "548614bb28466626b66e7ac1cfad16e5407d09dc80e93f6d96e893ed73ed7d71",
       "functions": [
         {
           "name": "to_jsonable",
@@ -10650,6 +10859,15 @@
           "properties": [],
           "exported": true,
           "lineCount": 15
+        },
+        {
+          "name": "PureGreetingCutPort",
+          "methods": [
+            "__call__"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 12
         },
         {
           "name": "LLMProvider",
@@ -10819,6 +11037,7 @@
       "exports": [
         "to_jsonable",
         "PersonaCatalogProvider",
+        "PureGreetingCutPort",
         "LLMProvider",
         "ClockPort",
         "Retriever",
@@ -10833,7 +11052,7 @@
         "NoOpTurnStatusSink",
         "InMemoryTurnStatusSink"
       ],
-      "totalLines": 309,
+      "totalLines": 325,
       "hasStructuralAnalysis": true
     },
     "src/diana/cognitive/registry.py": {
@@ -11176,7 +11395,7 @@
     },
     "src/diana/cognitive/retrievers/examples.py": {
       "filePath": "src/diana/cognitive/retrievers/examples.py",
-      "contentHash": "6efbb870d95df566b4fce1b25a594aea47cc0cee9467b3536916a91bebaf266a",
+      "contentHash": "8f0b95885a8f998a4ef2be70494ffaac3dfc74e0a786550e3f28b23378e33c88",
       "functions": [],
       "classes": [
         {
@@ -11187,7 +11406,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 61
+          "lineCount": 56
         }
       ],
       "imports": [
@@ -11195,12 +11414,6 @@
           "source": "logging",
           "specifiers": [
             "logging"
-          ]
-        },
-        {
-          "source": "random",
-          "specifiers": [
-            "random"
           ]
         },
         {
@@ -11220,7 +11433,7 @@
       "exports": [
         "ExamplesRetriever"
       ],
-      "totalLines": 90,
+      "totalLines": 84,
       "hasStructuralAnalysis": true
     },
     "src/diana/cognitive/retrievers/history.py": {
@@ -11394,7 +11607,7 @@
     },
     "src/diana/cognitive/retrievers/policy.py": {
       "filePath": "src/diana/cognitive/retrievers/policy.py",
-      "contentHash": "e7e12ee66de8340da638224a6e1a0d59ccac10e3ba739ad3b4ec5a542fbf4fa2",
+      "contentHash": "00331b32a255c9c092a72b7f556e51ab14bb1849071241613544f50d6533e29b",
       "functions": [
         {
           "name": "_norm",
@@ -11435,7 +11648,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 120
+          "lineCount": 121
         }
       ],
       "imports": [
@@ -11471,7 +11684,7 @@
         "_rule_text_from_formatted",
         "PolicyRetriever"
       ],
-      "totalLines": 170,
+      "totalLines": 171,
       "hasStructuralAnalysis": true
     },
     "src/diana/cognitive/retrievers/profile.py": {
@@ -11693,7 +11906,7 @@
     },
     "src/diana/cognitive/template_gate.py": {
       "filePath": "src/diana/cognitive/template_gate.py",
-      "contentHash": "33a8e1dd13f8613e177ab3ecbf0fc2308969efc9336c9ff158e1fa163e917a3a",
+      "contentHash": "946ad892bc73565a66a7de46cf63a6cb9f66a421ddb65b1c8e5ff28d1ccc9e9c",
       "functions": [
         {
           "name": "_kw_hit",
@@ -11704,6 +11917,15 @@
           "returnType": "bool",
           "exported": true,
           "lineCount": 10
+        },
+        {
+          "name": "looks_like_pure_greeting_text",
+          "params": [
+            "text"
+          ],
+          "returnType": "bool",
+          "exported": true,
+          "lineCount": 9
         }
       ],
       "classes": [
@@ -11761,9 +11983,10 @@
       "exports": [
         "TemplateRule",
         "_kw_hit",
+        "looks_like_pure_greeting_text",
         "TemplateGate"
       ],
-      "totalLines": 71,
+      "totalLines": 107,
       "hasStructuralAnalysis": true
     },
     "src/diana/cognitive/thresholds.py": {
@@ -11836,7 +12059,7 @@
     },
     "src/diana/composition.py": {
       "filePath": "src/diana/composition.py",
-      "contentHash": "37be2a3c8a5a855286652608890bce0479967395c64e7cf9140c0836b7e7f951",
+      "contentHash": "6d0a0b55266af5b1e890c1aa3c0bf77e065ad3973afa989000183040799d7d81",
       "functions": [
         {
           "name": "_default_persona",
@@ -11877,7 +12100,7 @@
           ],
           "returnType": "AppContainer",
           "exported": true,
-          "lineCount": 736
+          "lineCount": 762
         },
         {
           "name": "load_forbidden_keywords",
@@ -11904,7 +12127,7 @@
           ],
           "returnType": "Any",
           "exported": true,
-          "lineCount": 22
+          "lineCount": 23
         },
         {
           "name": "run_app_pre_delay_recovery",
@@ -11988,6 +12211,7 @@
             "runtime_timers",
             "business_connections",
             "persona_admin",
+            "ephemeral_event_service",
             "backfill_queue",
             "backfill_wake",
             "emotional_detector",
@@ -12001,10 +12225,11 @@
             "vip_mood_state_repo",
             "trust_budget",
             "trust_budget_wired",
-            "vip_trust_budget_repo"
+            "vip_trust_budget_repo",
+            "link_coordinator"
           ],
           "exported": true,
-          "lineCount": 60
+          "lineCount": 64
         }
       ],
       "imports": [
@@ -12097,9 +12322,28 @@
           ]
         },
         {
+          "source": "diana.application.ephemeral_event_service",
+          "specifiers": [
+            "EphemeralEventService"
+          ]
+        },
+        {
+          "source": "diana.application.ephemeral_knowledge",
+          "specifiers": [
+            "CompositeKnowledgeAugmenter",
+            "EphemeralKnowledgeAugmenter"
+          ]
+        },
+        {
           "source": "diana.application.gray_zone_service",
           "specifiers": [
             "GrayZoneService"
+          ]
+        },
+        {
+          "source": "diana.application.link",
+          "specifiers": [
+            "LinkCoordinator"
           ]
         },
         {
@@ -12185,7 +12429,8 @@
         {
           "source": "diana.application.turn_classifier",
           "specifiers": [
-            "TurnClassifier"
+            "TurnClassifier",
+            "make_pure_greeting_cut"
           ]
         },
         {
@@ -12396,6 +12641,12 @@
           ]
         },
         {
+          "source": "diana.infrastructure.db.repositories.link_events",
+          "specifiers": [
+            "SqlLinkEventStore"
+          ]
+        },
+        {
           "source": "diana.infrastructure.db.repositories.promo_executions",
           "specifiers": [
             "PromoExecutionRepo"
@@ -12447,6 +12698,12 @@
           "source": "diana.infrastructure.db.repositories.atencion_cycles",
           "specifiers": [
             "SqlAtencionCycleStore"
+          ]
+        },
+        {
+          "source": "diana.infrastructure.db.repositories.ephemeral_events",
+          "specifiers": [
+            "EphemeralEventRepo"
           ]
         },
         {
@@ -12599,7 +12856,7 @@
         "run_app_startup_recovery",
         "run_app_pre_delay_recovery"
       ],
-      "totalLines": 1349,
+      "totalLines": 1388,
       "hasStructuralAnalysis": true
     },
     "src/diana/config/__init__.py": {
@@ -12663,7 +12920,7 @@
     },
     "src/diana/config/settings.py": {
       "filePath": "src/diana/config/settings.py",
-      "contentHash": "20444fccda1b7c0dfe5c8f1efa8a364fd7be29a4ea990f419646ef8ab38e3fbf",
+      "contentHash": "5712cca440624612a3c9642fefc048a1cd6b4b47081dd1a71662099f9daee36b",
       "functions": [],
       "classes": [
         {
@@ -12710,6 +12967,10 @@
             "feature_advanced_behavior",
             "feature_persona_admin_enabled",
             "feature_general_mode_enabled",
+            "feature_quality_feedback_enabled",
+            "feature_link_enabled",
+            "link_chat_id",
+            "link_disable_frozen_until",
             "feature_emotional_detector_enabled",
             "vip_profile_history_ttl_days",
             "turn_category_log_ttl_days",
@@ -12722,6 +12983,7 @@
             "feature_phatic_autonomy",
             "classifier_confidence_min",
             "phatic_trust_min",
+            "feature_phatic_auto_send",
             "feature_mood_engine",
             "mood_return_rate",
             "mood_signal_weight",
@@ -12748,7 +13010,7 @@
             "backfill_recover_stale_max_age_sec"
           ],
           "exported": true,
-          "lineCount": 197
+          "lineCount": 212
         }
       ],
       "imports": [
@@ -12756,6 +13018,13 @@
           "source": "ipaddress",
           "specifiers": [
             "ipaddress"
+          ]
+        },
+        {
+          "source": "datetime",
+          "specifiers": [
+            "UTC",
+            "datetime"
           ]
         },
         {
@@ -12790,7 +13059,7 @@
       "exports": [
         "Settings"
       ],
-      "totalLines": 220,
+      "totalLines": 236,
       "hasStructuralAnalysis": true
     },
     "src/diana/infrastructure/__init__.py": {
@@ -12815,7 +13084,7 @@
     },
     "src/diana/infrastructure/db/models.py": {
       "filePath": "src/diana/infrastructure/db/models.py",
-      "contentHash": "96096abddec53d0d165eb50e34b236db4c0f4dc3046ea6efae129ac40e56a4a3",
+      "contentHash": "b66105aafd0d2d38447c0f32224f7323c46892cb07a9d431ea7489b4facfba09",
       "functions": [],
       "classes": [
         {
@@ -13036,10 +13305,11 @@
             "is_active",
             "valid_until",
             "source_query_id",
+            "vip_id",
             "created_at"
           ],
           "exported": true,
-          "lineCount": 24
+          "lineCount": 30
         },
         {
           "name": "Example",
@@ -13052,10 +13322,12 @@
             "corrected_text",
             "context",
             "is_counter_example",
+            "quality",
+            "vip_id",
             "created_at"
           ],
           "exported": true,
-          "lineCount": 19
+          "lineCount": 31
         },
         {
           "name": "StagingCandidate",
@@ -13173,6 +13445,22 @@
           ],
           "exported": true,
           "lineCount": 43
+        },
+        {
+          "name": "EphemeralEvent",
+          "methods": [],
+          "properties": [
+            "id",
+            "body",
+            "start_at",
+            "end_at",
+            "is_paused",
+            "created_by",
+            "created_at",
+            "updated_at"
+          ],
+          "exported": true,
+          "lineCount": 25
         },
         {
           "name": "DailyMessageLimit",
@@ -13372,6 +13660,7 @@
         "PromoExecution",
         "OwnerMark",
         "PersonaVersion",
+        "EphemeralEvent",
         "DailyMessageLimit",
         "AtencionCycle",
         "VipProfile",
@@ -13381,12 +13670,12 @@
         "TurnCategoryLog",
         "EmotionalSignalLog"
       ],
-      "totalLines": 903,
+      "totalLines": 948,
       "hasStructuralAnalysis": true
     },
     "src/diana/infrastructure/db/repositories/__init__.py": {
       "filePath": "src/diana/infrastructure/db/repositories/__init__.py",
-      "contentHash": "867a9765e33120151737cd8c030c5caf6e203c905cd273427d3c723df927db6f",
+      "contentHash": "15ddb9a2cb598fde6991eee96655d6df52b8426165b0bcdd6e5250c20ae11209",
       "functions": [],
       "classes": [],
       "imports": [
@@ -13478,6 +13767,13 @@
           ]
         },
         {
+          "source": "diana.infrastructure.db.repositories.ephemeral_events",
+          "specifiers": [
+            "EphemeralEventRepo",
+            "ephemeral_event_orm_to_record"
+          ]
+        },
+        {
           "source": "diana.infrastructure.db.repositories.turn_category",
           "specifiers": [
             "SqlTurnCategoryLogRepo",
@@ -13511,10 +13807,17 @@
             "SqlVipTrustBudgetRepo",
             "vip_trust_budget_orm_to_record"
           ]
+        },
+        {
+          "source": "diana.infrastructure.db.repositories.link_events",
+          "specifiers": [
+            "SqlLinkEventStore",
+            "link_event_orm_to_record"
+          ]
         }
       ],
       "exports": [],
-      "totalLines": 79,
+      "totalLines": 91,
       "hasStructuralAnalysis": true
     },
     "src/diana/infrastructure/db/repositories/approvals.py": {
@@ -14221,8 +14524,34 @@
     },
     "src/diana/infrastructure/db/repositories/examples.py": {
       "filePath": "src/diana/infrastructure/db/repositories/examples.py",
-      "contentHash": "f5ca47892f1583a3ec3155ac363324c0d570d87f27466ff6f83b47d0880c686e",
+      "contentHash": "810db69844b592136028fcb363c5b6189b43468da295e3bb14c92c63f3366b83",
       "functions": [
+        {
+          "name": "validate_example_quality",
+          "params": [
+            "quality"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "vip_id_visibility_clause",
+          "params": [
+            "column",
+            "vip_id"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "example_similarity_order",
+          "params": [
+            "embedding"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
         {
           "name": "example_to_dict",
           "params": [
@@ -14230,7 +14559,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 11
+          "lineCount": 13
         }
       ],
       "classes": [
@@ -14243,13 +14572,20 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 53
+          "lineCount": 62
         }
       ],
       "imports": [
         {
+          "source": "uuid",
+          "specifiers": [
+            "UUID"
+          ]
+        },
+        {
           "source": "sqlalchemy",
           "specifiers": [
+            "case",
             "select"
           ]
         },
@@ -14268,10 +14604,13 @@
         }
       ],
       "exports": [
+        "validate_example_quality",
+        "vip_id_visibility_clause",
+        "example_similarity_order",
         "example_to_dict",
         "ExamplesRepo"
       ],
-      "totalLines": 83,
+      "totalLines": 125,
       "hasStructuralAnalysis": true
     },
     "src/diana/infrastructure/db/repositories/gray_zone.py": {
@@ -14849,8 +15188,17 @@
     },
     "src/diana/infrastructure/db/repositories/policies.py": {
       "filePath": "src/diana/infrastructure/db/repositories/policies.py",
-      "contentHash": "9630347e5ec15d88c2a6c13c573b6cf9f15b789a4e44ea8787d5add98ab7c35a",
+      "contentHash": "745a81b72606b5fa412841736a61ac74cfdfe8bcf1ae1fc8e3373fee565d1cbc",
       "functions": [
+        {
+          "name": "vip_id_visibility_clause",
+          "params": [
+            "column",
+            "vip_id"
+          ],
+          "exported": true,
+          "lineCount": 5
+        },
         {
           "name": "policy_to_dict",
           "params": [
@@ -14858,7 +15206,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 12
+          "lineCount": 13
         }
       ],
       "classes": [
@@ -14871,7 +15219,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 58
+          "lineCount": 64
         }
       ],
       "imports": [
@@ -14903,10 +15251,11 @@
         }
       ],
       "exports": [
+        "vip_id_visibility_clause",
         "policy_to_dict",
         "PoliciesRepo"
       ],
-      "totalLines": 88,
+      "totalLines": 102,
       "hasStructuralAnalysis": true
     },
     "src/diana/infrastructure/db/repositories/profiles.py": {
@@ -17704,7 +18053,7 @@
     },
     "src/diana/telegram/handlers/admin.py": {
       "filePath": "src/diana/telegram/handlers/admin.py",
-      "contentHash": "06df20f7c4cfe6a8df780cbfd63dc8e7266606dbaaff52bcc4e4b23151ac36a1",
+      "contentHash": "c4dba7e5bbc80c73b41f9fdeaa5887cea0d6d529f36a1a2695ae4b39b3622dde",
       "functions": [
         {
           "name": "_answer_doctrine_status",
@@ -17795,7 +18144,7 @@
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 231
+          "lineCount": 262
         },
         {
           "name": "build_admin_router",
@@ -17807,7 +18156,6 @@
             "admin_trace",
             "admin_metrics",
             "profile_admin",
-            "note_sessions",
             "sandbox",
             "coordinator",
             "history_seed",
@@ -17817,7 +18165,7 @@
           ],
           "returnType": "Router",
           "exported": true,
-          "lineCount": 439
+          "lineCount": 437
         }
       ],
       "classes": [],
@@ -17826,6 +18174,12 @@
           "source": "logging",
           "specifiers": [
             "logging"
+          ]
+        },
+        {
+          "source": "os",
+          "specifiers": [
+            "os"
           ]
         },
         {
@@ -17922,7 +18276,6 @@
         {
           "source": "diana.telegram.handlers.callbacks",
           "specifiers": [
-            "ADMIN_MENU_TEXT",
             "SESSION_EXPIRED_UX",
             "CorrectSessionStore"
           ]
@@ -17930,6 +18283,14 @@
         {
           "source": "diana.telegram.keyboards",
           "specifiers": [
+            "reprimand_combo_keyboard"
+          ]
+        },
+        {
+          "source": "diana.telegram.keyboards",
+          "specifiers": [
+            "encode_menu",
+            "menu_back_keyboard",
             "metrics_keyboard",
             "trace_detail_keyboard",
             "trace_list_keyboard"
@@ -17947,21 +18308,31 @@
         "handle_admin_text",
         "build_admin_router"
       ],
-      "totalLines": 940,
+      "totalLines": 976,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/handlers/business.py": {
       "filePath": "src/diana/telegram/handlers/business.py",
-      "contentHash": "7a1394639ff7290278121d368fba7bbab8d95ee3f0b8bd1b57f926cdd742ce44",
+      "contentHash": "627bde1d05d08a8c7ad517e394e38539f50bb0539dc1a72ae1b261012865cc63",
       "functions": [
+        {
+          "name": "_inbound_text",
+          "params": [
+            "message"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 12
+        },
         {
           "name": "build_business_router",
           "params": [
-            "orchestrator"
+            "orchestrator",
+            "on_vip_inbound"
           ],
           "returnType": "Router",
           "exported": true,
-          "lineCount": 83
+          "lineCount": 99
         },
         {
           "name": "handle_business_message",
@@ -17985,6 +18356,12 @@
           "source": "logging",
           "specifiers": [
             "logging"
+          ]
+        },
+        {
+          "source": "collections.abc",
+          "specifiers": [
+            "Callable"
           ]
         },
         {
@@ -18025,10 +18402,11 @@
         }
       ],
       "exports": [
+        "_inbound_text",
         "build_business_router",
         "handle_business_message"
       ],
-      "totalLines": 126,
+      "totalLines": 170,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/handlers/business_connection.py": {
@@ -18087,7 +18465,7 @@
     },
     "src/diana/telegram/handlers/callbacks.py": {
       "filePath": "src/diana/telegram/handlers/callbacks.py",
-      "contentHash": "418946103556c268cc4a4d1bdc1a7f59c5a40ab35ed444b5dacc29c161bf6982",
+      "contentHash": "0a7c67184c3d5a3ae941396a00ca723323d31a40bc9c7c3ee17ce995b17a6b98",
       "functions": [
         {
           "name": "_map_delivery_status",
@@ -18109,11 +18487,13 @@
             "admin_trace",
             "admin_metrics",
             "owner_telegram_id",
-            "draft_variants"
+            "draft_variants",
+            "on_delivery_progress",
+            "on_regenerating"
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 107
+          "lineCount": 232
         },
         {
           "name": "build_callback_router",
@@ -18123,16 +18503,31 @@
             "admin_trace",
             "admin_metrics",
             "owner_telegram_id",
-            "note_sessions",
+            "menu_sessions",
             "profile_admin",
             "draft_variants"
           ],
           "returnType": "Router",
           "exported": true,
-          "lineCount": 303
+          "lineCount": 480
         }
       ],
       "classes": [
+        {
+          "name": "CorrectSession",
+          "methods": [],
+          "properties": [
+            "turn_id",
+            "started_at",
+            "mode",
+            "phase",
+            "candidate_id",
+            "corrected_text",
+            "chat_id"
+          ],
+          "exported": true,
+          "lineCount": 10
+        },
         {
           "name": "CorrectSessionStore",
           "methods": [
@@ -18140,13 +18535,17 @@
             "start",
             "pop",
             "get",
+            "get_session",
             "resolve",
             "cancel",
-            "cancel_turn"
+            "cancel_turn",
+            "refresh",
+            "capture_reprimand",
+            "cancel_combo_for_chat"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 82
+          "lineCount": 132
         }
       ],
       "imports": [
@@ -18154,6 +18553,12 @@
           "source": "logging",
           "specifiers": [
             "logging"
+          ]
+        },
+        {
+          "source": "dataclasses",
+          "specifiers": [
+            "dataclass"
           ]
         },
         {
@@ -18185,12 +18590,6 @@
           ]
         },
         {
-          "source": "aiogram.exceptions",
-          "specifiers": [
-            "TelegramBadRequest"
-          ]
-        },
-        {
           "source": "aiogram.types",
           "specifiers": [
             "BufferedInputFile",
@@ -18207,7 +18606,21 @@
           "source": "diana.application.admin_service",
           "specifiers": [
             "AdminService",
-            "OwnerAuthError"
+            "OwnerAuthError",
+            "QualityFeedbackDisabled"
+          ]
+        },
+        {
+          "source": "diana.application.staging_service",
+          "specifiers": [
+            "AtencionPromoteBlocked"
+          ]
+        },
+        {
+          "source": "diana.behavior.ports",
+          "specifiers": [
+            "DeliveryProgress",
+            "DeliveryProgressCallback"
           ]
         },
         {
@@ -18219,6 +18632,7 @@
         {
           "source": "diana.application.draft_variants",
           "specifiers": [
+            "RegeneratingCallback",
             "build_owner_draft_text"
           ]
         },
@@ -18233,9 +18647,12 @@
           "specifiers": [
             "MENU_ROOT_TEXT",
             "draft_keyboard",
+            "gold_scope_keyboard",
             "menu_root_keyboard",
             "parse_callback",
+            "parse_gold_confirm",
             "parse_metrics_callback",
+            "parse_reprimand_confirm",
             "parse_trace_callback",
             "step_detail_keyboard",
             "trace_detail_keyboard",
@@ -18244,12 +18661,13 @@
         }
       ],
       "exports": [
+        "CorrectSession",
         "CorrectSessionStore",
         "_map_delivery_status",
         "dispatch_owner_callback",
         "build_callback_router"
       ],
-      "totalLines": 598,
+      "totalLines": 998,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/handlers/doctrine.py": {
@@ -18427,7 +18845,7 @@
     },
     "src/diana/telegram/handlers/memory_approval.py": {
       "filePath": "src/diana/telegram/handlers/memory_approval.py",
-      "contentHash": "c6897e43b7321074a5ba93517209ce9ceff47b6468e6f5ecbdaa70b90443f152",
+      "contentHash": "01e8cac7b8165758c3ce4c5ac65a2644d15880d77b1cf89c37bc03347d4af5cc",
       "functions": [
         {
           "name": "_truncate",
@@ -18542,12 +18960,12 @@
         "dispatch_memory_approval_callback",
         "build_memory_approval_router"
       ],
-      "totalLines": 196,
+      "totalLines": 198,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/handlers/menu.py": {
       "filePath": "src/diana/telegram/handlers/menu.py",
-      "contentHash": "85ba3a30d7fc27c181db59957e03f852529d825309e2bba4f1008cfabdb09079",
+      "contentHash": "306cb1032bd548e63ac25932c6f7acd47b6dcf8d6fb89de9f2b59267f2ea8283",
       "functions": [
         {
           "name": "_memory_section_lines",
@@ -18644,11 +19062,12 @@
             "menu_sessions",
             "config_store",
             "history_seed",
-            "backfill_queue"
+            "backfill_queue",
+            "ephemeral_event_service"
           ],
           "returnType": "Router",
           "exported": true,
-          "lineCount": 191
+          "lineCount": 256
         },
         {
           "name": "_dispatch_action",
@@ -18667,11 +19086,12 @@
             "sessions",
             "config_store",
             "history_seed",
-            "backfill_queue"
+            "backfill_queue",
+            "ephemeral_event_service"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 594
+          "lineCount": 687
         },
         {
           "name": "_handle_sandbox_forward",
@@ -18684,7 +19104,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 41
+          "lineCount": 54
         },
         {
           "name": "_handle_register_forward",
@@ -18697,7 +19117,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 50
+          "lineCount": 67
         },
         {
           "name": "_handle_note_text",
@@ -18705,11 +19125,12 @@
             "message",
             "bot",
             "session",
-            "profile_admin"
+            "profile_admin",
+            "sessions"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 40
+          "lineCount": 56
         },
         {
           "name": "_handle_fact_text",
@@ -18717,11 +19138,12 @@
             "message",
             "bot",
             "session",
-            "profile_admin"
+            "profile_admin",
+            "sessions"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 50
+          "lineCount": 67
         },
         {
           "name": "_handle_rename_text",
@@ -18729,11 +19151,144 @@
             "message",
             "bot",
             "session",
-            "vips"
+            "vips",
+            "sessions"
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 28
+          "lineCount": 43
+        },
+        {
+          "name": "_format_event_dt",
+          "params": [
+            "dt"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "_event_detail_text",
+          "params": [
+            "record"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_render_event_list",
+          "params": [
+            "message",
+            "service",
+            "actor_id"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "_render_event_detail",
+          "params": [
+            "message",
+            "record"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "_update_event",
+          "params": [
+            "service",
+            "actor_id",
+            "event_id",
+            "body",
+            "start_at",
+            "end_at"
+          ],
+          "returnType": "EphemeralEventRecord | None",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_apply_duration_selection",
+          "params": [
+            "message",
+            "service",
+            "actor_id",
+            "sessions",
+            "event_id",
+            "duration_action"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 73
+        },
+        {
+          "name": "_dispatch_event_action",
+          "params": [
+            "message",
+            "parsed",
+            "actor_id",
+            "service",
+            "sessions"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 206
+        },
+        {
+          "name": "_handle_event_body_text",
+          "params": [
+            "message",
+            "bot",
+            "session",
+            "service",
+            "sessions"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 45
+        },
+        {
+          "name": "_handle_event_custom_start_text",
+          "params": [
+            "message",
+            "bot",
+            "session",
+            "service",
+            "sessions"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 47
+        },
+        {
+          "name": "_handle_event_custom_end_text",
+          "params": [
+            "message",
+            "bot",
+            "session",
+            "service",
+            "sessions"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 89
+        },
+        {
+          "name": "_handle_event_edit_body_text",
+          "params": [
+            "message",
+            "bot",
+            "session",
+            "service",
+            "sessions"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 54
         }
       ],
       "classes": [
@@ -18747,12 +19302,16 @@
             "persona_section",
             "persona_target",
             "persona_channel",
+            "event_body",
+            "event_start_at",
+            "event_end_at",
+            "event_id",
             "last_bot_message_id",
             "last_chat_id",
             "created_at"
           ],
           "exported": true,
-          "lineCount": 12
+          "lineCount": 16
         },
         {
           "name": "MenuSessionStore",
@@ -18763,13 +19322,17 @@
             "get",
             "pop",
             "has_active",
+            "status",
             "cancel",
             "store_pending_vip_name",
-            "pop_pending_vip_name"
+            "pop_pending_vip_name",
+            "record_confirmation",
+            "confirmation_live",
+            "consume_confirmation"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 50
+          "lineCount": 89
         },
         {
           "name": "HasActiveMenuSession",
@@ -18779,7 +19342,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 10
+          "lineCount": 24
         }
       ],
       "imports": [
@@ -18809,6 +19372,12 @@
           "specifiers": [
             "Any",
             "Literal"
+          ]
+        },
+        {
+          "source": "uuid",
+          "specifiers": [
+            "UUID"
           ]
         },
         {
@@ -18845,6 +19414,12 @@
           ]
         },
         {
+          "source": "diana.application.ephemeral_event_service",
+          "specifiers": [
+            "EphemeralEventService"
+          ]
+        },
+        {
           "source": "diana.application.persona_admin_service",
           "specifiers": [
             "PersonaAdminService"
@@ -18853,6 +19428,7 @@
         {
           "source": "diana.application.ports",
           "specifiers": [
+            "EphemeralEventRecord",
             "TrainingModeStore",
             "VipStore"
           ]
@@ -18908,6 +19484,15 @@
           "source": "diana.telegram.keyboards",
           "specifiers": [
             "MENU_CATEGORY_TEXT",
+            "MENU_EVENT_CONFIRM_TEMPLATE",
+            "MENU_EVENT_CREATE_BODY_PROMPT",
+            "MENU_EVENT_CUSTOM_END_PROMPT",
+            "MENU_EVENT_CUSTOM_START_PROMPT",
+            "MENU_EVENT_DURATION_PROMPT",
+            "MENU_EVENT_EDIT_BODY_PROMPT",
+            "MENU_EVENT_EDIT_DURATION_PROMPT",
+            "MENU_EVENT_EMPTY_TEXT",
+            "MENU_EVENT_LIST_TEXT",
             "MENU_ROOT_TEXT",
             "MenuCallback",
             "encode_menu",
@@ -18915,6 +19500,13 @@
             "menu_back_keyboard",
             "menu_config_keyboard",
             "menu_confirm_delete_keyboard",
+            "menu_event_confirm_delete_keyboard",
+            "menu_event_confirm_keyboard",
+            "menu_event_detail_keyboard",
+            "menu_event_duration_keyboard",
+            "menu_event_list_keyboard",
+            "menu_event_modify_keyboard",
+            "menu_event_terminate_confirm_keyboard",
             "menu_history_keyboard",
             "menu_metrics_keyboard",
             "menu_pause_duration_keyboard",
@@ -18952,9 +19544,20 @@
         "_handle_register_forward",
         "_handle_note_text",
         "_handle_fact_text",
-        "_handle_rename_text"
+        "_handle_rename_text",
+        "_format_event_dt",
+        "_event_detail_text",
+        "_render_event_list",
+        "_render_event_detail",
+        "_update_event",
+        "_apply_duration_selection",
+        "_dispatch_event_action",
+        "_handle_event_body_text",
+        "_handle_event_custom_start_text",
+        "_handle_event_custom_end_text",
+        "_handle_event_edit_body_text"
       ],
-      "totalLines": 1421,
+      "totalLines": 2336,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/handlers/persona_admin.py": {
@@ -19307,7 +19910,7 @@
     },
     "src/diana/telegram/handlers/staging.py": {
       "filePath": "src/diana/telegram/handlers/staging.py",
-      "contentHash": "4f6eb1d5994d09e86c164aea62bd260cb325c9472f352696cae515c72b7c660c",
+      "contentHash": "1d1d38be9700d6968d84f02c4822a451c98f7497cce7c20ef1f61e1435ff6ad0",
       "functions": [
         {
           "name": "_truncate",
@@ -19348,7 +19951,7 @@
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 58
+          "lineCount": 64
         },
         {
           "name": "build_staging_router",
@@ -19358,7 +19961,7 @@
           ],
           "returnType": "Router",
           "exported": true,
-          "lineCount": 57
+          "lineCount": 91
         }
       ],
       "classes": [],
@@ -19405,7 +20008,8 @@
           "source": "diana.telegram.keyboards",
           "specifiers": [
             "parse_staging_callback",
-            "staging_candidate_keyboard"
+            "staging_candidate_keyboard",
+            "staging_discard_confirm_keyboard"
           ]
         }
       ],
@@ -19416,7 +20020,7 @@
         "dispatch_staging_callback",
         "build_staging_router"
       ],
-      "totalLines": 205,
+      "totalLines": 249,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/health.py": {
@@ -19541,7 +20145,7 @@
     },
     "src/diana/telegram/keyboards.py": {
       "filePath": "src/diana/telegram/keyboards.py",
-      "contentHash": "f7957c6f88c90fb6c6baaa7b0ed0ba662e9874a8a84d523822262d6a6cf2f7d4",
+      "contentHash": "9f40f4d84c47fce211ab45e8c4da2db71198a7782ab76745b2950b25c2fc7b55",
       "functions": [
         {
           "name": "encode_callback",
@@ -19551,7 +20155,7 @@
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 14
+          "lineCount": 16
         },
         {
           "name": "encode_add_note",
@@ -19569,7 +20173,7 @@
           ],
           "returnType": "tuple[str, UUID] | None",
           "exported": true,
-          "lineCount": 37
+          "lineCount": 39
         },
         {
           "name": "encode_doctrine_callback",
@@ -19593,11 +20197,69 @@
         {
           "name": "draft_keyboard",
           "params": [
+            "turn_id",
+            "show_quality_feedback"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "encode_gold_confirm",
+          "params": [
+            "turn_id",
+            "scope"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "parse_gold_confirm",
+          "params": [
+            "data"
+          ],
+          "returnType": "tuple[UUID, str] | str | None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "encode_reprimand_confirm",
+          "params": [
+            "turn_id",
+            "mode",
+            "scope"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "parse_reprimand_confirm",
+          "params": [
+            "data"
+          ],
+          "returnType": "tuple[UUID, str, str] | None",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "gold_scope_keyboard",
+          "params": [
             "turn_id"
           ],
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
-          "lineCount": 20
+          "lineCount": 22
+        },
+        {
+          "name": "reprimand_combo_keyboard",
+          "params": [
+            "turn_id"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 26
         },
         {
           "name": "encode_doctrine_resolve_callback",
@@ -19630,11 +20292,12 @@
           "name": "encode_trace_view",
           "params": [
             "turn_id",
-            "from_draft"
+            "from_draft",
+            "page"
           ],
           "returnType": "str",
           "exported": true,
-          "lineCount": 7
+          "lineCount": 15
         },
         {
           "name": "encode_trace_detail",
@@ -19681,7 +20344,7 @@
           ],
           "returnType": "TraceCallbackData | None",
           "exported": true,
-          "lineCount": 44
+          "lineCount": 51
         },
         {
           "name": "trace_list_keyboard",
@@ -19692,18 +20355,19 @@
           ],
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
-          "lineCount": 35
+          "lineCount": 44
         },
         {
           "name": "trace_detail_keyboard",
           "params": [
             "turn_id",
             "timings",
-            "from_draft"
+            "from_draft",
+            "page"
           ],
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
-          "lineCount": 57
+          "lineCount": 60
         },
         {
           "name": "step_detail_keyboard",
@@ -19719,11 +20383,12 @@
           "name": "draft_keyboard",
           "params": [
             "turn_id",
-            "chat_id"
+            "chat_id",
+            "show_quality_feedback"
           ],
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
-          "lineCount": 32
+          "lineCount": 34
         },
         {
           "name": "encode_metrics_export",
@@ -19774,16 +20439,43 @@
           "lineCount": 6
         },
         {
+          "name": "encode_staging_discard_confirm",
+          "params": [
+            "candidate_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "encode_staging_discard_cancel",
+          "params": [
+            "candidate_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
           "name": "parse_staging_callback",
           "params": [
             "data"
           ],
           "returnType": "tuple[str, UUID] | None",
           "exported": true,
-          "lineCount": 15
+          "lineCount": 27
         },
         {
           "name": "staging_candidate_keyboard",
+          "params": [
+            "candidate_id"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "staging_discard_confirm_keyboard",
           "params": [
             "candidate_id"
           ],
@@ -19826,6 +20518,24 @@
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
           "lineCount": 16
+        },
+        {
+          "name": "link_kick_keyboard",
+          "params": [
+            "event_id"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "parse_link_callback",
+          "params": [
+            "data"
+          ],
+          "returnType": "tuple[str, str] | None",
+          "exported": true,
+          "lineCount": 11
         },
         {
           "name": "encode_menu",
@@ -19876,13 +20586,32 @@
           "lineCount": 8
         },
         {
+          "name": "encode_menu_event",
+          "params": [
+            "event_id"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "encode_menu_event_action",
+          "params": [
+            "event_id",
+            "action"
+          ],
+          "returnType": "str",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
           "name": "parse_menu_callback",
           "params": [
             "data"
           ],
           "returnType": "MenuCallback | None",
           "exported": true,
-          "lineCount": 29
+          "lineCount": 43
         },
         {
           "name": "_menu_back_row",
@@ -19898,7 +20627,7 @@
           ],
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
-          "lineCount": 22
+          "lineCount": 23
         },
         {
           "name": "menu_vip_list_keyboard",
@@ -19932,11 +20661,13 @@
           "name": "menu_vip_profile_keyboard",
           "params": [
             "user_id",
-            "show_generate"
+            "show_generate",
+            "notes",
+            "facts"
           ],
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
-          "lineCount": 23
+          "lineCount": 44
         },
         {
           "name": "menu_back_keyboard",
@@ -19946,6 +20677,67 @@
           "returnType": "InlineKeyboardMarkup",
           "exported": true,
           "lineCount": 5
+        },
+        {
+          "name": "menu_event_list_keyboard",
+          "params": [
+            "events"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "menu_event_detail_keyboard",
+          "params": [
+            "event"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 38
+        },
+        {
+          "name": "menu_event_confirm_delete_keyboard",
+          "params": [
+            "event_id"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "menu_event_terminate_confirm_keyboard",
+          "params": [
+            "event_id"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "menu_event_duration_keyboard",
+          "params": [
+            "event_id"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 29
+        },
+        {
+          "name": "menu_event_confirm_keyboard",
+          "params": [],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "menu_event_modify_keyboard",
+          "params": [
+            "event_id"
+          ],
+          "returnType": "InlineKeyboardMarkup",
+          "exported": true,
+          "lineCount": 24
         },
         {
           "name": "menu_personalidad_keyboard",
@@ -20078,10 +20870,11 @@
             "category",
             "action",
             "vip_user_id",
+            "event_id",
             "extra"
           ],
           "exported": true,
-          "lineCount": 7
+          "lineCount": 8
         }
       ],
       "imports": [
@@ -20103,6 +20896,12 @@
             "InlineKeyboardButton",
             "InlineKeyboardMarkup"
           ]
+        },
+        {
+          "source": "diana.application.ports",
+          "specifiers": [
+            "EphemeralEventRecord"
+          ]
         }
       ],
       "exports": [
@@ -20112,6 +20911,12 @@
         "encode_doctrine_callback",
         "parse_doctrine_callback",
         "draft_keyboard",
+        "encode_gold_confirm",
+        "parse_gold_confirm",
+        "encode_reprimand_confirm",
+        "parse_reprimand_confirm",
+        "gold_scope_keyboard",
+        "reprimand_combo_keyboard",
         "encode_doctrine_resolve_callback",
         "encode_doctrine_escalate_callback",
         "doctrine_keyboard",
@@ -20132,18 +20937,25 @@
         "metrics_keyboard",
         "encode_staging_promote",
         "encode_staging_discard",
+        "encode_staging_discard_confirm",
+        "encode_staging_discard_cancel",
         "parse_staging_callback",
         "staging_candidate_keyboard",
+        "staging_discard_confirm_keyboard",
         "encode_memory_approve",
         "encode_memory_discard",
         "parse_memory_approval_callback",
         "memory_pending_keyboard",
+        "link_kick_keyboard",
+        "parse_link_callback",
         "MenuCallback",
         "encode_menu",
         "encode_menu_vip",
         "encode_menu_vip_action",
         "encode_menu_sandbox_profile",
         "encode_menu_persona",
+        "encode_menu_event",
+        "encode_menu_event_action",
         "parse_menu_callback",
         "_menu_back_row",
         "menu_root_keyboard",
@@ -20152,6 +20964,13 @@
         "menu_pause_duration_keyboard",
         "menu_vip_profile_keyboard",
         "menu_back_keyboard",
+        "menu_event_list_keyboard",
+        "menu_event_detail_keyboard",
+        "menu_event_confirm_delete_keyboard",
+        "menu_event_terminate_confirm_keyboard",
+        "menu_event_duration_keyboard",
+        "menu_event_confirm_keyboard",
+        "menu_event_modify_keyboard",
         "menu_personalidad_keyboard",
         "menu_persona_list_keyboard",
         "menu_persona_confirm_restore_keyboard",
@@ -20166,12 +20985,12 @@
         "menu_history_keyboard",
         "menu_config_keyboard"
       ],
-      "totalLines": 1171,
+      "totalLines": 1707,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/middlewares/__init__.py": {
       "filePath": "src/diana/telegram/middlewares/__init__.py",
-      "contentHash": "ea01b9a0342795d9d925dd38bcfee3c9ac60c983738bbebabe8b987f483fbf9f",
+      "contentHash": "fff58eca581cea59cf2e7525901f3babd45c6ad9af24019a8fe956495fc92d63",
       "functions": [],
       "classes": [],
       "imports": [
@@ -20206,6 +21025,12 @@
           ]
         },
         {
+          "source": "diana.telegram.middlewares.link",
+          "specifiers": [
+            "LinkCoordinatorMiddleware"
+          ]
+        },
+        {
           "source": "diana.telegram.middlewares.logging",
           "specifiers": [
             "LoggingMiddleware"
@@ -20225,7 +21050,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 40,
+      "totalLines": 43,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/middlewares/auth.py": {
@@ -20800,7 +21625,7 @@
     },
     "src/diana/telegram/notifier.py": {
       "filePath": "src/diana/telegram/notifier.py",
-      "contentHash": "4d6a46114e78cbe7bf3017c55337c8419b20e87b88fc9121ddf088115e296760",
+      "contentHash": "9e6a6557945d68b94c4e44aaaf49c094aeabc2a47218bc9eb984ac80419acac6",
       "functions": [
         {
           "name": "_esc",
@@ -20822,11 +21647,12 @@
             "void_draft",
             "notify_escalation",
             "notify_doctrine",
+            "notify_link",
             "notify_info"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 91
+          "lineCount": 117
         }
       ],
       "imports": [
@@ -20853,7 +21679,8 @@
           "specifiers": [
             "DoctrineNotification",
             "DraftNotification",
-            "EscalationNotification"
+            "EscalationNotification",
+            "LinkNotification"
           ]
         },
         {
@@ -20873,7 +21700,8 @@
           "source": "diana.telegram.keyboards",
           "specifiers": [
             "doctrine_keyboard",
-            "draft_keyboard"
+            "draft_keyboard",
+            "link_kick_keyboard"
           ]
         }
       ],
@@ -20881,12 +21709,12 @@
         "_esc",
         "AiogramOwnerNotifier"
       ],
-      "totalLines": 121,
+      "totalLines": 148,
       "hasStructuralAnalysis": true
     },
     "src/diana/telegram/setup.py": {
       "filePath": "src/diana/telegram/setup.py",
-      "contentHash": "3f8bd0ba3a9892c5e156e2f5d3168025c7aefc22812db3b045e001c59af45a1f",
+      "contentHash": "b6a70733ffaec9fd33cfd013cc33bae00813072a13205c2621d4a86416b15960",
       "functions": [
         {
           "name": "middleware_class_names",
@@ -20943,11 +21771,15 @@
             "bc_store",
             "history",
             "backfill_queue",
-            "memory_approval"
+            "memory_approval",
+            "ephemeral_event_service",
+            "link",
+            "link_chat_id",
+            "feature_link_enabled"
           ],
           "returnType": "TelegramWiring",
           "exported": true,
-          "lineCount": 185
+          "lineCount": 205
         },
         {
           "name": "registered_middleware_names",
@@ -20997,6 +21829,18 @@
           "source": "diana.application.admin_metrics_service",
           "specifiers": [
             "AdminMetricsService"
+          ]
+        },
+        {
+          "source": "diana.application.ephemeral_event_service",
+          "specifiers": [
+            "EphemeralEventService"
+          ]
+        },
+        {
+          "source": "diana.application.link",
+          "specifiers": [
+            "LinkCoordinator"
           ]
         },
         {
@@ -21106,6 +21950,12 @@
           ]
         },
         {
+          "source": "diana.telegram.handlers.link",
+          "specifiers": [
+            "build_link_callback_router"
+          ]
+        },
+        {
           "source": "diana.telegram.handlers.staging",
           "specifiers": [
             "build_staging_router"
@@ -21160,6 +22010,12 @@
           ]
         },
         {
+          "source": "diana.telegram.middlewares.link",
+          "specifiers": [
+            "LinkCoordinatorMiddleware"
+          ]
+        },
+        {
           "source": "diana.telegram.middlewares.logging",
           "specifiers": [
             "LoggingMiddleware"
@@ -21185,7 +22041,7 @@
         "build_dispatcher",
         "registered_middleware_names"
       ],
-      "totalLines": 285,
+      "totalLines": 309,
       "hasStructuralAnalysis": true
     },
     "tests/__init__.py": {
@@ -21200,7 +22056,7 @@
     },
     "tests/conftest.py": {
       "filePath": "tests/conftest.py",
-      "contentHash": "1d4c88554d61b1a3e0efe98e695e1b5a6ad6f9b656768b36da834ba2966158bf",
+      "contentHash": "9ad06fc60986ff796a550344d6fbf5db04a1e18e6bee41c4514947dcc87abaee",
       "functions": [
         {
           "name": "clear_settings_env",
@@ -21209,7 +22065,7 @@
           ],
           "returnType": "Iterator[None]",
           "exported": true,
-          "lineCount": 56
+          "lineCount": 59
         }
       ],
       "classes": [],
@@ -21236,7 +22092,7 @@
       "exports": [
         "clear_settings_env"
       ],
-      "totalLines": 68,
+      "totalLines": 71,
       "hasStructuralAnalysis": true
     },
     "tests/e2e/__init__.py": {
@@ -26010,7 +26866,7 @@
     },
     "tests/unit/acceptance/test_tac_mvp_f1.py": {
       "filePath": "tests/unit/acceptance/test_tac_mvp_f1.py",
-      "contentHash": "976e4210106ea8d393f852d10c68fb7b76d463d345fa52d3b338debe8de8ff55",
+      "contentHash": "dada2776fe2851ea216769c513ed09c88e5fe9cf9ccc5a585c466cedb4a45351",
       "functions": [
         {
           "name": "_eval",
@@ -26286,7 +27142,7 @@
     },
     "tests/unit/application/test_admin_metrics_service.py": {
       "filePath": "tests/unit/application/test_admin_metrics_service.py",
-      "contentHash": "c3c959adf3a4e34eaae2ab490d3cac3db648f1e60c9e7a75fc3aff895d3eea75",
+      "contentHash": "83edd6767e8c93f684faa53146d40efb0651aebc3520ed16f02078d273be5550",
       "functions": [
         {
           "name": "_full_values",
@@ -26399,11 +27255,11 @@
           "methods": [
             "test_export_includes_week_and_values",
             "test_export_empty_week",
-            "test_export_truncates_when_over_telegram_cap"
+            "test_export_full_json_over_telegram_cap"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 30
+          "lineCount": 32
         },
         {
           "name": "TestNoAiogram",
@@ -26462,7 +27318,7 @@
         "TestExportWeekJson",
         "TestNoAiogram"
       ],
-      "totalLines": 292,
+      "totalLines": 294,
       "hasStructuralAnalysis": true
     },
     "tests/unit/application/test_admin_owner_escalate.py": {
@@ -26650,7 +27506,7 @@
     },
     "tests/unit/application/test_admin_service.py": {
       "filePath": "tests/unit/application/test_admin_service.py",
-      "contentHash": "628c0c09eebbf00242e88ed4fdcc9c119237f140783411f01c34a4478e18776f",
+      "contentHash": "e757f9dc2584286151c23d4e365424bca3a21d216ada9aa2d1f27831026036e4",
       "functions": [
         {
           "name": "_real_staging",
@@ -26684,6 +27540,7 @@
           "name": "_admin_graph",
           "params": [
             "feature_advanced_behavior",
+            "feature_quality_feedback_enabled",
             "behavior_override",
             "vip_store",
             "delivery_mode",
@@ -26694,7 +27551,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 70
+          "lineCount": 72
         },
         {
           "name": "admin_graph",
@@ -26773,7 +27630,7 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 25
+          "lineCount": 27
         },
         {
           "name": "test_handle_approve_vip_frozen_persist_then_raise_fires_hook",
@@ -27298,7 +28155,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 31
+          "lineCount": 33
         },
         {
           "name": "_CapturingDeliverer",
@@ -27308,7 +28165,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 15
+          "lineCount": 17
         },
         {
           "name": "_FakeTrustBudgetAdmin",
@@ -27503,7 +28360,7 @@
         "test_handle_correct_no_decrement_when_staging_failed",
         "test_handle_correct_trust_failure_still_delivers"
       ],
-      "totalLines": 2088,
+      "totalLines": 2096,
       "hasStructuralAnalysis": true
     },
     "tests/unit/application/test_admin_trace_service.py": {
@@ -28740,7 +29597,7 @@
     },
     "tests/unit/application/test_draft_variants.py": {
       "filePath": "tests/unit/application/test_draft_variants.py",
-      "contentHash": "3fca0d1e5e378a0590b65b3197225e5a2d4dab115561caf8f404d3ac1fc5e8d5",
+      "contentHash": "93aae1448ac05048dcd72c8dc7b053ea0e10eed485f058b0dcce85d7e5d61e52",
       "functions": [
         {
           "name": "_eval",
@@ -28762,6 +29619,13 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 50
+        },
+        {
+          "name": "test_edit_draft_forwards_quality_feedback_flag",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 48
         },
         {
           "name": "_pending_approval_fixture",
@@ -28794,6 +29658,27 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 36
+        },
+        {
+          "name": "test_regenerate_fires_on_start_during_success",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "test_regenerate_skips_on_start_when_early_return",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "test_regenerate_on_start_fault_does_not_abort",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 18
         },
         {
           "name": "test_update_draft_cas_skips_non_waiting",
@@ -28897,17 +29782,21 @@
         "test_ensure_and_read_versions",
         "FakeDirector",
         "test_navigate_prev_next",
+        "test_edit_draft_forwards_quality_feedback_flag",
         "_pending_approval_fixture",
         "test_regenerate_appends_variant",
         "test_regenerate_rejects_terminal_turn_without_director",
         "test_regenerate_cancelled_mid_llm_does_not_revive_ui",
+        "test_regenerate_fires_on_start_during_success",
+        "test_regenerate_skips_on_start_when_early_return",
+        "test_regenerate_on_start_fault_does_not_abort",
         "test_update_draft_cas_skips_non_waiting",
         "test_build_owner_draft_text_falls_back_to_chat_id",
         "test_build_owner_draft_text_uses_resolved_name",
         "test_resolve_vip_display_name",
         "test_refresh_owner_message_uses_vip_display_name"
       ],
-      "totalLines": 353,
+      "totalLines": 477,
       "hasStructuralAnalysis": true
     },
     "tests/unit/application/test_emotional_detector_thresholds.py": {
@@ -35162,7 +36051,7 @@
     },
     "tests/unit/application/test_recovery_startup.py": {
       "filePath": "tests/unit/application/test_recovery_startup.py",
-      "contentHash": "85dedb45cf351ee9a0514b48489bb7d83535dcd87911a5ed1f164c09cf4cbf66",
+      "contentHash": "f66aa5be5ab22e08c9cfee417754f5069512a536212e1cceaa23a01303edf370",
       "functions": [
         {
           "name": "_delivery",
@@ -35296,6 +36185,13 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 121
+        },
+        {
+          "name": "test_renotify_sets_quality_flag_for_vip_when_enabled",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 18
         }
       ],
       "classes": [],
@@ -35371,9 +36267,10 @@
         "test_startup_promo_grace_still_delivers",
         "test_startup_without_turns_traces_timers_backwards_compat",
         "test_startup_timer_recovery_reschedules_active_timer",
-        "test_resume_pre_delay_corrupt_payload_does_not_abort_pass"
+        "test_resume_pre_delay_corrupt_payload_does_not_abort_pass",
+        "test_renotify_sets_quality_flag_for_vip_when_enabled"
       ],
-      "totalLines": 947,
+      "totalLines": 968,
       "hasStructuralAnalysis": true
     },
     "tests/unit/application/test_runtime_thresholds.py": {
@@ -35729,7 +36626,7 @@
     },
     "tests/unit/application/test_staging_service.py": {
       "filePath": "tests/unit/application/test_staging_service.py",
-      "contentHash": "2822463a07b99092ae796e90126202637db2f950c6f099391bf4c4613d41b99c",
+      "contentHash": "e33bd68e7f1e9afc6b9f5e8cdd2e13d70821ec3a4ce89a36e5b80cbc4e69d6f7",
       "functions": [
         {
           "name": "_fake_staging_row",
@@ -35890,6 +36787,85 @@
           "lineCount": 9
         },
         {
+          "name": "test_promote_to_counter_example_happy_path",
+          "params": [
+            "service",
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "test_promote_to_counter_example_blocks_atencion_candidate",
+          "params": [
+            "service",
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "test_promote_to_counter_example_candidate_not_found",
+          "params": [
+            "service",
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "test_promote_to_counter_example_wrong_status",
+          "params": [
+            "service",
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "test_promote_to_policy_forwards_vip_id",
+          "params": [
+            "service",
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "test_insert_gold_example_happy_path",
+          "params": [
+            "service",
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "test_insert_gold_example_blocks_atencion",
+          "params": [
+            "service",
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "test_insert_gold_example_skips_when_sandbox_active",
+          "params": [
+            "repos"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 56
+        },
+        {
           "name": "test_discard_happy_path",
           "params": [
             "service",
@@ -36020,6 +36996,14 @@
         "test_promote_to_policy_default_scope",
         "test_promote_to_policy_candidate_not_found",
         "test_promote_to_policy_wrong_status",
+        "test_promote_to_counter_example_happy_path",
+        "test_promote_to_counter_example_blocks_atencion_candidate",
+        "test_promote_to_counter_example_candidate_not_found",
+        "test_promote_to_counter_example_wrong_status",
+        "test_promote_to_policy_forwards_vip_id",
+        "test_insert_gold_example_happy_path",
+        "test_insert_gold_example_blocks_atencion",
+        "test_insert_gold_example_skips_when_sandbox_active",
         "test_discard_happy_path",
         "test_discard_candidate_not_found",
         "test_discard_rejects_non_pending",
@@ -36029,7 +37013,7 @@
         "test_save_correction_skips_when_sandbox_active",
         "test_save_correction_inserts_when_sandbox_inactive"
       ],
-      "totalLines": 541,
+      "totalLines": 756,
       "hasStructuralAnalysis": true
     },
     "tests/unit/application/test_strong_signal_heuristics.py": {
@@ -36730,7 +37714,7 @@
     },
     "tests/unit/application/test_turn_classifier.py": {
       "filePath": "tests/unit/application/test_turn_classifier.py",
-      "contentHash": "6905db865a416c540bf85b6bfa385a5a6a851172d6da4236de3b129a37bd448b",
+      "contentHash": "f278482bad3cef5cd5310b274452aa27c07f5f99c6daf29a31a5fbc4524119c7",
       "functions": [
         {
           "name": "_comp",
@@ -36972,6 +37956,70 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 13
+        },
+        {
+          "name": "test_is_pure_greeting_saludar_confident",
+          "params": [
+            "clf"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "test_is_pure_greeting_accepts_short_greeting_forms",
+          "params": [
+            "clf",
+            "text"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "test_is_pure_greeting_rejects_agradecer",
+          "params": [
+            "clf"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "test_is_pure_greeting_rejects_analyst_false_positive",
+          "params": [
+            "clf"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "test_is_pure_greeting_rejects_ambiguous_and_short",
+          "params": [
+            "clf"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "test_is_pure_greeting_carinosa_boundary",
+          "params": [
+            "clf"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "test_make_pure_greeting_cut_binds_classifier",
+          "params": [
+            "clf"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 4
         }
       ],
       "classes": [],
@@ -36999,7 +38047,9 @@
           "specifiers": [
             "CLASSIFIER_CONFIDENCE_MIN",
             "TurnClassification",
-            "TurnClassifier"
+            "TurnClassifier",
+            "is_pure_greeting",
+            "make_pure_greeting_cut"
           ]
         }
       ],
@@ -37030,9 +38080,16 @@
         "test_apply_overrides",
         "test_apply_overrides_invalid_config_does_not_crash",
         "test_apply_overrides_without_key_keeps_default",
-        "test_import_purity"
+        "test_import_purity",
+        "test_is_pure_greeting_saludar_confident",
+        "test_is_pure_greeting_accepts_short_greeting_forms",
+        "test_is_pure_greeting_rejects_agradecer",
+        "test_is_pure_greeting_rejects_analyst_false_positive",
+        "test_is_pure_greeting_rejects_ambiguous_and_short",
+        "test_is_pure_greeting_carinosa_boundary",
+        "test_make_pure_greeting_cut_binds_classifier"
       ],
-      "totalLines": 249,
+      "totalLines": 328,
       "hasStructuralAnalysis": true
     },
     "tests/unit/application/test_turn_coordinator.py": {
@@ -37522,7 +38579,7 @@
     },
     "tests/unit/application/test_turn_orchestrator.py": {
       "filePath": "tests/unit/application/test_turn_orchestrator.py",
-      "contentHash": "d8c6619fb2105e5b4da94432db917f8de027ba86656fdb9c7d4c33eb540bcb96",
+      "contentHash": "9e6213f24675b7e3a54dcbebe6aee821d193dc1f1fca3a83ffa9ac5e9af16498",
       "functions": [
         {
           "name": "_eval",
@@ -37541,6 +38598,7 @@
             "feature_general_mode_enabled",
             "wire_autonomous",
             "feature_autonomous_mode",
+            "feature_phatic_auto_send",
             "feature_advanced_behavior",
             "global_mode",
             "delivery_mode",
@@ -37566,7 +38624,7 @@
           ],
           "returnType": "dict",
           "exported": true,
-          "lineCount": 132
+          "lineCount": 136
         },
         {
           "name": "_vip",
@@ -37732,6 +38790,41 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 20
+        },
+        {
+          "name": "test_plantilla_saludo_delivers_without_ams",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 23
+        },
+        {
+          "name": "test_plantilla_saludo_flag_off_demotes_to_approve",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "test_plantilla_saludo_atencion_never_auto_sends",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 17
+        },
+        {
+          "name": "test_plantilla_saludo_frozen_vip_fail_closed",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "test_plantilla_saludo_paused_vip_fail_closed",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 21
         },
         {
           "name": "test_send_ams_supervised_without_auto_send_falls_back_to_approve",
@@ -38017,7 +39110,7 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 27
+          "lineCount": 34
         },
         {
           "name": "test_consult_doctrine_raises_when_feature_disabled",
@@ -38074,6 +39167,13 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 31
+        },
+        {
+          "name": "test_consult_doctrine_vip_notify_failure_discards_and_demotes",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 37
         },
         {
           "name": "test_consult_doctrine_atencion_recheck_fail_opens",
@@ -38848,7 +39948,7 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 38
+          "lineCount": 50
         },
         {
           "name": "_FakeTraceReader",
@@ -39302,6 +40402,11 @@
         "_MultiMidDeliverer",
         "test_autonomous_multi_message_ids_appends_all_owner_history",
         "test_send_ams_disabled_falls_back_to_approve",
+        "test_plantilla_saludo_delivers_without_ams",
+        "test_plantilla_saludo_flag_off_demotes_to_approve",
+        "test_plantilla_saludo_atencion_never_auto_sends",
+        "test_plantilla_saludo_frozen_vip_fail_closed",
+        "test_plantilla_saludo_paused_vip_fail_closed",
         "test_send_ams_supervised_without_auto_send_falls_back_to_approve",
         "test_send_supervised_with_auto_send_delivers",
         "test_send_frozen_after_prepare_no_deliver",
@@ -39352,6 +40457,7 @@
         "test_consult_doctrine_atencion_requires_general_mode",
         "test_consult_doctrine_atencion_skips_when_already_open",
         "test_consult_doctrine_atencion_notify_failure_discards_and_demotes",
+        "test_consult_doctrine_vip_notify_failure_discards_and_demotes",
         "_FlakyRecheckGrayZone",
         "test_consult_doctrine_atencion_recheck_fail_opens",
         "test_detect_payment_intent_pure",
@@ -39470,7 +40576,7 @@
         "test_trust_budget_error_does_not_break_turn",
         "test_turn_classifier_returns_record"
       ],
-      "totalLines": 5883,
+      "totalLines": 6062,
       "hasStructuralAnalysis": true
     },
     "tests/unit/application/test_vip_history_seed.py": {
@@ -39857,7 +40963,7 @@
     },
     "tests/unit/behavior/test_engine.py": {
       "filePath": "tests/unit/behavior/test_engine.py",
-      "contentHash": "bed66a804643cf0a85b13b83236d6eb00e803d8a1c5eb8dbf5460673804c0816",
+      "contentHash": "eab9942c731eedd6d10e3084537e6dbb4bffdd37849c045ee4b75384985c97b2",
       "functions": [
         {
           "name": "engine_bundle",
@@ -40119,6 +41225,20 @@
           "lineCount": 15
         },
         {
+          "name": "test_split_three_paragraphs_under_limit_three_sends",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "test_split_three_paragraphs_flag_off_single_send",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
           "name": "test_split_expand_adds_inter_message_gap",
           "params": [],
           "returnType": "None",
@@ -40271,6 +41391,40 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 10
+        },
+        {
+          "name": "test_deliver_reports_progress_reading_then_typing",
+          "params": [
+            "engine_bundle"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "test_deliver_no_reading_progress_without_trigger_message",
+          "params": [
+            "engine_bundle"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "test_deliver_progress_callback_fault_does_not_break_delivery",
+          "params": [
+            "engine_bundle"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "test_deliver_split_reports_sending_progress_with_fraction",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 29
         }
       ],
       "classes": [],
@@ -40339,6 +41493,7 @@
           "source": "diana.behavior.ports",
           "specifiers": [
             "DeliveryContext",
+            "DeliveryProgress",
             "TransientSendError"
           ]
         }
@@ -40377,6 +41532,8 @@
         "test_dual_gate_allow_split_false_single_send",
         "test_split_on_expands_long_text",
         "test_split_short_text_still_one_send",
+        "test_split_three_paragraphs_under_limit_three_sends",
+        "test_split_three_paragraphs_flag_off_single_send",
         "test_split_expand_adds_inter_message_gap",
         "test_quirks_off_no_extra_pause",
         "test_quirks_on_extra_pause",
@@ -40398,9 +41555,13 @@
         "test_deliver_with_sequence_cancel_mid_no_further_sends",
         "test_timer_created_when_runtime_timer_store_injected",
         "test_no_timer_without_runtime_timer_store",
-        "test_deliver_with_sequence_not_on_behavior_deliverer_protocol"
+        "test_deliver_with_sequence_not_on_behavior_deliverer_protocol",
+        "test_deliver_reports_progress_reading_then_typing",
+        "test_deliver_no_reading_progress_without_trigger_message",
+        "test_deliver_progress_callback_fault_does_not_break_delivery",
+        "test_deliver_split_reports_sending_progress_with_fraction"
       ],
-      "totalLines": 1069,
+      "totalLines": 1203,
       "hasStructuralAnalysis": true
     },
     "tests/unit/behavior/test_fake_delivery.py": {
@@ -40456,7 +41617,7 @@
     },
     "tests/unit/behavior/test_quirks.py": {
       "filePath": "tests/unit/behavior/test_quirks.py",
-      "contentHash": "be537c8bedb92e4e5b813b7c5b7e40e9de8fa7f245408116a9e8dbfe09282dd6",
+      "contentHash": "afa56bb22f3a0244e00e28abac0a2656f5c59f8e34ca55786725e1bd0816aceb",
       "functions": [
         {
           "name": "test_pick_quirk_p_zero_returns_none",
@@ -40478,6 +41639,13 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 7
+        },
+        {
+          "name": "test_pick_quirk_prefers_typo_correct",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 10
         },
         {
           "name": "test_pick_quirk_force_invalid_fail_closed_pause",
@@ -40578,6 +41746,7 @@
         "test_pick_quirk_p_zero_returns_none",
         "test_pick_quirk_force_returns_kind",
         "test_pick_quirk_p_one_returns_one_of_kinds",
+        "test_pick_quirk_prefers_typo_correct",
         "test_pick_quirk_force_invalid_fail_closed_pause",
         "test_natural_split_multi_sentence",
         "test_natural_split_short_or_single_sentence_unchanged",
@@ -40590,12 +41759,12 @@
         "test_apply_typo_all_noop_candidates_returns_none",
         "test_apply_typo_spanish_accented_word"
       ],
-      "totalLines": 140,
+      "totalLines": 152,
       "hasStructuralAnalysis": true
     },
     "tests/unit/cognitive/test_analyst.py": {
       "filePath": "tests/unit/cognitive/test_analyst.py",
-      "contentHash": "bb7ab9421e78d843ef06994b7992c2f37f2e8e2d79ead4794aa634dd409a8e76",
+      "contentHash": "e86c788f79bef70947a6d4e2a4c2fab7cb40c14f9766a2fb25416ccbcc0a62e0",
       "functions": [
         {
           "name": "_input",
@@ -40715,6 +41884,13 @@
           "lineCount": 29
         },
         {
+          "name": "test_system_prompt_saludar_only_for_pure_short_greeting",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
           "name": "test_system_prompt_mentions_persona_voice_needs",
           "params": [],
           "returnType": "None",
@@ -40799,15 +41975,16 @@
         "test_analyze_uses_only_generate_structured",
         "test_analyze_attaches_raw_llm_output",
         "test_analyze_system_prompt_has_no_tone_or_policy_instructions",
+        "test_system_prompt_saludar_only_for_pure_short_greeting",
         "test_system_prompt_mentions_persona_voice_needs",
         "test_system_prompt_mentions_current_activity_needs_schedule"
       ],
-      "totalLines": 291,
+      "totalLines": 300,
       "hasStructuralAnalysis": true
     },
     "tests/unit/cognitive/test_context_builder.py": {
       "filePath": "tests/unit/cognitive/test_context_builder.py",
-      "contentHash": "4fb59ff6e635eb3e1e62f9d122c7088a67ea0da6c201d14282b822ba41c161ec",
+      "contentHash": "0a3a4dc24d962090373187c2093b197d314ec19f7f71b7e90c3db0cec1945e83",
       "functions": [
         {
           "name": "_turn",
@@ -40909,7 +42086,7 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 39
+          "lineCount": 41
         },
         {
           "name": "test_contexto_excede_limite_raises_typed_error_no_truncate",
@@ -41001,6 +42178,13 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 21
+        },
+        {
+          "name": "test_ephemeral_knowledge_section_fenced_as_non_instruction_data",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 19
         }
       ],
       "classes": [],
@@ -41065,9 +42249,10 @@
         "test_policy_knowledge_section_fenced_as_non_instruction_data",
         "test_examples_knowledge_section_fenced_as_non_instruction_data",
         "test_fenced_blocks_have_no_cross_fence_pollution",
-        "test_fenced_blocks_payload_remains_intact"
+        "test_fenced_blocks_payload_remains_intact",
+        "test_ephemeral_knowledge_section_fenced_as_non_instruction_data"
       ],
-      "totalLines": 610,
+      "totalLines": 633,
       "hasStructuralAnalysis": true
     },
     "tests/unit/cognitive/test_decider.py": {
@@ -41528,14 +42713,22 @@
     },
     "tests/unit/cognitive/test_director.py": {
       "filePath": "tests/unit/cognitive/test_director.py",
-      "contentHash": "c04840dc5e427a7b3fc2e69d0f29fc2004325c43724dfb84561b46bc367a2854",
+      "contentHash": "04291770c6cf1c7c06df2f7189c1c0665604535cb869fe9b346ceebd8a4c7942",
       "functions": [
         {
           "name": "_h6_template_gate",
           "params": [],
           "returnType": "TemplateGate",
           "exported": true,
-          "lineCount": 37
+          "lineCount": 17
+        },
+        {
+          "name": "_pure_greeting_cut_using_tc",
+          "params": [
+            "classifier"
+          ],
+          "exported": true,
+          "lineCount": 5
         },
         {
           "name": "_profile",
@@ -41552,6 +42745,15 @@
           "returnType": "Comprehension",
           "exported": true,
           "lineCount": 16
+        },
+        {
+          "name": "_saludo_comprehension",
+          "params": [
+            "**overrides"
+          ],
+          "returnType": "Comprehension",
+          "exported": true,
+          "lineCount": 11
         },
         {
           "name": "_turn",
@@ -41578,12 +42780,16 @@
             "recent_intents",
             "repetition_guard",
             "template_gate",
+            "pure_greeting_cut",
+            "saludo_response_pool",
+            "saludo_rng",
             "naturalness_min",
-            "persona_catalog_provider"
+            "persona_catalog_provider",
+            "phatic_auto_send"
           ],
           "returnType": "tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]",
           "exported": true,
-          "lineCount": 49
+          "lineCount": 58
         },
         {
           "name": "test_happy_path_approve",
@@ -41889,32 +43095,95 @@
           "lineCount": 8
         },
         {
-          "name": "test_h6_short_hola_template_approve_skips_pipeline",
+          "name": "_wire_stage_spies",
+          "params": [
+            "director"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "test_h6_short_hola_runs_analyst_then_saludo_template_cut",
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 35
+          "lineCount": 38
         },
         {
-          "name": "test_h6_long_hola_does_not_template_runs_pipeline",
+          "name": "test_h6_saludo_cut_sends_when_phatic_auto_send",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 38
+        },
+        {
+          "name": "test_h6_long_hola_request_runs_full_pipeline_even_if_analyst_says_saludar",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "test_h6_mixed_saludo_with_emotional_load_runs_full_pipeline",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "test_h6_non_saludar_intent_runs_full_pipeline",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "test_h6_empty_saludo_pool_fails_open_to_full_pipeline",
+          "params": [
+            "pool"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "test_h6_saludo_con_afecto_carinosa_still_cuts",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "test_h6_texto_muy_corto_fails_open_to_full_pipeline",
           "params": [],
           "returnType": "None",
           "exported": true,
           "lineCount": 19
         },
         {
+          "name": "test_h6_phatic_non_saludo_intents_skip_saludo_pool_cut",
+          "params": [
+            "intent",
+            "text"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 35
+        },
+        {
           "name": "test_h6_ia_probe_template_exact_draft",
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 29
+          "lineCount": 25
         },
         {
           "name": "test_h6_template_decision_never_send_or_escalate",
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 15
+          "lineCount": 30
         },
         {
           "name": "test_h6_default_gate_none_does_not_false_fire_hola_diana",
@@ -41987,6 +43256,12 @@
       ],
       "imports": [
         {
+          "source": "typing",
+          "specifiers": [
+            "Any"
+          ]
+        },
+        {
           "source": "uuid",
           "specifiers": [
             "uuid4"
@@ -41996,6 +43271,13 @@
           "source": "pytest",
           "specifiers": [
             "pytest"
+          ]
+        },
+        {
+          "source": "diana.application.turn_classifier",
+          "specifiers": [
+            "TurnClassifier",
+            "make_pure_greeting_cut"
           ]
         },
         {
@@ -42102,8 +43384,10 @@
       ],
       "exports": [
         "_h6_template_gate",
+        "_pure_greeting_cut_using_tc",
         "_profile",
         "_comprehension",
+        "_saludo_comprehension",
         "_turn",
         "make_director",
         "test_happy_path_approve",
@@ -42149,8 +43433,16 @@
         "test_naturalness_second_generate_empty_fail_closed",
         "test_naturalness_custom_min_via_ctor",
         "_assert_zero_evaluation",
-        "test_h6_short_hola_template_approve_skips_pipeline",
-        "test_h6_long_hola_does_not_template_runs_pipeline",
+        "_wire_stage_spies",
+        "test_h6_short_hola_runs_analyst_then_saludo_template_cut",
+        "test_h6_saludo_cut_sends_when_phatic_auto_send",
+        "test_h6_long_hola_request_runs_full_pipeline_even_if_analyst_says_saludar",
+        "test_h6_mixed_saludo_with_emotional_load_runs_full_pipeline",
+        "test_h6_non_saludar_intent_runs_full_pipeline",
+        "test_h6_empty_saludo_pool_fails_open_to_full_pipeline",
+        "test_h6_saludo_con_afecto_carinosa_still_cuts",
+        "test_h6_texto_muy_corto_fails_open_to_full_pipeline",
+        "test_h6_phatic_non_saludo_intents_skip_saludo_pool_cut",
         "test_h6_ia_probe_template_exact_draft",
         "test_h6_template_decision_never_send_or_escalate",
         "test_h6_default_gate_none_does_not_false_fire_hola_diana",
@@ -42163,7 +43455,7 @@
         "test_persona_provider_non_list_rules_falls_back",
         "test_atencion_fallback_never_resolves_vip_persona"
       ],
-      "totalLines": 1848,
+      "totalLines": 2106,
       "hasStructuralAnalysis": true
     },
     "tests/unit/cognitive/test_director_knowledge_augmenter.py": {
@@ -42304,7 +43596,7 @@
     },
     "tests/unit/cognitive/test_director_logging.py": {
       "filePath": "tests/unit/cognitive/test_director_logging.py",
-      "contentHash": "40ea9762232f078924c8378f21364f62fdfd74e6bcef35d1718703895ee7a1e9",
+      "contentHash": "dde1289526fe140f6a4e4a607aab313759ce46414e796ddf17078c1644fb99e8",
       "functions": [
         {
           "name": "test_full_pipeline_logs_each_stage",
@@ -42317,6 +43609,15 @@
         },
         {
           "name": "test_template_h6_logs_rule",
+          "params": [
+            "caplog"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "test_template_h6_ia_logs_pre_pipeline",
           "params": [
             "caplog"
           ],
@@ -42376,9 +43677,10 @@
       "exports": [
         "test_full_pipeline_logs_each_stage",
         "test_template_h6_logs_rule",
+        "test_template_h6_ia_logs_pre_pipeline",
         "test_repetition_logs_escalation"
       ],
-      "totalLines": 79,
+      "totalLines": 106,
       "hasStructuralAnalysis": true
     },
     "tests/unit/cognitive/test_embedding.py": {
@@ -44401,7 +45703,7 @@
     },
     "tests/unit/cognitive/test_retrievers.py": {
       "filePath": "tests/unit/cognitive/test_retrievers.py",
-      "contentHash": "152a948c68c7bd9297627eee07f024e3b63796aa0ca6af53130cd463237d179e",
+      "contentHash": "c1b386c7c812b2bda58fbcdc50d5ce58cbdc93ecc64ea5731761ca04829a7c3c",
       "functions": [
         {
           "name": "_turn",
@@ -44529,7 +45831,7 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 27
+          "lineCount": 35
         },
         {
           "name": "test_retrievers_have_no_cross_peer_imports_ast",
@@ -44592,14 +45894,42 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 17
+          "lineCount": 31
         },
         {
           "name": "test_examples_retriever_counter_example",
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 36
+          "lineCount": 39
+        },
+        {
+          "name": "test_examples_retriever_counter_only_when_standard_empty",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "test_examples_retriever_forwards_vip_id",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "test_examples_and_policy_atencion_forward_vip_id_none",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 27
+        },
+        {
+          "name": "test_policy_retriever_forwards_scope_and_vip_id",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 17
         },
         {
           "name": "test_policy_static_tema_match_without_embeddings",
@@ -44867,6 +46197,10 @@
         "test_examples_retriever_returns_empty_on_no_results",
         "test_examples_retriever_formats_results",
         "test_examples_retriever_counter_example",
+        "test_examples_retriever_counter_only_when_standard_empty",
+        "test_examples_retriever_forwards_vip_id",
+        "test_examples_and_policy_atencion_forward_vip_id_none",
+        "test_policy_retriever_forwards_scope_and_vip_id",
         "test_policy_static_tema_match_without_embeddings",
         "test_policy_static_no_match_returns_empty_list",
         "test_policy_static_plus_db_merge_dedupes_by_rule",
@@ -44891,7 +46225,7 @@
         "test_schedule_fallback_is_channel_neutral_for_atencion",
         "test_policy_db_path_channel_scopes_atencion_to_all"
       ],
-      "totalLines": 1171,
+      "totalLines": 1294,
       "hasStructuralAnalysis": true
     },
     "tests/unit/cognitive/test_schedule_retriever.py": {
@@ -45098,7 +46432,7 @@
     },
     "tests/unit/cognitive/test_template_gate.py": {
       "filePath": "tests/unit/cognitive/test_template_gate.py",
-      "contentHash": "92bd3c1f6a360bfb2dad99be6f79621ee9e908588b85bfe775acf3398b7f0787",
+      "contentHash": "c1546e012e65db15227c8638075094b58060405114af2283f7193d3ea015196e",
       "functions": [
         {
           "name": "_saludo_gate",
@@ -45141,6 +46475,13 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 5
+        },
+        {
+          "name": "test_looks_like_pure_greeting_text_matches_gate_shape",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 8
         },
         {
           "name": "test_deteccion_ia_matches_probe_and_renders_exact",
@@ -45210,8 +46551,11 @@
         {
           "source": "diana.cognitive.template_gate",
           "specifiers": [
+            "PURE_GREETING_MAX_WORDS",
+            "PURE_GREETING_PATTERNS",
             "TemplateGate",
-            "TemplateRule"
+            "TemplateRule",
+            "looks_like_pure_greeting_text"
           ]
         }
       ],
@@ -45222,6 +46566,7 @@
         "test_empty_and_blank_text_return_none",
         "test_saludo_matches_short_hola_and_holis",
         "test_saludo_rejects_long_hola_message",
+        "test_looks_like_pure_greeting_text_matches_gate_shape",
         "test_deteccion_ia_matches_probe_and_renders_exact",
         "test_rule_order_deteccion_ia_beats_saludo_on_mixed_short",
         "test_phrase_trigger_matches_with_punctuation",
@@ -45231,7 +46576,7 @@
         "test_saludo_unaccented_aliases_match",
         "test_render_with_fixed_rng_is_stable_and_in_pool"
       ],
-      "totalLines": 158,
+      "totalLines": 162,
       "hasStructuralAnalysis": true
     },
     "tests/unit/cognitive/test_thresholds.py": {
@@ -46012,14 +47357,21 @@
     },
     "tests/unit/infrastructure/test_f1_schema_metadata.py": {
       "filePath": "tests/unit/infrastructure/test_f1_schema_metadata.py",
-      "contentHash": "3cbd3e80a655267013fe106868ea08d9482a7c20b80cc7560c43ce2d90abfcea",
+      "contentHash": "19bbcefda2e7cf607eb6f83d92a40ba917fd762b68e5ed0401e1cbd3293a0801",
       "functions": [
         {
-          "name": "test_orm_exposes_exactly_thirty_two_tables",
+          "name": "test_orm_exposes_exactly_thirty_four_tables",
           "params": [],
           "returnType": "None",
           "exported": true,
           "lineCount": 4
+        },
+        {
+          "name": "test_link_events_table_registers_expected_columns",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 15
         },
         {
           "name": "test_turn_category_log_has_shadow_columns",
@@ -46157,7 +47509,8 @@
         }
       ],
       "exports": [
-        "test_orm_exposes_exactly_thirty_two_tables",
+        "test_orm_exposes_exactly_thirty_four_tables",
+        "test_link_events_table_registers_expected_columns",
         "test_turn_category_log_has_shadow_columns",
         "test_evo_agente_check_constraint_names",
         "test_evo_agente_index_names",
@@ -46173,7 +47526,7 @@
         "test_migration_seed_keys_allowlist",
         "test_migration_011_pipeline_traces_chat_index"
       ],
-      "totalLines": 237,
+      "totalLines": 254,
       "hasStructuralAnalysis": true
     },
     "tests/unit/infrastructure/test_f3_calibration_migration.py": {
@@ -51392,7 +52745,7 @@
     },
     "tests/unit/telegram/test_bc_lifecycle_middleware.py": {
       "filePath": "tests/unit/telegram/test_bc_lifecycle_middleware.py",
-      "contentHash": "ff193f54be379e9bc89684b5d58a8092f18f3b48355939091de9e7392495af6e",
+      "contentHash": "6521eb0db770eebf7f715d05518820211bba05d1b9fbad86444cd2253e107aab",
       "functions": [
         {
           "name": "_fake_orchestrator",
@@ -51630,7 +52983,7 @@
     },
     "tests/unit/telegram/test_business_handler.py": {
       "filePath": "tests/unit/telegram/test_business_handler.py",
-      "contentHash": "fd7dd8226076b1237253c620ecc64d3affac752bfa12c810a0fd88bd62b697aa",
+      "contentHash": "54fea3fdcefc34ba2da47158cb10dee0b39b4f707b78c52f5606583664c3d4e3",
       "functions": [
         {
           "name": "_biz_message",
@@ -51638,6 +52991,88 @@
           "returnType": "Message",
           "exported": true,
           "lineCount": 9
+        },
+        {
+          "name": "_photo_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_video_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 16
+        },
+        {
+          "name": "_audio_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_media_message",
+          "params": [
+            "kind",
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "_voice_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "_video_note_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_document_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "_animation_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 6
+        },
+        {
+          "name": "_sticker_message",
+          "params": [
+            "caption"
+          ],
+          "returnType": "Message",
+          "exported": true,
+          "lineCount": 14
         },
         {
           "name": "test_maps_dto_and_calls_orchestrator_once",
@@ -51701,6 +53136,89 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 15
+        },
+        {
+          "name": "test_router_calls_on_vip_inbound_before_orchestrator",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 15
+        },
+        {
+          "name": "_assert_inbound_text",
+          "params": [
+            "msg",
+            "expected"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "test_photo_message_tagged_imagen",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "test_photo_with_caption_keeps_caption",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "test_video_message_tagged_video",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "test_video_with_caption_keeps_caption",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "test_audio_message_tagged_audio",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 2
+        },
+        {
+          "name": "test_remaining_media_types_tagged",
+          "params": [
+            "builder",
+            "expected"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "test_remaining_media_with_caption_keeps_caption",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "test_plain_text_message_unchanged",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 3
+        },
+        {
+          "name": "test_edited_media_message_gets_tag_and_keeps_edit_flag",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 12
         }
       ],
       "classes": [],
@@ -51709,6 +53227,7 @@
           "source": "unittest.mock",
           "specifiers": [
             "AsyncMock",
+            "MagicMock",
             "patch"
           ]
         },
@@ -51727,9 +53246,17 @@
         {
           "source": "aiogram.types",
           "specifiers": [
+            "Animation",
+            "Audio",
             "Chat",
+            "Document",
             "Message",
-            "User"
+            "PhotoSize",
+            "Sticker",
+            "User",
+            "Video",
+            "VideoNote",
+            "Voice"
           ]
         },
         {
@@ -51748,6 +53275,15 @@
       ],
       "exports": [
         "_biz_message",
+        "_photo_message",
+        "_video_message",
+        "_audio_message",
+        "_media_message",
+        "_voice_message",
+        "_video_note_message",
+        "_document_message",
+        "_animation_message",
+        "_sticker_message",
         "test_maps_dto_and_calls_orchestrator_once",
         "test_pure_helper_propagates_orchestrator_exception",
         "test_router_maps_channel_type_into_inbound",
@@ -51756,14 +53292,25 @@
         "test_router_default_counted_false",
         "test_edited_router_forwards_counted_marker",
         "test_edited_message_keeps_channel_and_is_edit",
-        "test_router_swallows_orchestrator_exception"
+        "test_router_swallows_orchestrator_exception",
+        "test_router_calls_on_vip_inbound_before_orchestrator",
+        "_assert_inbound_text",
+        "test_photo_message_tagged_imagen",
+        "test_photo_with_caption_keeps_caption",
+        "test_video_message_tagged_video",
+        "test_video_with_caption_keeps_caption",
+        "test_audio_message_tagged_audio",
+        "test_remaining_media_types_tagged",
+        "test_remaining_media_with_caption_keeps_caption",
+        "test_plain_text_message_unchanged",
+        "test_edited_media_message_gets_tag_and_keeps_edit_flag"
       ],
-      "totalLines": 175,
+      "totalLines": 387,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_callback_error_safety.py": {
       "filePath": "tests/unit/telegram/test_callback_error_safety.py",
-      "contentHash": "67cea316003158185065a31f594ea12ff9087f4ae219116e88ef6411dcd12b17",
+      "contentHash": "0180fecacb1cdde367b84a6add6ffb0d7e8ba53efe854e372a6d1a995895440f",
       "functions": [
         {
           "name": "_owner_callback",
@@ -51802,6 +53349,86 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 33
+        },
+        {
+          "name": "test_add_note_callback_starts_ttl_note_session",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 47
+        },
+        {
+          "name": "test_add_note_callback_unavailable_without_session_store",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 22
+        },
+        {
+          "name": "test_approve_answers_before_delivery",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 37
+        },
+        {
+          "name": "test_approve_edits_draft_with_live_progress",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 49
+        },
+        {
+          "name": "_regen_query",
+          "params": [
+            "turn_id",
+            "text"
+          ],
+          "returnType": "tuple",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "test_regen_edits_draft_with_regenerating_legend",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 32
+        },
+        {
+          "name": "test_regen_failure_restores_draft_after_regenerating_legend",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 33
+        },
+        {
+          "name": "test_regen_blocked_does_not_show_regenerating_legend",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 24
+        },
+        {
+          "name": "test_metrics_export_ships_full_json_document",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 42
+        },
+        {
+          "name": "test_metrics_back_edits_message_in_place",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 34
+        },
+        {
+          "name": "test_trace_detail_back_uses_parsed_page",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 43
         }
       ],
       "classes": [],
@@ -51809,6 +53436,7 @@
         {
           "source": "unittest.mock",
           "specifiers": [
+            "ANY",
             "AsyncMock",
             "MagicMock",
             "patch"
@@ -51829,10 +53457,23 @@
         {
           "source": "aiogram.types",
           "specifiers": [
+            "BufferedInputFile",
             "CallbackQuery",
             "Chat",
             "Message",
             "User"
+          ]
+        },
+        {
+          "source": "diana.application.draft_variants",
+          "specifiers": [
+            "VariantNavResult"
+          ]
+        },
+        {
+          "source": "diana.behavior.ports",
+          "specifiers": [
+            "DeliveryProgress"
           ]
         },
         {
@@ -51843,9 +53484,21 @@
           ]
         },
         {
+          "source": "diana.telegram.handlers.menu",
+          "specifiers": [
+            "MenuSessionStore"
+          ]
+        },
+        {
           "source": "diana.telegram.keyboards",
           "specifiers": [
-            "encode_callback"
+            "MENU_ROOT_TEXT",
+            "encode_add_note",
+            "encode_callback",
+            "encode_metrics_back",
+            "encode_metrics_export",
+            "encode_trace_page",
+            "encode_trace_view"
           ]
         }
       ],
@@ -51854,9 +53507,20 @@
         "test_standard_owner_callback_answers_alert_on_exception",
         "test_standard_owner_callback_answer_failure_swallowed",
         "test_escalate_callback_edits_draft_message",
-        "test_awaiting_correct_followup_failure_does_not_reanswer"
+        "test_awaiting_correct_followup_failure_does_not_reanswer",
+        "test_add_note_callback_starts_ttl_note_session",
+        "test_add_note_callback_unavailable_without_session_store",
+        "test_approve_answers_before_delivery",
+        "test_approve_edits_draft_with_live_progress",
+        "_regen_query",
+        "test_regen_edits_draft_with_regenerating_legend",
+        "test_regen_failure_restores_draft_after_regenerating_legend",
+        "test_regen_blocked_does_not_show_regenerating_legend",
+        "test_metrics_export_ships_full_json_document",
+        "test_metrics_back_edits_message_in_place",
+        "test_trace_detail_back_uses_parsed_page"
       ],
-      "totalLines": 171,
+      "totalLines": 596,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_callbacks.py": {
@@ -53645,7 +55309,7 @@
     },
     "tests/unit/telegram/test_memory_approval_callbacks.py": {
       "filePath": "tests/unit/telegram/test_memory_approval_callbacks.py",
-      "contentHash": "562dfaf60ce802b405ad9cec219cab838060a237edd3255191396c75ed95d17e",
+      "contentHash": "60ce0902d65ab8fe7f217cdfe06cb05a46cd2612486d0372086669a6e48d3523",
       "functions": [
         {
           "name": "memory",
@@ -53712,6 +55376,15 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 7
+        },
+        {
+          "name": "test_discard_toast_uses_show_alert",
+          "params": [
+            "memory"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 21
         }
       ],
       "classes": [],
@@ -53732,6 +55405,13 @@
           "source": "pytest",
           "specifiers": [
             "pytest"
+          ]
+        },
+        {
+          "source": "aiogram.types",
+          "specifiers": [
+            "CallbackQuery",
+            "User"
           ]
         },
         {
@@ -53757,9 +55437,10 @@
         "test_memory_none_unavailable",
         "test_invalid_callback_data",
         "test_stale_token_from_service",
-        "test_build_router_when_none"
+        "test_build_router_when_none",
+        "test_discard_toast_uses_show_alert"
       ],
-      "totalLines": 116,
+      "totalLines": 141,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_memory_approval_keyboards.py": {
@@ -53808,7 +55489,7 @@
     },
     "tests/unit/telegram/test_menu.py": {
       "filePath": "tests/unit/telegram/test_menu.py",
-      "contentHash": "fc75c9bf809a064385789ac832d8f8577493568737bd56f6f2312f22b2b322a0",
+      "contentHash": "1a5e84a0dfc67009f5e62637ceb4fdc88bc2a65005688eb2448861a08ab6a597",
       "functions": [
         {
           "name": "test_keyboard_shows_pausar_when_not_paused",
@@ -54023,7 +55704,7 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 10
+          "lineCount": 13
         },
         {
           "name": "test_config_toggle_activates_training_mode",
@@ -54065,7 +55746,21 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 21
+          "lineCount": 23
+        },
+        {
+          "name": "test_register_confirm_expired_is_rejected",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 25
+        },
+        {
+          "name": "test_delete_confirm_expired_is_rejected",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 22
         },
         {
           "name": "test_profile_keyboard_show_generate_button",
@@ -54073,6 +55768,71 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 11
+        },
+        {
+          "name": "test_profile_keyboard_per_item_delete_buttons",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 21
+        },
+        {
+          "name": "test_profile_keyboard_no_delete_buttons_without_data",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "test_profile_keyboard_skips_overlong_fact_key",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "_fake_profile_admin",
+          "params": [
+            "content"
+          ],
+          "returnType": "object",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "test_profile_action_shows_delete_buttons_per_item",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 30
+        },
+        {
+          "name": "test_note_del_from_ficha_deletes_note",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 37
+        },
+        {
+          "name": "test_fact_del_from_ficha_deletes_fact",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 36
+        },
+        {
+          "name": "test_stale_vip_button_redirects_to_list_when_deactivated",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 28
+        },
+        {
+          "name": "test_active_vip_card_still_shows_actions",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 28
         },
         {
           "name": "test_format_vip_profile_renders_memory_section",
@@ -54115,6 +55875,122 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 23
+        },
+        {
+          "name": "_text_msg",
+          "params": [
+            "text",
+            "forward_origin"
+          ],
+          "returnType": "AsyncMock",
+          "exported": true,
+          "lineCount": 13
+        },
+        {
+          "name": "_bot",
+          "params": [],
+          "returnType": "AsyncMock",
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "test_note_text_empty_keeps_wizard_alive",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 14
+        },
+        {
+          "name": "test_note_text_invalid_forward_keeps_sandbox_wizard_alive",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "test_has_active_menu_session_skips_commands",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 8
+        },
+        {
+          "name": "test_has_active_menu_session_matches_forwarded_command",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "test_confirmation_live_until_consumed",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 7
+        },
+        {
+          "name": "test_confirmation_expires_by_ttl",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 9
+        },
+        {
+          "name": "test_confirmation_is_not_tied_to_active_menu_session",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 5
+        },
+        {
+          "name": "_rendered_keyboard",
+          "params": [
+            "msg"
+          ],
+          "exported": true,
+          "lineCount": 4
+        },
+        {
+          "name": "test_profile_unavailable_has_back_keyboard",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "test_register_invalid_id_has_back_keyboard",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 20
+        },
+        {
+          "name": "test_sandbox_off_no_active_has_back_keyboard",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 18
+        },
+        {
+          "name": "test_session_status_none_live_expired",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "test_has_active_menu_session_matches_expired_for_warning",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "test_menu_session_text_expired_warns_and_clears",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 28
         }
       ],
       "classes": [
@@ -54138,6 +56014,15 @@
           "properties": [],
           "exported": true,
           "lineCount": 8
+        },
+        {
+          "name": "_NoActiveSandbox",
+          "methods": [
+            "get_focus_chat_id"
+          ],
+          "properties": [],
+          "exported": true,
+          "lineCount": 3
         }
       ],
       "imports": [
@@ -54196,9 +56081,13 @@
         {
           "source": "diana.telegram.handlers.menu",
           "specifiers": [
+            "HasActiveMenuSession",
+            "MenuSessionStore",
             "_dispatch_action",
             "_format_vip_profile",
-            "MenuSessionStore"
+            "_handle_note_text",
+            "_handle_sandbox_forward",
+            "build_menu_router"
           ]
         },
         {
@@ -54250,15 +56139,43 @@
         "test_profile_generate_enqueues_backfill",
         "test_profile_generate_unavailable_without_queue",
         "test_register_confirm_enqueues_backfill",
+        "test_register_confirm_expired_is_rejected",
+        "test_delete_confirm_expired_is_rejected",
         "test_profile_keyboard_show_generate_button",
+        "test_profile_keyboard_per_item_delete_buttons",
+        "test_profile_keyboard_no_delete_buttons_without_data",
+        "test_profile_keyboard_skips_overlong_fact_key",
+        "_fake_profile_admin",
+        "test_profile_action_shows_delete_buttons_per_item",
+        "test_note_del_from_ficha_deletes_note",
+        "test_fact_del_from_ficha_deletes_fact",
+        "test_stale_vip_button_redirects_to_list_when_deactivated",
+        "test_active_vip_card_still_shows_actions",
         "test_format_vip_profile_renders_memory_section",
         "test_format_vip_profile_empty_manual_with_memory",
         "test_format_vip_profile_empty_without_memory_stays_empty_card",
         "test_format_vip_profile_renders_trust_section",
         "test_format_vip_profile_empty_with_trust_shows_trust",
-        "test_format_vip_profile_no_trust_no_section"
+        "test_format_vip_profile_no_trust_no_section",
+        "_text_msg",
+        "_bot",
+        "test_note_text_empty_keeps_wizard_alive",
+        "test_note_text_invalid_forward_keeps_sandbox_wizard_alive",
+        "test_has_active_menu_session_skips_commands",
+        "test_has_active_menu_session_matches_forwarded_command",
+        "test_confirmation_live_until_consumed",
+        "test_confirmation_expires_by_ttl",
+        "test_confirmation_is_not_tied_to_active_menu_session",
+        "_rendered_keyboard",
+        "test_profile_unavailable_has_back_keyboard",
+        "test_register_invalid_id_has_back_keyboard",
+        "_NoActiveSandbox",
+        "test_sandbox_off_no_active_has_back_keyboard",
+        "test_session_status_none_live_expired",
+        "test_has_active_menu_session_matches_expired_for_warning",
+        "test_menu_session_text_expired_warns_and_clears"
       ],
-      "totalLines": 899,
+      "totalLines": 1447,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_metrics_callbacks.py": {
@@ -54407,14 +56324,14 @@
     },
     "tests/unit/telegram/test_middleware_stack.py": {
       "filePath": "tests/unit/telegram/test_middleware_stack.py",
-      "contentHash": "2b12384e8a2074502a138a259927aa5e8e6579c2ba030c54fee4cc87c203da38",
+      "contentHash": "b33b1d225e0b849ca195542ba0830fa408f327de65f26f46bc843a641f2c9fc8",
       "functions": [
         {
           "name": "test_f2_middleware_order_constant",
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 13
+          "lineCount": 14
         },
         {
           "name": "test_f2_middleware_includes_freeze_check",
@@ -54516,12 +56433,12 @@
         "test_build_dispatcher_registers_f2_order_on_business_message",
         "test_build_dispatcher_applies_ops_knobs_to_middleware_instances"
       ],
-      "totalLines": 146,
+      "totalLines": 147,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_notifier.py": {
       "filePath": "tests/unit/telegram/test_notifier.py",
-      "contentHash": "43efaafd9228ce2fbeb93c7b6d3fe5c60aaa74b1b69db9f848ae0ac57c9f21b1",
+      "contentHash": "95c2863916ae7e36aa34c8a013629e56b2943358960aaf3ebeeccb12946afe80",
       "functions": [
         {
           "name": "test_callback_encode_parse_roundtrip",
@@ -54535,7 +56452,14 @@
           "params": [],
           "returnType": "None",
           "exported": true,
-          "lineCount": 23
+          "lineCount": 24
+        },
+        {
+          "name": "test_notify_draft_quality_row_when_flagged",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 20
         },
         {
           "name": "test_notify_escalation_sends_dm",
@@ -54550,6 +56474,27 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 22
+        },
+        {
+          "name": "test_notify_link_includes_approved_copy_and_buttons",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 19
+        },
+        {
+          "name": "test_notify_link_normalizes_at_prefixed_username",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 10
+        },
+        {
+          "name": "test_notify_link_without_username_shows_display_name_only",
+          "params": [],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 11
         }
       ],
       "classes": [],
@@ -54583,7 +56528,8 @@
           "source": "diana.application.ports",
           "specifiers": [
             "DraftNotification",
-            "EscalationNotification"
+            "EscalationNotification",
+            "LinkNotification"
           ]
         },
         {
@@ -54603,10 +56549,14 @@
       "exports": [
         "test_callback_encode_parse_roundtrip",
         "test_notify_draft_includes_markup_with_turn_id",
+        "test_notify_draft_quality_row_when_flagged",
         "test_notify_escalation_sends_dm",
-        "test_notify_escalation_includes_spanish_label"
+        "test_notify_escalation_includes_spanish_label",
+        "test_notify_link_includes_approved_copy_and_buttons",
+        "test_notify_link_normalizes_at_prefixed_username",
+        "test_notify_link_without_username_shows_display_name_only"
       ],
-      "totalLines": 90,
+      "totalLines": 167,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_owner_mw.py": {
@@ -54739,7 +56689,7 @@
     },
     "tests/unit/telegram/test_persona_admin_menu.py": {
       "filePath": "tests/unit/telegram/test_persona_admin_menu.py",
-      "contentHash": "79d1043f76a9b133d57133d1f7495ae0a18edc24d256cccc029172a76c7484fc",
+      "contentHash": "455a2d3f1a7b02d8d9d626ede00551966d98ffb9b539c35bb8fb35afc3a2079a",
       "functions": [
         {
           "name": "_msg",
@@ -55456,7 +57406,7 @@
     },
     "tests/unit/telegram/test_staging_callbacks.py": {
       "filePath": "tests/unit/telegram/test_staging_callbacks.py",
-      "contentHash": "bc9ee2147e27a8b967448f81ae42d502e9d020711e568d96683560e3454951d2",
+      "contentHash": "b2da265667c48562110faafd9002242e42c9e643ca9498df96f8c9188860a767",
       "functions": [
         {
           "name": "staging",
@@ -55475,7 +57425,25 @@
           "lineCount": 11
         },
         {
-          "name": "test_owner_discard_success",
+          "name": "test_owner_discard_arms_confirm_prompt",
+          "params": [
+            "staging"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 12
+        },
+        {
+          "name": "test_owner_discard_confirm_deletes",
+          "params": [
+            "staging"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 11
+        },
+        {
+          "name": "test_owner_discard_cancel_keeps_candidate",
           "params": [
             "staging"
           ],
@@ -55527,7 +57495,7 @@
           "lineCount": 13
         },
         {
-          "name": "test_discard_value_error_stale",
+          "name": "test_discard_confirm_value_error_stale",
           "params": [
             "staging"
           ],
@@ -55580,6 +57548,8 @@
           "source": "diana.telegram.keyboards",
           "specifiers": [
             "encode_staging_discard",
+            "encode_staging_discard_cancel",
+            "encode_staging_discard_confirm",
             "encode_staging_promote"
           ]
         }
@@ -55587,21 +57557,23 @@
       "exports": [
         "staging",
         "test_owner_promote_success",
-        "test_owner_discard_success",
+        "test_owner_discard_arms_confirm_prompt",
+        "test_owner_discard_confirm_deletes",
+        "test_owner_discard_cancel_keeps_candidate",
         "test_non_owner_forbidden",
         "test_staging_none_unavailable",
         "test_invalid_callback_data",
         "test_promote_value_error_stale",
         "test_promote_atencion_blocked_distinct_status",
-        "test_discard_value_error_stale",
+        "test_discard_confirm_value_error_stale",
         "test_build_staging_router_when_none"
       ],
-      "totalLines": 144,
+      "totalLines": 175,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_staging_keyboards.py": {
       "filePath": "tests/unit/telegram/test_staging_keyboards.py",
-      "contentHash": "6c922f9426c3fd856e929b7e8bfe6da2e1349fce466da58dc53e12173ce633da",
+      "contentHash": "ab117e874d302d2e744aa848893b020c5eb1c208ddeee918c0c802aa686cc384",
       "functions": [],
       "classes": [
         {
@@ -55609,14 +57581,16 @@
           "methods": [
             "test_promote_roundtrip",
             "test_discard_roundtrip",
+            "test_discard_confirm_cancel_roundtrip",
             "test_encoded_under_64_bytes",
             "test_parse_rejects_foreign_prefixes",
             "test_parse_callback_ignores_staging_prefixes",
-            "test_keyboard_buttons_spanish"
+            "test_keyboard_buttons_spanish",
+            "test_discard_confirm_keyboard_buttons"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 38
+          "lineCount": 72
         }
       ],
       "imports": [
@@ -55630,17 +57604,20 @@
           "source": "diana.telegram.keyboards",
           "specifiers": [
             "encode_staging_discard",
+            "encode_staging_discard_cancel",
+            "encode_staging_discard_confirm",
             "encode_staging_promote",
             "parse_callback",
             "parse_staging_callback",
-            "staging_candidate_keyboard"
+            "staging_candidate_keyboard",
+            "staging_discard_confirm_keyboard"
           ]
         }
       ],
       "exports": [
         "TestStagingKeyboards"
       ],
-      "totalLines": 54,
+      "totalLines": 91,
       "hasStructuralAnalysis": true
     },
     "tests/unit/telegram/test_staging_list_command.py": {
@@ -56051,7 +58028,7 @@
     },
     "tests/unit/telegram/test_trace_keyboards.py": {
       "filePath": "tests/unit/telegram/test_trace_keyboards.py",
-      "contentHash": "a9f93214e10602e4c7607c55ba0692d5a4612ed0e6f78a79820c5e9643bec09c",
+      "contentHash": "2cc4ff314ff90c301a16c676da605215ea0b0cf070be5857a69123bdbc2e231c",
       "functions": [
         {
           "name": "turn_id",
@@ -56082,6 +58059,7 @@
           "methods": [
             "test_parse_trace_view_callback",
             "test_parse_trace_view_from_draft_callback",
+            "test_parse_trace_view_callback_with_page",
             "test_parse_trace_detail_callback",
             "test_parse_trace_detail_from_draft_callback",
             "test_parse_trace_back_to_draft_callback",
@@ -56092,29 +58070,32 @@
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 68
+          "lineCount": 77
         },
         {
           "name": "TestTraceListKeyboard",
           "methods": [
             "test_basic_structure",
+            "test_back_to_menu_row_present",
+            "test_turn_buttons_carry_current_page",
             "test_pagination_previous_hidden_on_page_0",
             "test_pagination_next_hidden_on_last_page"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 32
+          "lineCount": 50
         },
         {
           "name": "TestTraceDetailKeyboard",
           "methods": [
             "test_contains_all_steps",
             "test_step_buttons_use_plain_trace_detail_callback",
-            "test_shows_timings_when_present"
+            "test_shows_timings_when_present",
+            "test_back_to_turns_restores_page"
           ],
           "properties": [],
           "exported": true,
-          "lineCount": 28
+          "lineCount": 37
         },
         {
           "name": "TestTraceDetailKeyboardFromDraft",
@@ -56178,6 +58159,7 @@
             "TraceCallbackData",
             "draft_keyboard",
             "encode_callback",
+            "encode_menu",
             "encode_trace_back_to_draft",
             "encode_trace_detail",
             "encode_trace_json",
@@ -56201,12 +58183,12 @@
         "TestValueErrorOnLargeCallback",
         "TestDraftKeyboard"
       ],
-      "totalLines": 261,
+      "totalLines": 298,
       "hasStructuralAnalysis": true
     },
     "tests/unit/test_composition_wiring.py": {
       "filePath": "tests/unit/test_composition_wiring.py",
-      "contentHash": "c21ed9b44abaeeee359c761ef765b0dd88a930d8eb728a4224cddfe866a5e4ee",
+      "contentHash": "004014d88f7d28fdeed2aa235bea07588e428e2186471fe589440a997d06ae3a",
       "functions": [
         {
           "name": "_comp_src",
@@ -56377,7 +58359,7 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 14
+          "lineCount": 15
         },
         {
           "name": "test_composition_promo_service_wired",
@@ -56561,7 +58543,16 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 18
+          "lineCount": 25
+        },
+        {
+          "name": "test_composition_phatic_auto_send_wired_from_settings_not_autonomy",
+          "params": [
+            "_comp_src"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 19
         },
         {
           "name": "test_persona_reglas_estilo_no_j2_examples_note",
@@ -56594,6 +58585,15 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 17
+        },
+        {
+          "name": "test_composition_quality_feedback_flag_wired",
+          "params": [
+            "_comp_src"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 8
         },
         {
           "name": "test_composition_dispatcher_receives_staging",
@@ -56871,10 +58871,12 @@
         "test_composition_profiles_repo_wired",
         "test_composition_repetition_guard_disabled",
         "test_composition_template_gate_wired",
+        "test_composition_phatic_auto_send_wired_from_settings_not_autonomy",
         "test_persona_reglas_estilo_no_j2_examples_note",
         "test_setup_forbidden_middleware_still_accepts_behavior_kw",
         "test_composition_sandbox_wired",
         "test_composition_admin_receives_staging_when_enabled",
+        "test_composition_quality_feedback_flag_wired",
         "test_composition_dispatcher_receives_staging",
         "test_setup_includes_staging_router_before_callbacks",
         "test_setup_auth_and_admin_receive_sandbox",
@@ -56900,12 +58902,12 @@
         "test_composition_trust_budget_wired_flag_exposed",
         "test_composition_load_runtime_thresholds_reads_trust"
       ],
-      "totalLines": 744,
+      "totalLines": 783,
       "hasStructuralAnalysis": true
     },
     "tests/unit/test_config.py": {
       "filePath": "tests/unit/test_config.py",
-      "contentHash": "b9fb2c08a28f0f97906235cd144762bfc7499bae1390d4a15e8c537eb2365203",
+      "contentHash": "842ad6dc0785d1fe6aefd71b3d017e53cfed6e123902940f53c3b984d1abca5b",
       "functions": [
         {
           "name": "_set_required_env",
@@ -57077,7 +59079,17 @@
           ],
           "returnType": "None",
           "exported": true,
-          "lineCount": 26
+          "lineCount": 29
+        },
+        {
+          "name": "test_settings_feature_phatic_auto_send_env_true",
+          "params": [
+            "clear_settings_env",
+            "monkeypatch"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 14
         },
         {
           "name": "test_settings_evo_agente_fase_2_3_threshold_defaults",
@@ -57110,6 +59122,16 @@
           "returnType": "None",
           "exported": true,
           "lineCount": 24
+        },
+        {
+          "name": "test_settings_quality_feedback_flag_env_override_true",
+          "params": [
+            "clear_settings_env",
+            "monkeypatch"
+          ],
+          "returnType": "None",
+          "exported": true,
+          "lineCount": 13
         },
         {
           "name": "test_random_delay_policy_rejects_invalid_ranges",
@@ -57203,9 +59225,11 @@
         "test_settings_delivery_retry_and_delay_defaults",
         "test_settings_rejects_non_positive_delay_min",
         "test_settings_feature_flag_defaults_are_false",
+        "test_settings_feature_phatic_auto_send_env_true",
         "test_settings_evo_agente_fase_2_3_threshold_defaults",
         "test_settings_trust_budget_defaults_conservative",
         "test_settings_f3_flag_env_override_true",
+        "test_settings_quality_feedback_flag_env_override_true",
         "test_random_delay_policy_rejects_invalid_ranges",
         "test_random_delay_policy_mode_ranges",
         "test_settings_rejects_invalid_numeric_and_log_level",
@@ -57213,7 +59237,7 @@
         "test_settings_accepts_loopback_health_hosts",
         "test_settings_rejects_non_loopback_health_host"
       ],
-      "totalLines": 459,
+      "totalLines": 493,
       "hasStructuralAnalysis": true
     },
     "tests/unit/test_f5_anti_contamination.py": {
@@ -57768,22 +59792,22 @@
     },
     "wiki/concepts/anti-contaminacion.md": {
       "filePath": "wiki/concepts/anti-contaminacion.md",
-      "contentHash": "214462b4c9f72a0a518541ed07fb828ea0ed3d4b65ce26022240c7ff7598a3e2",
+      "contentHash": "0f70b580a20704bd20878eef087a8ef9b546e6096cb109fc335252808f3da813",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 30,
+      "totalLines": 50,
       "hasStructuralAnalysis": true
     },
     "wiki/concepts/aprendizaje-post-turno.md": {
       "filePath": "wiki/concepts/aprendizaje-post-turno.md",
-      "contentHash": "f8cdb8546faa64247ac88d8b8f9e6f18391cd119c33235e074bf991b3a20c22f",
+      "contentHash": "7a061d8e6e712f9fc48e6596cf2102336635030116bdb491e3a830ded2b036ce",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 33,
+      "totalLines": 36,
       "hasStructuralAnalysis": true
     },
     "wiki/concepts/calibracion-de-umbrales.md": {
@@ -57808,12 +59832,12 @@
     },
     "wiki/concepts/capability-registry.md": {
       "filePath": "wiki/concepts/capability-registry.md",
-      "contentHash": "2228791ff8a1929665860c6d05686c5b4519ec9bbb69d18bc24727a96cb4649c",
+      "contentHash": "8698ccbf61eb2342475a09ce5a62d34d02e2adb6fa54dd84ced98667aa84bb92",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 37,
+      "totalLines": 48,
       "hasStructuralAnalysis": true
     },
     "wiki/concepts/comunicacion-con-producto.md": {
@@ -57828,12 +59852,12 @@
     },
     "wiki/concepts/decisor.md": {
       "filePath": "wiki/concepts/decisor.md",
-      "contentHash": "4c79faa7e44fe0a2488025d3dbf4a312da02ee8047bdc1dd068571565f60c2cc",
+      "contentHash": "ecd9dfde19ab7bdf005efc80ce7e1d31944f222726eb19bcc51268695e75c75b",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 39,
+      "totalLines": 48,
       "hasStructuralAnalysis": true
     },
     "wiki/concepts/detector-emocional.md": {
@@ -57868,12 +59892,12 @@
     },
     "wiki/concepts/feature-flags.md": {
       "filePath": "wiki/concepts/feature-flags.md",
-      "contentHash": "7fc1ff63553e757e187d782443a50c59bdcbb11f8d8aa859aeab17bec3fb0abb",
+      "contentHash": "338b89fb1221fd73519e87a8faddbee8f194f7381e99d9d1409478b910438213",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 34,
+      "totalLines": 104,
       "hasStructuralAnalysis": true
     },
     "wiki/concepts/memoria-vip.md": {
@@ -57958,47 +59982,7 @@
     },
     "wiki/concepts/zona-gris-y-politicas.md": {
       "filePath": "wiki/concepts/zona-gris-y-politicas.md",
-      "contentHash": "4eec4084002597170af92a51735cd885834f487031e8207486657238aeb50d5c",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 37,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/comandos/superficie-admin.md": {
-      "filePath": "wiki/entities/comandos/superficie-admin.md",
-      "contentHash": "49e04491b37ce4feaf5c3e65edd290c165bd23bd93964053e6297450aa419f73",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 41,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/modulos/application-services.md": {
-      "filePath": "wiki/entities/modulos/application-services.md",
-      "contentHash": "886d1157f2718592ec1feb4522471ca0d5ade060f2032d240298a683b42197a1",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 48,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/modulos/behavior-engine.md": {
-      "filePath": "wiki/entities/modulos/behavior-engine.md",
-      "contentHash": "947d2f932109ccc438cf5add9c02c6f2e8d840e6fdf5ddda0cc39da6a3ba2263",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 41,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/modulos/cognitive-core.md": {
-      "filePath": "wiki/entities/modulos/cognitive-core.md",
-      "contentHash": "a4170aee67fa38e8ad29d8a835a1c3084901756f9fbad844b7357aeee1139056",
+      "contentHash": "0db84d68904bda38cddf5b3b29a4bcf0caf597d24976256353761f8adc4a9577",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -58006,49 +59990,49 @@
       "totalLines": 49,
       "hasStructuralAnalysis": true
     },
+    "wiki/entities/comandos/superficie-admin.md": {
+      "filePath": "wiki/entities/comandos/superficie-admin.md",
+      "contentHash": "faf094de0530b6147dd4f9ece2560b9141c921ba98a547862559464e9e758a7b",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 62,
+      "hasStructuralAnalysis": true
+    },
+    "wiki/entities/modulos/application-services.md": {
+      "filePath": "wiki/entities/modulos/application-services.md",
+      "contentHash": "e529b75c941d506d25f0cccf5e63da545a8203f34b553df4c8ce7881724491e6",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 51,
+      "hasStructuralAnalysis": true
+    },
+    "wiki/entities/modulos/behavior-engine.md": {
+      "filePath": "wiki/entities/modulos/behavior-engine.md",
+      "contentHash": "2b53dba0bd3b1c67059b4ac3c2a7165625856516ce8db97749c3b2d125494e1c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 44,
+      "hasStructuralAnalysis": true
+    },
+    "wiki/entities/modulos/cognitive-core.md": {
+      "filePath": "wiki/entities/modulos/cognitive-core.md",
+      "contentHash": "cb89b8f102ddac45af58d6d3f0d1c1eb61840c1a87d51f36118df32c6e09b8d7",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 52,
+      "hasStructuralAnalysis": true
+    },
     "wiki/entities/modulos/infrastructure-persistence.md": {
       "filePath": "wiki/entities/modulos/infrastructure-persistence.md",
-      "contentHash": "8a932d420314b8ce3448fa04d8b2f16f7e4d05a5b3b22fcdf4e4ff51defca19d",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 35,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/modulos/jobs.md": {
-      "filePath": "wiki/entities/modulos/jobs.md",
-      "contentHash": "26e965e3431fa6898e0597c80ad55b9c08030fb8e097557babb558bddb02d119",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 45,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/modulos/learning.md": {
-      "filePath": "wiki/entities/modulos/learning.md",
-      "contentHash": "69ef92b6c0d5b68ea1f1d92c841a508feb6e2a3a4f3adaa56a8c05da7b0b0d49",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 35,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/modulos/llm-provider.md": {
-      "filePath": "wiki/entities/modulos/llm-provider.md",
-      "contentHash": "abc509598db2850ba78ca4819edd274ba300b2b2f4be075e808819c68286fcd9",
-      "functions": [],
-      "classes": [],
-      "imports": [],
-      "exports": [],
-      "totalLines": 35,
-      "hasStructuralAnalysis": true
-    },
-    "wiki/entities/modulos/telegram-layer.md": {
-      "filePath": "wiki/entities/modulos/telegram-layer.md",
-      "contentHash": "ef865b6c59118de16233e7db25992fa267c6f25ce60d542a70b6b26f0059f383",
+      "contentHash": "276a399fcc103f01f32ec45237d475b383b539412eebb3a6efa7df82ab1c89a4",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -58056,14 +60040,54 @@
       "totalLines": 42,
       "hasStructuralAnalysis": true
     },
-    "wiki/entities/modulos/turn-coordinator.md": {
-      "filePath": "wiki/entities/modulos/turn-coordinator.md",
-      "contentHash": "5cf7d169b120732f3f883edaba5a33aa601ed5b99b26b704714553d210e13ce1",
+    "wiki/entities/modulos/jobs.md": {
+      "filePath": "wiki/entities/modulos/jobs.md",
+      "contentHash": "5fbd56c0405a2bdb283e0c0eb4c0cc47724e152fa5eb5206c9eb88086c55a000",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 38,
+      "totalLines": 47,
+      "hasStructuralAnalysis": true
+    },
+    "wiki/entities/modulos/learning.md": {
+      "filePath": "wiki/entities/modulos/learning.md",
+      "contentHash": "25d08448bd996b55c5d229ca5a84533baa6409bf86fa022a80eacf63f47c6de3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 51,
+      "hasStructuralAnalysis": true
+    },
+    "wiki/entities/modulos/llm-provider.md": {
+      "filePath": "wiki/entities/modulos/llm-provider.md",
+      "contentHash": "9b465983b2c5a18cf2ba650af4735e0cb2d560c7060bda5ec3b2452a81ae030c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 40,
+      "hasStructuralAnalysis": true
+    },
+    "wiki/entities/modulos/telegram-layer.md": {
+      "filePath": "wiki/entities/modulos/telegram-layer.md",
+      "contentHash": "4b5901aec2040f462f94c1feb5b1be54f8ec0ad23a4b393dbb235a812837cb6f",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 53,
+      "hasStructuralAnalysis": true
+    },
+    "wiki/entities/modulos/turn-coordinator.md": {
+      "filePath": "wiki/entities/modulos/turn-coordinator.md",
+      "contentHash": "6c56200b40101cd69d241d5a596546918206774ca82ca6863828d51198b7c8c0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 51,
       "hasStructuralAnalysis": true
     },
     "wiki/entities/specs/agents-md.md": {
@@ -58078,22 +60102,22 @@
     },
     "wiki/entities/specs/changelog.md": {
       "filePath": "wiki/entities/specs/changelog.md",
-      "contentHash": "56d1ad474e5b3757ca7c74597fbb79ff6804a375e1e00a15d131aeaff10da30e",
+      "contentHash": "d1fde08ef71861af53bd4db2046563206c32842b19dde138333985e62394cab2",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 42,
+      "totalLines": 50,
       "hasStructuralAnalysis": true
     },
     "wiki/entities/specs/estado-del-proyecto.md": {
       "filePath": "wiki/entities/specs/estado-del-proyecto.md",
-      "contentHash": "6c1453e90012341b9117d8686b3059aaa0279981a098cc893220c8e2a7915524",
+      "contentHash": "e471be8b1d0c515d25c2b9ae2ff6b7509b2d6683c99e5aa4b9f8a045939361b8",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 38,
+      "totalLines": 39,
       "hasStructuralAnalysis": true
     },
     "wiki/entities/specs/informe-auditoria.md": {
@@ -58178,17 +60202,17 @@
     },
     "wiki/entities/tablas/esquema-conocimiento.md": {
       "filePath": "wiki/entities/tablas/esquema-conocimiento.md",
-      "contentHash": "f3aac0bacc0692bca6035502d4d965c54505e5349a537f7b01fbc8b43bfe153d",
+      "contentHash": "ee46ab5774fc331a1cefa57d598567e528e89db4746327e5ddfc13a4c89c6c22",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 28,
+      "totalLines": 32,
       "hasStructuralAnalysis": true
     },
     "wiki/entities/tablas/esquema-evolucion.md": {
       "filePath": "wiki/entities/tablas/esquema-evolucion.md",
-      "contentHash": "d819e995a5032b550155e88649a4335651333a621f29017d3d201b564e3d325a",
+      "contentHash": "f0045e510df247e99dc82787ecbcde677c3319f8191893334bf6633cbc1ab306",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -58198,17 +60222,17 @@
     },
     "wiki/entities/tablas/esquema-fase1.md": {
       "filePath": "wiki/entities/tablas/esquema-fase1.md",
-      "contentHash": "da5a6ec3f187a1ff75dac81576c058bcafc821e83c9a4611aff715725e5d214a",
+      "contentHash": "ea07c9fec996cbfcc69754f989aef39ef652d068396c4d49aeb6a1762f41e24a",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 29,
+      "totalLines": 30,
       "hasStructuralAnalysis": true
     },
     "wiki/entities/tablas/esquema-fase3.md": {
       "filePath": "wiki/entities/tablas/esquema-fase3.md",
-      "contentHash": "35db236254efcb18b574cb69bfe441283f4556a88f9ecf2faac2b0426c20789a",
+      "contentHash": "d8f1b87791e545d78a761e0863a94e66baf28925fd15297cf1000de50c72cc05",
       "functions": [],
       "classes": [],
       "imports": [],
@@ -58218,32 +60242,32 @@
     },
     "wiki/entities/tablas/esquema-fase4.md": {
       "filePath": "wiki/entities/tablas/esquema-fase4.md",
-      "contentHash": "1dd3ece61ab689f1c26fdfe85f6d59763b10158b87b50863ea8aaaba0805c1bf",
+      "contentHash": "0302007dde98321cc47a8dc1ea7fe2f50401d48270bbdc72242ebb20492fcdf6",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 29,
+      "totalLines": 31,
       "hasStructuralAnalysis": true
     },
     "wiki/index.md": {
       "filePath": "wiki/index.md",
-      "contentHash": "6bf11b39167e147f3a44a3e218f37936730dca2dd8339fe7a2e1f261d72cd15b",
+      "contentHash": "2e20812afd7f6aeecf033fbe59b38cb2c94deec5d5970275c0ea2547ecdcae1d",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 75,
+      "totalLines": 81,
       "hasStructuralAnalysis": true
     },
     "wiki/log.md": {
       "filePath": "wiki/log.md",
-      "contentHash": "e7b9b4fb7a5d9b5ee3556a1e4f9f3dc399b32d9b790fdd9c8457975e0d1de656",
+      "contentHash": "3ed671550dab7a43a087102b3009e7286ed4a3cca3b14a8c00f2eb4bb68a4b70",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 74,
+      "totalLines": 93,
       "hasStructuralAnalysis": true
     }
   }
