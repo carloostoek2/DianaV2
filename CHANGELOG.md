@@ -2,14 +2,29 @@
 
 Highlights of what's new and fixed in Diana, from her early releases through the latest work.
 
-## Owner control, Lucien link, and quality feedback — 2026-08-16
-
-*These shipped in code after the 2026-08-11 wiki freeze. Destacar/Reprender and the Lucien link stay off until their flags are turned on. Temporary events have no flag.*
+## Cognitive greeting and delivery polish — 2026-08-20
 
 ### ✨ New Features
-- **Destacar / Reprender on VIP drafts** (flag `FEATURE_QUALITY_FEEDBACK_ENABLED`, default off): the owner can mark a good reply as gold or send a correction now and later save the lesson for that VIP or for everyone. Attention-channel drafts never show these buttons.
-- **Gold-first example bank**: highlighted replies are retrieved before ordinary ones. Lessons can be global or VIP-scoped. This retrieval is live even when the buttons are off.
-- **Lucien → Diana VIP-kick notice** (flag `FEATURE_LINK_ENABLED`, default off): when Lucien removes a subscriber, Diana asks the owner to expel, disable, or keep that VIP.
+- **Paragraph-bubble delivery**: drafts are split into paragraph bubbles (blank-line blocks) before the character-length split, so multi-paragraph replies arrive as natural separate messages instead of one wall of text.
+- **Sending progress**: multi-segment deliveries show the owner a live "sending X/Y" progress indicator.
+- **Weighted delivery quirks**: quirk selection is weighted toward typo + self-correction, and the overall quirk rate is raised to 20%.
+
+### 🐛 Fixes
+- Fixed a startup hang in the memory backfill queue: the has-history check now uses a single cheap count query instead of walking the entire chat history page by page (which stalled the bot at boot against remote databases).
+
+## Cognitive greeting — 2026-08-16
+
+### ✨ New Features
+- **Pure-greeting template cut**: when an incoming message is a short, unambiguous greeting, Diana detects it right after the analysis step and answers with a prepared greeting template — without running the full cognitive pipeline.
+- **Template delivery through the orchestrator**: template replies flow through the same turn orchestration as normal replies, so they keep the standard delivery behavior (read, typing, send) and remain fully traceable.
+- **Phatic auto-send**: short greetings can be delivered without owner approval when the conversation's trust level allows it, with the safety rules of the cognitive pipeline applied before anything is sent.
+
+## Owner control, Lucien link, and quality feedback — 2026-08-16
+
+### ✨ New Features
+- **Destacar / Reprender on VIP drafts**: the owner can mark a good reply as gold or send a correction now and later save the lesson for that VIP or for everyone. Attention-channel drafts never show these buttons.
+- **Gold-first example bank**: highlighted replies are retrieved before ordinary ones. Lessons can be global or VIP-scoped.
+- **Lucien → Diana VIP-kick notice**: when Lucien removes a subscriber, Diana asks the owner to expel, disable, or keep that VIP.
 - **Temporary events**: the owner can inject a dated context note (start/end). It reaches the model as short-lived context and never mixes into VIP memory or the example bank.
 - **Live delivery feedback**: approving a draft shows seen → typing → sent; regenerate shows “Regenerando…”.
 - **Honest stale-button toasts** when Approve/Correct/Escalate no longer apply.
@@ -20,18 +35,14 @@ Highlights of what's new and fixed in Diana, from her early releases through the
 - If a VIP doctrine query fails to reach the owner, Diana unfreezes the VIP and sends the draft to approval instead of leaving them stuck.
 - Startup recovery handlers run as background tasks and never auto-send.
 
-### ⚠️ Ops notes
-- Repo database head is migration **029**. Production was last verified at **026** (2026-08-11). Apply 027 → 028 → 029 before relying on temporary events, the Lucien link, or quality columns.
-- Turning on Destacar/Reprender or the Lucien link is an owner decision, not automatic.
+## Agent evolution (shadow observation) — 2026-08-07
 
-## Agent Evolution (Shadow) — 2026-08-07
-
-*Observation-only: this new layer runs in shadow mode, so it measures how Diana would act without changing her live responses yet.*
+*Shadow mode is a capability, not a development stage: while the owner handles a real conversation, Diana runs her full cognitive process in parallel — analysis, generation, evaluation, and decision — without touching the delivery. At the end of the turn the system compares what Diana would have done with what the owner actually did, and that difference feeds her learning.*
 
 ### ✨ New Features
 - **Shadow agent-evolution engine**: a complete observational layer now watches how Diana handles each conversation — emotional signals, turn-by-turn self-assessment, mood, and per-VIP trust — and records it all for analysis.
 - **Emotional signal detection**: Diana now spots emotional cues in incoming messages with a lightweight local heuristic (no external AI calls).
-- **Automatic profile refresh**: when a VIP's conversation shows strong signals, Diana can now trigger a profile synthesis on her own, keeping VIP profiles current without a manual action.
+- **Automatic profile refresh**: when a VIP's conversation shows strong signals, Diana can trigger a profile synthesis on her own, keeping VIP profiles current without a manual action.
 - **Turn-by-turn self-classification**: for every turn, Diana records how she would have handled it autonomously and her confidence in that call.
 - **Three-axis mood engine**: Diana now tracks her emotional tone across conversations to keep her delivery consistent.
 - **Trust budget per VIP**: Diana keeps a running trust score per VIP based on how consistently she handles their conversations, with configurable thresholds and a status card.
