@@ -289,6 +289,23 @@ consult_doctrine → freeze → send_doctrine_query a la dueña
   → Si el DM ok: el VIP/chat sigue congelado hasta que la dueña responda
 ```
 
+4.17 Saludo puro VIP (FEATURE_PHATIC_AUTO_SEND)
+
+```
+business_message VIP
+  → Analyst (siempre; el saludo ya no se corta antes de entender)
+  → Corte a plantilla SOLO si las tres se cumplen:
+      1. intent == saludar
+      2. el texto es un saludo corto (hola/holis/buenas/qué tal, máximo 4 palabras)
+      3. clasificador fático confiable
+  → Si sí: plantilla fija "Holis 😁"
+      → flag ON: send directo al VIP (sin cola de la dueña)
+      → flag OFF: approve (cola de la dueña)
+  → Si no (pedido, pregunta, "dale", "ok", hola+contenido): pipeline completo
+```
+
+Invariante: que el Analista marque `saludar` NO basta. Sin keyword de saludo o con más de 4 palabras, nunca se usa la plantilla.
+
 ---
 
 4. Contratos críticos que ningún agente puede romper
@@ -457,6 +474,6 @@ AGENTS.md (este) Límites que ningún agente puede cruzar al tocar el código, c
 
 ---
 
-Fin de AGENTS.md v1.4 (Fase 3 + flujos 4.13–4.16 documentados 2026-08-16)
+Fin de AGENTS.md v1.4 (Fase 3 + flujos 4.13–4.17; candado de texto del saludo 2026-08-17)
 Última actualización: Agosto 2026
 Equipo de Arquitectura — Producto completo listo para desarrollo.

@@ -260,6 +260,15 @@ async def test_analyze_system_prompt_has_no_tone_or_policy_instructions() -> Non
 
 
 
+def test_system_prompt_saludar_only_for_pure_short_greeting() -> None:
+    """Analyst must not default casual/request turns to intent=saludar."""
+    from diana.cognitive import analyst as analyst_mod
+
+    system = analyst_mod._SYSTEM
+    assert "Use intent=saludar ONLY" in system
+    assert "never saludar" in system
+
+
 def test_system_prompt_mentions_persona_voice_needs() -> None:
     """H2: Analyst _SYSTEM lists new needs_* flags and usage hints."""
     from diana.cognitive import analyst as analyst_mod

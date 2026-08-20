@@ -27,6 +27,25 @@ class TemplateRule:
     reason: str
 
 
+# Historical saludo_constante shape (H6). Production no longer wires that
+# TemplateRule pre-pipeline; the post-Analyst cut reuses the same lock so a
+# mislabeled intent=saludar cannot canned-reply to real requests.
+PURE_GREETING_MAX_WORDS = 4
+PURE_GREETING_PATTERNS = (
+    "hola",
+    "holaa",
+    "holis",
+    "buenas",
+    "buenos días",
+    "buenos dias",
+    "buenas tardes",
+    "buenas noches",
+    "hey",
+    "qué tal",
+    "que tal",
+)
+
+
 def _kw_hit(kw: str, lower_text: str) -> bool:
     """Match keyword as a whole-token sequence on lowercased text.
 
@@ -38,6 +57,17 @@ def _kw_hit(kw: str, lower_text: str) -> bool:
         return False
     return re.search(rf"(?<!\w){re.escape(k)}(?!\w)", lower_text) is not None
 
+
+
+def looks_like_pure_greeting_text(text: str) -> bool:
+    """True when inbound text is a short greeting (keyword + ≤4 words)."""
+    if not text or not str(text).strip():
+        return False
+    words = str(text).strip().split()
+    if len(words) > PURE_GREETING_MAX_WORDS:
+        return False
+    lower = str(text).lower()
+    return any(_kw_hit(kw, lower) for kw in PURE_GREETING_PATTERNS)
 
 
 class TemplateGate:
@@ -67,4 +97,10 @@ class TemplateGate:
         return self._rng.choice(rule.response_pool)
 
 
-__all__ = ["TemplateRule", "TemplateGate"]
+__all__ = [
+    "PURE_GREETING_MAX_WORDS",
+    "PURE_GREETING_PATTERNS",
+    "TemplateRule",
+    "TemplateGate",
+    "looks_like_pure_greeting_text",
+]

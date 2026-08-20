@@ -1634,6 +1634,34 @@ async def test_h6_saludo_cut_sends_when_phatic_auto_send() -> None:
 
 
 @pytest.mark.asyncio
+async def test_h6_long_hola_request_runs_full_pipeline_even_if_analyst_says_saludar() -> None:
+    """A long Hola+request must not take the canned saludo pool."""
+    long_text = "Hola, tengo una pregunta sobre el contenido"
+    llm = FakeLLM(
+        structured_responses=[
+            _saludo_comprehension(),
+            _profile(safety=0.5),
+        ],
+        text_responses=["Request path draft"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+        phatic_auto_send=True,
+    )
+    turn = _turn(text=long_text)
+    decision = await director.handle_turn(turn)
+
+    assert decision.reason != "plantilla_saludo"
+    assert decision.draft_text == "Request path draft"
+    assert decision.draft_text not in SALUDO_POOL
+    assert trace.get(turn.turn_id, "plan") is not None
+    assert any(name == "generate" for name, _ in llm.calls)
+
+
+@pytest.mark.asyncio
 async def test_h6_mixed_saludo_with_emotional_load_runs_full_pipeline() -> None:
     """H6.6.2: ambiguous saludo+carga fails pure cut → full pipeline."""
     mixed_text = "Hola, es que no sé si contarte algo"

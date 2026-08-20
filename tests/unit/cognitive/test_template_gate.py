@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import random
 
-from diana.cognitive.template_gate import TemplateGate, TemplateRule
+from diana.cognitive.template_gate import (
+    PURE_GREETING_MAX_WORDS,
+    PURE_GREETING_PATTERNS,
+    TemplateGate,
+    TemplateRule,
+    looks_like_pure_greeting_text,
+)
 
 IA_TEMPLATE = "jsjsj si y sólo vivo en tu mente 😏"
 
@@ -27,20 +33,8 @@ DETECCION_IA = TemplateRule(
 
 SALUDO = TemplateRule(
     id="saludo_constante",
-    trigger_patterns=[
-        "hola",
-        "holaa",
-        "holis",
-        "buenas",
-        "buenos días",
-        "buenos dias",
-        "buenas tardes",
-        "buenas noches",
-        "hey",
-        "qué tal",
-        "que tal",
-    ],
-    max_words=4,
+    trigger_patterns=list(PURE_GREETING_PATTERNS),
+    max_words=PURE_GREETING_MAX_WORDS,
     response_pool=list(SALUDO_POOL),
     reason="plantilla_saludo",
 )
@@ -79,6 +73,16 @@ def test_saludo_rejects_long_hola_message() -> None:
     long_msg = "Hola, tengo una pregunta sobre el contenido"
     assert len(long_msg.strip().split()) > 4
     assert gate.match(long_msg) is None
+
+
+def test_looks_like_pure_greeting_text_matches_gate_shape() -> None:
+    assert looks_like_pure_greeting_text("Hola") is True
+    assert looks_like_pure_greeting_text("holis") is True
+    assert looks_like_pure_greeting_text("dale") is False
+    assert (
+        looks_like_pure_greeting_text("Hola, tengo una pregunta sobre el contenido")
+        is False
+    )
 
 
 def test_deteccion_ia_matches_probe_and_renders_exact() -> None:

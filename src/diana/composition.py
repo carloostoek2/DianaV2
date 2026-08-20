@@ -700,7 +700,7 @@ def build_app(
         response_pool=[IA_TEMPLATE],
         reason="plantilla_deteccion_ia",
     )
-    saludo_response_pool = ["Holis 😁", "Holaa, qué tal?", "Hola amor, cómo vas?"]
+    saludo_response_pool = ["Holis 😁"]
     template_gate = TemplateGate(rules=[deteccion_ia])
     director = CognitiveDirector(
         analyst=Analyst(provider),

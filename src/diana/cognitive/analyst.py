@@ -35,11 +35,17 @@ _SYSTEM = (
     # ROADMAP 5.2: closed intent catalog so RepetitionGuard's exact-string
     # match works reliably. Without this, two semantically-identical intents
     # ("saludar" vs "decir_hola") break streak detection silently.
-    "intent MUST be one of: saludar, preguntar_actividad, recordar_evento, "
+    "intent MUST be one of: preguntar_actividad, recordar_evento, "
     "queja, flirtear, agradecer, despedirse, compartir_logro, "
     "pedir_consejo, contar_anecdota, solicitar_contenido, "
     "consultar_politica, confirmar_entrega, dar_feedback, "
-    "otro. topics MUST be from: familia, duelo, estudios, trayectoria, "
+    "saludar, otro. "
+    "Use intent=saludar ONLY when the entire turno_actual is a short greeting "
+    "(hola / holis / buenas / qué tal) with no request, question, anecdote, "
+    "or other content. A message that starts with hola and then asks or tells "
+    "something is NOT saludar — pick the other intent. When unsure, use otro, "
+    "never saludar. "
+    "topics MUST be from: familia, duelo, estudios, trayectoria, "
     "vivienda, rutina, independencia, trabajo, contenido, canal, "
     "suscripcion, soporte, motivacion_personal, tema_pesado, saludo, "
     "ausencia, reencuentro, conexion, "

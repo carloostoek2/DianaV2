@@ -254,8 +254,50 @@ def test_is_pure_greeting_saludar_confident(clf: TurnClassifier) -> None:
     assert is_pure_greeting("Hola", _comp(intent="saludar"), classifier=clf) is True
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Holis",
+        "buenas noches",
+        "qué tal",
+        "Hola amor",
+    ],
+)
+def test_is_pure_greeting_accepts_short_greeting_forms(
+    clf: TurnClassifier, text: str
+) -> None:
+    assert is_pure_greeting(text, _comp(intent="saludar"), classifier=clf) is True
+
+
 def test_is_pure_greeting_rejects_agradecer(clf: TurnClassifier) -> None:
     assert is_pure_greeting("gracias", _comp(intent="agradecer"), classifier=clf) is False
+
+
+def test_is_pure_greeting_rejects_analyst_false_positive(clf: TurnClassifier) -> None:
+    """Analyst intent=saludar is not enough: text must look like a short greeting.
+
+    Without this lock the canned pool replies to any casual/request turn the
+    Analyst mislabels as saludar.
+    """
+    saludar = _comp(intent="saludar")
+    assert is_pure_greeting("ok", saludar, classifier=clf) is False
+    assert is_pure_greeting("dale", saludar, classifier=clf) is False
+    assert (
+        is_pure_greeting(
+            "Hola, tengo una pregunta sobre el contenido",
+            saludar,
+            classifier=clf,
+        )
+        is False
+    )
+    assert (
+        is_pure_greeting(
+            "me mandas las fotos que te pedí",
+            saludar,
+            classifier=clf,
+        )
+        is False
+    )
 
 
 def test_is_pure_greeting_rejects_ambiguous_and_short(clf: TurnClassifier) -> None:

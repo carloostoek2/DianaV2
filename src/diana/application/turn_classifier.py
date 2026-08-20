@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from diana.cognitive.models import Comprehension, TurnCategory
+from diana.cognitive.template_gate import looks_like_pure_greeting_text
 
 logger = logging.getLogger("diana.application")
 
@@ -243,8 +244,9 @@ def is_pure_greeting(
 ) -> bool:
     """True when Director may cut after Analyst for pure VIP saludo.
 
-    Contract (PLAN A1): intent == ``saludar`` AND TurnClassifier category is
-    ``fatico`` AND ``is_confident``. Fail open (False) on any other shape.
+    Contract (PLAN A1 + 2026-08-17 lock): intent == ``saludar`` AND the raw
+    text looks like a short greeting (keyword + ≤4 words) AND TurnClassifier
+    category is ``fatico`` AND ``is_confident``. Fail open (False) otherwise.
     Thanks/goodbye phatic intents are excluded by the saludar gate.
     """
     if isinstance(comprehension, Comprehension):
@@ -255,6 +257,8 @@ def is_pure_greeting(
         return False
     intent = str(raw_intent).strip().lower() if raw_intent is not None else ""
     if intent != "saludar":
+        return False
+    if not looks_like_pure_greeting_text(text):
         return False
     classification = classifier.classify(text, comprehension)
     return (
