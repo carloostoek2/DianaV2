@@ -37,7 +37,11 @@ Highlights of what's new and fixed in Diana, from her early releases through the
 
 ## Agent evolution (shadow observation) — 2026-08-07
 
-*Shadow mode is a capability, not a development stage: while the owner handles a real conversation, Diana runs her full cognitive process in parallel — analysis, generation, evaluation, and decision — without touching the delivery. At the end of the turn the system compares what Diana would have done with what the owner actually did, and that difference feeds her learning.*
+### SHADOW MODE
+
+Durante el entrenamiento, Diana tiene la capacidad de observación en la sombra: mientras la dueña atiende una conversación real, Diana ejecuta en paralelo todo su proceso cognitivo, análisis, generación, evaluación y decisión, sin interferir en la entrega. Al final del turno, el sistema compara lo que Diana habría hecho con lo que la dueña hizo realmente, y esa comparación se convierte en aprendizaje.
+
+Este estado acompaña a la supervisión real para acumular evidencia de cómo decidiría Diana ante cada conversación.
 
 ### ✨ New Features
 - **Shadow agent-evolution engine**: a complete observational layer now watches how Diana handles each conversation — emotional signals, turn-by-turn self-assessment, mood, and per-VIP trust — and records it all for analysis.
