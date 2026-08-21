@@ -115,10 +115,11 @@
   contexto.
 
   v2 guarda en DB (escalations table) y notifica al owner vía Telegram DM.
-  NO escribe archivo de texto legible.
+  Además escribe un archivo de texto legible: logger diana.escalations con
+  RotatingFileHandler (5 MB, 5 backups) en /var/log/diana/escalations.log.
 
-  ❌ NO IMPLEMENTADO — la DB + notificación cubre la funcionalidad, pero no
-  hay archivo de texto plano para debug/auditoría.
+  ✅ RESUELTO (implementado) — archivo de texto plano para debug/auditoría
+  (src/diana/application/admin_service.py:52-97).
 
   ---
   8. Contexto temporal / rutina semanal
@@ -144,11 +145,12 @@
   v1 diana.py:164-168: al iniciar, encola VIPs faltantes para backfill de
   historial (history_backfill.enqueue_missing_vips()).
 
-  v2 no hace backfill al arranque. El startup sequence (main.py:49-63) corre
-  recovery_startup + missed_message_recovery, pero no backfill de historial
-  de conversación.
+  v2 AHORA hace backfill al arranque: el startup sequence (main.py:117-119)
+  encola VIPs faltantes vía backfill_queue.enqueue_missing_vips() antes del
+  polling, con guards de 24h y skip de VIPs sin historial ni perfil.
 
-  ❌ NO IMPLEMENTADO
+  ✅ RESUELTO (implementado) — backfill de historial al arranque con guards
+  anti-re-encolado (src/diana/application/memory_backfill_queue.py:275).
 
   ---
   10. Simulación de "escribiendo..." con loop
@@ -157,11 +159,12 @@
   send_chat_action cada ~4s porque la acción expira a los ~5s en Telegram. Para
   mensajes largos (15s), esto mantiene el indicador visible.
 
-  v2 behavior/engine.py:222-236: hace un solo send_chat_action + sleep del
-  typing_duration calculado. Sin loop de refresh. Para mensajes de más de ~40
-  caracteres (~5s+), el indicador desaparece antes de enviar.
+  v2 behavior/engine.py:621-649 (_show_typing): re-envía send_chat_action en un
+  loop cada _TYPING_REFRESH_SECONDS=4.0s mientras quede duración de typing, así
+  el indicador permanece visible para mensajes largos.
 
-  ❌ NO IMPLEMENTADO — sigue siendo single-shot.
+  ✅ RESUELTO (implementado) — loop de refresh que mantiene el indicador
+  "escribiendo..." visible (src/diana/behavior/engine.py:56, 621-649).
 
   ---
   11. Notificación a Diana admin al arranque con resumen de recuperación
@@ -211,17 +214,17 @@
   │  6  │ Data Pause por VIP             │    ✅    │ UI admin completa con teclado de     │
   │     │                                │ RESUELTO │ duraciones, pause/unpause en DB       │
   ├─────┼────────────────────────────────┼──────────┼──────────────────────────────────────┤
-  │  7  │ Escalaciones a archivo txt     │    ❌    │ solo DB + notificación Telegram      │
-  │     │                                │ PENDIENTE│                                        │
+  │  7  │ Escalaciones a archivo txt     │    ✅    │ RotatingFileHandler en logger        │
+  │     │                                │ RESUELTO │ diana.escalaciones (admin_service)   │
   ├─────┼────────────────────────────────┼──────────┼──────────────────────────────────────┤
   │  8  │ Contexto temporal / rutina     │    ⚠️   │ ScheduleRetriever listo; inyección   │
   │     │ semanal                        │ PARCIAL  │ condicional, no garantizada           │
   ├─────┼────────────────────────────────┼──────────┼──────────────────────────────────────┤
-  │  9  │ History backfill al arranque   │    ❌    │ no existe el mecanismo                │
-  │     │                                │ PENDIENTE│                                        │
+  │  9  │ History backfill al arranque   │    ✅    │ enqueue_missing_vips() en startup     │
+  │     │                                │ RESUELTO │ (main.py:117-119, queue:275)          │
   ├─────┼────────────────────────────────┼──────────┼──────────────────────────────────────┤
-  │ 10  │ Loop de "escribiendo..."       │    ❌    │ single send_chat_action sin refresh   │
-  │     │                                │ PENDIENTE│                                        │
+  │ 10  │ Loop de "escribiendo..."       │    ✅    │ loop de refresh cada 4s mantiene      │
+  │     │                                │ RESUELTO │ el indicador (engine.py:621-649)      │
   ├─────┼────────────────────────────────┼──────────┼──────────────────────────────────────┤
   │ 11  │ DM de recuperación a Diana     │    ✅    │ _notify_recovery_summary() envía      │
   │     │                                │ RESUELTO │ resumen detallado post-recovery       │
@@ -230,7 +233,7 @@
   │     │                                │ PENDIENTE│                                        │
   └─────┴────────────────────────────────┴──────────┴──────────────────────────────────────┘
 
-  Resumen: 8 ✅ resueltos, 1 ⚠️ parcial, 3 ❌ pendientes.
+  Resumen: 10 ✅ resueltos, 1 ⚠️ parcial, 1 ❌ pendiente.
 
   ¿Quieres que profundice en alguna de estas? La #1 y #2 son las que más impacto
    operativo tienen. Para la #1, puedo investigar exactamente por qué aiogram no

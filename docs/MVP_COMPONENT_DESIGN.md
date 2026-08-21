@@ -6,9 +6,17 @@
 | Nivel | Diseño de componentes para el primer valor seguro |
 | Basado en | `REQUERIMIENTOS.md` v2.1 + `docs/SPEC-1.1.md` v1.5 + `AGENTS.md` v1.0 |
 | Objetivo | Entregar el MVP Supervisado (Fase 1) sin romper la arquitectura híbrida |
-| Versión | 1.1 |
-| Fecha | Julio 2026 |
-| Fuente de verdad de diseño | `docs/SPEC-1.1.md` (este doc es la guía de implementación de Fase 1) |
+| Versión | 1.2 |
+| Fecha | Julio 2026 (diseño) · 2026-08-21 (actualización de estado) |
+| Estado | **Implementado y desplegado** (2026-08-21) |
+| Fuente de verdad de diseño | `docs/SPEC-1.1.md` (este doc es la guía de componentes de Fase 1) |
+
+> **Nota de estado (2026-08-21):** Guía de componentes de Fase 1 — **implementada y desplegada**.
+> El diseño de componentes que sigue describe el sistema actual en su núcleo supervisado: la Fase 1 está
+> en producción y la Fase 2 (memoria, zona gris, staging, sandbox) también está implementada. Para la vista
+> consolidada del sistema tal como existe hoy, referirse a `docs/ARCHITECTURE.md`. Las referencias a
+> "no se implementa en Fase 1" o "listo para Fase 2" que hayan quedado en secciones posteriores se
+> actualizaron al estado real o se marcaron como fuera de alcance sin prometer nada.
 
 ---
 
@@ -20,11 +28,11 @@
 
 Consecuencias para el MVP:
 
-- **Director 100 % determinista** — nunca pregunta a un LLM “qué hacer”.
+- **Director 100 % determinista** — nunca pregunta a un LLM "qué hacer".
 - **Cada componente responde una sola pregunta**.
 - **Explicabilidad total** — objetos intermedios persistidos.
 - **Sustituibilidad** — Capability Registry desde el día 1 (reales o STUB).
-- **Anti-contaminación** — no se escribe en bancos de conocimiento en Fase 1.
+- **Anti-contaminación** — la Memoria de un VIP y el banco de ejemplos permanecen aislados; la escritura en bancos de conocimiento es siempre post-turno y controlada (Staging Area con promoción explícita).
 
 ---
 
@@ -32,7 +40,7 @@ Consecuencias para el MVP:
 
 Un VIP autorizado envía un mensaje → el sistema genera un borrador → la dueña lo ve en su DM → aprueba o corrige → el mensaje se entrega en nombre de la dueña con delay + lectura + typing.
 
-**Criterio de éxito (AC-01 + AC-03 + AC-05 + roadmap Fase 1 de SPEC-1.1):**
+**Criterio de éxito (AC-01 + AC-03 + AC-05 + roadmap de Fase 1 de SPEC-1.1) — cumplido:**
 
 - El VIP recibe la respuesta como si fuera la dueña (Business Connection).
 - Nada llega al VIP sin aprobación explícita.
@@ -40,6 +48,8 @@ Un VIP autorizado envía un mensaje → el sistema genera un borrador → la due
 - Escalación por palabras prohibidas funciona sin pasar por el LLM.
 - Un segundo mensaje del VIP supersede el turno anterior y cancela deliveries.
 - Toda decisión deja traza reconstruible en `pipeline_traces` + estado en `turns`.
+
+Hoy (2026-08-21) estos criterios están implementados y desplegados; el diseño de componentes de este documento describe el sistema actual. Ver `docs/ARCHITECTURE.md` para la vista consolidada.
 
 ---
 
@@ -66,21 +76,25 @@ Un VIP autorizado envía un mensaje → el sistema genera un borrador → la due
 | 15 | Persistencia Fase 1 | `vips`, `message_history`, `pipeline_traces`, `pending_deliveries`, `turns`, `escalation_events`, `system_config`, `pending_approvals` |
 | 16 | Learning post-turno (mínimo) | Solo persistir traza; sin Staging |
 
-### Explícitamente fuera de alcance (Fase 2+)
+**Nota (2026-08-21):** los 16 componentes de esta tabla están **implementados y desplegados**. El aprendizaje
+post-turno hoy incluye además extracción de memoria y candidatos a Staging (ver `docs/ARCHITECTURE.md` §3),
+y los retrievers que en Fase 1 eran STUB ya son reales (ver §5.7).
 
-| Componente | Tratamiento en Fase 1 |
-|------------|------------------------|
-| Retrievers de memory / policy / examples / profile / schedule | **STUB** que devuelven `null` (el Registry ya los resuelve) |
-| pgvector / embeddings | No |
-| Staging Area / destilación / promoción | No se escribe en bancos vivos |
-| Zona gris / `consult_doctrine` | Decider no puede devolverlo |
-| `regenerate` | Deshabilitado (dueña corrige en DM) |
-| Modo autónomo / `send` directo | Solo supervisado → siempre `approve` o `escalate` |
-| Sandbox / FakeDelivery | No |
-| Recontacto / Promo no-VIP | No |
-| Hot-swap de LLM en runtime | Interfaz abstracta lista; instancia DeepSeek |
-| FreezeCheck middleware | No (Fase 2) |
-| Métricas agregadas | No |
+### Fuera del alcance del MVP (Fase 1) — estado actual
+
+| Componente | Tratamiento en Fase 1 | Estado actual (2026-08-21) |
+|------------|------------------------|----------------------------|
+| Retrievers de memory / policy / examples / profile / schedule | **STUB** que devuelven `null` | **REAL** — memoria pgvector, perfil, política, ejemplos y schedule implementados (+ `persona_facts`, `voice_patterns`) |
+| pgvector / embeddings | No | **Implementado** — pgvector con índices HNSW + sentence-transformers local (ADR-005) |
+| Staging Area / destilación / promoción | No se escribe en bancos vivos | **Implementado** — corrección guarda en `staging_candidates`; pasa a `examples` solo tras promoción explícita |
+| Zona gris / `consult_doctrine` | Decider no puede devolverlo | **Implementado** — el Decisor emite `consult_doctrine`; congela al VIP y pregunta a la dueña (ver ARCHITECTURE §3) |
+| `regenerate` | Deshabilitado (dueña corrige en DM) | **Implementado** — variantes/regeneración de borrador (`application/draft_variants.py`) |
+| Modo autónomo / `send` directo | Solo supervisado → siempre `approve` o `escalate` | **Cableado pero deshabilitado** — `FEATURE_AUTONOMOUS_MODE=false`; doble puerta vía `autonomous_mode_service` |
+| Sandbox / FakeDelivery | No | **Implementado** — conversaciones con perfiles ficticios + `FakeDelivery` |
+| Recontacto / Promo no-VIP | No | **Implementado** — recontacto por silencio y promo por trigger exacto (flags `true`) |
+| Hot-swap de LLM en runtime | Interfaz abstracta lista; instancia DeepSeek | **Parcial** — interfaz `LLMProvider` con DeepSeek primario y Anthropic como respaldo configurable (ADR-006); el cambio dinámico en runtime **no** está implementado (ADM-03 pendiente) |
+| FreezeCheck middleware | No (Fase 2) | **Implementado** — `FreezeCheckMiddleware` activo (ver §5.1) |
+| Métricas agregadas | No | **Parcial** — métricas de admin y calibración existen; la calibración automática está por flag (`FEATURE_CALIBRATION_ENABLED=false`) |
 
 ---
 
@@ -92,8 +106,8 @@ Telegram Business Connection (aiogram 3.x)
         ▼
 ┌───────────────────────────────────────────────────────────────────┐
 │  MIDDLEWARES                                                      │
-│  Logging → BusinessConnection → OwnerDetection                    │
-│  → ForbiddenKeywords (cortocircuito) → Auth (allowlist)           │
+│  ErrorHandler → Dedup → RateLimit → Logging → BC → Link → Owner    │
+│  → FreezeCheck → Auth (allowlist) → Forbidden (cortocircuito)     │
 └───────────────────────────────┬───────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼───────────────────────────────────┐
@@ -108,15 +122,19 @@ Telegram Business Connection (aiogram 3.x)
 │  Director → Analyst → Planner → Registry/Retrievers               │
 │  → ContextBuilder → Generator → Evaluator → Decider               │
 └───────────────────────────────┬───────────────────────────────────┘
-                                │ Decision (approve | escalate)
+                                │ Decision (approve | escalate | consult_doctrine | send*)
 ┌───────────────────────────────▼───────────────────────────────────┐
 │  AdminService (DM dueña)  →  BehaviorEngine (solo tras approve)   │
 └───────────────────────────────┬───────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼───────────────────────────────────┐
-│  LEARNING post-turno: solo pipeline_traces                        │
+│  LEARNING post-turno: Staging Area + memoria + métricas           │
+│  (nunca durante el pipeline)                                      │
 └───────────────────────────────────────────────────────────────────┘
 ```
+
+`* send` solo con `FEATURE_AUTONOMOUS_MODE=true` (hoy deshabilitado). El orden de middlewares refleja el
+registro real en `src/diana/telegram/setup.py`.
 
 ---
 
@@ -146,24 +164,38 @@ Cada mensaje VIP crea un `Turn` que transita así (SPEC-1.1 §3):
 
 El **Turn Coordinator** lo garantiza (serialización por chat: `SELECT … FOR UPDATE` sobre `turns`, o cola FIFO en memoria por `chat_id`).
 
+**Estados añadidos tras Fase 1 (hoy activos):** `gray_zone` (zona gris / consulta de doctrina),
+`waiting_delay` (delivery en vuelo tras aprobación) y `promo_pending` (secuencia promo no-VIP).
+El conjunto vigente vive en `src/diana/cognitive/models.py` (`TurnStatus`) y se describe en
+`docs/ARCHITECTURE.md` §3. El diagrama de arriba sigue siendo el flujo canónico del núcleo supervisado.
+
 ---
 
 ## 5. Componentes — responsabilidades y contratos
 
 ### 5.1 Telegram Layer + Middleware
 
-**Orden del stack (AGENTS.md + SPEC Fase 1):**
+**Orden del stack (registrado en `src/diana/telegram/setup.py`; implementado):**
 
 ```
-1. LoggingMiddleware
-2. BusinessConnectionExtractor      # inyecta business_connection_id
-3. OwnerDetectionMiddleware         # dueña → cancel_pending + observe only
-4. ForbiddenKeywordsMiddleware      # cortocircuito → escalate (ANTES del Analista)
-5. AuthMiddleware                   # allowlist + not paused
-6. → Turn Coordinator / application entry
+1. ErrorHandlerMiddleware
+2. DedupMiddleware
+3. RateLimitMiddleware
+4. LoggingMiddleware
+5. BusinessConnectionMiddleware     # inyecta business_connection_id
+6. LinkCoordinatorMiddleware       # coordinación Lucien → Diana
+7. OwnerDetectionMiddleware        # dueña → cancel_pending + observe only
+8. FreezeCheckMiddleware           # congela VIPs en zona gris (F2) y canal de atención (F4)
+9. AuthMiddleware                  # allowlist + not paused
+10. ForbiddenKeywordsMiddleware    # cortocircuito → escalate (ANTES del Analista)
+11. → Turn Coordinator / application entry
 ```
 
-`FreezeCheck` no se implementa en Fase 1 (queda el slot de middleware listo para Fase 2).
+`FreezeCheckMiddleware` (índice 6, `src/diana/telegram/freeze_middleware.py`) **está implementado y activo**:
+descarta silenciosamente los mensajes de VIPs con `frozen_until` futuro y, cuando un VIP congelado con
+consulta de doctrina abierta insiste, notifica a la dueña con un recordatorio debounced (TTL por defecto
+20 min). Es fail-closed ante error de lookup y cachea el `vip_record` para que `AuthMiddleware` lo reutilice.
+La línea de "slot de middleware listo para Fase 2" quedó obsoleta.
 
 **Contrato de entrada:**
 
@@ -198,8 +230,8 @@ class TurnCoordinator:
     async def mark_failed(self, turn_id: UUID, error: str) -> Turn: ...
 ```
 
-Estados válidos (columna `turns.status`):  
-`received | analyzing | planning | retrieving | building_context | generating | evaluating | deciding | pending_approval | escalated | superseded | delivered | failed`
+Estados vigentes (columna `turns.status`; la Fase 1 usaba el subset sin `waiting_delay`/`gray_zone`/`promo_pending`):  
+`received | waiting_delay | analyzing | planning | retrieving | building_context | generating | evaluating | deciding | pending_approval | gray_zone | promo_pending | escalated | superseded | delivered | failed`
 
 ### 5.3 Application entry (TurnOrchestrator)
 
@@ -234,10 +266,11 @@ class TurnOrchestrator:
             await self.coordinator.transition(turn.id, "pending_approval")
             await self.admin.send_draft_for_approval(incoming, decision, turn.id)
         else:
-            # Fase 1: solo approve | escalate
+            # Fase 1: solo approve | escalate. Hoy el orquestador además maneja
+            # consult_doctrine (zona gris) y send (autónomo, solo con flag).
             raise ValueError(f"Unexpected action in Fase 1: {decision.action}")
 
-        # Learning post-turno (Fase 1 = solo asegurar traza completa)
+        # Learning post-turno (hoy: traza + memoria + candidatos a Staging)
         await self.learning.run_post_turn(turn.id)
 ```
 
@@ -322,7 +355,9 @@ class Comprehension(BaseModel):
     raw_llm_output: dict | None = None
 ```
 
-En Fase 1 los flags `needs_*` **sí se usan**: el Planner los mapea a capacidades. Los STUBs devuelven `null` y el ContextBuilder omite esos bloques.
+Los flags `needs_*` **se usan**: el Planner los mapea a capacidades. En Fase 1 los STUBs devolvían `null` y
+el ContextBuilder omitía esos bloques; hoy todos los retrievers son **reales** (memoria pgvector, perfil,
+política, ejemplos, schedule) y el ContextBuilder incluye solo los bloques relevantes al turno.
 
 ### 5.6 Planner (determinista)
 
@@ -369,17 +404,19 @@ class CapabilityRegistry:
     def resolve(self, capability: str) -> Retriever: ...
 ```
 
-| Capacidad | Fase 1 |
-|-----------|--------|
-| `knowledge.history` | **REAL** — últimos N mensajes (SQL) |
-| `knowledge.context` | **REAL (parcial)** — estado simple derivado del historial |
-| `knowledge.profile` | **STUB** → `null` |
-| `knowledge.memory` | **STUB** → `null` |
-| `knowledge.policy` | **STUB** → `null` |
-| `knowledge.examples` | **STUB** → `null` |
-| `knowledge.schedule` | **STUB** → `null` |
+| Capacidad | Fase 1 | Estado actual (2026-08-21) |
+|-----------|--------|----------------------------|
+| `knowledge.history` | **REAL** — últimos N mensajes (SQL) | **REAL** |
+| `knowledge.context` | **REAL (parcial)** — estado simple derivado del historial | **REAL** |
+| `knowledge.profile` | **STUB** → `null` | **REAL** — perfil persistido |
+| `knowledge.memory` | **STUB** → `null` | **REAL** — memoria pgvector |
+| `knowledge.policy` | **STUB** → `null` | **REAL** — políticas destiladas |
+| `knowledge.examples` | **STUB** → `null` | **REAL** — banco de ejemplos |
+| `knowledge.schedule` | **STUB** → `null` | **REAL** |
 
-El Director solo conoce **nombres de capacidad**, nunca clases concretas (TAC-02 / ADR-002).
+El Director solo conoce **nombres de capacidad**, nunca clases concretas (TAC-02 / ADR-002).  
+La Fase 2 reemplazó los STUBs por retrievers reales **sin tocar el Director** (cero líneas de Cognitive Core),
+confirmando la sustituibilidad del Registry.
 
 ### 5.8 ContextBuilder
 
@@ -398,7 +435,8 @@ class ContextBuilder:
         Composición dinámica (REQ-NFR-07):
         - Siempre: persona/voz + reglas de estilo + mensaje actual
         - Incluye solo bloques de knowledge cuyo valor no es null
-        - En Fase 1 típico: history (+ context parcial si existe)
+        - Hoy típico: history + context + memoria + perfil + política/ejemplos
+          según `needs_*` y flags
         """
         ...
 ```
@@ -439,7 +477,7 @@ class EvaluationProfile(BaseModel):
 **Nunca** se reduce a un score único (`mean(...)` está prohibido).  
 Nombres de campo en código en inglés (AGENTS.md); semántica = vector 7D de SPEC-1.1.
 
-### 5.11 Decider (Fase 1 — solo dos acciones)
+### 5.11 Decider (Fase 1 — modo supervisado)
 
 **Pregunta:** ¿Qué acción tomar?
 
@@ -477,8 +515,17 @@ class Decision(BaseModel):
     draft_text: str | None = None
 ```
 
-- `regenerate` y `consult_doctrine` **deshabilitados** en Fase 1.
-- Umbral inicial de seguridad: **0.3** (conservador); ajustable vía `system_config`.
+- En Fase 1 `regenerate` y `consult_doctrine` estaban **deshabilitados**; hoy están implementados:
+  `consult_doctrine` (zona gris, con freeze) y la regeneración de variantes del borrador (MODE-05).
+- Umbral inicial de seguridad: **0.3** (conservador); ajustable vía `system_config` y hoy también
+  calibrable con el job de calibración (`FEATURE_CALIBRATION_ENABLED=false` en runtime).
+
+**Evolución del contrato (hoy):** el Decisor emite `escalate | consult_doctrine | send | approve` (matriz
+pura en `src/diana/cognitive/decider.py`). Orden de prioridades vigente: seguridad baja → `escalate`;
+`needs_policy` sin política → `consult_doctrine`; emoción molesta → `escalate`; `risk=alto` → `escalate`;
+modo autónomo + umbrales → `send` (solo con `FEATURE_AUTONOMOUS_MODE=true`); resto → `approve`
+(referencia: `docs/ARCHITECTURE.md` §3). El código de Fase 1 de arriba es el subconjunto supervisado
+que sigue vigente en el modo por defecto.
 
 ### 5.12 BehaviorEngine (Fase 1)
 
@@ -525,6 +572,10 @@ class BehaviorEngine:
 
 **Prohibido:** LLM, decidir acción, generar texto.
 
+**Adiciones vigentes (Fase 2, `FEATURE_ADVANCED_BEHAVIOR=true`):** `deliver()` divide el texto por párrafos,
+reenvía `send_chat_action("typing")` en loop mientras dura el typing (refresco 4 s) y aplica quirks humanos
+probabilísticos (~20 %, priorizando typo + corrección).
+
 ### 5.13 AdminService (Fase 1)
 
 ```python
@@ -553,7 +604,8 @@ class AdminService:
 
     async def handle_correct(self, callback, turn_id: UUID, corrected_text: str) -> None:
         # Entregar texto corregido vía BehaviorEngine
-        # Fase 1: NO escribe en Staging
+        # Hoy: la corrección guarda el par (original, final) en staging_candidates;
+        # solo pasa a `examples` tras promoción explícita.
         # coordinator.transition(turn_id, "delivered")
         ...
 
@@ -567,18 +619,22 @@ class AdminService:
         ...
 ```
 
-Superficie admin Fase 1 (SPEC-1.1 §7): `/start`, `/menu`, añadir/quitar VIP, ver estado, aprobar/corregir borradores.
+Superficie admin actual: `/start`, `/menu`, alta/baja de VIPs, ver estado, aprobar/corregir borradores, más
+doctrina (zona gris), `/staging`, aprobación de memoria, panel de personalidad (`persona_admin`) y vínculo
+Lucien → Diana. Ver `docs/ARCHITECTURE.md` §2.2 para el árbol completo.
 
 ### 5.14 Learning post-turno (mínimo)
 
 ```python
 class LearningService:
     async def run_post_turn(self, turn_id: UUID) -> None:
-        """Fase 1: garantizar que pipeline_traces está completo. Sin Staging."""
+        """Hoy: garantizar pipeline_traces completo + extracción de memoria
+        post-turno + candidatos a Staging. Nunca durante el pipeline."""
         ...
 ```
 
-Solo se invoca **después** de que el turno tomó decisión de aplicación (approve path → pending_approval / escalate path). Nunca dentro del Director.
+Se invoca **después** de que el turno tomó decisión de aplicación (approve path → pending_approval /
+escalate path), desde el orquestador (`_maybe_post_turn`, con guards best-effort). Nunca dentro del Director.
 
 ---
 
@@ -703,11 +759,19 @@ INSERT INTO system_config (key, value) VALUES
 ('trace_ttl_days', '30');
 ```
 
-**Nota:** tablas de Fase 2/3 (`profiles`, `memories`, `contexts`, `policies`, `examples`, `staging_candidates`, `gray_zone_queries`, `learning_metrics`) **no se implementan en código de Fase 1**. Pueden existir vacías en el esquema si se prefiere migrar una sola vez; el código de Fase 1 no las usa.
+**Nota (2026-08-21):** las tablas de Fase 2/3 (`profiles`, `memories` [pgvector], `contexts`, `policies`,
+`examples`, `staging_candidates`, `gray_zone_queries`, `learning_metrics`) y las de fases posteriores
+(`recontact_schedules`, `promo_triggers`, `persona_versions`, `atencion_cycles`, `backfill_queue`,
+`vip_profile`, `ephemeral_events`, `link_events`, etc.) **están implementadas** en el esquema actual
+(migraciones Alembic 001 → 029). La arquitectura de datos vigente está en `docs/ARCHITECTURE.md` §5.
+El DDL de arriba se conserva como el contrato del núcleo supervisado de Fase 1.
 
 ---
 
 ## 7. Flujos críticos (paso a paso)
+
+Los flujos de esta sección siguen siendo el comportamiento canónico del núcleo supervisado hoy
+(ver `docs/ARCHITECTURE.md` §3); se anotan las adiciones posteriores donde aplican.
 
 ### 7.1 Happy path — VIP escribe → dueña aprueba
 
@@ -741,7 +805,7 @@ INSERT INTO system_config (key, value) VALUES
 7. Dueña ✏️ Corregir → envía texto nuevo
 8. BehaviorEngine.deliver(corrected_text)
 9. Turn → delivered
-10. Fase 1: NO se escribe en Staging / examples
+10. Hoy: la corrección se guarda en staging_candidates para promoción explícita
 ```
 
 ### 7.3 Escalación determinística (palabra prohibida)
@@ -790,6 +854,9 @@ main.py arranca:
 3. Re-notificar escalation_events no notificados (opcional)
 ```
 
+La recuperación en arranque hoy expira deliveries en vuelo sin re-enviar ni auto-aprobar en silencio
+(ver `docs/ARCHITECTURE.md` §6).
+
 ---
 
 ## 8. Interfaces LLM (Fase 1)
@@ -814,13 +881,17 @@ class LLMProvider(Protocol):
     ) -> BaseModel: ...
 ```
 
-- Instancia Fase 1: `DeepSeekProvider` (OpenAI-compatible).
-- Interfaz lista para Anthropic en Fase 2 (hot-swap) sin tocar Cognitive Core.
+- Instancia primaria: `DeepSeekProvider` (OpenAI-compatible); Anthropic como respaldo configurable (ADR-006).
+- La interfaz abstracta permite el hot-swap sin tocar Cognitive Core. **Nota:** el cambio dinámico de LLM
+  en runtime (vía `system_config`) **no** está implementado; la instancia se fija en construcción desde
+  `settings.llm_base_url` (ADM-03 pendiente).
 - **Uso:** Analyst y Evaluator → `generate_structured`; Generator → `generate`.
 
 ---
 
 ## 9. Estructura de carpetas (Fase 1 subset de SPEC-1.1 §11)
+
+Árbol de Fase 1 (subset). El árbol real y completo del sistema actual está en `docs/ARCHITECTURE.md` §2.2.
 
 ```
 src/diana/
@@ -835,7 +906,7 @@ src/diana/
 │   ├── middlewares/
 │   │   ├── auth.py
 │   │   ├── forbidden.py
-│   │   └── owner.py          # freeze.py se añade en Fase 2
+│   │   └── owner.py          # freeze vive en telegram/freeze_middleware.py
 │   └── keyboards.py
 │
 ├── application/
@@ -883,11 +954,16 @@ src/diana/
     └── tracing.py
 ```
 
-Módulos de Fase 2/3 (`sandbox_service`, `fake.py`, `embeddings/`, etc.) **no se crean vacíos obligatorios**; se añaden al activar la fase.
+Los módulos de Fase 2/3 (`application/sandbox.py`, `behavior/fake.py`, `jobs/`, `embeddings`, etc.) que en
+Fase 1 "se añadirían al activar la fase" **hoy existen y están activos** (Fase 2/3 desplegadas). Ver el
+árbol real en `docs/ARCHITECTURE.md` §2.2.
 
 ---
 
 ## 10. Orden de implementación recomendado
+
+**Estado: orden ejecutado y desplegado (2026-08-21).** Se conserva como registro histórico del orden de
+construcción de Fase 1; los pasos están completos.
 
 | Paso | Qué construir | Criterio de “hecho” |
 |------|---------------|---------------------|
@@ -923,21 +999,23 @@ Módulos de Fase 2/3 (`sandbox_service`, `fake.py`, `embeddings/`, etc.) **no se
 | MVP-12 | Decider Fase 1 solo `approve` \| `escalate` | Unit tests | §4.8 |
 | MVP-13 | Invariante: ≤1 turno no terminal por `chat_id` | Integration test | §3 |
 
+Estos criterios se verificaron en el merge de Fase 1; los contratos que definen siguen vigentes.
+
 ---
 
-## 12. Qué deja preparada la Fase 1 para Fase 2
+## 12. Transiciones que la Fase 1 preparó — estado actual
 
-El Director **ya** llama a Planner + Registry. En Fase 2:
+La Fase 1 dejó al Director llamando a Planner + Registry, listo para crecer sin tocarlo. Estado de cada transición hoy (2026-08-21):
 
-| Cambio | Impacto en Director |
-|--------|---------------------|
-| STUBs → Retrievers REAL + pgvector | **Cero** líneas del Director |
-| Activar `consult_doctrine` / `regenerate` | Solo Decider + umbrales |
-| Staging en correcciones | Solo Admin/Learning post-turno |
-| Modo autónomo (`send`) | Decider + `system_config` |
-| Freeze middleware + gray zone | Telegram + Admin; no Cognitive Core |
-| Hot-swap LLM | `llm/` + config |
-| Sandbox / FakeDelivery | `behavior/fake.py` |
+| Cambio preparado | Impacto en Director | Estado hoy |
+|------------------|---------------------|------------|
+| STUBs → Retrievers REAL + pgvector | **Cero** líneas del Director | **Implementado** — memoria pgvector, perfil, política, ejemplos, schedule reales |
+| Activar `consult_doctrine` / `regenerate` | Solo Decider + umbrales | **Implementado** — zona gris y variantes de borrador activos |
+| Staging en correcciones | Solo Admin/Learning post-turno | **Implementado** — corrección → `staging_candidates` → promoción explícita |
+| Modo autónomo (`send`) | Decider + `system_config` | **Cableado, deshabilitado** — `FEATURE_AUTONOMOUS_MODE=false` + doble puerta |
+| Freeze middleware + gray zone | Telegram + Admin; no Cognitive Core | **Implementado** — `FreezeCheckMiddleware` + consulta de doctrina |
+| Hot-swap LLM | `llm/` + config | **Parcial** — interfaz lista (DeepSeek primario, Anthropic respaldo); cambio dinámico en runtime pendiente |
+| Sandbox / FakeDelivery | `behavior/fake.py` | **Implementado** — sandbox con perfiles ficticios |
 
 ---
 
@@ -945,17 +1023,19 @@ El Director **ya** llama a Planner + Registry. En Fase 2:
 
 | # | Tema | Decisión Fase 1 |
 |---|------|------------------|
-| 1 | Regeneración por naturalidad baja | **No**. Dueña corrige en DM. |
+| 1 | Regeneración por naturalidad baja | **No** en Fase 1 (dueña corrige en DM). Hoy implementado como variantes/regeneración del borrador (MODE-05). |
 | 2 | Serialización por chat | Preferir lock DB (`turns` + `FOR UPDATE`) o `asyncio.Queue` por chat; documentar en código. |
-| 3 | Umbral seguridad inicial | **0.3** en `system_config`; ajustar tras ~50 turnos reales. |
+| 3 | Umbral seguridad inicial | **0.3** en `system_config`; ajustar tras ~50 turnos reales. Hoy existe calibración automática (job, flag OFF por defecto). |
 | 4 | TTL de `pipeline_traces` | 30 días (configurable). |
 
 ---
 
 ## 14. Checklist de revisión (antes de merge)
 
+**Aplicado en el merge de Fase 1 (registro histórico).** Los límites que define siguen vigentes como contrato del núcleo supervisado.
+
 - [ ] ¿El Director sigue siendo 100 % determinista?
-- [ ] ¿Existen Planner + Registry con STUBs (no “omitidos”)?
+- [ ] ¿Existen Planner + Registry con STUBs (no "omitidos")?
 - [ ] ¿Turn Coordinator impone 1 no-terminal por chat?
 - [ ] ¿EvaluationProfile es vector 7D sin score único?
 - [ ] ¿Behavior Engine no genera texto ni decide acción?
@@ -964,15 +1044,16 @@ El Director **ya** llama a Planner + Registry. En Fase 2:
 - [ ] ¿Modos y umbrales salen de config, no hardcode mágico en lógica?
 - [ ] ¿Contratos alineados con `AGENTS.md` y `docs/SPEC-1.1.md`?
 
-Si alguna respuesta es “no”, el cambio **no se mergea**.
+Si alguna respuesta es "no", el cambio **no se mergea**.
 
 ---
 
-**Fin del diseño de componentes del MVP (Fase 1) v1.1**
+**Fin del diseño de componentes del MVP (Fase 1) v1.2**
 
-Guía de implementación de Fase 1.  
+Guía de diseño de la Fase 1 (núcleo supervisado) — **implementada y desplegada (2026-08-21)**.  
 Fuente de verdad de diseño: `docs/SPEC-1.1.md` v1.5.  
 Límites duros de módulo: `AGENTS.md`.  
+Estado vigente del sistema completo: `docs/ARCHITECTURE.md`.  
 Cualquier desviación que rompa esos contratos debe ser rechazada.
 
 Equipo de Arquitectura — Julio 2026

@@ -3,12 +3,13 @@
 **Fecha:** Julio 2026
 **Tipo:** Auditoría de alineamiento código ↔ requerimientos
 **Alcance:** 161 requerimientos revisados (P0, P1, P2)
+**Actualizado:** 2026-08-21 — re-verificación factual contra el código (commit `b592192`). Los items que estaban marcados como no implementados / fuera de alcance fueron reclasificados según su estado real en el código.
 
 ---
 
 ## Resumen ejecutivo
 
-El sistema está firme. De 161 requerimientos revisados, **139 están cumplidos**, 14 tienen observaciones menores, y solo **2 no están implementados** (los dos son funcionalidades que directamente no existen en el código).
+El sistema está firme. De 161 requerimientos revisados, **143 están cumplidos**, 11 tienen observaciones menores, 5 no implementados (P2 / fuera de alcance) y **2 no implementados (P1)** que directamente no existen en el código.
 
 ### Lo que funciona bien
 
@@ -34,15 +35,12 @@ El sistema está firme. De 161 requerimientos revisados, **139 están cumplidos*
 Hoy no hay un límite configurable de cuántos VIPs puede tener el sistema. Si alguien agrega 500 VIPs, el sistema lo va a intentar procesar. Conviene poner un tope configurable desde settings.
 
 **2. Modo observación — AUTH-07 (P2)**
-Está mencionado en los requerimientos pero no implementado. La idea es poder "escuchar" chats no-VIP sin responder, solo para aprender. No es urgente, pero está pendiente.
+El sistema no tiene un modo de observación silenciosa de chats no-VIP: solo existe un training mode que responde (no-VIP con training ON pasa al pipeline cognitivo y responde). El modo observación pide "escuchar" sin responder, solo para aprender.
 
 **3. Generalización al crear políticas — GAP-11 (P1)**
 Cuando la dueña resuelve una zona gris, el sistema no le pregunta "esto aplica siempre que pregunten por X, o solo en este caso puntual?". Hoy usa el texto que la dueña escribe directamente. Habría que agregar un paso de generalización para que las políticas sean más reutilizables.
 
-**4. Regenerar variantes — MODE-05 (P1)**
-Está fuera de alcance actual. La dueña no puede pedir "generame otra versión" de un borrador. Solo puede aprobar, corregir, o escalar.
-
-**5. Recontacto sin pipeline cognitivo — REE-02 / COG-15 (P2)**
+**4. Recontacto sin pipeline cognitivo — REE-02 / COG-15 (P2)**
 El recontacto por silencio usa plantillas fijas, pero los requerimientos piden un pipeline reducido (que recuerde cosas del VIP, genere un mensaje personalizado, lo evalúe, etc.). Hoy salta toda la cognición.
 
 ---
@@ -72,23 +70,23 @@ El recontacto por silencio usa plantillas fijas, pero los requerimientos piden u
 | AUTH-07 | ❌ | **Modo observación no existe** |
 | VIP-07 | ⚠️ | La deduplicación de mensajes funciona pero tiene una ventana donde podrían colarse duplicados |
 
-### Bloque 4: Zona Gris, Memoria, Políticas (23 reqs, 20 ✅ 3 ⚠️)
+### Bloque 4: Zona Gris, Memoria, Políticas (23 reqs, 21 ✅ 2 ⚠️)
 
 | Nro | Estado | Detalle |
 |-----|--------|---------|
 | GAP-01 a 10 | ✅ | Detección, consulta, freeze, respuesta, destilación, timed out, feature flag |
 | GAP-11 | ⚠️ | No se pide generalización explícita a la dueña |
 | GAP-08 | ⚠️ | No hay comando dedicado para listar/desactivar políticas activas |
-| MEM-02 | ⚠️ | En Fase 1 el aprendizaje post-turno solo verifica trazabilidad, no extrae hechos |
+| MEM-02 | ✅ | La extracción post-turno está implementada y cableada al orquestador de turno (`memory_extraction_service.py` `extract_post_turn`, invocado desde `turn_orchestrator.py` `_maybe_post_turn`) |
 
-### Bloque 5: Aprendizaje, Staging, Anti-contaminación (22 reqs, 17 ✅ 3 ⚠️ 2 🔍)
+### Bloque 5: Aprendizaje, Staging, Anti-contaminación (22 reqs, 20 ✅ 2 🔍)
 
 | Nro | Estado | Detalle |
 |-----|--------|---------|
 | TRN-07, ADM-08, BR-13 | ✅ | Staging obligatorio, confirmación explícita, nunca auto-promover |
-| TRN-06 | ⚠️ | Fase 1 implementa 2 de las 4 fuentes de señal de aprendizaje |
-| MEM-02 | ⚠️ | Aprendizaje post-turno no extrae hechos nuevos en Fase 1 |
-| MET-04 | ⚠️ | Detector de drift de estilo existe pero sin baseline no funciona |
+| TRN-06 | ✅ | Las fuentes de señal de aprendizaje están implementadas y cableadas (`strong_signal_heuristics.py` señal fuerte para resíntesis + `profile_synthesis_trigger_service.py`) |
+| MEM-02 | ✅ | La extracción post-turno extrae hechos (`extract_post_turn` → `insert_facts`) y está cableada al orquestador |
+| MET-04 | ✅ | El detector de drift tiene baseline configurable (`calibration_service.py` `drift_alert_threshold: 0.1`, `baseline_weeks: 4`) y calcula `style_drift_score` contra él |
 
 ### Bloque 6: Behavior Engine (13 reqs, 13 ✅)
 
@@ -96,18 +94,18 @@ El recontacto por silencio usa plantillas fijas, pero los requerimientos piden u
 |-----|--------|---------|
 | Todos | ✅ | Separado de cognición, delay, read, typing, split, quirks, fake delivery, cancelación, retries |
 
-### Bloque 7: Fase 3 (26 reqs, 18 ✅ 5 ⚠️ 3 🔍)
+### Bloque 7: Fase 3 (26 reqs, 20 ✅ 4 ⚠️ 2 🔍)
 
 | Nro | Estado | Detalle |
 |-----|--------|---------|
 | MODE-01 a 04 | ✅ | Modos supervisado/autónomo, draft con contexto, aprobar/corregir |
-| MODE-05 | 🔍 | Regenerar variantes está fuera de alcance |
+| MODE-05 | ✅ | Regenerar variantes está implementado (`draft_variants.py` `DraftVariantService.regenerate`, callbacks regen/prev/next, botones prev / Regenerar / next) |
 | MODE-09 | ⚠️ | No hay calificación post-send autónomo dedicada |
 | REE-02 / COG-15 | ⚠️ | Recontacto usa plantillas fijas, no pipeline reducido |
 | PRO-01 a 04 | ✅ | Promo completa: trigger exacto, sin LLM, diferencia primer envío, Behavior Engine |
 | EVAL-02 a 03 | ✅ | Calibración semanal con percentiles, umbrales ajustados |
-| EVAL-04 | 🔍 | Sin visualización de calibración |
-| MET-04 | ⚠️ | Drift detector implementado pero no calibrado |
+| EVAL-04 | 🔍 | Sin visualización de calibración por dimensión (el resumen semanal muestra tasa global y drift, no tabla por dimensión) |
+| MET-04 | ✅ | Drift detector con baseline de 4 semanas y umbral de alerta configurable; el drift se calcula contra el baseline |
 
 ### Bloque 8: Admin, Persistencia, NFRs (34 reqs, 33 ✅ 1 🔍)
 
@@ -124,18 +122,21 @@ El recontacto por silencio usa plantillas fijas, pero los requerimientos piden u
 
 | Estado | Cantidad |
 |--------|----------|
-| ✅ Cumple | 139 |
-| ⚠️ Observación menor | 14 |
-| 🔍 No implementado (P2 / fuera de alcance) | 6 |
+| ✅ Cumple | 143 |
+| ⚠️ Observación menor | 11 |
+| 🔍 No implementado (P2 / fuera de alcance) | 5 |
 | ❌ No implementado (P1) | 2 |
 | **Total** | **161** |
 
-**Prioridad de atención:**
-1. **AUTH-03** (P1) — Tope de VIPs: agregar un límite configurable
-2. **GAP-11** (P1) — Generalización en políticas: preguntar a la dueña antes de crear
-3. **AUTH-07** (P2) — Modo observación
-4. **REE-02 / COG-15** (P2) — Pipeline reducido en recontacto
-5. **MODE-09** (P1) — Feedback post-send autónomo
+**Prioridad de atención (pendientes reales a 2026-08-21):**
+1. **AUTH-03** (P1) — No existe un tope configurable de VIPs simultáneos
+2. **GAP-11** (P1) — Al resolver una zona gris no se pide confirmación de generalización a la dueña (el mismo texto se usa como `generalization` y `rule`)
+3. **MODE-09** (P1) — No hay calificación post-send dedicada tras envíos autónomos
+4. **ADM-03** (P1) — No hay cambio de proveedor/modelo LLM en caliente
+5. **AUTH-07** (P2) — No hay modo de observación silenciosa de chats no-VIP
+6. **REE-02 / COG-15** (P2) — El recontacto por silencio usa plantillas fijas, sin pipeline reducido
+7. **EVAL-04** (P2) — No hay visualización de calibración por dimensión (el resumen semanal muestra tasa global y drift, no tabla por dimensión)
+8. **GAP-08** (P2) — No hay comando dedicado para listar/desactivar las políticas de doctrina desde admin
 
 ---
 

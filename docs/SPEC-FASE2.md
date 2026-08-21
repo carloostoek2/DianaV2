@@ -7,7 +7,7 @@ Nivel Contrato de diseño e implementación para la Fase 2
 Basado en SPEC.md v1.5 (Híbrido) + REQUERIMIENTOS.md v2.1 (Bloques MEM, TRN, GAP, EVAL)
 Audiencia Ingeniería
 Versión 2.1 — MVP+ (Revisión Post-Review)
-Estado Aprobado para implementación (sobre base de Fase 1)
+Estado Implementado y desplegado (flags activos: memoria, zona gris, staging, sandbox)
 Documentos relacionados Anexos_contratos.md (contratos detallados de todos los nodos)
 
 ---
@@ -21,9 +21,9 @@ Documentos relacionados Anexos_contratos.md (contratos detallados de todos los n
 5. Contratos de los Nuevos Componentes
 6. Flujos Canónicos de Fase 2
 7. Integración con Fase 1 (Estrategia de Migración)
-8. Roadmap de Implementación (Fase 2)
+8. Estado de Implementación (Fase 2)
 9. Trazabilidad REQ → Componentes de Fase 2
-10. Decisiones de Diseño Abiertas
+10. Decisiones resueltas
 11. Relación con los Anexos
 12. Notas Finales
 
@@ -64,7 +64,7 @@ F2-O2 Recontacto por silencio.
 F2-O3 Promo no-VIP.
 F2-O4 Calibración automática de umbrales (solo registro de datos).
 F2-O5 Behavior Engine avanzado (mensajes divididos, quirks humanos).
-F2-O6 Listado y desactivación de políticas desde el DM (REQ-GAP-08, P2). Se posterga a Fase 3 o herramienta administrativa.
+F2-O6 Listado y desactivación de políticas desde el DM (REQ-GAP-08, P2). Sigue sin implementarse; no se observa evidencia en el código actual.
 
 ---
 
@@ -96,7 +96,9 @@ Las tablas ya existen en el esquema de la Fase 1 (creadas para evitar migracione
 · examples (banco vivo de few-shots, con embedding)
 · staging_candidates (candidatos a ejemplo/política)
 · gray_zone_queries (consultas abiertas)
-· learning_metrics (reservada para Fase 3)
+· learning_metrics (tabla existente, grupo de Fase 3)
+
+Hoy las tablas de la Fase 2 se pueblan y consultan mediante repositorios reales: `memories` y `profiles` se escriben vía extracción post-turno (`memory_extraction_service`), backfill (`memory_backfill_service`) y actualización de perfil (`replace_vip_profile`) en cada finalización exitosa.
 
 4.2 Índices requeridos (crear en Fase 2)
 
@@ -274,7 +276,7 @@ Decisor emite action = "consult_doctrine"
       → El turno se maneja según decisión de la dueña (aprueba el borrador original)
   → SI la dueña no responde en GRAY_ZONE_TIMEOUT_HOURS (default 24h):
       → GrayZoneService.expire_old_queries() marca como 'expired'
-      → Ejecuta acción configurable: 'escalate' (por defecto) o 'use_draft'
+      → Ejecuta acción configurable: si la consulta expirada tiene borrador, se promueve a aprobación supervisada ('use_draft'); si no, 'escalate'
       → Se notifica a la dueña la expiración
 ```
 
@@ -320,23 +322,25 @@ Rollback: Basta con desactivar los flags correspondientes en system_config; el s
 
 ---
 
-8. Roadmap de Implementación (Fase 2)
+8. Estado de Implementación (Fase 2)
 
-Hito Descripción Dependencias
-H2.1 Implementar MemoryRetriever, PolicyRetriever, ExamplesRetriever con pgvector. Índices HNSW creados.
-H2.2 Implementar StagingService (guardar, promover, descartar). Tabla staging_candidates existente.
-H2.3 Implementar GrayZoneService y PolicyDistiller. Tablas gray_zone_queries y policies.
-H2.4 Extender Planner para solicitar todas las capacidades. Contratos de Retrievers listos.
-H2.5 Extender Decisor con regla de consult_doctrine (envuelta en flag). —
-H2.6 Modificar Director para manejar la nueva acción. —
-H2.7 Implementar sandbox con FakeDelivery. Behavior Engine ya tiene interfaz.
-H2.8 Implementar job de expiración de gray_zone_queries (configurable). —
-H2.9 Unificar flujo de promoción de políticas vía Staging (zona gris + manual). H2.2, H2.3
-H2.10 Actualizar AGENTS.md para marcar flujos como activos. —
-H2.11 Pruebas de integración y activación gradual de flags. Todos los anteriores
+La Fase 2 está implementada y desplegada. Los cuatro flags de la Sección 3 están activos en el entorno de ejecución (`FEATURE_MEMORY_ENABLED`, `FEATURE_GRAY_ZONE_ENABLED`, `FEATURE_STAGING_ENABLED`, `FEATURE_SANDBOX_ENABLED` = `true`). Ver `docs/ARCHITECTURE.md` §4 para el estado de flags y §3 para los flujos canónicos tal como operan hoy.
 
-Criterio de salida de Fase 2:
-El sistema puede recordar hechos de conversaciones anteriores, resolver dudas de doctrina sin repetir preguntas (con políticas que pasan por Staging), capturar correcciones para mejorar futuras respuestas, y manejar expiración de consultas de zona gris.
+Hito Descripción Estado
+H2.1 Implementar MemoryRetriever, PolicyRetriever, ExamplesRetriever con pgvector. Índices HNSW creados. Implementado
+H2.2 Implementar StagingService (guardar, promover, descartar). Tabla staging_candidates existente. Implementado
+H2.3 Implementar GrayZoneService y PolicyDistiller. Tablas gray_zone_queries y policies. Implementado
+H2.4 Extender Planner para solicitar todas las capacidades. Contratos de Retrievers listos. Implementado
+H2.5 Extender Decisor con regla de consult_doctrine (envuelta en flag). Implementado
+H2.6 Modificar Director para manejar la nueva acción. Implementado
+H2.7 Implementar sandbox con FakeDelivery. Behavior Engine ya tiene interfaz. Implementado
+H2.8 Implementar job de expiración de gray_zone_queries (configurable). Implementado
+H2.9 Unificar flujo de promoción de políticas vía Staging (zona gris + manual). Implementado
+H2.10 Actualizar AGENTS.md para marcar flujos como activos. Implementado
+H2.11 Pruebas de integración y activación gradual de flags. Implementado
+
+Criterio de salida de Fase 2 (cumplido):
+El sistema recuerda hechos de conversaciones anteriores, resuelve dudas de doctrina sin repetir preguntas (con políticas que pasan por Staging), captura correcciones para mejorar futuras respuestas, y maneja la expiración de consultas de zona gris.
 
 ---
 
@@ -353,13 +357,13 @@ REQ-NFR-16 StagingArea (confirmación explícita)
 
 ---
 
-10. Decisiones de Diseño Abiertas (para resolver en implementación)
+10. Decisiones resueltas (implementadas)
 
-1. Umbral de similitud para MemoryRetriever: Se sugiere 0.75 (distancia coseno). ¿Se calibra con datos reales o se deja fijo hasta Fase 3?
-2. Frecuencia de inclusión de contraejemplos: 10% de las veces, ¿es adecuado o se configura por VIP?
-3. Duración de congelación en zona gris (GRAY_ZONE_TIMEOUT_HOURS): Se propone 24h configurable. ¿Es suficiente o se necesita más?
-4. Acción por defecto ante expiración de zona gris: Se recomienda "escalate" (seguridad), pero podría ser "use_draft" (envía el borrador original) si la dueña prefiere no dejar al VIP sin respuesta.
-5. Modelo de embeddings: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (384 dims). ¿Se mantiene o se cambia a API en Fase 2?
+1. Umbral de similitud para MemoryRetriever: fijado en 0.75 (distancia coseno), constante `DEFAULT_MEMORY_THRESHOLD` en `src/diana/cognitive/retrievers/memory.py`. El PolicyRetriever usa 0.8 (`DEFAULT_POLICY_THRESHOLD`) y el ExamplesRetriever 0.7. Los umbrales se mantienen fijos; la calibración automática sigue desactivada (`FEATURE_CALIBRATION_ENABLED=false`).
+2. Frecuencia de inclusión de contraejemplos: se abandonó el 10% probabilístico. El ExamplesRetriever anexa un contraejemplo siempre que exista uno que coincida (límite 1), ver `src/diana/cognitive/retrievers/examples.py`.
+3. Duración de congelación en zona gris (GRAY_ZONE_TIMEOUT_HOURS): confirmada en 24h configurable (`default_timeout_hours=24` en `src/diana/application/gray_zone_service.py`). El VIP permanece congelado hasta confirmar, descartar o expirar la consulta.
+4. Acción por defecto ante expiración de zona gris: híbrida. Si la consulta expirada tiene borrador, se convierte en aprobación pendiente supervisada (no deja al VIP sin respuesta); si no hay borrador o no hay servicio administrativo, se escala (`escalate`), ver `src/diana/jobs/gray_zone_expiration.py`.
+5. Modelo de embeddings: se mantuvo `paraphrase-multilingual-MiniLM-L12-v2` (384 dims), local con sentence-transformers y carga lazy, ver `src/diana/cognitive/embedding.py` (ADR-005).
 
 ---
 
@@ -384,5 +388,5 @@ Anexo H (Registry/Retrievers) Se añaden contratos para MemoryRetriever, PolicyR
 ---
 
 Fin del SPEC-FASE2.md (v2.1)
-Última actualización: Julio 2026
-Equipo de Arquitectura — Fase 2 lista para implementación sobre base de Fase 1, con todas las correcciones del review integradas.
+Última actualización: Agosto 2026
+Equipo de Arquitectura — Fase 2 implementada y desplegada sobre la base de Fase 1, con todas las correcciones del review integradas.

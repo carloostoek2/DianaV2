@@ -1,14 +1,13 @@
-
 SPEC-FASE3.md — Producto Completo (Autonomía, Proactividad y Métricas) — VERSIÓN ACTUALIZADA
 
 Diana Business Bot / Sistema de Automatización de Chats VIP
 
 Campo Valor
-Nivel Contrato de diseño e implementación para la Fase 3
+Nivel Contrato de diseño e implementación (Fase 3) — estado de implementación
 Basado en SPEC.md v1.5, SPEC-FASE2.md v2.1, Anexo T (Trazabilidad)
 Audiencia Ingeniería
-Versión 3.1 — Revisión Post-Review
-Estado Aprobado para implementación (sobre base de Fase 2 + Trazabilidad)
+Versión 3.2 — Actualizada al estado implementado (2026-08-21)
+Estado Implementado (Fase 3 desplegada por flags; autonomía y calibración implementadas en código, deshabilitadas por flag)
 
 ---
 
@@ -27,14 +26,14 @@ Sección Cambio
 
 1. Propósito de esta Fase
 
-Completar el sistema con las capacidades que lo convierten en un producto final listo para producción:
+Completar el sistema con las capacidades que lo convierten en un producto final listo para producción. Estado actual (2026-08-21): el recontacto, la promo no-VIP y el behavior avanzado están implementados, desplegados y activos por flag; el modo autónomo y la calibración automática están implementados en código y cableados, pero deshabilitados por flag (`FEATURE_AUTONOMOUS_MODE=false`, `FEATURE_CALIBRATION_ENABLED=false`).
 
-1. Modo autónomo: El sistema puede enviar respuestas sin aprobación previa, sujeto a umbrales de confianza y configuraciones por VIP.
-2. Recontacto por silencio: El sistema puede iniciar conversaciones proactivamente cuando un VIP lleva tiempo sin interactuar, respetando estados bloqueantes (REQ-REE-03, BR-05).
-3. Promo no-VIP: Respuesta automática a mensajes de contacto no autorizados con una secuencia promocional fija, diferenciando primer envío de reenvío (REQ-PRO-03) y con trazabilidad.
-4. Calibración automática de umbrales: Ajuste dinámico de los umbrales del Evaluador y Decisor basado en datos históricos de corrección, con garantía de que el umbral autónomo siempre sea más estricto que el supervisado.
-5. Behavior Engine avanzado: Mensajes divididos, errores humanos simulados, y secuencias multi-mensaje.
-6. Métricas completas de aprendizaje: Dashboards agregados para medir efectividad, drift de estilo y repetición de zona gris.
+1. Modo autónomo: El sistema puede enviar respuestas sin aprobación previa, sujeto a umbrales de confianza y configuraciones por VIP. *(Implementado en código; deshabilitado por `FEATURE_AUTONOMOUS_MODE=false`.)*
+2. Recontacto por silencio: El sistema puede iniciar conversaciones proactivamente cuando un VIP lleva tiempo sin interactuar, respetando estados bloqueantes (REQ-REE-03, BR-05). *(Implementado y activo.)*
+3. Promo no-VIP: Respuesta automática a mensajes de contacto no autorizados con una secuencia promocional fija, diferenciando primer envío de reenvío (REQ-PRO-03) y con trazabilidad. *(Implementado y activo.)*
+4. Calibración automática de umbrales: Ajuste dinámico de los umbrales del Evaluador y Decisor basado en datos históricos de corrección, con garantía de que el umbral autónomo siempre sea más estricto que el supervisado. *(Implementado; `FEATURE_CALIBRATION_ENABLED=false`.)*
+5. Behavior Engine avanzado: Mensajes divididos, errores humanos simulados, y secuencias multi-mensaje. *(Implementado y activo.)*
+6. Métricas completas de aprendizaje: Dashboards agregados para medir efectividad, drift de estilo y repetición de zona gris. *(Implementado.)*
 
 ---
 
@@ -67,14 +66,14 @@ F3-O4 Panel web avanzado (todo permanece en el DM).
 
 Añadir los siguientes flags a system_config. Todos con valor por defecto false para mantener compatibilidad con Fase 2.
 
-Flag Descripción Valor en Fase 3
-FEATURE_AUTONOMOUS_MODE Habilita el envío directo sin aprobación (global). true (después de pruebas)
+Flag Descripción Valor actual (runtime)
+FEATURE_AUTONOMOUS_MODE Habilita el envío directo sin aprobación (global). false — implementado en código, deshabilitado (kill-switch maestro)
 FEATURE_RECONTACT_ENABLED Habilita el recontacto por silencio. true
 FEATURE_PROMO_ENABLED Habilita la respuesta promocional a no-VIP. true
-FEATURE_CALIBRATION_ENABLED Habilita el ajuste automático de umbrales. true
+FEATURE_CALIBRATION_ENABLED Habilita el ajuste automático de umbrales. false — implementado en código, deshabilitado
 FEATURE_ADVANCED_BEHAVIOR Habilita mensajes divididos y errores humanos simulados. true
 
-Regla: Cada nuevo comportamiento debe estar envuelto en su flag correspondiente. Si un flag está desactivado, el sistema se comporta como en Fase 2.
+Regla: Cada comportamiento está envuelto en su flag correspondiente. Si un flag está desactivado, el sistema se comporta como en Fase 2. Con `FEATURE_AUTONOMOUS_MODE=false`, el autoenvío autónomo está cableado tras el flag (`src/diana/application/turn_orchestrator.py` ~304 y ~2549, y `src/diana/application/recontact_service.py` ~209) pero deshabilitado: la ruta existe y queda inactiva hasta encender el flag (ver `docs/ARCHITECTURE.md` §4).
 
 ---
 
@@ -120,7 +119,7 @@ ALTER TABLE learning_metrics ADD COLUMN style_drift_score REAL;
 
 4.2 Configuraciones adicionales en system_config
 
-Unificado: Los umbrales autónomos iniciales son conservadores para el arranque en frío (0.9/0.8/0.7). La calibración automática los ajustará tras acumular suficientes datos.
+Unificado: Los umbrales autónomos iniciales son conservadores para el arranque en frío (0.9/0.8/0.7), definidos como constantes en `src/diana/cognitive/thresholds.py` (`DEFAULT_AUTONOMOUS_THRESHOLDS`; supervisados 0.5/0.4/0.5). La calibración automática los ajusta tras acumular suficientes datos (implementada en `src/diana/application/calibration_service.py`; flag `FEATURE_CALIBRATION_ENABLED=false` en runtime).
 
 ```json
 {
@@ -158,9 +157,13 @@ Unificado: Los umbrales autónomos iniciales son conservadores para el arranque 
 }
 ```
 
+Nota (promo): el servicio implementa coincidencia exacta del trigger (`PromoService.match_trigger`, sin LLM). El trigger activo en el despliegue es el texto exacto «Quiero más información 🔥»; cada ejecución se registra en `promo_executions` para trazabilidad y el reenvío dentro de la ventana `promo.repeat_days` sustituye el primer mensaje por un texto breve si `repeat_first_message` está configurado (ver §11).
+
 ---
 
 5. Contratos de los Nuevos Componentes
+
+Los componentes de esta sección están implementados en `src/diana/application/` y `src/diana/cognitive/`; los fragmentos describen el contrato real, no intención futura.
 
 5.1 Decisor (extensión para modo autónomo)
 
@@ -300,6 +303,8 @@ class BehaviorEngine:
 
 6.1 Turno VIP en modo autónomo
 
+Estado: implementado y cableado en `src/diana/application/turn_orchestrator.py`; activo solo con `FEATURE_AUTONOMOUS_MODE=true` (hoy `false`, la ruta demota a `approve`).
+
 ```
 business_message
   → TurnCoordinator (igual)
@@ -321,6 +326,8 @@ business_message
 ```
 
 6.2 Recontacto por silencio (job programado) — ACTUALIZADO
+
+Estado: implementado y activo (`FEATURE_RECONTACT_ENABLED=true`); job periódico en `src/diana/jobs/recontact.py` (loop cada hora por defecto) → `RecontactService.get_due_vips()` → `execute_recontact()` con gate de modo autónomo (`recontact_service.py` ~209).
 
 ```
 Job programado (ej. cada hora):
@@ -356,6 +363,8 @@ Reglas de exclusión (REQ-REE-03, BR-05):
 
 6.3 Promo no-VIP (trigger exacto) — ACTUALIZADO
 
+Estado: implementado y activo (`FEATURE_PROMO_ENABLED=true`); `PromoService` (`src/diana/application/promo_service.py`) con coincidencia exacta del trigger y registro en `promo_executions`.
+
 ```
 business_message de no-VIP (no está en allowlist)
   → Middleware de auth detecta no-VIP
@@ -383,10 +392,12 @@ Trazabilidad (REQ-MET y filosofía Anexo T):
 · promo_executions permite auditar cuántas veces se envió cada promo, a qué chats, y cuándo.
 · No se guarda el pipeline completo, pero hay registro de ejecución.
 
-6.4 Calibración automática (job semanal)
+6.4 Calibración automática (job periódico)
+
+Estado: implementado (`CalibrationJob` en `src/diana/jobs/calibration.py`, loop periódico por defecto cada 3600 s, ventana de muestras de 30 días) pero deshabilitado (`FEATURE_CALIBRATION_ENABLED=false`). `CalibrationService.detect_drift()` es de solo lectura y sí reporta métricas aunque el flag esté apagado.
 
 ```
-Job programado (ej. cada domingo a las 3 AM):
+Job programado (periodicidad configurable):
   → Si FEATURE_CALIBRATION_ENABLED:
       → CalibrationService.calibrate_thresholds(window_days=30)
           - Calcula umbrales supervisados (percentil 70)
@@ -401,6 +412,8 @@ Job programado (ej. cada domingo a las 3 AM):
 ```
 
 6.5 Hook de cancelación de recontacto en TurnCoordinator — NUEVO
+
+Estado: implementado.
 
 Cuando llega un nuevo business_message de un VIP, el TurnCoordinator debe:
 
@@ -417,6 +430,8 @@ async def ensure_valid_turn(chat_id: int, message: Message) -> Turn:
 ```
 
 6.6 Mensajes divididos (Behavior avanzado)
+
+Estado: implementado y activo (`FEATURE_ADVANCED_BEHAVIOR=true`).
 
 ```
 Cuando se envía un mensaje largo:
@@ -483,19 +498,26 @@ Compatibilidad: Todos los nuevos comportamientos están envueltos en feature fla
 
 ---
 
-9. Roadmap de Implementación
+9. Estado de implementación
 
-Hito Descripción Dependencias
-H3.1 Extender el Decisor con reglas de modo autónomo y umbrales. Feature flag FEATURE_AUTONOMOUS_MODE.
-H3.2 Implementar AutonomousModeService y notificaciones opcionales. H3.1
-H3.3 Implementar RecontactService con verificación de bloqueo y job programado. Tabla recontact_schedules, feature flag.
-H3.4 Implementar PromoService con trazabilidad (tabla promo_executions) y diferenciación. Tablas promo_triggers, promo_executions.
-H3.5 Implementar CalibrationService con margen mínimo autónomo > supervisado. Tabla learning_metrics, feature flag.
-H3.6 Extender BehaviorEngine con mensajes divididos y quirks humanos. Feature flag FEATURE_ADVANCED_BEHAVIOR.
-H3.7 Implementar job semanal de cálculo de métricas y drift. H3.5
-H3.8 Añadir hook de cancelación de recontacto en TurnCoordinator. H3.3
-H3.9 Añadir comandos de admin para ver métricas y configurar promos/recontactos. H3.3, H3.4, H3.7
-H3.10 Pruebas de integración y activación gradual de flags. Todos los anteriores
+Fase 3 está implementada y desplegada por feature flags. Estados actuales (2026-08-21):
+
+· Activos en runtime: `FEATURE_RECONTACT_ENABLED=true`, `FEATURE_PROMO_ENABLED=true`, `FEATURE_ADVANCED_BEHAVIOR=true`.
+· Implementados en código pero deshabilitados por flag: `FEATURE_AUTONOMOUS_MODE=false` y `FEATURE_CALIBRATION_ENABLED=false`. La ruta de entrega autónoma está cableada tras el flag (`src/diana/application/turn_orchestrator.py` ~304 y ~2549 — demote a `approve` cuando no está habilitado — y `src/diana/application/recontact_service.py` ~209) y la calibración está implementada (`CalibrationJob` en `src/diana/jobs/calibration.py`); ambos quedan inactivos hasta encender su flag. Referencia: `docs/ARCHITECTURE.md` §4.
+
+Todos los hitos del roadmap original (H3.1–H3.10) están implementados:
+
+Hito Descripción Estado
+H3.1 Decisor con reglas de modo autónomo y umbrales duales. Implementado — `src/diana/cognitive/decider.py`, `src/diana/cognitive/thresholds.py`.
+H3.2 AutonomousModeService y notificaciones opcionales (cerca del umbral). Implementado — `src/diana/application/autonomous_mode_service.py`.
+H3.3 RecontactService con verificación de bloqueo y job programado. Implementado y activo — `recontact_service.py`, `jobs/recontact.py`.
+H3.4 PromoService con trazabilidad (`promo_executions`) y diferenciación primer envío/reenvío. Implementado y activo — `promo_service.py`.
+H3.5 CalibrationService con margen mínimo autónomo > supervisado. Implementado, flag OFF — `calibration_service.py`, `calibration_math.py`.
+H3.6 BehaviorEngine con mensajes divididos y quirks humanos. Implementado y activo — `behavior/engine.py`, `behavior/split.py`, `behavior/quirks.py`.
+H3.7 Job de cálculo de métricas y drift de estilo. Implementado — `jobs/metrics.py`, `jobs/calibration.py` (drift).
+H3.8 Hook de cancelación de recontacto en TurnCoordinator. Implementado.
+H3.9 Comandos de admin para ver métricas (`/resumen`, métricas del panel) y administrar promos/recontactos. Implementado — `admin_metrics_service.py`, `admin_service.py`.
+H3.10 Pruebas de integración y activación gradual de flags. Implementado — suite de pruebas E2E y activación gradual de flags.
 
 ---
 
@@ -513,15 +535,15 @@ BR-07 Hook de cancelación de recontacto cuando dueña escribe
 
 ---
 
-11. Decisiones de Diseño Abiertas (actualizadas)
+11. Decisiones resueltas
 
-1. Umbrales iniciales para modo autónomo: seguridad=0.9, doctrina=0.8, naturalidad=0.7 (definidos en 4.2). Se ajustarán automáticamente tras la primera calibración.
-2. Frecuencia de calibración: Semanal (domingo 3 AM) con ventana de 30 días.
-3. Margen mínimo autónomo-supervisado: 0.05 (configurable en calibration.autonomous_margin_min).
-4. Duración de no repetición de promo: 30 días (configurable en promo.repeat_days).
-5. Acción por defecto ante expiración de zona gris: "escalate" (seguridad).
-6. Inactividad para recontacto: 7 días (configurable en recontact.inactivity_days).
-7. Acción al reenviar promo ya enviada: Silencio (no reenviar) o mensaje breve "ya te enviamos información". Se recomienda silencio para no spamear.
+1. Umbrales iniciales para modo autónomo: seguridad=0.9, doctrina=0.8, naturalidad=0.7 (definidos en 4.2). Implementado como constantes en `src/diana/cognitive/thresholds.py` (`DEFAULT_AUTONOMOUS_THRESHOLDS`; supervisados 0.5/0.4/0.5). La calibración los ajusta con percentiles 0.70 (supervisado) y 0.90 (autónomo).
+2. Frecuencia de calibración: el diseño original proponía "semanal (domingo 3 AM)" con ventana de 30 días. La implementación usa un loop periódico configurable (`CalibrationJob`, intervalo por defecto 3600 s) con ventana de muestras de 30 días (`window_days`).
+3. Margen mínimo autónomo-supervisado: 0.05 (configurable en `calibration.autonomous_margin_min`). Implementado en `DEFAULT_CALIBRATION_CONFIG` y aplicado por `enforce_margin` en `src/diana/application/calibration_math.py` antes de escribir.
+4. Duración de no repetición de promo: 30 días (configurable en `promo.repeat_days`). Implementado con default `_DEFAULT_REPEAT_DAYS = 30` en `src/diana/application/promo_service.py`.
+5. Acción por defecto ante expiración de zona gris: "escalate" (seguridad). Mantenida.
+6. Inactividad para recontacto: 7 días (configurable en `recontact.inactivity_days`). Implementado con default `_DEFAULT_INACTIVITY_DAYS = 7` en `src/diana/application/recontact_service.py`.
+7. Acción al reenviar promo ya enviada: resuelto — no se silencia; si el trigger define `repeat_first_message`, se sustituye el primer mensaje de la secuencia por ese texto breve; si no, se reenvía la secuencia completa. El registro en `promo_executions` es siempre.
 
 ---
 
@@ -538,13 +560,13 @@ AGENTS.md Actualizado con flujos de Fase 3, hooks y reglas de exclusión.
 
 13. Notas Finales
 
-· Gradualidad: Esta fase es la más compleja. Se recomienda activar los flags uno a uno: primero Recontacto (menos riesgoso, pero con filtros de bloqueo), luego Promo (bajo riesgo), luego Calibración (requiere datos), luego Modo Autónomo (después de calibración), y finalmente Behavior avanzado.
-· Monitoreo: La dueña debe recibir notificaciones semanales con métricas para tener visibilidad del rendimiento.
+· Despliegue: Recontacto, Promo y Behavior avanzado están activos. Calibración y Modo Autónomo quedan implementados en código y deshabilitados por flag; se recomienda activarlos cuando se acumulen suficientes datos de corrección (calibración) y, después de calibrar, validar el modo autónomo.
+· Monitoreo: La dueña recibe notificaciones semanales con métricas para tener visibilidad del rendimiento.
 · Rollback: Todos los nuevos comportamientos tienen feature flags; se puede desactivar cualquier funcionalidad sin redeploy.
 · Cancelación de recontacto: El hook en TurnCoordinator asegura que el recontacto se cancele cuando el VIP escribe, evitando mensajes redundantes o inapropiados.
 
 ---
 
-Fin del SPEC-FASE3.md (v3.1)
-Última actualización: Julio 2026
-Equipo de Arquitectura — Producto completo listo para desarrollo, con todas las correcciones del review integradas.
+Fin del SPEC-FASE3.md (v3.2)
+Última actualización: Agosto 2026
+Estado: Fase 3 implementada y desplegada por flags; autonomía y calibración implementadas en código, deshabilitadas por flag.

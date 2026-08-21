@@ -1,7 +1,7 @@
 ---
 title: SPEC-FASE2.md
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 type: entity
 tags: [spec, memoria, aprendizaje, politica]
 sources: [../../docs/SPEC-FASE2.md]
@@ -10,7 +10,7 @@ confidence: high
 
 # SPEC-FASE2.md
 
-Contrato de diseño e implementación de la **Fase 2 (MVP+)**: Memoria, Aprendizaje Controlado y Zona Gris (v2.1, basado en [[spec-1-1]] y [[spec-requerimientos]] bloques MEM/TRN/GAP/EVAL).
+Contrato de diseño e implementación de la **Fase 2 (MVP+)**: Memoria, Aprendizaje Controlado y Zona Gris (v2.1, basado en [[spec-1-1]] y [[spec-requerimientos]] bloques MEM/TRN/GAP/EVAL). **Estado (2026-08-21): implementada y desplegada** — los cuatro flags están activos en el entorno de ejecución (ver [[feature-flags]] y [[estado-del-proyecto]]).
 
 ## Propósito
 
@@ -22,9 +22,9 @@ Transformar el "bot supervisado" de Fase 1 en un sistema que aprende y razona co
 4. **Evaluación calibrable** — registro de perfiles para [[calibracion-de-umbrales]] futura.
 5. **Sustituibilidad** — mismas interfaces del [[capability-registry]]; el Director no cambia.
 
-## Feature toggles (todos default false)
+## Feature toggles (activos en runtime)
 
-`FEATURE_MEMORY_ENABLED`, `FEATURE_GRAY_ZONE_ENABLED`, `FEATURE_STAGING_ENABLED`, `FEATURE_SANDBOX_ENABLED` (ver [[feature-flags]]).
+`FEATURE_MEMORY_ENABLED=true`, `FEATURE_GRAY_ZONE_ENABLED=true`, `FEATURE_STAGING_ENABLED=true`, `FEATURE_SANDBOX_ENABLED=true` — los cuatro activos en `.env` (defaults `false` en código, overridables por env; ver [[feature-flags]]).
 
 ## Componentes nuevos
 
@@ -35,7 +35,7 @@ Transformar el "bot supervisado" de Fase 1 en un sistema que aprende y razona co
 - **Evaluador** — doctrina según tabla: `needs_policy=false` → 0.7 neutral; con políticas → valor real; `needs_policy=true` + sin políticas → 0.2 (señal de zona gris).
 - **Decisor** — prioridad 2 nueva: `consult_doctrine` cuando `needs_policy=true` y retrieval vacío (ver [[decisor]]).
 
-## Orden de activación recomendado
+## Orden de activación (histórico)
 
 Índices HNSW → seed de políticas → flags uno a uno (memoria → staging → zona gris). Rollback solo cambiando configuración.
 

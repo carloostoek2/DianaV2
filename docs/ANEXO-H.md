@@ -1,5 +1,7 @@
 # Plan: Persona Facts + Voice Patterns + Refinamiento de Escalación
 
+> **Estado del plan (2026-08-21): Anexo H implementado y desplegado.** El plan de persona (hechos + patrones de voz + escalación + agenda semanal) está implementado. Los 10 hitos H0–H9 están **cumplidos**: el catálogo vive en `src/diana/config/persona_diana.json` (9 `persona_facts` + 11 `voice_patterns` + `schedule`), los retrievers `persona_facts`, `voice_patterns` y `schedule` están registrados en el Capability Registry y `UNIMPLEMENTED_CAPABILITIES` está vacío (ver [ARCHITECTURE.md](ARCHITECTURE.md), sección "Capability Registry + Retrievers"). Las secciones siguientes se conservan como registro/trazabilidad del plan original; los bloques marcados como "Cumplido" reflejan el estado real del sistema.
+
 ## Context
 
 `diana_system_prompt.md` v1.1 se estructuró en el Anexo J (persona/voz siempre-presente, banco de ejemplos de voz, hechos biográficos, reglas duras/blandas). Este plan lleva eso al código real de `DianaV2-main`, respetando lo que ya existe:
@@ -59,11 +61,11 @@ voice_patterns:
   # ... 10 más
 ```
 
-Si en el futuro esto crece mucho (decenas/cientos de hechos) o quieres que la dueña los edite desde Telegram sin redeploy, ese es el momento de moverlo a tabla + comando de admin — no antes; es la misma lógica de "no sobre-construir" que ya aplicamos a la decisión de no usar vectores.
+Como guía de diseño, si el catálogo creciera a decenas/cientos de hechos, o si la dueña necesitara editarlos desde Telegram sin redeploy, el paso natural sería moverlo a tabla + comando de admin; hoy, con 9 hechos + 11 patrones, no se justifica. Es la misma lógica de "no sobre-construir" que ya aplicamos a la decisión de no usar vectores.
 
 ## Estado actual (para quien implemente — no re-hacer lo ya hecho)
 
-> **Última verificación de código:** 2026-07-28 (pool residuales H7/H9 cerrado) — estado contrastado contra SUMMARYs residual-* + commits del pool + tree actual (`src/`, `tests/`). Hardener H7+H9: 2026-07-27.
+> **Última verificación de código:** 2026-08-21 (estado real contrastado contra `src/diana/` y `docs/ARCHITECTURE.md`), sobre la verificación previa de 2026-07-28 (pool residuales H7/H9 cerrado, estado contrastado contra SUMMARYs residual-* + commits del pool + tree actual). Hardener H7+H9: 2026-07-27.
 
 | Hito | Qué es | Estado |
 |---|---|---|
@@ -77,8 +79,8 @@ Si en el futuro esto crece mucho (decenas/cientos de hechos) o quieres que la du
 
 **Residuales H7/H9 — estado (pool 2026-07-28):** VIP sandbox history ✅ · multi-segment owner history ✅ · H9.5 CDMX ✅ · recontact owner history ✅ · Promote UI (REQ-ADM-08) ✅ · promo history ❌ (explícito out-of-scope). Índice: `.grok/agent-memory/residuals/h7-h9-pool.md`.
 
-Pendiente de investigar (no bloquea implementación, es diagnóstico posterior): `needs_examples` no se está activando en los traces de producción — el pool de H8 está cargado pero aún sin uso confirmado. Tras H7 + Promote UI, las correcciones de dueña alimentan staging y la dueña puede listar/promover/descartar ejemplos pendientes vía `/staging` (flag `FEATURE_STAGING_ENABLED`).
-## Orden global sugerido
+**`needs_examples` (resuelto a nivel de código, 2026-08-21):** el campo está en el schema del Analyst (`cognitive/analyst.py`, con descripción de activación), se mapea en `planner.py` a `knowledge.examples` y lo lee `evaluator.py` — la capacidad está cableada. Queda como **pendiente de investigación (operativo)**: confirmar en los traces de producción que `needs_examples` se activa en turnos reales y que el pool de H8 (4,348 ejemplos) genera retrievals efectivos. No es una brecha de implementación. Tras H7 + Promote UI, las correcciones de dueña alimentan staging y la dueña puede listar/promover/descartar ejemplos pendientes vía `/staging` (flag `FEATURE_STAGING_ENABLED`).
+## Orden global (orden ejecutado)
 
 ```
 H0 → H1 → H2 → (H3 ∥ H4) → H5     [núcleo: persona_facts/voice_patterns/escalación]
@@ -86,17 +88,21 @@ H6                                 [independiente — solo toca Director + nuevo
 H7                                 [independiente — solo toca admin_service.py/turn_orchestrator.py]
 H9                                 [independiente — solo toca schedule.py/ports.py/registry.py/analyst.py]
 ```
-H6, H7 y H9 no dependen entre sí ni de H0–H5 (tocan archivos distintos, salvo que los tres tocan `analyst.py`/`director.py` — revisar conflictos de merge si se hacen en paralelo por separado). Orden relativo entre ellos: el que se quiera ver reflejado primero en producción.
+H6, H7 y H9 no dependían entre sí ni de H0–H5 (tocan archivos distintos, salvo que los tres tocan `analyst.py`/`director.py` — hubo que revisar conflictos de merge si se ejecutaban en paralelo por separado). Orden relativo entre ellos: el que se quiso ver reflejado primero en producción.
 
 ## Plan de implementación (10 hitos: H0–H9)
 
 ### H0: Modelo + config
+
+> **Cumplido (2026-08-21):** `needs_persona_facts`/`needs_voice_patterns` añadidos a `Comprehension` (`cognitive/models.py`); el catálogo real vive en `src/diana/config/persona_diana.json` (9 `persona_facts` + 11 `voice_patterns`) y se sirve vía `PersonaCatalogProvider` en `composition.py`.
 
 - Añadir `needs_persona_facts: bool` y `needs_voice_patterns: bool` a `Comprehension` (`cognitive/models.py`). **Nota de compatibilidad:** esto es un cambio de schema (Anexo A.7) — las filas históricas de `pipeline_traces.comprehension` no tendrán estas claves. Verificar que nada re-valida JSON histórico contra el modelo Pydantic estricto (solo se muestra como blob en `AdminTraceService`/`/traza`) antes de desplegar.
 - Crear `config/persona_diana.yaml` con el contenido ya redactado en el Anexo J (J.2 y J.3), incluyendo el hecho de vivienda ya resuelto.
 - Loader simple en `composition.py` (YAML → dict en memoria, sin nueva dependencia si ya usan `pyyaml`; si no, `tomllib`/JSON son alternativas igual de válidas).
 
 ### H1: Retrievers nuevos (sin embeddings)
+
+> **Cumplido (2026-08-21):** `cognitive/retrievers/persona_facts.py` y `cognitive/retrievers/voice_patterns.py` existen, con match determinista por sets (sin embeddings) y refresco por canal vía `persona_catalog_provider`.
 
 **`cognitive/retrievers/persona_facts.py`** — mismo patrón de firma que `HistoryRetriever`/`ContextRetriever` (Anexo H.2: `fetch(turn, comprehension) -> resultado | None`):
 ```python
@@ -130,6 +136,8 @@ Match determinista por intersección de sets — sin embeddings, sin librería n
 
 ### H2: Wiring — Planner, Registry, ContextBuilder, Analyst
 
+> **Cumplido (2026-08-21):** `planner.py` mapea ambas capacidades (`needs_persona_facts`/`needs_voice_patterns` → `knowledge.*`); `registry.py` las registra en `build_default_registry` y en `PLANNER_CAPABILITY_UNIVERSE`; `context_builder.py` las emite tras `knowledge.context`; `analyst.py` incluye los dos campos con su descripción de activación.
+
 - `planner.py`: agregar `("needs_persona_facts", "knowledge.persona_facts")` y `("needs_voice_patterns", "knowledge.voice_patterns")` a `_NEED_TO_CAPABILITY`.
 - `registry.py`: registrar ambos retrievers en `build_default_registry` (reciben la lista cargada del YAML), sumarlos a `PLANNER_CAPABILITY_UNIVERSE` para que el fail-fast de arranque (Anexo H.1) los valide igual que a los demás.
 - `context_builder.py`: agregar ambos nombres a `_KNOWLEDGE_EMISSION_ORDER`. Orden sugerido: justo después de `knowledge.context` y antes de `knowledge.memory` (son datos "sobre Diana", conceptualmente más cerca de persona que de memoria/política del VIP):
@@ -145,6 +153,8 @@ _KNOWLEDGE_EMISSION_ORDER = (
 
 ### H3: Regla de frustración directa (Decider)
 
+> **Cumplido (2026-08-21):** `decider.py` evalúa `emotion == "molesta"` → `Decision(action="escalate", reason="frustracion_directa")` antes de la regla de riesgo alto.
+
 En `decider.py`, nueva regla en la matriz F3 — evalúa **antes** de la regla de `risk == "alto"` (misma prioridad de intención: escalar sin importar si es el primer mensaje):
 ```python
 # 2b. Frustración directa (nueva) — no espera acumulación de turnos.
@@ -154,6 +164,8 @@ if comprehension.emotion == "molesta":
 Es un cambio de una línea porque `Decider` ya recibe `Comprehension` completa — no necesita I/O ni tocar su contrato de pureza (Anexo F.4).
 
 ### H4: Regla de repetición (Director + nuevo puerto)
+
+> **Cumplido (2026-08-21):** `RecentIntentsPort` en `cognitive/ports.py`, `get_recent_intents` en `infrastructure/db/repositories/traces.py`, `RepetitionGuard` en `cognitive/repetition_guard.py` y el chequeo post-Analyst en `director.py` (si dispara, salta Planner/Retrievers/Generador/Evaluador).
 
 Esta es la pieza nueva de verdad porque el Decisor no puede resolverla (no tiene acceso a turnos anteriores, por diseño).
 
@@ -210,6 +222,8 @@ Director gana 2 dependencias nuevas en el constructor: `recent_intents: RecentIn
 
 ### H5: Wiring final + tests
 
+> **Cumplido (2026-08-21):** `composition.py` carga el catálogo e inyecta los retrievers + `RecentIntentsPort`/`RepetitionGuard` al `CognitiveDirector`; tests unitarios en `tests/unit/` (retrievers, guard, decider, director).
+
 - `composition.py`: cargar `persona_diana.yaml`, construir `PersonaFactsRetriever`/`VoicePatternsRetriever`, inyectar `RecentIntentsPort` (el mismo repo de traces ya extendido) y `RepetitionGuard` al `CognitiveDirector`.
 - Tests nuevos (siguiendo la convención `tests/unit/cognitive/test_*.py` y `tests/unit/infrastructure/test_*.py` ya existente):
   - `test_persona_facts_retriever.py` — match por tema, `None` si no matchea.
@@ -218,7 +232,7 @@ Director gana 2 dependencias nuevas en el constructor: `recent_intents: RecentIn
   - `test_decider.py` (extender) — `emotion == "molesta"` → `escalate`, incluso con `safety` alto.
   - `test_director.py` (extender) — repetición dispara escalación y **no** invoca Generator/Evaluator (mock con `assert_not_called`).
 
-## Orden de implementación
+## Orden de implementación (ejecutado)
 
 ```
 H0 (modelo + config) → H1 (retrievers) → H2 (wiring cognitivo)
@@ -227,7 +241,7 @@ H0 (modelo + config) → H1 (retrievers) → H2 (wiring cognitivo)
   → H5 (composition.py + tests)
 ```
 
-H3 y H4 son independientes entre sí — se pueden hacer en paralelo o en cualquier orden porque tocan archivos distintos (`decider.py` vs `director.py`/`ports.py`/`traces.py`).
+H3 y H4 son independientes entre sí — se pueden hacer en paralelo o en cualquier orden porque tocan archivos distintos (`decider.py` vs `director.py`/`ports.py`/`traces.py`). Este orden es el que se siguió en la implementación; todos los hitos están cumplidos.
 
 ## Verificación
 
@@ -250,11 +264,15 @@ Antes de dar por cerrado el trabajo, además de la Verificación de H0–H5 y la
 
 ## Nota aparte (fuera de este plan, mencionada por completitud)
 
+> **Resuelta (2026-08-16):** la plantilla fija para "¿eres una IA?" se implementó vía `TemplateGate` pre-pipeline (`deteccion_ia`), no en `ForbiddenKeywordsMiddleware` — ver H6. El texto original de la nota se conserva como registro del razonamiento.
+
 La plantilla fija para "¿eres una IA?" (Anexo J.4) usa el mismo mecanismo de `ForbiddenKeywordsMiddleware` que ya tienes, pero ese componente hoy solo sabe **escalar en silencio** (`handle_deterministic_escalation`), no **responder con texto fijo y luego escalar**. Si quieres esa plantilla exacta, es un pequeño cambio adicional en ese middleware (una rama nueva: "keyword de tipo respuesta-fija" vs "keyword de tipo escalar-silencioso"). Lo dejo fuera de este plan porque no lo mencionaste como prioridad ahora — dime si quieres que lo diseñe aparte.
 
 ---
 
 ## H6: Plantillas deterministas — saludo puro + "¿eres una IA?"
+
+> **Cumplido (2026-08-16):** ver bloque "Estado de código" abajo — `TemplateGate` pre-pipeline (`deteccion_ia`) + pool `plantilla_saludo` post-Analyst con `FEATURE_PHATIC_AUTO_SEND`.
 
 > **Estado de código (2026-08-16, pool saludo-cognitivo):**  
 > - **"¿eres una IA?"** sigue en `TemplateGate` **pre-pipeline** (`deteccion_ia` only en producción): 0 Analyst, `action=approve`, `reason=plantilla_deteccion_ia`.  
@@ -383,11 +401,13 @@ Ganancia del corte de saludo: se evita Planner + Generator + Evaluator + Decider
 3. "eres una ia?" → pre-pipeline, 0 Analyst, `draft_text` exacto del pool IA, `action=approve`.
 4. Flag ON + Atención → no entrega autónoma (demote a approve). Flag ON + VIP congelado/pausado → no envía.
 5. `FEATURE_PHATIC_AUTONOMY` no dispara envío; import purity cognitive↛application en verde.
-6. Limpieza de `config/persona_diana.yaml`: quitar el `(ver J.2 / examples)` de `reglas_estilo` (hallazgo de la sesión original H6).
+6. Limpieza de `config/persona_diana.yaml`: quitar el `(ver J.2 / examples)` de `reglas_estilo` (hallazgo de la sesión original H6). **Cumplido (2026-08-21):** el catálogo real vive en `src/diana/config/persona_diana.json`.
 
 ---
 
 ## H7: Corrección persistida + historial de salida (gap encontrado en esta sesión)
+
+> **Cumplido (2026-08-21):** `handle_correct` → `StagingService.save_correction`; owner history `role="owner"` en admin (approve/correct) y orquestador autónomo. Ver tabla de Estado actual (residuales 2026-07-28 todos cerrados salvo promo history, explícito out-of-scope).
 
 ### H7.1 Diagnóstico (confirmado en código, no hipótesis)
 
@@ -437,6 +457,8 @@ No es solo higiene de datos — el ejemplo de "uy, no wey" que me mandaste es la
 
 ## H8: Importar `diana_training.db` a `knowledge.examples`
 
+> **Cumplido/ejecutado (2026-08-21):** 4,348 filas importadas vía `scripts/import_v1_training.py` (455 saltadas por `contenido_pricing_excluido`). **No re-ejecutar** sin `--limit` — no hay chequeo de idempotencia. Las preguntas abiertas de H8.2 se resolvieron durante la ejecución.
+
 ### H8.1 Mapeo de los 3 casos usables (4 803 de 4 916 filas — mismo filtro que v1 ya usa en `get_few_shots`)
 
 | Origen v1 | Filas | `Example.turn_text` | `Example.draft_text` | `Example.corrected_text` | `is_counter_example` |
@@ -460,13 +482,17 @@ Con eso te devuelvo un script de migración (`scripts/import_v1_training.py`, of
 
 ---
 
-## H9: Implementar `knowledge.schedule` de verdad (agenda semanal fija)
+## H9: Implementar `knowledge.schedule` (agenda semanal fija)
 
-### H9.1 Diagnóstico
+> **Cumplido (2026-08-21):** el retriever real está implementado y registrado; esta sección se conserva como trazabilidad del plan.
 
-`ScheduleRetriever` ya existe en el código como el placeholder exacto del Anexo H.3 (`fuente="no_implementado"`, `fetch()` siempre `None`). Todo el plumbing (`Planner._NEED_TO_CAPABILITY`, `registry.py`, `context_builder._KNOWLEDGE_EMISSION_ORDER`) **ya está conectado** — es la única capacidad que falta implementar de verdad, no hay que tocar nada del resto del pipeline.
+### H9.1 Diagnóstico (estado original) y estado real
 
-Segundo hallazgo, en el trace real: `"Y ahora qué haces?"` → `needs_schedule: false`. El Analista tampoco reconoce ese patrón todavía — hay que ajustar su prompt además de escribir el retriever.
+**Estado real (2026-08-21):** `cognitive/retrievers/schedule.py` existe con `ScheduleRetriever` real (`fuente="agenda_semanal_fija"`), registrado en `registry.py` bajo `knowledge.schedule` y validado por el fail-fast de `PLANNER_CAPABILITY_UNIVERSE`. `UNIMPLEMENTED_CAPABILITIES` está vacío (`frozenset()` — comentado "Empty after H9 (schedule is real)"). Su `fetch()` **nunca devuelve `None`**: retorna `{"tipo": "actividad", ...}` cuando el día/hora CDMX cae dentro de un bloque y `{"tipo": "respuesta_libre", ...}` en huecos o fuera de horario — la "respuesta libre" es el comportamiento diseñado para tiempo muerto, no un hueco de implementación.
+
+**Diagnóstico original (previo a implementar, 2026-07):** `ScheduleRetriever` existía como el placeholder del Anexo H.3 (`fuente="no_implementado"`, `fetch()` → `None`) y era la única capacidad sin implementar. Todo el plumbing (`Planner._NEED_TO_CAPABILITY`, `registry.py`, `context_builder._KNOWLEDGE_EMISSION_ORDER`) ya estaba conectado; hoy esa condición ya no aplica — el retriever está implementado y registrado.
+
+Segundo hallazgo del trace real: `"Y ahora qué haces?"` → `needs_schedule: false`. El Analista tampoco reconocía ese patrón — se resolvió ajustando su prompt además de escribir el retriever (ver H9.6).
 
 ### H9.2 Config — tabla semanal (`config/persona_diana.yaml`, mismo archivo de H0)
 
@@ -561,11 +587,16 @@ Extiendo `ContextRetriever` (que ya corre seguido, cuando `needs_context=true`) 
 
 ### H9.6 Fix al Analista — `needs_schedule` no dispara con "¿qué haces ahora?"
 
+> **Cumplido (2026-08-21):** el prompt del Analyst en `cognitive/analyst.py` ya incluye el patrón de actividad/disponibilidad actual — *"needs_schedule=true for direct questions about Diana's current activity/availability right now (qué haces, dónde andas, estás libre / "ahora qué haces"), not only future appointments"*.
+
 En `analyst.py`, ampliar la descripción del campo: agregar explícitamente el patrón *"pregunta directa sobre la actividad/disponibilidad actual de Diana en este momento (qué haces, dónde andas, estás libre)"* como disparador de `needs_schedule=true` — hoy el prompt solo lo asocia (implícitamente) con temas de citas/agenda futura, no con "ahora mismo".
 
 ### H9.7 Verificación
+
+> **Verificación cumplida (2026-08-21)** — los checks 1-5 se satisficieron durante la implementación de H9 (tests con `ClockPort` fake + verificación de presupuesto de prompt).
+
 1. `"Y ahora qué haces?"` en jueves 14:30 hora CDMX → `needs_schedule=true`, `knowledge.schedule` retorna `{"tipo": "actividad", "actividad": "en las prácticas profesionales..."}`, el borrador no contradice eso.
 2. Mismo mensaje en domingo → `actividad` = "con su hermana...".
 3. Mismo mensaje en jueves 13:00 (hueco) → `{"tipo": "respuesta_libre", "respuesta_sugerida": "<una de las 3>"}`, y el borrador suena a esa línea sin citarla forzosamente palabra por palabra.
 4. `ClockPort` fake en tests para fijar día/hora sin depender del reloj real (mismo patrón que ya usan los tests de `recovery_startup`).
-5. Confirmar que un turno sin `needs_schedule` (ej. saludo simple) sigue sin traer `knowledge.schedule` — el ahorro de presupuesto de prompt no se pierde por hacerlo "siempre presente" a medias (solo día/hora vía H9.5, no el bloque completo).	
+5. Confirmar que un turno sin `needs_schedule` (ej. saludo simple) sigue sin traer `knowledge.schedule` — el ahorro de presupuesto de prompt no se pierde por hacerlo "siempre presente" a medias (solo día/hora vía H9.5, no el bloque completo).

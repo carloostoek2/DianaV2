@@ -3,7 +3,7 @@
 The product README lives at the repo root: [README.md](../README.md).
 
 Installable `src/diana` package: env-driven Settings, PostgreSQL schema via
-Alembic (migrations **001–017**, F1 foundation through F3 tables/indexes), pure
+Alembic (migrations **001–029**, F1 foundation through F6/feedback), pure
 cognitive decision pipeline, application shell (orchestrator + admin approval
 gate), Behavior Engine, Learning post-turn, and **Telegram I/O** (aiogram 3
 long-polling) with SQL repository adapters.
@@ -14,6 +14,13 @@ delivery follows owner approve/correct unless autonomous mode is explicitly
 unlocked. F2/F3 code surfaces exist; **wired** gates use Settings/env (see
 table). Ops enable them gradually
 (see [`.planning/quick/F3-PHASE-STATUS.md`](.planning/quick/F3-PHASE-STATUS.md)).
+
+**Runtime state (2026-08-21):** the code defaults stay `false`, but the production
+`.env` enables most surface flags (memory, gray zone, staging, sandbox, advanced
+behavior, promo, recontact, persona admin, quality feedback, general mode, phatic
+auto-send, link, and the evo-agente shadow flags). Still off: `FEATURE_AUTONOMOUS_MODE`
+(auto-send double-gate, wired but disabled) and `FEATURE_CALIBRATION_ENABLED`. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §4 for the authoritative flag table.
 
 ## Feature flags
 
@@ -34,6 +41,12 @@ merge; those seeds are **not** live overrides today.
 | **F3** Calibration | `feature_calibration_enabled` / `FEATURE_CALIBRATION_ENABLED` | **yes** | Threshold calibration job + threshold writes / drift alerts |
 | **F3** Advanced behavior | `feature_advanced_behavior` / `FEATURE_ADVANCED_BEHAVIOR` | **yes** | Message split + human quirks when delivery context enables them |
 | **Persona admin** | `feature_persona_admin_enabled` / `FEATURE_PERSONA_ADMIN_ENABLED` | **yes** | Owner `/persona` menu + "Personalidad y reglas" panel with versioned catalog (migration **017**). Flag off → panel hidden, static `persona_diana.json` remains the source. |
+| **F4** Atención general | `feature_general_mode_enabled` / `FEATURE_GENERAL_MODE_ENABLED` | **yes** | Non-VIP attention channel (`channel_type=atencion`), 20 msgs/day limit, payment notice close (migrations 018–021) |
+| **F5** Memoria VIP | `feature_memory_enabled` wiring + F5 services | **yes** | Backfill + post-turn extraction + approval of sensitive facts (migrations 022–023). Memory populated and maintained |
+| **Evo-agente (shadow)** | `feature_emotional_detector_enabled` / `feature_profile_synthesis_enabled` / `feature_phatic_autonomy` / `feature_mood_engine` / `feature_trust_budget` | **yes** | Shadow measurement only (detector, perfil evolutivo, mood, trust budget; migrations 024–026). Miden y registran; no cambian decisiones |
+| **F6** Link Lucien→Diana | `feature_link_enabled` / `FEATURE_LINK_ENABLED` | **yes** | Coordinator chat receives `[LINK] vip_kicked` → dedup by `event_id` → owner DM (Expulsar/Desactivar/Mantener). Migration **028**. Active in `.env` |
+| **Feedback calidad** | `feature_quality_feedback_enabled` / `FEATURE_QUALITY_FEEDBACK_ENABLED` | **yes** | Destacar/Reprender on VIP drafts, gold/vip banks, gold-first retrieval (migration **029**). Active in `.env` |
+| **Saludo puro VIP** | `feature_phatic_auto_send` / `FEATURE_PHATIC_AUTO_SEND` | **yes** | Direct send of short pure-greeting turns (else approve) |
 
 **Freeze** is implemented on the gray-zone / freeze path (middleware + Behavior
 delivery hard-check). **Traceability (Anexo T)** is available for the owner DM:
@@ -116,10 +129,11 @@ export DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/diana
 alembic upgrade head
 ```
 
-Schema evolves through migrations **001–017** (F1 foundation, F2 knowledge /
+Schema evolves through migrations **001–029** (F1 foundation, F2 knowledge /
 freeze / trace timings, F3 flags·thresholds·auto_send·recontact/promo·calibration·
-owner marks, runtime timers, business connections, and persona versions — pipeline_traces
-indexes). See `alembic/versions/` and ORM models
+owner marks, runtime timers, business connections, persona versions, F4 attention
+channel, F5 memory state columns, evo-agente tables, ephemeral events, link events,
+feedback quality). See `alembic/versions/` and ORM models
 for the authoritative table set (do not hard-code a table count).
 Seeds include non-secret `system_config` keys (`global_mode`, `forbidden_keywords`,
 `eval_thresholds`, feature flags default false, etc.). The `pgcrypto` extension is
@@ -127,6 +141,9 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 
 ## Docs
 
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — consolidated architecture guide (layers, modules, flows, flags, schema, stack, ADRs)
+- [`docs/ESTADO-PROYECTO.md`](docs/ESTADO-PROYECTO.md) — current system state and real pending items
+- [`docs/INFORME_AUDITORIA.md`](docs/INFORME_AUDITORIA.md) — code ↔ requirements audit
 - [`docs/MVP_COMPONENT_DESIGN.md`](docs/MVP_COMPONENT_DESIGN.md) — F1 component guide
 - [`docs/SPEC-1.1.md`](docs/SPEC-1.1.md) — F1 technical design
 - [`docs/SPEC-FASE2.md`](docs/SPEC-FASE2.md) — Fase 2 (memory, gray zone, staging, sandbox)
@@ -143,6 +160,6 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 |----------|------|
 | `EvaluationProfile` | Exactly 7 floats; no single score / confidence |
 | `Decision.action` | `approve` \| `escalate` \| `consult_doctrine` \| `send` — Decider emits `send` when autonomous **flag + mins** met; auto-**delivery** only if autonomous mode service L1/L2 enable (else demote to approve) |
-| Schema | F1 foundation + F2 knowledge + F3 tables via migrations **001–017** (see `alembic/versions`) |
+| Schema | F1 foundation → F6/feedback via migrations **001–029** (see `alembic/versions`) |
 | Secrets | Env only; not in seed or repo |
 | Feature flags | Default **`false`** in Settings/env (runtime SoT). Every Settings flag is a live gate — surfaces appear only when their flag is on |

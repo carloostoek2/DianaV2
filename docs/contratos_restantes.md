@@ -85,7 +85,7 @@ GeneradorOutput { texto: string }                # texto plano; sin JSON, sin me
 
 ### E.3 Invariantes
 - Temperatura/creatividad del modelo puede ser más alta aquí que en Analista/Evaluador (que buscan consistencia de clasificación) — es una decisión de tuning, no de contrato, pero se documenta porque es la única pieza del pipeline donde variabilidad es deseable en vez de riesgo.
-- No tiene acceso a `PerfilEvaluacion` de intentos anteriores del mismo turno cuando hay `Regenerar` (ver §3.11 del cuerpo, decisión abierta) — si se implementa Regenerar, el Generador recibe el mismo `prompt_final`, no una versión "corregida según lo que falló", salvo que se decida explícitamente lo contrario en una iteración posterior de este contrato.
+- No tiene acceso a `PerfilEvaluacion` de intentos anteriores del mismo turno cuando hay `Regenerar` (ver §3.11 del cuerpo) — con `Regenerar` (implementado en `application/draft_variants.py`), el Generador recibe el mismo `prompt_final`, no una versión "corregida según lo que falló", salvo que se decida explícitamente lo contrario en una iteración posterior de este contrato.
 - Nunca escribe directamente a ningún canal — su salida siempre pasa por Evaluador → Decisor → cola de aprobación antes de cualquier entrega (invariante de todo el modo supervisado, §3.11 y §3.13).
 
 ### E.4 Errores
@@ -218,7 +218,7 @@ BehaviorOutput { ok: boolean, error: string | null, resultado_entrega: Resultado
 ### I.4 Invariantes
 - Verifica, justo antes del paso 4, que el `Turn` asociado **no** haya pasado a `superseded` mientras esperaba (paso 1-3 toma tiempo real; un mensaje nuevo del VIP pudo llegar mientras tanto). Si ya es `superseded`, aborta sin enviar y lo registra — este es el mecanismo que cierra el ciclo de la invariante de G.4 hasta el último paso del pipeline, no solo en la creación del turno.
 - No reintenta indefinidamente ante fallo de envío (REQ-NFR-04): reintento acotado (config) solo para errores de red/API transitorios; fallos definitivos se notifican a la dueña, nunca se descartan en silencio.
-- `fake_delivery` no se implementa en el MVP, pero el enum ya lo contempla (§3.12 del cuerpo) para que activar sandbox (REQ-COG-14, MVP+) no requiera cambiar la firma de este contrato, solo agregar el caso.
+- `fake_delivery` está implementado y activo en el sandbox (`FEATURE_SANDBOX_ENABLED=true`, `behavior/fake.py`); el enum lo contempla (§3.12 del cuerpo) sin necesidad de cambiar la firma de este contrato.
 
 ### I.5 Errores
 - Fallo de envío (canal caído, rate limit del proveedor) → `ok: false`, `error` con motivo, `Turn.status = failed` si se agotan los reintentos configurados, notificación a la dueña con contexto suficiente para que sepa que el VIP no recibió respuesta.

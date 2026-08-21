@@ -2,7 +2,7 @@
 
 > Catálogo de contenido. Toda página de la wiki listada bajo su tipo con un resumen de una línea.
 > Leer primero para encontrar páginas relevantes ante cualquier consulta.
-> Last updated: 2026-08-16 | Total pages: 48
+> Last updated: 2026-08-21 | Total pages: 48
 
 ## Entities — Specs
 
@@ -14,11 +14,11 @@
 - [[spec-fase4]] — Fase 4: Atención al Cliente General (canal no-VIP), perfil de canal
 - [[spec-fase5]] — Fase 5: Perfil de VIP con memoria (backfill + mantenimiento)
 - [[spec-evolucion-agente]] — Evolución de agente v1.2: perfil evolutivo, trust budget, detector emocional, mood
-- [[spec-fase6]] — Fase 6: aviso Lucien→Diana cuando expulsan a un VIP (flag OFF)
-- [[spec-feedback]] — Destacar/Reprender, gold-first, bancos por VIP (flag OFF)
-- [[estado-del-proyecto]] — estado 2026-08-16: F4/F5 activas, evo-agente shadow, F6+feedback en código, apply 027-029 sin verificar
+- [[spec-fase6]] — Fase 6: aviso Lucien→Diana cuando expulsan a un VIP (activo, desplegada)
+- [[spec-feedback]] — Destacar/Reprender, gold-first, bancos por VIP (activo)
+- [[estado-del-proyecto]] — estado 2026-08-21: F6 y feedback activos, evo-agente shadow, autoenvío deshabilitado, apply 027-029 sin verificar
 - [[changelog]] — historial de cambios del sistema
-- [[informe-auditoria]] — auditoría 161 reqs: 139 ✅, 14 ⚠️, 6 🔍, 2 ❌ (AUTH-03, AUTH-07)
+- [[informe-auditoria]] — auditoría 161 reqs: 143 ✅, 11 ⚠️, 5 🔍, 2 ❌ (AUTH-03, AUTH-07)
 
 ## Entities — Módulos
 
@@ -61,14 +61,14 @@
 - [[comunicacion-con-producto]] — reglas del chat con la dueña; español neutro obligatorio
 - [[feature-flags]] — regla de oro: comportamientos nuevos detrás de flags; rollback sin redeploy
 - [[calibracion-de-umbrales]] — ajuste empírico de umbrales; margen autónomo > supervisado; incidente que prohibió auto-calibración
-- [[trust-budget]] — confianza por (VIP, categoría); doble puerta del autoenvío; asimétrico por diseño
+- [[trust-budget]] — confianza por (VIP, categoría); doble puerta del autoenvío cableada pero deshabilitada
 - [[detector-emocional]] — quiebre emocional heurístico (sin LLM); umbrales 0.5/0.8; escalación shadow-only
 - [[perfil-evolutivo]] — stable_traits/recent_trend/sensitivities; resíntesis, decaimiento, versionado; mood
 - [[canal-atencion]] — perfil no-VIP: supervisado, límite 20/día, guiones como doctrina, anti-contaminación entre canales
 - [[memoria-vip]] — ficha del VIP por secciones; backfill idempotente + mantenimiento post-turno; aprobación de sensibles
 - [[ops-single-instance]] — un solo proceso activo; estado process-local; consecuencias multi-réplica
-- [[calidad-feedback]] — Destacar/Reprender; gold-first; flag default OFF; Atención bloqueada
-- [[vinculo-lucien]] — aviso de expulsión Lucien→Diana; 3 botones; flag default OFF
+- [[calidad-feedback]] — Destacar/Reprender; gold-first; flag activo; Atención bloqueada
+- [[vinculo-lucien]] — aviso de expulsión Lucien→Diana; 3 botones; flag activo
 - [[eventos-temporales]] — contexto con fecha de la dueña; sin flag; no contamina memoria ni ejemplos
 
 ## Comparisons

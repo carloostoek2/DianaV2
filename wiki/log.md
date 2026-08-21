@@ -90,3 +90,10 @@
 - estado-del-proyecto y changelog de wiki alineados al snapshot 2026-08-16
 - Apply prod 027-029 marcado SIN VERIFICAR
 - Flags Destacar/Reprender y Lucien documentados como OFF por default
+
+## [2026-08-21] update | Sincronización al estado del sistema (2026-08-21)
+
+- Transformación de la documentación a estado actual: Fase 6 y feedback de calidad **activos** en `.env` (`FEATURE_LINK_ENABLED=true`, `FEATURE_QUALITY_FEEDBACK_ENABLED=true`); F6 desplegada y verificada E2E
+- Autoenvío (doble puerta): documentado como cableado tras `FEATURE_AUTONOMOUS_MODE=false` pero deshabilitado (kill-switch L1); el detector emocional mide/registra en shadow (la escalación forzada del Decider no está implementada, no es un "flag futuro")
+- Conteos de auditoría actualizados en index.md: 143 ✅, 11 ⚠️, 5 🔍, 2 ❌ (161 reqs)
+- Actualizadas: conceptos calidad-feedback, vinculo-lucien, detector-emocional, trust-budget, feature-flags; comandos superficie-admin; tablas esquema-fase6; index.md (Last updated 2026-08-21, total páginas sin cambio)

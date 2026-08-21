@@ -1,7 +1,7 @@
 ---
 title: SPEC-FEEDBACK.md
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 type: entity
 tags: [spec, aprendizaje, operacion]
 sources: [../../docs/SPEC-FEEDBACK.md]
@@ -12,7 +12,7 @@ confidence: high
 
 Síntesis del spec de implementación **Feedback de calidad + fix zona gris** (`docs/SPEC-FEEDBACK.md` v1.0). Esta página no copia el spec: apunta al archivo y registra qué quedó vivo en código.
 
-**Estado (2026-08-16, `main` `a80e0d9`):** Fase 0 y Fases 1–3 implementadas. El flag de escritura `FEATURE_QUALITY_FEEDBACK_ENABLED` sigue en **default OFF**.
+**Estado (2026-08-21, `main` `b592192`):** Fase 0 y Fases 1–3 implementadas, pool `feedback-calidad` cerrado (4 ítems). El flag `FEATURE_QUALITY_FEEDBACK_ENABLED` está **ACTIVO** (`true` en `.env`; default `false` en código, overridable por env) — Destacar/Reprender operativos en borradores VIP y paracaídas de zona gris aplicado (ver [[estado-del-proyecto]]).
 
 ## Qué cubre el spec
 

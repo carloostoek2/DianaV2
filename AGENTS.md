@@ -1,12 +1,11 @@
 
-
 AGENTS.md — Límites de módulo y flujos vivos (v1.3)
 
 Diana Business Bot / Sistema de Automatización de Chats VIP
 
 Campo Valor
 Nivel Operación para agentes de desarrollo (humanos o IA)
-Basado en REQUERIMIENTOS.md v2.1 + SPEC.md v1.5 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0 + SPEC-FASE6 + SPEC-FEEDBACK
+Basado en REQUERIMIENTOS.md v2.1 + SPEC-1.1.md v1.5 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0 + SPEC-FASE6 + SPEC-FEEDBACK
 Audiencia Chat con el usuario: dueño/a de producto. Cuerpo técnico de este doc: agentes de código y revisores.
 Versión 1.3 — Fase 3 (Producto Completo) + regla de comunicación con producto
 Idioma Español
@@ -157,7 +156,7 @@ Prohibido:
 · 4.6 Corrección → Staging (FEATURE_STAGING_ENABLED)
 · 4.7 Sandbox (FEATURE_SANDBOX_ENABLED)
 
-🟠 [FASE 3 — Producto Completo] Flujos NUEVOS
+🟠 [FASE 3 — Producto Completo] Flujos ACTIVOS (con flags)
 
 4.8 Turno VIP en modo autónomo (FEATURE_AUTONOMOUS_MODE)
 
@@ -318,19 +317,19 @@ El Decisor debe evaluar las condiciones en este orden exacto:
 Prioridad Condición Acción
 1 perfil.seguridad < umbral_seguridad Escalar
 2 comprension.needs_policy == true Y policy_retrieval_result == vacío Y FEATURE_GRAY_ZONE_ENABLED Consultar doctrina
-2b comprension.emotion == "molesta" Escalar (frustracion_directa)
-3 comprension.risk == "alto" Escalar
-4 (pre-Decisor) perfil.naturalidad < umbral_naturalidad → Director re-genera 1× + re-evalúa (MVP; sin Decision.action=regenerate). El Decisor no emite regenerate. Multi-retry / action regenerate = residual.
-5 Modo autónomo activo Y umbrales superados Enviar
-6 Ninguna de las anteriores Aprobar
+3 comprension.risk == "alto" Escalar (risk_high)
+4 comprension.emotion == "molesta" Escalar (frustracion_directa)
+5 (pre-Decisor) perfil.naturalidad < umbral_naturalidad → Director re-genera 1× + re-evalúa (MVP; sin Decision.action=regenerate). El Decisor no emite regenerate. Multi-retry / action regenerate = residual.
+6 Modo autónomo activo Y umbrales superados Enviar
+7 Ninguna de las anteriores Aprobar
 
-Notas sobre prioridad 4: la redraft de naturalidad es **secuenciación del Director** (pre-Decisor), no una acción del Decisor. El orden de **acciones** del Decisor sigue siendo seguridad → zona gris → escalate (frustración o risk) → send autónomo → approve; el paso 4 del Decisor es no-op (redraft ya ocurrió upstream si correspondía).
+Notas sobre prioridad 5: la redraft de naturalidad es **secuenciación del Director** (pre-Decisor), no una acción del Decisor. El orden de **acciones** del Decisor sigue siendo seguridad → zona gris → escalate (risk o frustración) → send autónomo → approve; el paso 5 del Decisor es no-op (redraft ya ocurrió upstream si correspondía).
 
-Nota de implementación (2026-08-16): el código evalúa `risk=alto` antes que `emotion=molesta`. Si ambas aplican, la acción sigue siendo Escalar y el `reason` queda `risk_high` (visible en `/traza`). La fila 2b del contrato se conserva: molesta sola escala sin esperar acumulación de risk. No cambiar esta tabla para “seguir al código” sin decisión de producto.
+Nota de alineación (2026-08-21): la tabla coincide con `src/diana/cognitive/decider.py` — el código evalúa `risk=alto` (prioridad 3) antes que `emotion=molesta` (prioridad 4). Si ambas aplican, la acción sigue siendo Escalar y el `reason` queda `risk_high` (la severidad semántica gana sobre la señal de frustración; visible en `/traza`). `molesta` sola escala sin esperar acumulación de risk.
 
 Justificación de la prioridad 2 sobre la 3 (BR-02 modificado): La zona gris se evalúa antes que risk=alto porque la falta de doctrina es una causa tratable que, una vez resuelta, elimina la necesidad de escalación futura. La escalación por risk=alto solo se ejecuta cuando no hay doctrina pendiente.
 
-Justificación de 2b (frustracion_directa): emotion molesta escala sin esperar acumulación de risk; se evalúa después de zona gris (doctrina tratable gana) y antes de risk=alto / send autónomo.
+Justificación de la prioridad 4 (frustracion_directa): emotion molesta escala sin esperar acumulación de risk; se evalúa después de zona gris (doctrina tratable gana) y de risk=alto (si ambas aplican, gana risk_high) y antes de send autónomo.
 
 4.2 BehaviorEngine (extensión Fase 3)
 
@@ -380,32 +379,32 @@ async def detect_drift() -> Dict[str, float]
 
 5. Reglas operativas para agentes de código (Fase 3)
 
-5.1 Al implementar modo autónomo
+5.1 Al modificar modo autónomo
 
 1. El Decisor ya tiene la regla de send al final. Asegurarse de que el orden de prioridades se mantiene.
 2. AutonomousModeService debe verificar FEATURE_AUTONOMOUS_MODE y auto_send por VIP.
 3. Las notificaciones a la dueña deben ser opcionales y configurables por umbral.
 
-5.2 Al implementar recontacto
+5.2 Al modificar recontacto
 
 1. El pipeline reducido no debe pasar por Analista ni Planificador.
 2. Las plantillas deben ser fijas, pero pueden incluir placeholders ({nombre}, {producto}).
 3. El job debe respetar los periodos de silencio configurados y evitar spam.
 
-5.3 Al implementar promo no-VIP
+5.3 Al modificar promo no-VIP
 
 1. La coincidencia debe ser exacta (case-insensitive, pero sin fuzzy matching).
 2. La secuencia se envía con delays entre mensajes (BehaviorEngine ya lo soporta).
 3. No se debe guardar en pipeline_traces.
 
-5.4 Al implementar calibración
+5.4 Al modificar calibración
 
 1. Usar un window_days configurable (default 30).
 2. Calcular umbrales por separado para cada dimensión.
 3. Aplicar suavizado (promedio con umbral anterior) para evitar oscilaciones.
 4. Registrar el cambio en system_config con historial (opcional).
 
-5.5 Al implementar Behavior avanzado
+5.5 Al modificar Behavior avanzado
 
 1. allow_split y allow_human_quirks son flags del DeliveryContext, no configuraciones globales.
 2. Los quirks humanos deben ser probabilísticos y no afectar el contenido del mensaje.
@@ -462,19 +461,20 @@ Programar recontacto sin verificar congelación/pausa Podría molestar al VIP en
 
 Documento Qué define
 REQUERIMIENTOS.md Qué debe cumplir el sistema (producto)
-SPEC.md v1.5 Cómo se implementa la Fase 1 (diseño técnico)
-SPEC-FASE2.md Cómo se implementa la Fase 2 (MVP+)
-SPEC-FASE3.md Cómo se implementa la Fase 3 (Producto Completo)
+SPEC-1.1.md v1.5 Diseño de Fase 1 (MVP supervisado)
+SPEC-FASE2.md Diseño de Fase 2 (MVP+)
+SPEC-FASE3.md Diseño de Fase 3 (Producto Completo)
 SPEC-FASE4.md Atención general (canal no-VIP)
 SPEC-FASE5.md Perfil de memoria por VIP
 SPEC-FASE6.md Vínculo Lucien→Diana (migración real 028)
 SPEC-FEEDBACK.md Destacar/Reprender y bancos gold/vip (migración real 029)
-Anexos_contratos.md Contratos detallados de todos los nodos
-Anexo T Sistema de trazabilidad interactiva
+ARCHITECTURE.md Arquitectura consolidada del sistema actual (entrada técnica única; mapa de módulos y flujos en §2–§3)
+contratos_restantes.md · contrato_analista.md Contratos detallados de los nodos (Anexos A y C+)
+ANEXO_T-TRAZABILIDAD.md Sistema de trazabilidad interactiva (Anexo T)
 AGENTS.md (este) Límites que ningún agente puede cruzar al tocar el código, clasificados por fase; más regla de comunicación con dueño de producto (sección 0)
 
 ---
 
 Fin de AGENTS.md v1.4 (Fase 3 + flujos 4.13–4.17; candado de texto del saludo 2026-08-17)
 Última actualización: Agosto 2026
-Equipo de Arquitectura — Producto completo listo para desarrollo.
+Equipo de Arquitectura — Producto completo implementado (sistema actual).

@@ -1,7 +1,7 @@
 ---
 title: Calidad Feedback
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 type: concept
 tags: [aprendizaje, flujo, operacion]
 sources: [../../docs/SPEC-FEEDBACK.md, ../../docs/UX.md, ../../src/diana/application/admin_service.py]
@@ -12,7 +12,7 @@ confidence: high
 
 Dos palancas extra en el borrador VIP, más allá de Aprobar / Corregir / Escalar: **Destacar** una respuesta que sí hay que repetir, y **Reprender** una que no.
 
-El flag `FEATURE_QUALITY_FEEDBACK_ENABLED` (env `feature_quality_feedback_enabled`) está **apagado por defecto**. Con el flag OFF los botones no aparecen y Aprobar/Corregir/Escalar no cambia. El retrieval gold-first y el filtro `vip_id` sí están en el esquema (migración `029_feedback_quality`) aunque el flag esté OFF — no escriben filas nuevas sin los botones.
+El flag `FEATURE_QUALITY_FEEDBACK_ENABLED` (env `feature_quality_feedback_enabled`) está **activo en producción desde 2026-08-21** (`FEATURE_QUALITY_FEEDBACK_ENABLED=true` en `.env`; default `false` en código, overridable por env). Con el flag activo los botones Destacar/Reprender aparecen en los borradores VIP y la escritura de oro/lección es operativa. El retrieval gold-first y el filtro `vip_id` están en el esquema (migración `029_feedback_quality`) y escriben filas al usar los botones.
 
 ## Estado actual
 
@@ -55,3 +55,6 @@ Anti-contaminación Memoria ↔ Ejemplos se mantiene ([[anti-contaminacion]]). A
 - No está enganchado al [[trust-budget]].
 
 Contrato de diseño: [[spec-feedback]].
+
+^[docs/ESTADO-PROYECTO.md §Feedback de calidad]
+^[src/diana/config/settings.py — feature_quality_feedback_enabled]

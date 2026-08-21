@@ -1,7 +1,7 @@
 ---
 title: Superficie de Admin
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-08-21
 type: entity
 tags: [operacion, contrato, modo]
 sources: [../../src/diana/telegram/handlers/, ../../docs/UX.md, ../../docs/PRODUCT_OWNER_ADMIN_SANDBOX.md]
@@ -30,7 +30,7 @@ Superficie de administración de la dueña en el DM con el bot (REQ-ADM-*). Toda
 | Fila | Botones | Condición |
 |---|---|---|
 | 1 | ✅ Aprobar · ✏️ Corregir · ⚠️ Escalar | Siempre |
-| 2 | Destacar · Reprender | `FEATURE_QUALITY_FEEDBACK_ENABLED` **y** `vip_id` presente (default del flag: **OFF**) |
+| 2 | Destacar · Reprender | `FEATURE_QUALITY_FEEDBACK_ENABLED` **y** `vip_id` presente (flag **activo** en `.env`, 2026-08-21) |
 | 3 | ◀ Anterior · 🔄 Regenerar · Siguiente ▶ | Siempre |
 | 4 | 🔍 Traza (`vtd:` vuelve al borrador) · 📝 Agregar nota | Siempre |
 

@@ -1,7 +1,7 @@
 ---
 title: Trust Budget
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 type: concept
 tags: [decision, aprendizaje, modo, riesgo]
 sources: [../../docs/SPEC-EVOLUCION-AGENTE.md]
@@ -30,6 +30,8 @@ Arranca en un valor bajo por defecto. El **castigo pesa más que el premio**: el
 autoenviar = (trust_score[categoria] >= umbral) AND (evaluacion del turno >= minimos del Decider)
 ```
 
+**Estado de cableado:** la doble puerta **sí está cableada** tras `FEATURE_AUTONOMOUS_MODE`, pero **deshabilitada** por el kill-switch L1 (`turn_orchestrator.py` ~304/2549, `recontact_service.py` ~209). Con `FEATURE_AUTONOMOUS_MODE=false` solo se acumula medición shadow (trust budget por VIP/categoría); nada se autoenvía.
+
 ## Reglas
 
 - **EA-03 (regla dura):** la categoría `sensitive` nunca entra en autonomía, sin importar el trust_score — siempre aprobación del owner.
@@ -40,3 +42,4 @@ autoenviar = (trust_score[categoria] >= umbral) AND (evaluacion del turno >= min
 Relacionado: [[decisor]], [[modos-de-operacion]], [[spec-evolucion-agente]].
 
 ^[docs/SPEC-EVOLUCION-AGENTE.md §5, EA-01..03]
+^[docs/ESTADO-PROYECTO.md §3 — autoenvío deshabilitado]

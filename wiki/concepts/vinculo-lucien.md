@@ -1,7 +1,7 @@
 ---
 title: Vínculo Lucien → Diana
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 type: concept
 tags: [flujo, contrato, operacion]
 sources: [../../docs/SPEC-FASE6.md, ../../src/diana/application/link.py]
@@ -10,7 +10,7 @@ confidence: high
 
 # Vínculo Lucien → Diana
 
-Cuando Lucien saca a alguien del Canal VIP, Diana **no lo da de baja sola**. Comprueba si esa persona es VIP suyo y le pregunta a la dueña. La llave es `FEATURE_LINK_ENABLED` (default `false`): apagada, el sistema se comporta como antes. Contrato: [[spec-fase6]].
+Cuando Lucien saca a alguien del Canal VIP, Diana **no lo da de baja sola**. Comprueba si esa persona es VIP suyo y le pregunta a la dueña. La llave es `FEATURE_LINK_ENABLED` (default `false` en código; **activo en `.env`**: `FEATURE_LINK_ENABLED=true`, 2026-08-21). La integración está **desplegada y verificada E2E** (bot-to-bot DM, aceptación real pasada). Contrato: [[spec-fase6]].
 
 ## Quick path
 
@@ -43,7 +43,7 @@ Un VIP pausado o congelado **sigue siendo VIP**: si `is_active` es true, el avis
 
 ## Fail-closed y anti-contaminación
 
-- **Flag OFF**, sin `LINK_CHAT_ID`, o sin coordinator: el mensaje sigue de largo; cero comportamiento nuevo.
+- Con `FEATURE_LINK_ENABLED` activo, sin `LINK_CHAT_ID` configurado, o sin coordinator: el mensaje sigue de largo; cero comportamiento nuevo.
 - Mismo `event_id` otra vez → no se vuelve a notificar (dedup UNIQUE + `create` idempotente).
 - JSON inválido, `event` distinto, ids no finitos (`OverflowError`) → log `link_malformed`, se consume, no crashea, no llega al orquestador.
 - Error real del coordinator **no** se disfraza de malformado: sube al `ErrorHandlerMiddleware`.
@@ -54,3 +54,4 @@ Relacionado: [[feature-flags]], [[modos-de-operacion]], [[anti-contaminacion]].
 
 ^[docs/SPEC-FASE6.md]
 ^[src/diana/application/link.py]
+^[docs/ESTADO-PROYECTO.md §Fase 6]

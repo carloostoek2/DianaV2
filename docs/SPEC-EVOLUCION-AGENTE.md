@@ -6,6 +6,8 @@
 
 **Lección incorporada (revisión 2026-08-06):** los umbrales de seguridad y confianza son constantes fijas (con override manual vía `system_config`), **nunca auto-calibrados por LLM**. El incidente de calibración (safety_min calibrado a 0.95 por correcciones → escalaciones masivas) es el precedente que prohíbe recalibración automática de gates de seguridad/confianza.
 
+**Estado actual (2026-08-21):** la capa de evolución de agente está desplegada en **shadow mode (modo medición)** — los flags F0–F5 están `true` y miden/registran sin cambiar decisiones; el autoenvío está deshabilitado (`FEATURE_AUTONOMOUS_MODE=false`). Lo que en este documento figura como "flag futuro" o "para cuando se llegue" corresponde a piezas que hoy **no están implementadas**.
+
 ---
 
 ## Decisiones de diseño aprobadas (v1.2)
@@ -25,7 +27,7 @@
 
 Antes de tocar comportamiento, se necesita esquema nuevo. Sin esto, las fases 1-5 no tienen dónde vivir.
 
-**Nuevas entidades (migraciones Alembic 024+ — el head actual es 023):**
+**Nuevas entidades (migraciones Alembic 024–026 — aplicadas; el head actual es 029):**
 
 - `vip_profile` — perfil sintetizado por VIP. Columnas: `vip_id`, `stable_traits` (jsonb), `recent_trend` (jsonb), `sensitivities` (jsonb), `version`, `last_synthesized_at`, `synthesis_trigger` (enum: volume/session_close/strong_signal/emotional_signal).
 - `vip_profile_history` — snapshot de cada versión anterior (para auditar drift). Columnas: `vip_id`, `version`, `profile_snapshot` (jsonb), `diff_summary` (texto corto generado por el LLM), `created_at`.
@@ -36,7 +38,7 @@ Antes de tocar comportamiento, se necesita esquema nuevo. Sin esto, las fases 1-
 
 **Cambios a servicios existentes:**
 
-- `memory_extraction_service`: sigue igual, sigue produciendo hechos episódicos. No se toca su contrato de salida (la Fase 4 añade un campo aditivo opcional, compatible hacia atrás).
+- `memory_extraction_service`: sigue igual, sigue produciendo hechos episódicos. No se toca su contrato de salida (la Fase 4, no implementada, añadiría un campo aditivo opcional, compatible hacia atrás).
 - Nuevo repo `vip_profile_repository` (siguiendo el patrón de los repos en `infrastructure/`).
 - **Retención de datos:** `vip_profile_history`, `turn_category_log` y `emotional_signal_log` crecen sin límite; definir política de purga (mismo patrón que `TracePurgeJob`, con retención por tabla).
 
@@ -50,7 +52,7 @@ No es una fase con criterio de salida propio: es un servicio que las Fases 1, 2 
 
 ### Dónde vive
 
-`emotional_signal_detector` — corre **por turno**, **antes del carril rápido de la Fase 2** (mismo paso que el clasificador de turno 2.1, no dentro de la cadena del Director). Reusa la salida del `analyst` (emotion, urgency, risk, intent, topics) — **heurística v1, sin llamada LLM por turno**. Un refinamiento con LLM puede venir en un pool posterior, flag-gated.
+`emotional_signal_detector` — corre **por turno**, **antes del carril rápido de la Fase 2** (mismo paso que el clasificador de turno 2.1, no dentro de la cadena del Director). Reusa la salida del `analyst` (emotion, urgency, risk, intent, topics) — **heurística v1, sin llamada LLM por turno**, desplegada en shadow. No hay detector con LLM propio implementado.
 
 **Tabla nueva (Fase 0):** `emotional_signal_log` — columnas: `vip_id`, `turn_id`, `signal_type`, `intensity`, `should_trigger_synthesis`, `should_escalate_to_owner`, `pipeline_would_have_escalated` (bool **nullable**: NULL para turnos que no pasaron por el Decider — carril rápido; la comparación aplica solo a pipeline completo), `created_at`.
 
@@ -78,7 +80,7 @@ No es una fase con criterio de salida propio: es un servicio que las Fases 1, 2 
 Tipos con manejo distinto:
 
 - **Revelación de vida** → sobre todo dispara síntesis (memoria); no necesariamente escalación.
-- **Angustia/crisis** → saca el turno del carril rápido (reclasificación a emocional/sensible → aprobación del owner). Para turnos de pipeline completo, en v1 es **shadow-only** (se loguea; la escalación forzada del Decider es un flag futuro).
+- **Angustia/crisis** → saca el turno del carril rápido (reclasificación a emocional/sensible → aprobación del owner). Para turnos de pipeline completo, en v1 es **shadow-only** (se loguea y compara `pipeline_would_have_escalated`; la escalación forzada del Decider **no está implementada**).
 - **Ruptura de patrón** → señal sutil pero valiosa para el perfil; no la captura una extracción de hechos simple. **Dependencia:** requiere un baseline — en Fase 0/1 temprana usa un **baseline rodante de emociones** (últimos N turnos por chat); cuando exista el perfil (Fase 1), usa `recent_trend` como baseline.
 
 ### Puntos de integración
@@ -113,7 +115,7 @@ si (mensajes_desde_ultima_sintesis >= UMBRAL_VOLUMEN)
 entonces encolar profile_synthesis_job(vip_id, trigger_type)
 ```
 
-Esto se integra como un hook al final de `turn_orchestrator` (patrón `_maybe_post_turn`), no como un job de cron adicional — la detección de "cierre de sesión" necesita saber que *ya no hay* actividad, así que sí conviene un job periódico ligero (cada 15-30 min) que revise VIPs con última actividad hace >X minutos y sin resíntesis pendiente marcada.
+Esto se integra como un hook al final de `turn_orchestrator` (`_run_profile_synthesis_trigger`, patrón `_maybe_post_turn`) y como un job periódico ligero ya implementado (`profile_synthesis_job.py` → `run_profile_synthesis_cycle`): escanea VIPs inactivos (`scan_inactivity`), encola `session_close`, drena la cola (`drain_pending`) y sintetiza cada VIP pendiente vía `ProfileSynthesisService`.
 
 ### 1.2 El job de síntesis (`profile_synthesis_job`)
 
@@ -210,7 +212,7 @@ El mood **no genera texto nuevo**: se pasa como parámetro de selección/matiz a
 
 ## Fase 4 — Iniciativa contextual
 
-(Menor prioridad según lo discutido — se deja especificado brevemente para cuando se llegue.)
+**Fase 4 (iniciativa contextual) — no implementada; diferida por decisión de producto. Especificada en este documento.**
 
 Extiende el job de `recontact` existente: en vez de disparar solo por tiempo de inactividad, consulta `vip_profile.recent_trend` y hechos episódicos recientes marcados como "pendiente de seguimiento". **El flag es un campo aditivo opcional en el contrato de `memory_extraction_service`** (ej. `follow_up: "evento_futuro" | "problema_sin_resolver" | null`) — compatible hacia atrás, no rompe el contrato existente. El job de recontact prioriza estos sobre el simple "ha pasado tiempo".
 
@@ -237,7 +239,7 @@ El trust budget se actualiza **solo por eventos** (correcciones / autónomos sin
 
 ### 5.2 Uso del `EvaluationProfile` como señal adicional
 
-Para turnos que sí pasan por el pipeline completo (no fáticos), antes de considerar autoenvío en fases futuras más allá de fático: mirar dispersión entre las 7 dimensiones del `EvaluationProfile`, no solo su resultado agregado. Alta dispersión (dimensiones en desacuerdo) → tratar como baja confianza aunque el score final parezca "seguro", y no autoenviar aunque el trust_score general sea alto.
+Para turnos que sí pasan por el pipeline completo (no fáticos): mirar dispersión entre las 7 dimensiones del `EvaluationProfile`, no solo su resultado agregado. Alta dispersión (dimensiones en desacuerdo) → tratar como baja confianza aunque el score final parezca "seguro", y no autoenviar aunque el trust_score general sea alto. Aplica al autoenvío de pipeline completo, que hoy está deshabilitado por `FEATURE_AUTONOMOUS_MODE=false`.
 
 ### 5.3 Reportes al owner
 
@@ -247,29 +249,27 @@ Para turnos que sí pasan por el pipeline completo (no fáticos), antes de consi
 
 ---
 
-## Orden de ejecución recomendado
+## Estado de despliegue
+
+Capa desplegada en **shadow mode (modo medición)**: los flags F0–F5 están `true` y miden/registran, sin cambiar decisiones. El autoenvío está deshabilitado (`FEATURE_AUTONOMOUS_MODE=false`).
 
 ```
-Fase 0 (fundaciones)
-   +
-Detector de quiebre emocional (transversal, se construye junto a Fase 0)
-   ↓
-Fase 1 (memoria) ──┐
-                    ├─→ Fase 3 (mood, en shadow)
-Fase 2 (autonomía   │
-fática, en shadow) ─┘
-   ↓
-Fase 5 (trust budget, activo desde que fase 2 sale de shadow)
-   ↓
-Fase 4 (iniciativa contextual)
+F0  fundaciones (esquema + repos)              — desplegada
+Detector de quiebre emocional (transversal)    — desplegado en shadow (medición)
+F1  ciclo de resíntesis de memoria             — desplegado en shadow (medición)
+F2  autonomía fática (clasificador + carril)   — desplegado en shadow (clasifica y registra, no autoenvía)
+F3  motor de mood                              — desplegado en shadow (calcula y loguea; no selecciona variantes)
+F5  trust budget                               — desplegado en shadow (registra por eventos); la doble puerta de
+                                                autoenvío está cableada pero deshabilitada (AMS master flag)
+F4  iniciativa contextual                      — no implementada (diferida por decisión de producto)
 ```
 
-Fase 1 y Fase 2 pueden desarrollarse en paralelo (no dependen entre sí para *construirse*), pero Fase 2 no debería salir de modo shadow hasta que Fase 1 tenga al menos `recent_trend` confiable, porque la calidad de la autonomía fática depende de tener contexto de perfil, no solo del turno aislado.
+F1 y F2 se construyeron en paralelo (no dependen entre sí para *construirse*); la autonomía fática (F2) no sale de shadow hasta que el perfil (F1) tenga al menos `recent_trend` confiable, porque la calidad de la autonomía fática depende de tener contexto de perfil, no solo del turno aislado.
 
 ---
 
 ## Decisiones confirmadas (2026-08-06)
 
-1. **Detector heurístico v1** — sin costo LLM por turno: mapeo de la salida del analyst (emotion/urgency/risk/intent/topics) a las señales. Un detector con LLM propio queda como pool posterior flag-gated, solo si el v1 resulta ruidoso.
-2. **Escalación del detector en v1 = shadow-only** — se loguea y compara (`pipeline_would_have_escalated`), no fuerza al Decider. Forzar escalación es un flag futuro, previo a activar autoenvío de la Fase 2.
+1. **Detector heurístico v1** — sin costo LLM por turno: mapeo de la salida del analyst (emotion/urgency/risk/intent/topics) a las señales. Desplegado en shadow. No hay detector con LLM propio implementado.
+2. **Escalación del detector en v1 = shadow-only** — se loguea y compara (`pipeline_would_have_escalated`), no fuerza al Decider. La escalación forzada **no está implementada**; el autoenvío de la Fase 2 está cableado pero deshabilitado (`FEATURE_AUTONOMOUS_MODE=false`).
 3. **Umbrales iniciales del detector**: `should_trigger_synthesis` >= 0.5, `should_escalate_to_owner` >= 0.8 — constantes fijas, override manual por `system_config`, nunca auto-calibrados.

@@ -1,4 +1,4 @@
-# SPEC-FASE5.md — Perfil de VIP con Memoria (backfill + mantenimiento) — v1.0
+# SPEC-FASE5.md — Perfil de VIP con Memoria (backfill + mantenimiento) — v1.1
 
 Diana Business Bot / Sistema de Automatización de Chats VIP
 
@@ -7,8 +7,8 @@ Diana Business Bot / Sistema de Automatización de Chats VIP
 | Nivel | Contrato de diseño e implementación para la Fase 5 |
 | Basado en | SPEC-FASE4.md v1.0 + REQUERIMIENTOS.md v2.1 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0 + AGENTS.md v1.3 |
 | Audiencia | Ingeniería (implementación con DeepSeek en terminal; revisión posterior) |
-| Versión | 1.0 — Borrador de diseño aprobado por la dueña de producto |
-| Estado | Aprobado para implementación |
+| Versión | 1.1 — Actualizada a estado implementado (2026-08-21); 1.0 fue el borrador de diseño aprobado |
+| Estado | Implementado — Fase 5 completa, memoria activa |
 | Idioma | Español |
 
 ---
@@ -18,9 +18,9 @@ Diana Business Bot / Sistema de Automatización de Chats VIP
 | Camino | Tabla | Contenido | Estado real |
 |---|---|---|---|
 | **Historial crudo** | `message_history` | Transcripción de chat: `chat_id`, `role`, `text`, `timestamp` (importada por Telethon al registrar un VIP) | ✅ Funciona — 1.015+ mensajes |
-| **Memoria procesada** | `memories` | Conocimiento derivado del VIP: hechos, preferencias, datos personales (búsqueda semántica por `vip_id`) | ⚠️ **Vacía (0 filas) — no existe escritor** |
+| **Memoria procesada** | `memories` | Conocimiento derivado del VIP: hechos, preferencias, datos personales (búsqueda semántica por `vip_id`) | ✅ **Implementada — poblada y en mantenimiento** (escritores activos: backfill + post-turno + aprobación) |
 
-Esta Fase construye el **puente**: leer el historial crudo, convertirlo en ficha del VIP (memoria procesada) y mantenerla al día.
+Esta Fase construyó el **puente** entre el historial crudo y la ficha del VIP (memoria procesada), y el sistema lo mantiene al día. Estado real verificado en `docs/ESTADO-PROYECTO.md` (Fase 5 completa, 4 pools cerrados; snapshot 2026-08-11: 81 filas en `memories`, 10 backfills) y `docs/ARCHITECTURE.md` (memoria VIP F5, migraciones 022–023).
 
 Estado actual de `memories` (ya existente, sin cambios de estructura mayores):
 
@@ -33,7 +33,7 @@ Estado actual de `memories` (ya existente, sin cambios de estructura mayores):
 | `category` | text | **Tipo de sección** (identidad / preferencias / comercial / limites / sensible / perfil) |
 | `confidence` | real | Nivel de confianza de la extracción |
 
-El retriever (`MemoryRetriever`, cognitive/retrievers/memory.py) ya consulta por similitud filtrada por `vip_id` (umbral 0.75, límite 5). Solo falta **quién escribe**.
+El retriever (`MemoryRetriever`, cognitive/retrievers/memory.py) consulta por similitud filtrada por `vip_id` (umbral 0.75, límite 5). El **escritor** está implementado y activo: extracción post-turno (`MemoryExtractionService.extract_post_turn`, `src/diana/application/memory_extraction_service.py`), backfill (`MemoryBackfillService`, `src/diana/application/memory_backfill_service.py`) y aprobación de la dueña (`MemoryApprovalService`, `src/diana/application/memory_approval_service.py`, handler `/memoria` en `src/diana/telegram/handlers/memory_approval.py`); la persistencia vive en `insert_facts`/`replace_vip_profile` (`src/diana/infrastructure/db/repositories/memories.py`).
 
 ---
 
@@ -78,6 +78,8 @@ Principios rectores:
 | F5-08 | Manejo de historial largo (paginación por ventanas de mensajes) |
 | F5-09 | Migración 022: columnas `status` y `source_turn_id` en `memories` |
 | F5-10 | Anti-contaminación y trazabilidad (testeo explícito) |
+
+> Todos los ítems F5-01 a F5-10 están **implementados y verificados** (los 4 pools — backfill, disparo+cola, post-turno, control de la dueña+panel — están cerrados). Ver `docs/ESTADO-PROYECTO.md` §Fase 5.
 
 ### 2.2 Fuera de alcance (postergado)
 
@@ -231,7 +233,7 @@ Cada VIP tiene una **ficha** compuesta por secciones. Cada sección es una fila 
 | `memories.status` | text NOT NULL default `'auto'` |
 | `memories.source_turn_id` | uuid NULL (sin FK dura, referencia blanda a `turns`) |
 | Índice | `(vip_id, status)` |
-| Seed | Ninguno (la memoria se llena por backfill; la tabla sigue vacía hasta entonces) |
+| Seed | Ninguno — la memoria se llena por backfill (tabla poblada; snapshot 2026-08-11: 81 filas, 10 backfills — ver `docs/ESTADO-PROYECTO.md`) |
 
 Downgrade: drop de columnas nuevas e índice.
 
@@ -249,25 +251,41 @@ Downgrade: drop de columnas nuevas e índice.
 
 ## 11. Criterios de aceptación (checklist)
 
-- [ ] Backfill: comando `/perfil <vip>` genera la ficha (secciones + perfil completo) desde `message_history`; idempotente (regenerar no duplica).
-- [ ] Al registrar un VIP nuevo con historial, el perfil se agenda y se genera.
-- [ ] Historial largo: paginación sin cortar el transcripto ni exceder el límite del modelo.
-- [ ] Post-turno: tras un turno aprobado, se extraen hechos nuevos; dedup no duplica.
-- [ ] Sensibles: nacen `pending_owner`, no se inyectan al contexto; aprobar/descartar/editar desde el DM funciona.
-- [ ] El panel muestra la ficha completa por VIP y permite editarla; la edición manual no se pisa.
-- [ ] `memories` deja de estar vacía para VIPs con historial (verificable en DB).
-- [ ] Anti-contaminación: tests de aislamiento entre VIPs, entre canales, y de `pending_owner` invisible.
-- [ ] Flag OFF → comportamiento idéntico al actual (suite completa verde).
-- [ ] Unit + e2e (FakeLLM) verdes; purity gates verdes.
+> Verificado al cierre de los 4 pools: criterios cumplidos; suite unit + e2e (FakeLLM) verdes y purity gates verdes (ver `docs/ESTADO-PROYECTO.md`).
+
+- [x] Backfill: la acción **"🔄 Generar perfil"** en la ficha del panel genera la ficha (secciones + perfil completo) desde `message_history`; idempotente (regenerar no duplica).
+- [x] Al registrar un VIP nuevo con historial, el perfil se agenda y se genera.
+- [x] Historial largo: paginación sin cortar el transcripto ni exceder el límite del modelo.
+- [x] Post-turno: tras un turno aprobado, se extraen hechos nuevos; dedup no duplica.
+- [x] Sensibles: nacen `pending_owner`, no se inyectan al contexto; aprobar/descartar/editar desde el DM funciona.
+- [x] El panel muestra la ficha completa por VIP y permite editarla; la edición manual no se pisa.
+- [x] `memories` deja de estar vacía para VIPs con historial (verificable en DB).
+- [x] Anti-contaminación: tests de aislamiento entre VIPs, entre canales, y de `pending_owner` invisible.
+- [x] Flag OFF → comportamiento idéntico al actual (suite completa verde).
+- [x] Unit + e2e (FakeLLM) verdes; purity gates verdes.
 
 ---
 
-## 12. Decisiones abiertas / pendientes
+## 12. Decisiones resueltas y pendientes reales
 
-1. **Definición de "sensible"**: lista inicial = salud, familia, dinero/pagos, ubicación, relaciones. La dueña puede ampliarla/ajustarla en la primera revisión.
-2. **Umbral de dedup**: 0.85 propuesto (similitud coseno); se calibra con datos reales en revisión.
-3. **Ventana de paginación del backfill**: 200 mensajes por llamada propuesto; ajustable según costo/latencia.
-4. **Regeneración completa vs. incremental**: si un VIP cambia mucho, la dueña puede forzar backfill (`/perfil` de nuevo). La regeneración automática completa queda fuera de alcance.
-5. **Notificación de perfil generado**: confirmar formato del DM de resumen (N hechos, M pendientes).
-6. **Actualización de docs** (README, AGENTS.md) y de la tabla de flags al cierre de la Fase (tarea de cierre).
-7. **Privacidad del backfill (nota de diseño, fix round F3 — hallazgo security-auditor)**: durante el backfill, el historial completo del chat del VIP se envía al proveedor LLM externo (DeepSeek) para la extracción, tal como define REQ-MEM-04 (comportamiento by-design). Controles actuales: ventana de 200 mensajes + tope de 12K caracteres por ventana y líneas truncadas a 400 caracteres (fix M2), y ninguna escritura de datos fuera de `memories`. **Pendientes para Pool 2+**: (a) flag de exclusión por VIP (opt-out del backfill), (b) evaluar redacción/masking de PII previo al envío cuando no sea necesaria para la extracción, (c) documentar retención y evaluar modelo local/on-prem para extracción sensible, (d) confirmar acuerdo de procesamiento de datos con el proveedor.
+### Decisiones de diseño adoptadas (implementadas)
+
+1. **Definición de "sensible"**: adoptada la lista inicial (salud, familia, dinero/pagos, ubicación, relaciones), implementada como heurística de términos sensibles **fail-closed** en el escritor (SEC-INJ-02). La dueña puede ampliarla/ajustarla.
+2. **Umbral de dedup**: adoptado 0.85 (similitud coseno), implementado en backfill y post-turno (ver pendiente de recalibración abajo).
+3. **Ventana de paginación del backfill**: adoptada 200 mensajes / 12K caracteres por llamada, implementada.
+4. **Regeneración completa vs. incremental**: el backfill bajo demanda ("🔄 Generar perfil" en la ficha) regenera la ficha del VIP de forma idempotente. La regeneración automática completa queda **fuera de alcance** (no implementada) — decisión de producto vigente.
+5. **Notificación de perfil generado**: implementada — el DM de resumen informa con el nombre del VIP (N hechos, M pendientes) y hint `/memoria`.
+6. **Actualización de docs y de la tabla de flags al cierre**: completada al cerrar los 4 pools (`docs/ESTADO-PROYECTO.md` y `docs/ARCHITECTURE.md` reflejan la Fase 5 implementada).
+
+### Pendientes reales (deuda técnica)
+
+- **Recalibración del umbral de dedup (0.85)** tras uso real: pendiente (ver `docs/ESTADO-PROYECTO.md` §3, deuda técnica).
+
+### Pendientes de privacidad
+
+**Privacidad del backfill** (nota de diseño, fix round F3 — hallazgo security-auditor): durante el backfill, el historial completo del chat del VIP se envía al proveedor LLM externo (DeepSeek) para la extracción, tal como define REQ-MEM-04 (comportamiento by-design). Controles actuales: ventana de 200 mensajes + tope de 12K caracteres por ventana y líneas truncadas a 400 caracteres (fix M2), y ninguna escritura de datos fuera de `memories`. Pendientes, **no implementados**:
+
+- (a) flag de exclusión por VIP (opt-out del backfill),
+- (b) evaluar redacción/masking de PII previo al envío cuando no sea necesaria para la extracción,
+- (c) documentar retención y evaluar modelo local/on-prem para extracción sensible,
+- (d) confirmar acuerdo de procesamiento de datos con el proveedor.

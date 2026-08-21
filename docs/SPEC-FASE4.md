@@ -1,4 +1,4 @@
-# SPEC-FASE4.md — Atención al Cliente General (canal no-VIP) — v1.0
+# SPEC-FASE4.md — Atención al Cliente General (canal no-VIP) — v1.1
 
 Diana Business Bot / Sistema de Automatización de Chats VIP
 
@@ -7,15 +7,15 @@ Diana Business Bot / Sistema de Automatización de Chats VIP
 | Nivel | Contrato de diseño e implementación para la Fase 4 |
 | Basado en | REQUERIMIENTOS.md v2.1 + SPEC.md v1.5 + SPEC-FASE2.md v2.1 + SPEC-FASE3.md v3.0 + AGENTS.md v1.3 |
 | Audiencia | Ingeniería (implementación con DeepSeek en terminal; revisión posterior) |
-| Versión | 1.0 — Borrador de diseño aprobado por la dueña de producto |
-| Estado | Aprobado para implementación |
+| Versión | 1.1 — Implementado y desplegado |
+| Estado | Implementado — desplegado (`FEATURE_GENERAL_MODE_ENABLED=true`). El canal de atención opera en modo supervisado; el modo automático queda fuera de alcance (no implementado) |
 | Idioma | Español |
 
 ---
 
 ## Resumen de decisiones de producto (dueña)
 
-1. **Atención general arranca supervisada**: cada respuesta a un cliente no-VIP pasa por aprobación/corrección de la dueña (igual que los VIP), hasta validar tono y estilo. El modo automático para atención queda fuera de alcance (postergado).
+1. **Atención general supervisada (implementada)**: cada respuesta a un cliente no-VIP pasa por aprobación/corrección de la dueña (igual que los VIP). El modo automático para atención queda fuera de alcance (no implementado): el canal opera siempre en modo supervisado.
 2. **Identidad**: la misma Diana, versión servicio: cálida y profesional, **sin coqueteo**, sin contenido íntimo/explícito.
 3. **Flujo con guion**: el primer script de bienvenida sigue enviándose en automático (promo existente). Después, el sistema **identifica la intención** del cliente y responde con el guion correspondiente: precios, diferencias entre niveles, proceso de suscripción, datos de pago.
 4. **Reglas duras**: no existe contacto personal ("¿dónde te puedo ver?" → servicio inexistente). No se deriva a terceros: **Diana es la única que atiende** y controla todos los aspectos de su negocio.
@@ -32,7 +32,7 @@ Convertir el sistema en un **asistente permanente de atención al cliente genera
 Principios rectores (heredados y extendidos):
 
 1. Un solo pipeline cognitivo; **no se duplica el sistema**. El canal (VIP / Atención) se decide una vez, de forma determinista, en la puerta de entrada.
-2. Todo el comportamiento nuevo de Fase 4 está detrás del flag `FEATURE_GENERAL_MODE_ENABLED` (default `false`). Flag apagado → comportamiento idéntico al de hoy.
+2. Todo el comportamiento nuevo de Fase 4 está detrás del flag `FEATURE_GENERAL_MODE_ENABLED` (default `false` en código, `true` en `.env`). Flag apagado → comportamiento idéntico al previo a la Fase 4.
 3. Anti-contaminación total entre canales: memoria, ejemplos y aprendizaje de atención **nunca** tocan memoria/banco VIP, y viceversa.
 4. Diana atiende todo: el bot nunca dice "te comunico con alguien más". Ante desconocimiento → zona gris (consulta a la dueña), nunca inventar.
 5. El Director sigue siendo 100 % determinista; el Behavior Engine sigue fuera de la cognición.
@@ -55,13 +55,13 @@ Principios rectores (heredados y extendidos):
 | F4-08 | Anti-contaminación de aprendizaje entre canales; trazabilidad de turns de atención |
 | F4-09 | Migración de esquema 018: `channel_type` en persona_versions + tabla de límite diario |
 
-### 2.2 Fuera de alcance (postergado)
+### 2.2 Fuera de alcance (no implementado)
 
 | ID | Exclusión |
 |---|---|
-| F4-O1 | Modo autónomo para atención (respuesta sin aprobación). La infraestructura lo permite; se habilita solo si la dueña lo decide tras validar el tono |
+| F4-O1 | Modo autónomo para atención (respuesta sin aprobación): no implementado. La entrega de atención es siempre supervisada; el mecanismo de decisor + entrega autónoma existe cableado tras el flag `FEATURE_AUTONOMOUS_MODE=false` (kill-switch global), desactivado |
 | F4-O2 | Entrega automática de contenido al cliente (la hace la dueña manualmente) |
-| F4-O3 | Recontacto/promo proactiva para clientes generales (la promo de bienvenida ya existe; recontacto de no-VIPs queda fuera) |
+| F4-O3 | Recontacto/promo proactiva para clientes generales (la promo de bienvenida está implementada; el recontacto de no-VIPs queda fuera de alcance, no implementado) |
 | F4-O4 | Multi-tenant, otros canales (WhatsApp, etc.) |
 | F4-O5 | CRM, tickets, historial de clientes generales más allá del historial de chat existente |
 | F4-O6 | Drift de estilo / calibración para el canal atención (la muestra de drift sigue usando solo canal VIP) |
@@ -108,11 +108,11 @@ Regla de oro: **una sola rama determinista** — en la puerta (AuthMiddleware) s
 ### REQ-ATN-03 — Contador diario
 - Solo aplica a chats de canal `atencion` (no-VIP).
 - Se cuentan **mensajes del cliente** (no las respuestas del bot) por `chat_id` y día local (`America/Mexico_City`).
-- Alcanzado el tope (20): el bot envía **una única respuesta de cierre por día** (plantilla fija, ej. "¡Hola! Por hoy ya cubrimos todo, si necesitas algo más escríbeme mañana 😊") y los siguientes mensajes del día se ignoran (drop silencioso con log).
+- Alcanzado el tope (20): el bot envía **una única respuesta de cierre por día** (plantilla fija implementada: "¡Hola! Por hoy ya cubrimos todo, si necesitas algo más escríbeme mañana 😊") y los siguientes mensajes del día se ignoran (drop silencioso con log).
 - El contador se reinicia al cambiar el día local. Sin reinicio por inactividad (decisión de producto).
 
 ### REQ-ATN-04 — Persistencia
-- Nueva tabla `daily_message_limits` (o equivalente) con clave única `(chat_id, fecha_local)` y columna `count`.
+- Tabla `daily_message_limits` con clave única `(chat_id, fecha_local)` y columna `count`.
 - Upsert atómico por turno de cliente. La consulta al superar el tope debe ser barata (índice por `chat_id`).
 - El conteo y el corte son deterministas; nunca dependen del LLM.
 
@@ -122,7 +122,7 @@ Regla de oro: **una sola rama determinista** — en la puerta (AuthMiddleware) s
 
 ### REQ-ATN-05
 - La entrega del canal `atencion` es **supervisada** en esta fase: el turno produce un borrador → va a la DM de la dueña (aprobación/corrección) → solo se envía al cliente tras aprobar (flujo exacto del VIP supervisado actual).
-- El modo de entrega del perfil se modela como **configuración del perfil** (no un flag global nuevo): `delivery_mode="supervised"` para atención en esta fase. El mecanismo para futuro `autonomous` ya existe (decisor + entrega autónoma) y no se toca.
+- El modo de entrega del perfil se modela como **configuración del perfil** (no un flag global nuevo): `delivery_mode="supervised"` para atención. El mecanismo `autonomous` (decisor + entrega autónoma) está implementado y cableado, pero deshabilitado por el flag `FEATURE_AUTONOMOUS_MODE=false` (`turn_orchestrator.py` ~304 y ~2549 con demote a approve; `recontact_service.py` ~209).
 - El freeze (congelación por consulta de zona gris) aplica igual que en VIP.
 
 ---
@@ -130,7 +130,7 @@ Regla de oro: **una sola rama determinista** — en la puerta (AuthMiddleware) s
 ## 7. Perfil de canal "Atención" (contenido)
 
 ### REQ-ATN-06 — Catálogo de persona por canal
-- `persona_versions` gana columna `channel_type` (`vip` | `atencion`), con **una versión activa por canal** (la constraint `uq_persona_versions_active` pasa a ser por `(channel_type, is_active)`).
+- `persona_versions` gana columna `channel_type` (`vip` | `atencion`), con **una versión activa por canal** (la constraint `uq_persona_versions_active` es por `(channel_type, is_active)`).
 - `PersonaCatalogProvider.get_catalog()` recibe el canal y devuelve la versión activa de ese canal; fallback al seed estático correspondiente.
 - El panel de persona existente (`/persona`) permite gestionar ambos canales (selector de canal en la pantalla).
 
@@ -201,7 +201,7 @@ Regla de oro: **una sola rama determinista** — en la puerta (AuthMiddleware) s
 
 ### REQ-ATN-14
 - Los turns de atención son trazables igual que los VIP (`/turnos`, `/traza` incluyen `channel_type`).
-- Métricas existentes que filtran por VIP quedan sin cambios; se agrega (mínimo) un conteo de turns de atención por día y de tope de límite alcanzado (log + métrica opcional).
+- Métricas existentes que filtran por VIP quedan sin cambios; se contabilizan los turns de atención por día y el tope de límite alcanzado (log + métrica opcional).
 
 ---
 
@@ -228,24 +228,24 @@ Downgrade: drop de la tabla de límites y de la columna `channel_type` (con re-s
 
 ---
 
-## 15. Criterios de aceptación (checklist)
+## 15. Criterios de aceptación (cumplidos)
 
-- [ ] Flag OFF → comportamiento idéntico al actual (suite completa verde).
-- [ ] Flag ON + no-VIP → el turno corre con canal `atencion`, perfil de atención, supervisado.
-- [ ] Tope 20/día: el mensaje 21 recibe la plantilla de cierre (una vez) y luego drop silencioso; el contador se reinicia al día siguiente local.
-- [ ] Promo de bienvenida automática intacta; el mensaje posterior entra al pipeline.
-- [ ] Intención de pago → borrador con guion de pago + DM a la dueña.
-- [ ] "¿Dónde te puedo ver?" → respuesta de política `no_contacto_personal` (sin inventar).
-- [ ] Pregunta sin doctrina → zona gris (freeze + DM `g:`), nunca inventa ni deriva.
-- [ ] Ningún ejemplo de atención en el banco VIP (test de anti-contaminación).
-- [ ] Drift de estilo solo con muestras VIP.
-- [ ] Unit + e2e (FakeLLM) verdes; purity gates verdes.
+- [x] Flag OFF → comportamiento idéntico al previo a la Fase 4 (suite completa verde).
+- [x] Flag ON + no-VIP → el turno corre con canal `atencion`, perfil de atención, supervisado.
+- [x] Tope 20/día: el mensaje 21 recibe la plantilla de cierre (una vez) y luego drop silencioso; el contador se reinicia al día siguiente local.
+- [x] Promo de bienvenida automática intacta; el mensaje posterior entra al pipeline.
+- [x] Intención de pago → borrador con guion de pago + DM a la dueña.
+- [x] "¿Dónde te puedo ver?" → respuesta de política `no_contacto_personal` (sin inventar).
+- [x] Pregunta sin doctrina → zona gris (freeze + DM `g:`), nunca inventa ni deriva.
+- [x] Ningún ejemplo de atención en el banco VIP (test de anti-contaminación).
+- [x] Drift de estilo solo con muestras VIP.
+- [x] Unit + e2e (FakeLLM) verdes; purity gates verdes.
 
 ---
 
-## 16. Decisiones abiertas / pendientes
+## 16. Decisiones resueltas durante la implementación
 
-1. **Plantilla exacta del cierre de límite diario** (la dueña la confirma o ajusta en la primera revisión).
-2. **Zona horaria del corte diario**: se asume `America/Mexico_City` (la del sistema); confirmar si el negocio quiere otro corte.
-3. **Tono del perfil de atención**: la primera tanda de aprobaciones supervisadas servirá para afinar las reglas de estilo (iteración con la dueña).
-4. **Actualización de AGENTS.md** (mapa de módulos y flujos) y de `REQUERIMIENTOS.md`/`README.md` cuando la Fase 4 quede implementada (tarea de cierre).
+1. **Plantilla de cierre de límite diario**: implementada como constante fija en `turn_orchestrator.py` (`ATENCION_DAILY_LIMIT_CLOSE`): "¡Hola! Por hoy ya cubrimos todo, si necesitas algo más escríbeme mañana 😊" (una única respuesta de cierre por día). Se ajusta en código, no es configurable por la dueña.
+2. **Zona horaria del corte diario**: `America/Mexico_City` (implementado; el contador se reinicia al cambiar el día local).
+3. **Tono del perfil de atención**: definido en el perfil semilla `persona_atencion.json` (cálida-profesional, sin coqueteo) y ajustable por la dueña vía el panel de persona `/persona`.
+4. **Plantillas de notificación (pago)**: constantes fijas en código (`ATENCION_PAYMENT_NOTICE` en `turn_orchestrator.py`); no hay personalización configurable.

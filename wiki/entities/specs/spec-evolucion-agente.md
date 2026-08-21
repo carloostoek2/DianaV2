@@ -1,7 +1,7 @@
 ---
 title: SPEC-EVOLUCION-AGENTE.md
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 type: entity
 tags: [spec, decision, aprendizaje, riesgo]
 sources: [../../docs/SPEC-EVOLUCION-AGENTE.md]
@@ -31,15 +31,16 @@ Contrato de implementación de la **Evolución de agente** (v1.2): llevar a Dian
 - **Fase 1 — Resíntesis de memoria:** [[perfil-evolutivo]] (stable_traits/recent_trend/sensitivities, decaimiento, versionado, `profile_synthesis_job`).
 - **Fase 2 — Autonomía fática:** clasificador de turno (phatic/informational/emotional/sensitive) + carril rápido (ver [[trust-budget]]).
 - **Fase 3 — Motor de mood:** 3 ejes (juguetón-serio, cálido-distante, energía), promedio móvil con retorno a la base; matiza selección de variantes.
-- **Fase 4 — Iniciativa contextual:** recontacto prioriza `recent_trend` + hechos con `follow_up` (campo aditivo opcional).
+- **Fase 4 — Iniciativa contextual:** recontacto prioriza `recent_trend` + hechos con `follow_up` (campo aditivo opcional). **No implementada (diferida por decisión de producto).**
 - **Fase 5 — Trust budget:** [[trust-budget]] activo.
 
-## Orden de ejecución
+## Estado (2026-08-21) — shadow mode activo
 
-Fase 0 + detector → Fase 1 y 2 en paralelo (shadow) → Fase 3 (shadow) → Fase 5 (activo cuando Fase 2 sale de shadow) → Fase 4.
+La capa de evolución de agente está desplegada en **shadow mode (modo medición)** en producción: los flags F0–F5 están `true` y **miden/registran sin cambiar decisiones** ([[perfil-evolutivo]], [[trust-budget]], [[detector-emocional]]). El bot sigue 100 % supervisado.
 
-## Estado (2026-08)
-
-Fase 0 y componentes desplegados; flags en medición; pendiente la mecánica del modo shadow (3 estados, doble llave, sombra por defecto).
+- Migraciones 024–026 aplicadas en producción; head del repo 029.
+- **F4 (iniciativa contextual): no implementada** (diferida).
+- **Autoenvío deshabilitado:** `FEATURE_AUTONOMOUS_MODE=false`. La doble puerta (trust budget + evaluación del Decider + filtros EA-02) está **cableada tras el flag**, pero el kill-switch L1 la desactiva — nada se autoenvía.
+- Pendientes reales: cola durable `synthesis_queue` para síntesis de perfiles (hoy guard en memoria) y ficha de perfil EA-06 completa con historial de versiones (`vip_profile_history`).
 
 ^[docs/SPEC-EVOLUCION-AGENTE.md]

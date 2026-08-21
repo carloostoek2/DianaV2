@@ -1,7 +1,7 @@
 ---
 title: Feature Flags
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-08-21
 type: concept
 tags: [operacion, decision, contrato]
 sources: [../../src/diana/config/settings.py, ../../.env.example, ../../AGENTS.md]
@@ -29,7 +29,7 @@ Runtime: pydantic `Settings` lee env `FEATURE_*` (campos `feature_*`). Default d
 
 | Flag | Default | Efecto |
 |------|---------|--------|
-| `FEATURE_AUTONOMOUS_MODE` | false | Envío autónomo (flujo 4.8). Sin esto nada se autoenvía |
+| `FEATURE_AUTONOMOUS_MODE` | false | Envío autónomo (flujo 4.8). Sin esto nada se autoenvía. **En `.env`: `false`** (kill-switch L1) |
 | `FEATURE_RECONTACT_ENABLED` | false | Recontacto por silencio (4.9) |
 | `FEATURE_PROMO_ENABLED` | false | Promo no-VIP por trigger exacto (4.10) |
 | `FEATURE_CALIBRATION_ENABLED` | false | Job de calibración (4.11) |
@@ -40,21 +40,21 @@ Runtime: pydantic `Settings` lee env `FEATURE_*` (campos `feature_*`). Default d
 
 | Flag | Default | Efecto |
 |------|---------|--------|
-| `FEATURE_GENERAL_MODE_ENABLED` | false | Canal atención no-VIP |
+| `FEATURE_GENERAL_MODE_ENABLED` | false | Canal atención no-VIP. **En `.env`: `true`** (activo) |
 
 ### Feedback de calidad (029)
 
 | Flag | Default | Efecto |
 |------|---------|--------|
-| `FEATURE_QUALITY_FEEDBACK_ENABLED` | false | Escritura Destacar/Reprender. Retrieval siempre usa `quality`/`vip_id` (defaults = comportamiento pre-flag) |
+| `FEATURE_QUALITY_FEEDBACK_ENABLED` | false | Escritura Destacar/Reprender. Retrieval siempre usa `quality`/`vip_id` (defaults = comportamiento pre-flag). **En `.env`: `true`** (activo, 2026-08-21) |
 
-No está en `.env.example`.
+Documentado en `.env.example`.
 
 ### Fase 6 (vínculo Lucien)
 
 | Flag | Default | Efecto |
 |------|---------|--------|
-| `FEATURE_LINK_ENABLED` | false | Middleware `[LINK]` + `LinkCoordinator`. Requiere `LINK_CHAT_ID` |
+| `FEATURE_LINK_ENABLED` | false | Middleware `[LINK]` + `LinkCoordinator`. Requiere `LINK_CHAT_ID`. **En `.env`: `true`** (activo, desplegado 2026-08-21) |
 
 ### Evolución de agente (shadow)
 
@@ -66,7 +66,7 @@ No está en `.env.example`.
 | `FEATURE_MOOD_ENGINE` | false | Motor de mood → `vip_mood_state` |
 | `FEATURE_TRUST_BUDGET` | false | Presupuesto de confianza. **Inerte** sin `FEATURE_PHATIC_AUTONOMY` |
 
-Encender evo-agente solo mide/registra. **No** usa estas flags para entregar mensajes al VIP.
+Encender evo-agente solo mide/registra. **No** usa estas flags para entregar mensajes al VIP. En `.env` de producción están activos en modo medición (`true`) con `FEATURE_AUTONOMOUS_MODE=false`.
 
 ### Saludo puro (entrega acotada)
 
@@ -92,12 +92,13 @@ Documentado en `.env.example`. Pool saludo-cognitivo 2026-08-16 (`e10d4cd`…`21
 
 - Rollback sin redeploy (AGENTS.md §7).
 - Nuevos comportamientos en `if settings.FEATURE_XXX_ENABLED:` (AGENTS.md §5.6).
-- Checklist de revisión: “¿Los nuevos flujos están envueltos en feature flags?” (AGENTS.md §6).
+- Checklist de revisión: "¿Los nuevos flujos están envueltos en feature flags?" (AGENTS.md §6).
 
 ## Estado de producción
 
-Snapshot verificado en [[estado-del-proyecto]] (2026-08-11): calibración off; evo-agente ON en medición; `FEATURE_AUTONOMOUS_MODE=false`; F4 `FEATURE_GENERAL_MODE_ENABLED=true`; memoria on. `FEATURE_LINK_ENABLED` implementado y **off** (2026-08-15). Apply de 027–029 y valor prod de `FEATURE_QUALITY_FEEDBACK_ENABLED`: **no verificado** después de esa fecha.
+Snapshot verificado en [[estado-del-proyecto]] (2026-08-21): `FEATURE_LINK_ENABLED=true` y `FEATURE_QUALITY_FEEDBACK_ENABLED=true` en `.env` (Fase 6 desplegada y feedback activo); `FEATURE_AUTONOMOUS_MODE=false` (la doble puerta del autoenvío queda cableada pero deshabilitada); evo-agente ON en medición; `FEATURE_GENERAL_MODE_ENABLED=true`; memoria on. Apply de 027–029 en producción: **sin verificar** (pendiente operativo).
 
 Relacionado: [[modos-de-operacion]], [[esquema-fase6]], [[esquema-conocimiento]], [[calibracion-de-umbrales]].
 
 ^[src/diana/config/settings.py, .env.example, AGENTS.md §1 §5.6]
+^[docs/ESTADO-PROYECTO.md §1]

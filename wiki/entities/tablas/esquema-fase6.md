@@ -1,7 +1,7 @@
 ---
 title: Esquema de Datos — Vínculo Lucien (F6)
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 type: entity
 tags: [dato, operacion, contrato]
 sources: [../../alembic/versions/028_link_events.py, ../../src/diana/infrastructure/db/repositories/link_events.py, ../../docs/SPEC-FASE6.md]
@@ -24,7 +24,7 @@ ORM: clase `LinkEvent` **inline** en `src/diana/infrastructure/db/repositories/l
 
 ## Gate
 
-Solo corre con `FEATURE_LINK_ENABLED` y `LINK_CHAT_ID` (ver [[feature-flags]]). Flag off = comportamiento idéntico. Anti-contaminación: el `[LINK]` no entra al pipeline ni a `message_history`.
+Solo corre con `FEATURE_LINK_ENABLED` y `LINK_CHAT_ID` (ver [[feature-flags]]). El flag está **activo** en `.env` desde 2026-08-21 (Fase 6 desplegada y verificada E2E); con el flag off el comportamiento sería idéntico al previo a la F6. Anti-contaminación: el `[LINK]` no entra al pipeline ni a `message_history`.
 
 Relacionado: [[esquema-conocimiento]], [[infrastructure-persistence]], [[modos-de-operacion]], [[spec-fase3]].
 

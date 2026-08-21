@@ -1,7 +1,7 @@
 ---
 title: Detector de Quiebre Emocional
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 type: concept
 tags: [modulo, riesgo, aprendizaje]
 sources: [../../docs/SPEC-EVOLUCION-AGENTE.md]
@@ -35,9 +35,10 @@ Componente transversal de la evolución de agente (v1.2). Detecta señales emoci
 ## Comportamiento v1
 
 - `angustia`/crisis → saca el turno del carril rápido (reclasifica a emocional/sensible → aprobación del owner).
-- La escalación del detector es **shadow-only**: se loguea y compara (`pipeline_would_have_escalated`); no fuerza al Decider (flag futuro).
+- La escalación del detector es **shadow-only**: se loguea y compara (`pipeline_would_have_escalated`); no fuerza al Decider. La escalación forzada del Decider **no está implementada** (no es un flag futuro prometido) — el detector mide y registra en shadow; no cambia ninguna decisión.
 - Cuando `should_escalate_to_owner=true` pero `pipeline_would_have_escalated=false` → señal valiosa de punto ciego del pipeline; se loguea para revisión periódica en la ficha del VIP.
 
 Relacionado: [[pipeline-cognitivo]], [[perfil-evolutivo]], [[escalacion]].
 
 ^[docs/SPEC-EVOLUCION-AGENTE.md — componente transversal]
+^[docs/ESTADO-PROYECTO.md §Evolución de agente]

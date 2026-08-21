@@ -3,6 +3,8 @@ Anexo T — Sistema de Trazabilidad Interactiva (Auditoría de Turnos)
 
 Diana Business Bot / Sistema de Automatización de Chats VIP
 
+> **Estado (2026-08-21): Anexo T implementado.** La trazabilidad interactiva está desplegada en el Director: `AdminTraceService`, migración `005_trace_timings`, comandos `/turnos` y `/traza` con botones de traza en el DM de la dueña (callbacks `vt`/`td`/`tdd`/`tp`/`tj`/`tb`). Registro de ejecución con evidencia por archivo: `docs/PLAN_TRAZABILIDAD.md`.
+
 Campo Valor
 Nivel Diseño e implementación del sistema de trazabilidad para el DM de la dueña
 Basado en SPEC.md v1.5 y SPEC-FASE2.md v2.1
@@ -40,7 +42,9 @@ T-04 Implementar AdminService.get_full_trace(turn_id) para recuperar todos los o
 T-05 Añadir comandos /turnos y /traza <turn_id> en el handler de admin.
 T-06 Diseñar mensajes con botones inline para paginación, navegación y visualización de detalles de cada paso.
 T-07 Añadir botón "Ver traza" en el mensaje de aprobación (cuando la dueña recibe un borrador para aprobar).
-T-08 (Opcional) Añadir exportación a JSON desde la vista de traza.
+T-08 Añadir exportación a JSON desde la vista de traza (implementado como `export_trace_json` / callback `tj`).
+
+Todos los ítems T-01 a T-08 están implementados (T-08 dejó de ser opcional).
 
 2.2 Fuera de alcance
 
@@ -55,7 +59,7 @@ T-O3 Modificación de trazas (son solo lectura).
 
 3.1 Extensión de pipeline_traces
 
-Añadir un nuevo campo timings en la tabla existente. Si se usa SQLAlchemy, añadir una columna JSONB:
+Se añadió un nuevo campo `timings` a la tabla existente (columna JSONB en SQLAlchemy, migración `005_trace_timings`):
 
 ```sql
 ALTER TABLE pipeline_traces ADD COLUMN timings JSONB DEFAULT '{}'::jsonb;
@@ -82,7 +86,7 @@ Campos opcionales: si algún paso no se ejecutó (ej. un retriever stub) o fall�
 
 3.2 Consultas indexadas
 
-Para que la lista de turnos recientes sea rápida, añadir índice:
+Para que la lista de turnos recientes sea rápida, se añadió el índice:
 
 ```sql
 CREATE INDEX CONCURRENTLY IF NOT EXISTS pipeline_traces_created_at_idx ON pipeline_traces (created_at DESC);
@@ -141,9 +145,9 @@ class AdminTraceService:
         ...
 ```
 
-4.2 TraceTimingMiddleware (opcional)
+4.2 TraceTimingMiddleware
 
-Para no ensuciar el Director con lógica de medición, se puede implementar un context manager o decorador que envuelva cada paso.
+Para no ensuciar el Director con lógica de medición, se implementó un context manager (`TimingContext`, en `cognitive/timing.py`) que envuelve cada paso.
 
 ```python
 class TimingContext:
@@ -264,7 +268,7 @@ Ejemplo de detalle de un paso (mensaje separado):
 
 5.3 Botón "Ver traza" en el mensaje de aprobación
 
-Cuando la dueña recibe un borrador para aprobar (en modo supervisado), el mensaje incluirá un botón adicional:
+Cuando la dueña recibe un borrador para aprobar (en modo supervisado), el mensaje incluye un botón adicional:
 
 ```
 📝 Borrador para aprobar:
@@ -286,18 +290,20 @@ Al hacer clic en "Ver traza", se muestra el resumen de la traza de ese turno (ig
 
 ---
 
-7. Roadmap de Implementación
+7. Estado de Implementación
 
-Hito Descripción Dependencias
-H1 Extender tabla pipeline_traces con campo timings (migración). Ninguna
-H2 Implementar TimingContext o decorador en el Director para registrar tiempos en cada paso. H1
-H3 Implementar AdminTraceService con métodos get_recent_turns y get_full_trace. H2
-H4 Añadir comando /turnos en el handler de admin. H3
-H5 Añadir comando /traza <turn_id> en el handler de admin. H3
-H6 Implementar paginación y navegación con botones inline para la lista de turnos. H4
-H7 Implementar la vista de detalle de cada paso (mensaje separado con entrada/salida). H5
-H8 Añadir botón "Ver traza" en el mensaje de aprobación (callback). H5
-H9 (Opcional) Implementar exportación a JSON desde la vista de traza. H5
+El plan del Anexo T se ejecutó en su totalidad; todos los hitos están cumplidos. Registro de ejecución con evidencia por archivo: `docs/PLAN_TRAZABILIDAD.md`.
+
+Hito Descripción Estado
+H1 Extender tabla `pipeline_traces` con campo `timings` (migración). ✅ Cumplido — migración `005_trace_timings` (columna JSONB + índice)
+H2 Implementar `TimingContext` en el Director para registrar tiempos en cada paso. ✅ Cumplido — `src/diana/cognitive/timing.py`
+H3 Implementar `AdminTraceService` con `get_recent_turns` y `get_full_trace`. ✅ Cumplido — `src/diana/application/admin_trace_service.py`
+H4 Añadir comando `/turnos` en el handler de admin. ✅ Cumplido — `telegram/handlers/admin.py`
+H5 Añadir comando `/traza <turn_id>` en el handler de admin. ✅ Cumplido — `telegram/handlers/admin.py`
+H6 Implementar paginación y navegación con botones inline para la lista de turnos. ✅ Cumplido — callback `tp` (`trace_list_keyboard`)
+H7 Implementar la vista de detalle de cada paso (mensaje separado con entrada/salida). ✅ Cumplido — callbacks `td`/`tdd` (`step_detail_keyboard`)
+H8 Añadir botón "Ver traza" en el mensaje de aprobación (callback). ✅ Cumplido — callback `vt` en `draft_keyboard`
+H9 Exportación a JSON desde la vista de traza. ✅ Cumplido — `export_trace_json` / callback `tj`
 
 Criterio de salida (core — cumplido): La dueña puede, desde su DM, listar turnos recientes (`/turnos`), abrir una traza (`/traza`) y revisar detalle de pasos con timings. Exportación JSON disponible desde la vista de traza (`export_trace_json` / teclado Export JSON). Analytics avanzados (T-O*) siguen fuera de alcance V1.
 
@@ -329,5 +335,5 @@ AGENTS.md Los agentes deben saber que no se pueden eliminar registros de pipelin
 ---
 
 Fin del Anexo T — Sistema de Trazabilidad Interactiva
-Última actualización: Julio 2026
+Última actualización: Agosto 2026
 Equipo de Arquitectura — Implementado y disponible para auditoría de la dueña (DM solo lectura).

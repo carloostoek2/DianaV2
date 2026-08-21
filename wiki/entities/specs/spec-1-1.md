@@ -1,7 +1,7 @@
 ---
 title: SPEC-1.1.md
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 type: entity
 tags: [spec, decision, arquitectura]
 sources: [../../docs/SPEC-1.1.md]
@@ -10,7 +10,7 @@ confidence: high
 
 # SPEC-1.1.md
 
-Contrato de diseño e implementación (SPEC.md v1.5 — Híbrido Integrado, basado en [[spec-requerimientos]] v2.1). Es la **única fuente de verdad para la implementación**; estrategia incremental por fases.
+Contrato de diseño e implementación (SPEC.md v1.5 — Híbrido Integrado, basado en [[spec-requerimientos]] v2.1). Es la **única fuente de verdad para la implementación**; estrategia incremental por fases. **Estado (2026-08-21): implementado** — Fase 1 desplegada, Fase 2 activa por flags, Fase 3 activa según flag (ver [[estado-del-proyecto]]).
 
 ## Stack tecnológico (bloqueado)
 

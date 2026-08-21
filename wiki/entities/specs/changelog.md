@@ -1,7 +1,7 @@
 ---
 title: Changelog
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-08-21
 type: entity
 tags: [estado, operacion]
 sources: [../../CHANGELOG.md]
@@ -10,12 +10,19 @@ confidence: high
 
 # Changelog
 
-Historial de cambios del sistema (CHANGELOG.md).
+Historial de cambios del sistema (CHANGELOG.md). **Al día: 2026-08-20** (última entrada "Cognitive greeting and delivery polish").
+
+## Saludo cognitivo y pulido de entrega — 2026-08-20
+
+- Entrega en **burbujas por párrafo**: los borradores se dividen por bloques de línea en blanco antes del corte por caracteres; las respuestas multi-párrafo llegan como mensajes separados naturales.
+- **Progreso de envío**: entregas multi-segmento muestran a la dueña un indicador "enviando X/Y" en vivo.
+- **Quirks de entrega ponderados**: la selección de quirks favorece el error de tipeo + autocorrección y la tasa general sube a 20 %.
+- Fix: arranque sin hang en la cola de backfill de memoria — el chequeo de historial usa un `count()` barato en vez de recorrer todo el historial por páginas.
 
 ## Control de la dueña, vínculo Lucien y calidad — 2026-08-16
 
-- [[calidad-feedback]]: Destacar/Reprender en borradores VIP (flag OFF); banco gold-first.
-- [[vinculo-lucien]]: aviso de expulsión Lucien→Diana (flag OFF).
+- [[calidad-feedback]]: Destacar/Reprender en borradores VIP; banco gold-first.
+- [[vinculo-lucien]]: aviso de expulsión Lucien→Diana.
 - [[eventos-temporales]]: contexto con fecha, sin flag.
 - Menú unificado, progreso en vivo al aprobar, paracaídas si falla el aviso de doctrina.
 - Ops: repo en migración 029; producción verificada hasta 026.

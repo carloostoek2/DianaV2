@@ -1,7 +1,7 @@
 ---
 title: SPEC-FASE5.md
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 type: entity
 tags: [spec, memoria, aprendizaje]
 sources: [../../docs/SPEC-FASE5.md]
@@ -10,10 +10,10 @@ confidence: high
 
 # SPEC-FASE5.md
 
-Contrato de diseño e implementación de la **Fase 5 — Perfil de VIP con Memoria (backfill + mantenimiento)** (v1.0, aprobado). Construye el puente entre los dos caminos de la información:
+Contrato de diseño e implementación de la **Fase 5 — Perfil de VIP con Memoria (backfill + mantenimiento)** (v1.1, implementada — Fase 5 completa). Construye el puente entre los dos caminos de la información:
 
 - **Historial crudo** (`message_history`): funcional, 1.015+ mensajes importados.
-- **Memoria procesada** (`memories`): **vacía (0 filas) — no existía escritor**. Esta fase lo crea (ver [[memoria-vip]]).
+- **Memoria procesada** (`memories`): **implementada y poblada** — escritores activos (backfill + post-turno + aprobación). Snapshot verificado 2026-08-11: **81 filas** en `memories` (52 auto, 18 discarded, 11 approved) y 10 backfills (ver [[memoria-vip]] y [[estado-del-proyecto]]).
 
 ## Decisiones de producto (dueña)
 

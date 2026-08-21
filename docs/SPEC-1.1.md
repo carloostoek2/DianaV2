@@ -6,7 +6,7 @@ Basado en REQUERIMIENTOS.md v2.1
 Estrategia Incremental por Fases (Fase 1 = MVP Supervisado, Fase 2 = MVP+, Fase 3 = Completo)
 Audiencia Ingeniería, producto técnico
 Versión 1.5 — Híbrido Integrado
-Estado Aprobado para implementación (Inicio por Fase 1)
+Estado Implementado (Fase 1 desplegada; Fase 2 activa por flags; Fase 3 activa según flag)
 
 ---
 
@@ -146,16 +146,16 @@ Naturaleza: 100 % código determinista.
 Entrada: Turn en estado received + texto.
 Salida: Decision (aprobación o escalación en Fase 1).
 
-Pasos (Fase 1):
+Pasos:
 
 1. Cortocircuito (REQ-COG-16): Si el texto coincide con palabras/temas prohibidos → EscalationEvent + Turn.status = escalated + fin.
 2. Invoca Analista → obtiene Comprehension.
 3. Invoca Planificador → obtiene Plan.
-4. Pide al Capability Registry resolver cada capacidad del Plan (en Fase 1, history y context son reales; el resto son STUBS).
+4. Pide al Capability Registry resolver cada capacidad del Plan (los retrievers son reales: historial, contexto, memoria, perfil, políticas, ejemplos y agenda).
 5. Constructor de Contexto → genera prompt.
 6. Generador (LLM) → produce Borrador.
 7. Evaluador (LLM) → produce EvaluationProfile.
-8. Decisor → produce Decision (siempre approve o escalate en Fase 1).
+8. Decisor → produce Decision (approve, escalate o consult_doctrine; send solo en modo autónomo).
 
 4.2 Analista (LLM)
 
@@ -190,16 +190,16 @@ Salida: Subconjunto de needs_* en true mapeado a nombres de capacidad (knowledge
 Pregunta: ¿Qué componente concreto satisface esta capacidad?
 Contrato: resolve(capacidad: str) → Retriever (todos con interfaz fetch(turn) → resultado | null).
 
-Estado de implementación por Fase:
+Estado actual (el diseño por fase original se conserva en docs/ARCHITECTURE.md y docs/SPEC-FASE2.md):
 
-Capacidad Fase 1 (MVP) Fase 2 (MVP+) Fase 3 (Completo)
-knowledge.history REAL: Últimos N mensajes (SQL) REAL (mejorado) REAL
-knowledge.context REAL (parcial): Deriva estado simple del historial REAL: Usa tabla contexts con embeddings y expiración REAL
-knowledge.profile STUB: Devuelve null REAL: Busca en profiles REAL
-knowledge.memory STUB: Devuelve null REAL: Busca en memories (pgvector + vip_id) REAL
-knowledge.policy STUB: Devuelve null REAL: Busca en policies activas REAL
-knowledge.examples STUB: Devuelve null REAL: Busca en examples (few-shot) REAL
-knowledge.schedule STUB STUB REAL: Agenda de la dueña
+Capacidad Estado actual (implementado)
+knowledge.history REAL: últimos N mensajes (SQL)
+knowledge.context REAL: tabla contexts con embeddings y expiración
+knowledge.profile REAL: busca en profiles (por VIP)
+knowledge.memory REAL: busca en memories (pgvector + vip_id)
+knowledge.policy REAL: busca en policies activas
+knowledge.examples REAL: busca en examples (few-shot)
+knowledge.schedule REAL: agenda de la dueña
 
 4.5 Constructor de Contexto
 
@@ -233,11 +233,14 @@ Salida (vector 7D, sin score único, REQ-COG-08):
 4.8 Decisor (Determinista)
 
 Pregunta: ¿Qué acción tomar?
-Reglas de Fase 1 (Modo Supervisado Global):
+Reglas (Modo Supervisado por defecto; prioridades del Decisor, contrato intocable):
 
 · Si seguridad < umbral_seguridad → Escalar.
+· Si needs_policy = true sin política → Consultar doctrina (zona gris).
+· Si emotion = "molesta" o risk = "alto" → Escalar.
+· Modo autónomo (flag + umbrales) → Enviar directo; en supervisado, nunca.
 · En cualquier otro caso → Aprobar (nunca Enviar directo).
-· Regenerar y Consultar doctrina están deshabilitados en Fase 1 (se activan en Fase 2).
+· Regeneración por naturalidad baja: implementada como variantes del borrador; es secuenciación del Director (pre-Decisor), no una acción del Decisor.
 
 4.9 Behavior Engine
 
@@ -249,11 +252,11 @@ Cancelación: Si se cancela un turno, se aborta la asyncio.Task y se marca como 
 
 5. Modelo de Datos (Clasificado por Fase)
 
-Nota: Las tablas de Fase 2 y 3 ya están diseñadas aquí para evitar migraciones rotas, pero el código de Fase 1 solo implementa las marcadas como FASE 1. Las demás tablas se crean (con sus índices) al activar la fase correspondiente, o pueden crearse desde el inicio con datos vacíos.
+Nota: Todas las tablas del spec están creadas y migradas (Alembic 001 → 029). El bloque [FASE 1] corresponde al núcleo supervisado; los bloques [FASE 2] y [FASE 3] se materializaron en fases posteriores. El esquema autoritativo vive en src/diana/infrastructure/db/models.py y wiki/SCHEMA.md.
 
 ```sql
 -- =============================================
--- [FASE 1] MVP SUPERVISADO (IMPLEMENTAR AHORA)
+-- [FASE 1] MVP SUPERVISADO (implementado)
 -- =============================================
 
 -- VIP allowlist
@@ -440,7 +443,7 @@ CREATE TABLE learning_metrics (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Configuración global del sistema (se amplía en Fase 3)
+-- Configuración global del sistema (ampliada: modo global, keywords, umbrales y flags)
 CREATE TABLE system_config (
     key         TEXT PRIMARY KEY,
     value       JSONB NOT NULL,
@@ -502,16 +505,18 @@ Ver métricas (tasa aprobación, zona gris) Fase 3
 
 ---
 
-8. Roadmap de Implementación (Alineado con REQUIREMENTS §18)
+8. Estado de Implementación
 
-Fase Hitos Criterio de Salida
-Fase 1 (MVP) 1. Turn Coordinator + Máquina de Estados. 2. Director con cortocircuito. 3. Analista + Generador + Evaluador (LLMs). 4. Decisor (solo approve/escalate). 5. Behavior Engine básico (delay, read, typing). 6. Cola de aprobación en DM. 7. Tablas Fase 1 (vips, history, traces, pending, turns, escalations). VIP autorizado recibe respuesta en nombre de la dueña con espera, lectura y typing; nada se envía sin aprobación.
-Fase 2 (MVP+) 8. Activar Retrievers reales (memoria, políticas, ejemplos) con pgvector. 9. Staging Area + promoción explícita. 10. Zona gris + destilación de políticas. 11. Evaluación con calibración empírica. 12. Hot-swap de LLM. 13. Sandbox con FakeDelivery. 14. Tablas Fase 2 (profiles, memories, contexts, policies, examples, staging, gray_zone). El sistema aprende de correcciones (vía Staging) y resuelve dudas de doctrina sin repetir preguntas.
-Fase 3 (Completo) 15. Recontacto por silencio. 16. Promo no-VIP (trigger exacto). 17. Métricas de aprendizaje agregadas. 18. Behavior Engine avanzado (mensajes divididos, quirks). 19. Tablas Fase 3 (learning_metrics, system_config ampliada). Producto completo alineado al 100 % con REQUERIMIENTOS.
+Las tres fases del plan incremental están implementadas. Esta sección resume qué cubre cada una; el estado vivo del sistema se mantiene en docs/ESTADO-PROYECTO.md y la arquitectura consolidada (módulos, flujos, feature flags y esquema) en docs/ARCHITECTURE.md.
+
+Fase Cobertura implementada
+Fase 1 (MVP Supervisado) Turn Coordinator + máquina de estados del Turn, Director con cortocircuito determinista, Analista + Planificador + Constructor de Contexto + Generador + Evaluador (vector 7D) + Decisor, Behavior Engine (delay, lectura, typing), cola de aprobación en el DM de la dueña y tablas base (vips, message_history, pipeline_traces, pending_deliveries, turns, escalation_events, system_config).
+Fase 2 (MVP+) Retrievers reales con pgvector (historial, contexto, perfil, memoria, políticas, ejemplos), Staging Area con promoción explícita, zona gris con destilación de políticas y freeze, sandbox con FakeDelivery, y Behavior Engine avanzado (mensajes divididos, quirks). Tablas de memoria y aprendizaje migradas.
+Fase 3 (Completo) Recontacto por silencio, promo no-VIP con trigger exacto, métricas de aprendizaje agregadas, calibración de umbrales (job existente; flag FEATURE_CALIBRATION_ENABLED=false) y autoenvío autónomo (ruta cableada; deshabilitado por FEATURE_AUTONOMOUS_MODE=false).
 
 ---
 
-9. Decisiones de Arquitectura (ADRs) y Decisiones Abiertas
+9. Decisiones de Arquitectura (ADRs) y Decisiones Resueltas
 
 ADRs (Tomados de SPEC-1)
 
@@ -522,16 +527,12 @@ ADRs (Tomados de SPEC-1)
 · ADR-005: Embeddings locales (sentence-transformers) para Fase 2 (cero coste, intercambiable).
 · ADR-006: LLMProvider abstracto con hot-swap (DeepSeek primario, Anthropic secundario).
 
-Decisiones Abiertas para Ingeniería (Fase 1)
+Decisiones Resueltas (Fase 1)
 
-1. ¿Incluir regeneración por naturalidad baja en Fase 1?
-      Recomendación: No. Diferir a Fase 2. En Fase 1, siempre approve y que la dueña corrija si es necesario.
-2. Mecanismo concreto de serialización por chat:
-      Recomendación: Usar SELECT ... FOR UPDATE sobre la tabla turns filtrando por chat_id y status NOT IN ('terminales'), o una cola en memoria con asyncio.Queue por chat_id para evitar latencia de DB en alta concurrencia.
-3. Umbrales iniciales del Decisor:
-      Recomendación: umbral_seguridad = 0.3 (muy conservador, escalar ante la mínima duda). Ajustar manualmente tras los primeros 50 turnos reales, hasta que Fase 2 incorpore calibración automática (REQ-EVAL-*).
-4. TTL de objetos intermedios (pipeline_traces):
-      Recomendación: 30 días para Fase 1, ajustable por variable de entorno.
+1. Regeneración por naturalidad baja: resuelto e implementado. Se implementaron variantes del borrador (DraftVariantService en src/diana/application/draft_variants.py: navigate/regenerate), cableadas en los botones del DM de la dueña (prev | Regenerar | next). La redraft por naturalidad es secuenciación del Director (pre-Decisor), no una acción del Decisor.
+2. Serialización por chat: resuelto. Se implementó un lock por chat_id (ChatLockProvider con asyncio.Lock) en src/diana/application/turn_coordinator.py, suficiente para el despliegue de proceso único. La serialización multi-proceso (Postgres SELECT ... FOR UPDATE / advisory lock) queda documentada como residual, fuera del despliegue actual.
+3. Umbrales iniciales del Decisor: resuelto. Umbral de seguridad (clave safety de eval_thresholds) con default 0.3 en src/diana/cognitive/thresholds.py y runtime_thresholds.py; los umbrales son mutables en runtime tras calibración (RuntimeThresholds.replace_safety). El job de calibración semanal existe (src/diana/jobs/calibration.py) y está desactivado por flag (FEATURE_CALIBRATION_ENABLED=false).
+4. TTL de objetos intermedios (pipeline_traces): resuelto e implementado. Default de 30 días (trace_ttl_days en src/diana/config/settings.py), ejecutado por TracePurgeJob (src/diana/jobs/trace_purge.py) vía SqlTraceStore.n_expired(ttl_days); ajustable por configuración.
 
 ---
 
@@ -554,7 +555,7 @@ TAC-13 Existen métricas de tasa de aprobación y repetición de zona gris (Fase
 
 ---
 
-11. Estructura de Carpetas Propuesta (Unificada)
+11. Estructura de Carpetas Real (Unificada)
 
 ```
 diana-bot/
@@ -651,13 +652,12 @@ diana-bot/
 
 · No define UI/UX de menús más allá de "existe un comando" (se define en la capa de Telegram).
 · No aborda escalado masivo (>100 VIPs concurrentes) en Fase 1 o 2 (REQ-NFR-11 es P2).
-· La Zona Gris (GAP-), el Aprendizaje (TRN-) y la Memoria (MEM-*) no se implementan en Fase 1, solo están diseñados.
-· No se implementa auto-envío (modo autónomo) hasta Fase 2 como mínimo.
+· La Zona Gris (GAP-), el Aprendizaje (TRN-) y la Memoria (MEM-*) quedaron fuera del alcance de la Fase 1 (solo diseñados en este spec); se implementaron en fases posteriores y hoy están activas según flag.
+· El auto-envío (modo autónomo) sigue fuera de alcance: la ruta está cableada pero deshabilitada por flag (FEATURE_AUTONOMOUS_MODE=false).
 
 ---
 
 Fin del documento de diseño híbrido v1.5
 
-Este documento es la única fuente de verdad para la implementación.
-Para la Fase 1, el equipo debe ignorar las secciones marcadas como [FASE 2] y [FASE 3] y concentrarse en los contratos, la máquina de estados y las tablas de la Fase 1.
-Para la Fase 2, se "encienden" los Retrievers reales y se materializan las tablas de memoria y staging, sin tocar una línea del Director.
+Este documento fue la fuente de verdad del diseño técnico base y su implementación por fases. El estado vivo del sistema se mantiene en docs/ESTADO-PROYECTO.md; la arquitectura consolidada (módulos, flujos, flags y esquema) en docs/ARCHITECTURE.md.
+Las fases se implementaron de forma incremental sin reescribir el Director: Fase 2 activó los retrievers reales y materializó las tablas de memoria y staging.

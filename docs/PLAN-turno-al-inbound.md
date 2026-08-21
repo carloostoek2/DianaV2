@@ -3,6 +3,7 @@
 **Rama base:** `main`  
 **Fecha:** 2026-08-02  
 **Estado:** **DONE** (implementado en main; pool hardener-agile effort 4 cerrado)  
+**Nota de estado (2026-08-21):** Rediseño implementado: el ciclo de turno opera con turno al inbound y la espera como estado del Turn; descrito en `docs/ARCHITECTURE.md` y en los flujos 4.x de `AGENTS.md`.  
 **Problema:** La espera “humana” corre **antes** de crear el turno. Si la dueña responde en esa ventana, no hay turno que cancelar y el flag de intervención se borra demasiado pronto → el bot puede seguir.  
 **Referencia limpia:** v1 (`diana/`) crea la unidad de trabajo al llegar el VIP (`reply_gen` + `timer_schedule` + task) y cancela con `task.cancel()` / gen obsoleto.  
 **Meta de producto:** Mismo comportamiento que v1: *si hay trabajo en el chat y llega dueña o VIP nuevo, ese trabajo muere*; la espera sigue contando desde el mensaje del VIP.
@@ -71,7 +72,7 @@ begin_turn (replace) → supersede el anterior (reason=new_message)
 
 ## 3. Cambios por capa (orden de implementación)
 
-### Fase A — Modelo de estado (pequeño, bloqueante)
+### Fase A — Modelo de estado (pequeño, bloqueante) — **implementado**
 
 1. **Estado de turno en espera**  
    - Opción preferida: nuevo `TurnStatus.WAITING_DELAY = "waiting_delay"` (explícito, auditable).  
@@ -86,7 +87,7 @@ begin_turn (replace) → supersede el anterior (reason=new_message)
 3. `begin_turn` / `coordinate` VIP: crear turno en `waiting_delay` (no en `received` ya “listo para analizar”).  
    Transición a `analyzing` (o el primer status del Director) **después** de la espera.
 
-### Fase B — Orquestador (corazón del cambio)
+### Fase B — Orquestador (corazón del cambio) — **implementado**
 
 Archivo principal: `application/turn_orchestrator.py`
 
@@ -110,7 +111,7 @@ Archivo principal: `application/turn_orchestrator.py`
    - Puede quedar como **defense-in-depth** (si el flag está y el turno aún no se supersedió).  
    - El camino principal es: turno ya supersedido por `coordinate(owner)`.
 
-### Fase C — Coordinador / middleware (simplificar, no romper)
+### Fase C — Coordinador / middleware (simplificar, no romper) — **implementado**
 
 1. `TurnCoordinator._supersede_nonterminal` ya cancela deliveries + approvals si hay turnos vivos. Con mint early, **la dueña en espera cancela de verdad**.
 
@@ -123,7 +124,7 @@ Archivo principal: `application/turn_orchestrator.py`
 
 3. `OwnerDetectionMiddleware`: sin cambio de contrato; se beneficia solo de que existan turnos supersedibles.
 
-### Fase D — Recovery / timers (opcional en el mismo PR o follow-up)
+### Fase D — Recovery / timers (opcional en el mismo PR o follow-up) — **D0 implementado; D1 residual**
 
 Hoy `runtime_timers` está atado a **delivery** (`delivery_id`), no al pre-delay del orquestador.
 
@@ -132,26 +133,26 @@ Hoy `runtime_timers` está atado a **delivery** (`delivery_id`), no al pre-delay
 | **D0 (MVP del plan)** | Sleep en memoria como ahora; si el proceso muere en la espera, el turno queda `waiting_delay` y el startup lo trata como zombie (supersede o fail + re-notify según política). |
 | **D1 (follow-up)** | Extender runtime timer o tabla de “turn fire_at” para reanudar esperas tras restart (paridad con `timer_schedule` de v1). |
 
-**Plan por defecto:** D0 en el primer cambio; documentar D1 como residual.  
+**Ejecutado:** D0 (sleep en memoria); D1 documentado como residual.  
 En recovery startup: turnos `waiting_delay` al boot → `superseded` o `failed` con razón `process_restart` (fail-closed, predecible). No reanudar LLM a ciegas.
 
-### Fase E — Tests (obligatorio, Strict TDD)
+### Fase E — Tests (obligatorio, Strict TDD) — **implementado**
 
-Orden sugerido (red → green):
+Orden seguido (red → green; tests presentes en la suite):
 
 1. **Dueña durante la espera:** VIP arranca delay → owner business msg → al despertar no hay Director call / no approval waiting / turno `superseded`.  
 2. **VIP nuevo durante la espera:** primer turno superseded; un solo Director sobre burst/último turn.  
 3. **Sin intervención:** tras delay, se crea pipeline normal (approve path).  
 4. **Regresión flag stale:** VIP nuevo tras dueña no se aborta en falso.  
 5. **Autónomo:** dueña en espera → no send.  
-6. Ajustar tests que asumen “no turn hasta después del delay” o synthetic uuid.
+6. Se ajustaron tests que asumían “no turn hasta después del delay” o synthetic uuid.
 
 Archivos de ancla:  
 `tests/unit/application/test_turn_orchestrator.py`,  
 `tests/unit/application/test_turn_coordinator.py`,  
 `tests/unit/telegram/test_owner_mw.py`.
 
-### Fase F — Observabilidad y producto
+### Fase F — Observabilidad y producto — **implementado**
 
 Logs claros:
 
@@ -190,17 +191,17 @@ Para la dueña (ops): en trazas se verá el turno cancelado en espera (más legi
 
 ## 6. Criterios de hecho (DoD)
 
-- [ ] Turno se crea **antes** de la espera humana.  
-- [ ] Dueña en chat VIP durante la espera → turno `superseded`, **0** LLM, **0** envío, **0** draft nuevo.  
-- [ ] VIP nuevo durante la espera → cancela el anterior; un solo pipeline vigente.  
-- [ ] Sin intervención, flujo supervisado/autónomo igual que hoy en resultado.  
-- [ ] No se reintroduce el “flag pegado” que abortaba VIP futuros.  
-- [ ] Tests unitarios del escenario dueña-en-espera en verde.  
-- [ ] Sin regresión de pureza de capas (Cognitive no conoce Telegram; cancel sigue en Coordinator/Behavior).
+- [x] Turno se crea **antes** de la espera humana.  
+- [x] Dueña en chat VIP durante la espera → turno `superseded`, **0** LLM, **0** envío, **0** draft nuevo.  
+- [x] VIP nuevo durante la espera → cancela el anterior; un solo pipeline vigente.  
+- [x] Sin intervención, flujo supervisado/autónomo igual que hoy en resultado.  
+- [x] No se reintroduce el “flag pegado” que abortaba VIP futuros. *(Garantía de diseño cumplida: el flag se limpia tras el mint del turno nuevo; hay tests de regresión de flag stale en la suite.)*  
+- [x] Tests unitarios del escenario dueña-en-espera en verde.  
+- [x] Sin regresión de pureza de capas (Cognitive no conoce Telegram; cancel sigue en Coordinator/Behavior).
 
 ---
 
-## 7. Orden de trabajo sugerido (commits)
+## 7. Orden de trabajo seguido (commits)
 
 1. `test: owner cancel during pre-delay fails today` (red) + status `waiting_delay`  
 2. `feat: mint turn before human delay` (green path orquestador)  
@@ -219,6 +220,6 @@ Para la dueña (ops): en trazas se verá el turno cancelado en espera (más legi
 
 ---
 
-## 9. Siguiente paso tras aprobar el plan
+## 9. Ejecución tras aprobar el plan
 
-Implementar en `main` (o branch `feat/turn-at-inbound` desde main) con Strict TDD, empezando por el test de dueña-en-espera y el status `waiting_delay`.
+Implementado en `main` con Strict TDD, empezando por el test de dueña-en-espera y el status `waiting_delay`. Commits clave en la tabla “Entrega”.
