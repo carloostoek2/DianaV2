@@ -908,6 +908,7 @@ def build_admin_router(
                     correct_sessions=sessions,
                     doctrine_sessions=doctrine_s,
                     gray_zone=gray_zone,
+                    coordinator=coordinator,
                 )
                 await _answer_doctrine_status(message, status)
                 return

@@ -341,6 +341,83 @@ async def test_doctrine_free_text_expired_session_returns_token(
 
 
 @pytest.mark.asyncio
+async def test_doctrine_free_text_router_forwards_coordinator(
+    admin_ctx: dict,
+) -> None:
+    """Regression: on_owner_text must forward coordinator to handle_admin_text.
+
+    Without the forward, free-text doctrine resolution returned
+    'doctrine_unavailable' ("Módulo de zona gris no disponible") even when the
+    gray zone module was wired.
+    """
+    from diana.application.ports import TurnRecord
+    from diana.telegram.handlers.admin import build_admin_router
+    from diana.telegram.handlers.doctrine import DoctrineSessionStore
+
+    g = admin_ctx
+    turn_id = uuid4()
+    # Real turn in gray_zone so the supervised delivery can transition it.
+    await g["turns"].create(
+        TurnRecord(
+            id=turn_id,
+            chat_id=42,
+            status="gray_zone",
+            channel_type="vip",
+            trigger_message_id=7,
+        )
+    )
+    sessions = DoctrineSessionStore()
+    sessions.start(OWNER, turn_id)
+
+    class _FakeGrayZone:
+        def __init__(self) -> None:
+            self.resolved: list[tuple[str, str]] = []
+
+        async def get_open_query_by_turn_id(self, tid: UUID) -> object:
+            assert tid == turn_id
+            return SimpleNamespace(
+                id=uuid4(),
+                turn_id=turn_id,
+                draft="draft",
+                question="q",
+                business_connection_id="bc-gray",
+            )
+
+        async def resolve_with_doctrine(
+            self, query_id: UUID, generalization: str, rule: str
+        ) -> object:
+            self.resolved.append((generalization, rule))
+            return SimpleNamespace(id=uuid4())
+
+        async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
+            return SimpleNamespace(id=query_id)
+
+        async def reopen_query(self, query_id: UUID) -> bool:
+            return True
+
+    gz = _FakeGrayZone()
+    router = build_admin_router(
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        coordinator=g["coordinator"],
+        doctrine_sessions=sessions,
+        gray_zone=gz,  # type: ignore[arg-type]
+    )
+    on_owner_text = _router_handler(router, "on_owner_text")
+    msg = _admin_message("Siempre ofrecer 10% si piden 3 unidades")
+    await on_owner_text(msg)
+    msg.answer.assert_awaited()
+    body = msg.answer.await_args.args[0]
+    assert "Doctrina guardada" in body
+    assert gz.resolved == [(
+        "Siempre ofrecer 10% si piden 3 unidades",
+        "Siempre ofrecer 10% si piden 3 unidades",
+    )]
+
+
+@pytest.mark.asyncio
 async def test_non_owner_ignored(admin_ctx: dict) -> None:
     g = admin_ctx
     status = await handle_admin_text(
