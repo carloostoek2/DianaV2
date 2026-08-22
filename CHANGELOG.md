@@ -2,6 +2,17 @@
 
 Highlights of what's new and fixed in Diana, from her early releases through the latest work.
 
+## Minibot test harness, doctrine fix, and doc refresh — 2026-08-21
+
+### ✨ New Features
+- **Minibot external test harness**: a companion harness (`minibot`, a Telethon userbot) now runs automated multi-turn tests against Diana's sandbox, simulating different subscriber profiles and grading her replies with an LLM. Tests stay isolated from real memory and data, honor a turn budget and per-profile rubrics, and can run a full dry pipeline without touching Telegram.
+
+### 🐛 Fixes
+- Fixed free-text gray-zone doctrine queries from the owner always answering "Módulo de zona gris no disponible": the resolution path now forwards the active doctrine session.
+
+### 🔧 Improvements
+- Documentation reorganized from implementation roadmap to system guides: a consolidated architecture reference (`docs/ARCHITECTURE.md`), a product front-page README, and a single pending-items catalog (`faltantes.md`).
+
 ## Cognitive greeting and delivery polish — 2026-08-20
 
 ### ✨ New Features
