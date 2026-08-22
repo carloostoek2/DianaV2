@@ -37,7 +37,10 @@ _DEFAULT_TRUST_MIN = 0.90
 _DEFAULT_CLASSIFIER_CONFIDENCE_MIN = 0.70
 _DRAFT_TEXT = "Holis 😁"
 _SUMMARY_DAYS = 7
-_DECISIONS_LIMIT = 10
+_DECISIONS_PER_PAGE = 3
+_DECISIONS_WINDOW = 30
+_BY_VIP_MAX = 10
+_DRAFT_CAP = 600
 
 _TRUST_OK = "✅ cumple"
 _TRUST_BELOW = "⏳ en camino"
@@ -158,7 +161,10 @@ class AdminShadowService:
             f"  Confianza para enviar sola: {self._thresholds.trust_min:.2f}",
             f"  Confianza del clasificador: "
             f"{self._thresholds.classifier_confidence_min:.2f}",
-            f'  Mensaje que habría enviado: "{self._thresholds.draft_text}"',
+            f'  Plantilla de saludo automático: "{self._thresholds.draft_text}"',
+            "",
+            "El detalle de cada turno (borrador real y si habría enviado sola) "
+            "está en 💬 Borradores y decisiones.",
             "",
             f"Última medición: {last_label}",
         ]
@@ -188,9 +194,12 @@ class AdminShadowService:
             lines += ["", "Todavía no hay confianza medida para ningún VIP."]
             return "\n".join(lines)
 
-        for vip_id, rows in sorted(
+        sorted_vips = sorted(
             by_vip.items(), key=lambda item: _vip_sort_key(item[1], names)
-        ):
+        )
+        # Telegram message cap: render at most _BY_VIP_MAX VIPs per message.
+        shown = sorted_vips[:_BY_VIP_MAX]
+        for vip_id, rows in shown:
             name = names.get(vip_id, str(vip_id)[:8])
             lines.append(f"\n👤 {name}")
             for row in sorted(rows, key=lambda r: r.turn_category):
@@ -204,9 +213,17 @@ class AdminShadowService:
                     f"autónomos {row.autonomous_count} · "
                     f"correcciones {row.correction_count} · {meets}"
                 )
+        hidden = len(sorted_vips) - len(shown)
+        if hidden > 0:
+            lines.append(f"\n… y {hidden} VIPs más (la confianza crece con el uso).")
         return "\n".join(lines)
 
-    async def render_decisions(self, limit: int = _DECISIONS_LIMIT) -> str:
+    async def render_decisions(
+        self,
+        page: int = 0,
+        per_page: int = _DECISIONS_PER_PAGE,
+        window: int = _DECISIONS_WINDOW,
+    ) -> tuple[str, int]:
         """Recent turns: draft + full-autonomy shadow verdict + reasons.
 
         Each entry re-runs the REAL Decisor (with the autonomy switch on)
@@ -215,14 +232,20 @@ class AdminShadowService:
         met), blocked by a threshold, escalated, or pending doctrine — plus
         the trust gate per (VIP, category) that "opens" autonomy as it is
         earned. The generated draft is the same message the owner approves.
+
+        Paginated (``per_page`` entries per page) so a full draft never blows
+        the Telegram message cap; returns ``(body, total_pages)``.
         """
         try:
-            rows = await self._turn_categories.list_recent_with_draft(limit)
+            rows = await self._turn_categories.list_recent_with_draft(window)
             trust_rows = await self._trust_budget.list_all()
             vips = await self._vips.list_active()
         except Exception:
             logger.exception("shadow_decisions_read_failed")
-            return _unavailable("borradores y decisiones")
+            return _unavailable("borradores y decisiones"), 1
+
+        total_pages = max(1, -(-len(rows) // per_page))
+        page = max(0, min(page, total_pages - 1))
 
         names = {v.id: (v.display_name or str(v.telegram_user_id)) for v in vips}
         trust_by_key = {
@@ -239,9 +262,10 @@ class AdminShadowService:
         ]
         if not rows:
             lines += ["", "Todavía no hay turnos medidos."]
-            return "\n".join(lines)
+            return "\n".join(lines), 1
 
-        for i, row in enumerate(rows, 1):
+        page_rows = rows[page * per_page : (page + 1) * per_page]
+        for i, row in enumerate(page_rows, 1 + page * per_page):
             name = names.get(row["vip_id"], str(row["vip_id"])[:8]) if row.get(
                 "vip_id"
             ) else "?"
@@ -258,10 +282,14 @@ class AdminShadowService:
                 self._full_autonomy_lines(row, trust_by_key, trust_min)
             )
             if draft:
-                lines.append(f'   Borrador generado: "{draft}"')
+                lines.append(f'   Borrador generado: "{_cap_text(draft)}"')
             else:
                 lines.append("   (sin borrador guardado en este turno)")
-        return "\n".join(lines)
+
+        lines.append(
+            f"\nPágina {page + 1} de {total_pages} — usa los botones para navegar."
+        )
+        return "\n".join(lines), total_pages
 
     def _full_autonomy_lines(
         self, row: dict, trust_by_key: dict, trust_min: float
@@ -348,6 +376,14 @@ def _fmt_day(value: date | datetime | None) -> str:
         return "—"
     d = cdmx_local_date(value) if isinstance(value, datetime) else value
     return d.strftime("%d/%m")
+
+
+def _cap_text(text: str, max_len: int = _DRAFT_CAP) -> str:
+    """Cap a draft snippet so the page never blows the Telegram limit."""
+    text = text or ""
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
 
 
 def _vip_sort_key(rows: list[Any], names: dict[Any, str]) -> tuple[float, str]:

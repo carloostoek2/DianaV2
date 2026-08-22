@@ -190,7 +190,7 @@ async def test_summary_shows_totals_trend_and_thresholds() -> None:
     assert "🎚 Umbrales actuales:" in body
     assert "Confianza para enviar sola: 0.90" in body
     assert "Confianza del clasificador: 0.70" in body
-    assert 'Mensaje que habría enviado: "Holis 😁"' in body
+    assert 'Plantilla de saludo automático: "Holis 😁"' in body
     assert "Última medición: 21/08" in body
 
 
@@ -250,7 +250,7 @@ async def test_decisions_would_send_when_all_thresholds_met() -> None:
         trust=[_trust(vip_id, category="fatico", score=0.95, auton=9)],
         vips=[_vip(vip_id, name="Hug Vbs")],
     )
-    body = await service.render_decisions()
+    body, total_pages = await service.render_decisions()
     assert "1. 22/08 · Hug Vbs · fatico (conf. 0.70)" in body
     assert "✅ CON AUTONOMÍA TOTAL: habría enviado sola" in body
     assert "Decisión real: aprobar (revisión de la dueña)" in body
@@ -273,7 +273,7 @@ async def test_decisions_below_threshold_shows_dimension_detail() -> None:
         ],
         vips=[_vip(vip_id, name="Alfonso")],
     )
-    body = await service.render_decisions()
+    body, total_pages = await service.render_decisions()
     assert "❌ Con autonomía: no habría enviado — umbrales no alcanzados:" in body
     assert "Seguridad 0.50 vs 0.90 ❌" in body
     assert "Doctrina 0.85 vs 0.80 ✅" in body
@@ -293,7 +293,7 @@ async def test_decisions_high_risk_escalates() -> None:
         ],
         vips=[_vip(vip_id)],
     )
-    body = await service.render_decisions()
+    body, total_pages = await service.render_decisions()
     assert "❌ Con autonomía: no habría enviado — riesgo alto en la conversación" in body
 
 
@@ -309,7 +309,7 @@ async def test_decisions_molesta_escalates() -> None:
         ],
         vips=[_vip(vip_id)],
     )
-    body = await service.render_decisions()
+    body, total_pages = await service.render_decisions()
     assert "❌ Con autonomía: no habría enviado — el VIP está molesta" in body
 
 
@@ -326,7 +326,7 @@ async def test_decisions_pending_doctrine() -> None:
         ],
         vips=[_vip(vip_id)],
     )
-    body = await service.render_decisions()
+    body, total_pages = await service.render_decisions()
     assert "❌ Con autonomía: no habría enviado — doctrina pendiente (zona gris)" in body
 
 
@@ -337,14 +337,14 @@ async def test_decisions_missing_evaluation_is_honest() -> None:
     row["evaluation"] = None
     row["comprehension"] = None
     service = _build(rows=[row], vips=[_vip(vip_id)])
-    body = await service.render_decisions()
+    body, total_pages = await service.render_decisions()
     assert "sin evaluación guardada en este turno" in body
 
 
 @pytest.mark.asyncio
 async def test_decisions_empty() -> None:
     service = _build()
-    body = await service.render_decisions()
+    body, total_pages = await service.render_decisions()
     assert "Todavía no hay turnos medidos." in body
 
 
@@ -413,3 +413,74 @@ async def test_dispatch_sombra_renders_decisions() -> None:
     assert call_args is not None
     assert "Simulación con autonomía total" in call_args[0][0]
     assert "umbrales no alcanzados" in call_args[0][0]
+
+
+# --- Pagination / message-cap safety (Telegram 4096 limit) ------------------
+
+
+@pytest.mark.asyncio
+async def test_decisions_paginates_three_per_page() -> None:
+    vip_id = uuid4()
+    rows = [
+        _decision_row(vip_id, draft=f"borrador {i}", when=datetime(2026, 8, 20 + i // 3, 12, 0, tzinfo=UTC))
+        for i in range(7)
+    ]
+    service = _build(rows=rows, vips=[_vip(vip_id, name="María")])
+
+    body, total_pages = await service.render_decisions(page=0)
+    assert total_pages == 3
+    assert "1." in body and "3." in body
+    assert "4." not in body
+
+    body, _ = await service.render_decisions(page=1)
+    assert "4." in body and "6." in body
+    assert "1." not in body
+
+    # Page clamping: beyond the last page shows the last page.
+    body, _ = await service.render_decisions(page=99)
+    assert "7." in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_draft_capped_for_telegram_limit() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[_decision_row(vip_id, draft="x" * 3000)],
+        vips=[_vip(vip_id)],
+    )
+    body, total_pages = await service.render_decisions()
+    assert total_pages == 1
+    assert "…" in body
+    assert len(body) < 4096
+
+
+@pytest.mark.asyncio
+async def test_by_vip_caps_long_lists() -> None:
+    vips = [_vip(uuid4(), name=f"VIP {i}") for i in range(11)]
+    trust = [_trust(v.id, score=0.3) for v in vips]
+    service = _build(trust=trust, vips=vips)
+    body = await service.render_by_vip()
+    assert "… y 1 VIPs más" in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_keyboard_navigation() -> None:
+    from diana.telegram.keyboards import menu_shadow_decisions_keyboard
+
+    # First page: only "Siguiente".
+    kb = menu_shadow_decisions_keyboard(0, 3)
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "m:sombra:decisions:p2" in data  # next → page 2 (1-based)
+    assert "📄 1/3" in [b.text for row in kb.inline_keyboard for b in row]
+
+    # Middle page: prev + next.
+    kb = menu_shadow_decisions_keyboard(1, 3)
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "m:sombra:decisions:p1" in data  # prev
+    assert "m:sombra:decisions:p3" in data  # next
+
+    # Last page: only "Anterior".
+    kb = menu_shadow_decisions_keyboard(2, 3)
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "m:sombra:decisions:p2" in data
+    assert "p4" not in "".join(data)

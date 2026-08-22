@@ -1163,6 +1163,37 @@ def menu_shadow_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def menu_shadow_decisions_keyboard(
+    page: int, total_pages: int
+) -> InlineKeyboardMarkup:
+    """Pagination controls for the decisions view (3 turns per page)."""
+    page = max(0, page)
+    total_pages = max(1, total_pages)
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(
+                text="⬅️ Anterior",
+                callback_data=encode_menu("sombra", f"decisions:p{page}"),
+            )
+        )
+    nav.append(
+        InlineKeyboardButton(
+            text=f"📄 {page + 1}/{total_pages}",
+            callback_data=encode_menu("sombra", "decisions"),
+        )
+    )
+    if page < total_pages - 1:
+        nav.append(
+            InlineKeyboardButton(
+                text="Siguiente ➡️",
+                callback_data=encode_menu("sombra", f"decisions:p{page + 2}"),
+            )
+        )
+    rows = [nav, [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu("sombra"))]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def menu_vip_list_keyboard(
     vips_data: list[tuple[int, str | None]],
 ) -> InlineKeyboardMarkup:

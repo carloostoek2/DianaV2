@@ -85,6 +85,7 @@ from diana.telegram.keyboards import (
     menu_sandbox_keyboard,
     menu_sandbox_profile_picker_keyboard,
     menu_shadow_keyboard,
+    menu_shadow_decisions_keyboard,
     menu_vip_detail_keyboard,
     menu_vip_list_keyboard,
     menu_vip_profile_keyboard,
@@ -871,10 +872,23 @@ async def _dispatch_action(
         try:
             if action == "summary":
                 body = await shadow_admin.render_summary()
+                await _show(message, body, menu_shadow_keyboard())
             elif action == "vips":
                 body = await shadow_admin.render_by_vip()
+                await _show(message, body, menu_shadow_keyboard())
             else:
-                body = await shadow_admin.render_decisions()
+                page = 0
+                if parsed.extra and parsed.extra.startswith("p"):
+                    try:
+                        page = max(0, int(parsed.extra[1:]) - 1)
+                    except ValueError:
+                        page = 0
+                body, total_pages = await shadow_admin.render_decisions(page=page)
+                await _show(
+                    message,
+                    body,
+                    menu_shadow_decisions_keyboard(page, total_pages),
+                )
         except Exception:
             logger.exception("shadow_menu_render_failed")
             await _show(
@@ -883,7 +897,6 @@ async def _dispatch_action(
                 menu_back_keyboard(encode_menu("sombra")),
             )
             return
-        await _show(message, body, menu_shadow_keyboard())
         return
 
     # ==================================================================
