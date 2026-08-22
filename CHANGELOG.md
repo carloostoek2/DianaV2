@@ -2,6 +2,21 @@
 
 Highlights of what's new and fixed in Diana, from her early releases through the latest work.
 
+## Shadow mode consult section in the owner menu — 2026-08-22
+
+### ✨ New Features
+- **🤖 Modo sombra in the owner menu**: a read-only consult section (no notifications) where the owner can check, on demand:
+  - **Resumen y umbrales**: measured turns over the last 7 days with daily trend, totals ("would have sent alone", owner corrections), current thresholds (trust 0.90, classifier 0.70) and the would-be autonomous message.
+  - **Confianza por VIP**: trust score per (VIP, category) compared to the threshold (✅ cumple / ⏳ en camino), with the "autónomos" (would-have-sent) and correction counters.
+  - **Mensajes que habría enviado**: the last 10 turns where the fast-lane would have auto-sent — date, VIP, category, classifier confidence and the message it would have delivered.
+- Nothing about the shadow measurement changes: it still records without deciding; the section only reads (`AdminShadowService`).
+
+### 🔧 Improvements
+- New repo read methods (`turn_category_log.daily_counts` / `list_would_autonomous`, `vip_trust_budget.list_all`) powering the views.
+
+### ✅ Tests
+- 2806 unit tests passing (new `test_admin_shadow_service.py`; root-menu layout tests updated for the new button).
+
 ## PII masking at the LLM boundary + production DB verified — 2026-08-22
 
 ### ✨ New Features

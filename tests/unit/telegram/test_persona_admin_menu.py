@@ -247,10 +247,10 @@ def test_encode_menu_persona_under_64_bytes_and_parse_roundtrip() -> None:
 
 def test_menu_root_keyboard_show_persona() -> None:
     default = menu_root_keyboard()
-    assert len(default.inline_keyboard) == 7
+    assert len(default.inline_keyboard) == 8
 
     with_persona = menu_root_keyboard(show_persona=True)
-    assert len(with_persona.inline_keyboard) == 8
+    assert len(with_persona.inline_keyboard) == 9
     assert any(
         b.callback_data == encode_menu("personalidad")
         for row in with_persona.inline_keyboard

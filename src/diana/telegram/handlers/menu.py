@@ -22,6 +22,7 @@ from aiogram.filters import Command, Filter
 from aiogram.types import CallbackQuery, Message
 
 from diana.application.admin_metrics_service import AdminMetricsService
+from diana.application.admin_shadow_service import AdminShadowService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.ephemeral_event_service import EphemeralEventService
 from diana.application.persona_admin_service import PersonaAdminService
@@ -82,6 +83,7 @@ from diana.telegram.keyboards import (
     menu_root_keyboard,
     menu_sandbox_keyboard,
     menu_sandbox_profile_picker_keyboard,
+    menu_shadow_keyboard,
     menu_vip_detail_keyboard,
     menu_vip_list_keyboard,
     menu_vip_profile_keyboard,
@@ -257,6 +259,7 @@ _CATEGORY_KEYBOARDS: dict[str, Any] = {
     "sandbox": menu_sandbox_keyboard,
     "metrics": menu_metrics_keyboard,
     "history": menu_history_keyboard,
+    "sombra": menu_shadow_keyboard,
 }
 
 
@@ -484,6 +487,7 @@ def build_menu_router(
     vips: VipStore,
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
+    shadow_admin: AdminShadowService | None = None,
     sandbox: SandboxService | None = None,
     staging: StagingService | None = None,
     coordinator: TurnCoordinator | None = None,
@@ -619,6 +623,7 @@ def build_menu_router(
             vips=vips,
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
+            shadow_admin=shadow_admin,
             sandbox=sandbox,
             staging=staging,
             coordinator=coordinator,
@@ -749,6 +754,7 @@ async def _dispatch_action(
     vips: VipStore,
     admin_trace: AdminTraceService | None,
     admin_metrics: AdminMetricsService | None,
+    shadow_admin: AdminShadowService | None = None,
     sandbox: SandboxService | None,
     staging: StagingService | None,
     coordinator: TurnCoordinator | None,
@@ -762,6 +768,35 @@ async def _dispatch_action(
 ) -> None:
     category = parsed.category
     action = parsed.action
+
+    # ==================================================================
+    # Modo sombra — consulta (read-only)
+    # ==================================================================
+    if category == "sombra" and action in ("summary", "vips", "drafts"):
+        if shadow_admin is None:
+            await _show(
+                message,
+                "El modo sombra no está disponible.",
+                menu_back_keyboard(encode_menu("sombra")),
+            )
+            return
+        try:
+            if action == "summary":
+                body = await shadow_admin.render_summary()
+            elif action == "vips":
+                body = await shadow_admin.render_by_vip()
+            else:
+                body = await shadow_admin.render_drafts()
+        except Exception:
+            logger.exception("shadow_menu_render_failed")
+            await _show(
+                message,
+                "Error del sistema al cargar el modo sombra. Reintenta más tarde.",
+                menu_back_keyboard(encode_menu("sombra")),
+            )
+            return
+        await _show(message, body, menu_shadow_keyboard())
+        return
 
     # ==================================================================
     # Eventos temporales — detail, actions, and the create/edit wizards

@@ -126,12 +126,22 @@ Cierre de la deuda "Masking de PII previo al envío al LLM (SPEC-FASE5 §12.7, F
 - **Acuerdo con el proveedor:** guía de negociación lista en `docs/ACUERDO-PROVEEDOR-LLM.md` (qué pedir a DeepSeek: ubicación, retención, entrenamiento, seguridad, subprocesadores, DPA).
 - Verificado: suite unit **2796 passed / 0 failed** (20 tests nuevos de masking).
 
+### Consulta del modo sombra en el menú de la dueña ✅ (IMPLEMENTADO, 2026-08-22)
+Sección **"🤖 Modo sombra"** en el menú de la dueña (consulta bajo demanda, sin notificaciones):
+
+- **📊 Resumen y umbrales:** turnos medidos en los últimos 7 días con tendencia diaria, totales ("habría enviado sola", correcciones de la dueña), umbrales actuales (confianza 0.90, clasificador 0.70) y el mensaje que habría enviado (`"Holis 😁"`).
+- **👥 Confianza por VIP:** score por (VIP, categoría) comparado con el umbral (✅ cumple / ⏳ en camino), contadores de autónomos y correcciones.
+- **💬 Mensajes que habría enviado:** últimos 10 turnos donde el fast-lane habría autoenviado, con fecha, VIP, categoría, confianza del clasificador y el mensaje habría sido.
+- **Nada cambia en el comportamiento:** la sección es solo lectura (`AdminShadowService`); los flags de autonomía siguen apagados.
+
+Verificado contra la base real: 69 turnos medidos en 7 días, 14 "habría enviado", 6 VIPs con confianza 0.15–0.45 (ninguno sobre el umbral).
+
 ### UX de la dueña (A1–A13) ✅ cerrado 2026-08-12
 Menú unificado como superficie principal. Progreso en vivo al aprobar (visto → escribiendo → enviado), “Regenerando…” al pedir otra versión, avisos honestos si el botón ya no aplica, nombre del VIP en el borrador, tipos de archivo etiquetados, doctrina en texto libre (`dr:`). Detalle en `docs/UX.md`.
 
 ### Otros
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria).
-- Migraciones en repo: **001–029**. En producción, verificado hasta **026** (2026-08-11). **027 ephemeral + 028 link + 029 quality: apply en producción SIN VERIFICAR.**
+- Migraciones en repo: **001–029**. En producción: **verificadas al head 029** (2026-08-22).
 - Persona sin reglas de voseo; español neutro. CHANGELOG.md vigente.
 - Auditoría de documentación 2026-08-16: wiki + estado alineados al código post-11-ago. Informes en `.planning/quick/docs-audit-2026-08-16/`.
 

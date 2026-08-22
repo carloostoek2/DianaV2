@@ -184,5 +184,15 @@ class SqlVipTrustBudgetRepo:
                 vip_trust_budget_orm_to_record(row) for row in result.scalars()
             ]
 
+    async def list_all(self) -> list[VipTrustBudgetRecord]:
+        """Every trust budget row (shadow consult surface, read-only)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(VipTrustBudget).order_by(VipTrustBudget.updated_at.desc())
+            )
+            return [
+                vip_trust_budget_orm_to_record(row) for row in result.scalars()
+            ]
+
 
 __all__ = ["SqlVipTrustBudgetRepo", "vip_trust_budget_orm_to_record"]

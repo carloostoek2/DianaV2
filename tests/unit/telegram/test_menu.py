@@ -546,18 +546,22 @@ class _TrainingModeStore:
 
 
 def test_menu_root_has_config_button() -> None:
-    """The root menu has 7 buttons; the last is Configuracion."""
+    """The root menu has 8 buttons; the last is Configuracion."""
     from diana.telegram.keyboards import menu_root_keyboard
 
     kb = menu_root_keyboard()
     rows = kb.inline_keyboard
-    assert len(rows) == 7
-    config_btn = rows[6][0]
+    assert len(rows) == 8
+    config_btn = rows[7][0]
     assert config_btn.text == "⚙️ Configuración"
     assert config_btn.callback_data == "m:config"
     # Eventos temporales sits between Historial and Configuración.
     event_btn = rows[5][0]
     assert event_btn.callback_data == "m:event"
+    # Modo sombra sits between Eventos and Configuración.
+    shadow_btn = rows[6][0]
+    assert shadow_btn.text == "🤖 Modo sombra"
+    assert shadow_btn.callback_data == "m:sombra"
 
 
 @pytest.mark.asyncio

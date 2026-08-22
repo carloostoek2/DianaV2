@@ -877,6 +877,13 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
     "sandbox": "🧪 Modo de prueba\nPrueba cómo responde Diana sin avisar a nadie real.",
     "metrics": "📊 Métricas y aprendizaje\nCómo está funcionando Diana esta semana.",
     "history": "🔍 Historial y diagnóstico\nPara entender qué hizo Diana en un caso puntual.",
+    "sombra": (
+        "🤖 Modo sombra\n\n"
+        "Aquí puedes revisar lo que Diana está aprendiendo en silencio: "
+        "cuántas veces habría enviado sola, la confianza por VIP comparada "
+        "con los umbrales y el mensaje que habría mandado. Es solo "
+        "información — nada de esto cambia cómo responde hoy."
+    ),
     "config": "⚙️ Configuración\n\nControla el comportamiento del bot. Por ahora solo está disponible el Modo Entrenamiento.",
     "personalidad": (
         "🎭 Personalidad y reglas\n\n"
@@ -1051,10 +1058,10 @@ def _menu_back_row() -> list[InlineKeyboardButton]:
 
 
 def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
-    """Main menu: the 7 logical categories (VIPs, Review, Sandbox, Metrics, History, Events, Config).
+    """Main menu: the logical categories (VIPs, Review, Sandbox, Metrics, History, Events, Shadow, Config).
 
     ``show_persona`` adds the "Personalidad y reglas" category (Item 3), gated by
-    ``FEATURE_PERSONA_ADMIN_ENABLED`` so the default 7-button layout is unchanged.
+    ``FEATURE_PERSONA_ADMIN_ENABLED`` so the default layout is unchanged.
     """
     rows = [
         [InlineKeyboardButton(text="👥 Mis VIPs", callback_data=encode_menu("vips"))],
@@ -1063,6 +1070,7 @@ def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📊 Métricas y aprendizaje", callback_data=encode_menu("metrics"))],
         [InlineKeyboardButton(text="🔍 Historial y diagnóstico", callback_data=encode_menu("history"))],
         [InlineKeyboardButton(text="📅 Eventos temporales", callback_data=encode_menu("event"))],
+        [InlineKeyboardButton(text="🤖 Modo sombra", callback_data=encode_menu("sombra"))],
     ]
     if show_persona:
         rows.append([
@@ -1072,6 +1080,32 @@ def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
             )
         ])
     rows.append([InlineKeyboardButton(text="⚙️ Configuración", callback_data=encode_menu("config"))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def menu_shadow_keyboard() -> InlineKeyboardMarkup:
+    """Shadow-mode consult section: summary, per-VIP trust and would-be drafts."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="📊 Resumen y umbrales",
+                callback_data=encode_menu("sombra", "summary"),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="👥 Confianza por VIP",
+                callback_data=encode_menu("sombra", "vips"),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💬 Mensajes que habría enviado",
+                callback_data=encode_menu("sombra", "drafts"),
+            )
+        ],
+        _menu_back_row(),
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

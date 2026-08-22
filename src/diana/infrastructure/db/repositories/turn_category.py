@@ -83,6 +83,55 @@ class SqlTurnCategoryLogRepo:
             )
             return [turn_category_log_orm_to_record(r) for r in result.scalars()]
 
+    async def list_would_autonomous(
+        self, limit: int = 10
+    ) -> list[TurnCategoryLogRecord]:
+        """Most recent turns where the fast-lane would have auto-sent (shadow).
+
+        Owner consult surface (``AdminShadowService.render_drafts``): ordered
+        newest-first, all VIPs.
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(TurnCategoryLog)
+                .where(TurnCategoryLog.would_autonomous.is_(True))
+                .order_by(TurnCategoryLog.created_at.desc())
+                .limit(limit)
+            )
+            return [turn_category_log_orm_to_record(r) for r in result.scalars()]
+
+    async def daily_counts(self, days: int = 7) -> list[dict]:
+        """Per-day totals over the last ``days`` days (shadow consult surface).
+
+        Returns ``[{day: date, total: int, autonomous: int}]`` oldest-first.
+        ``autonomous`` counts rows where the fast-lane would have auto-sent.
+        """
+        cutoff = func.now() - text(":days * INTERVAL '1 day'")
+        day_col = func.date_trunc("day", TurnCategoryLog.created_at).label("day")
+        stmt = (
+            select(
+                day_col,
+                func.count().label("total"),
+                func.count()
+                .filter(TurnCategoryLog.would_autonomous.is_(True))
+                .label("autonomous"),
+            )
+            .where(TurnCategoryLog.created_at >= cutoff)
+            .group_by(day_col)
+            .order_by(day_col)
+        )
+        stmt = stmt.params(days=days)
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return [
+                {
+                    "day": row.day,
+                    "total": int(row.total),
+                    "autonomous": int(row.autonomous),
+                }
+                for row in result.all()
+            ]
+
     async def purge_expired(self, ttl_days: int) -> int:
         batch_size = 1000
         cutoff = func.now() - text(":ttl_days * INTERVAL '1 day'")

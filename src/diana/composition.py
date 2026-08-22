@@ -16,6 +16,7 @@ from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from diana.application.admin_metrics_service import AdminMetricsService
+from diana.application.admin_shadow_service import AdminShadowService, ShadowThresholds
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
 from diana.application.profile_admin_service import ProfileAdminService
@@ -317,6 +318,7 @@ class AppContainer:
     metrics: MetricsAggregationService | None = None
     metrics_data: SqlMetricsDataSource | None = None
     admin_metrics: AdminMetricsService | None = None
+    shadow_admin: AdminShadowService | None = None
     profile_admin: ProfileAdminService | None = None
     runtime_thresholds: RuntimeThresholds | None = None
     turns: SqlTurnStore | None = None
@@ -935,6 +937,18 @@ def build_app(
         fp_marks=owner_marks,
     )
     admin_metrics = AdminMetricsService(store=learning_metrics)
+    # Modo sombra — consulta de la dueña (read-only): resumen, confianza por
+    # VIP vs. umbral y borradores que habría enviado. Built ALWAYS (the menu
+    # renders "no hay datos" when the shadow tables are empty).
+    shadow_admin = AdminShadowService(
+        turn_categories=turn_category_log_repo,
+        trust_budget=vip_trust_budget_repo,
+        vips=vips,
+        thresholds=ShadowThresholds(
+            trust_min=settings.trust_budget_threshold,
+            classifier_confidence_min=settings.classifier_confidence_min,
+        ),
+    )
     profile_admin = ProfileAdminService(
         profiles=profiles_repo,
         vips=vips,
@@ -1032,6 +1046,7 @@ def build_app(
         staging=staging,
         admin_trace=admin_trace,
         admin_metrics=admin_metrics,
+        shadow_admin=shadow_admin,
         profile_admin=profile_admin,
         persona_admin=persona_admin_service,
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
@@ -1089,6 +1104,7 @@ def build_app(
         metrics=metrics,
         metrics_data=metrics_data,
         admin_metrics=admin_metrics,
+        shadow_admin=shadow_admin,
         profile_admin=profile_admin,
         runtime_thresholds=runtime_thresholds,
         persona_admin=persona_admin_service,
