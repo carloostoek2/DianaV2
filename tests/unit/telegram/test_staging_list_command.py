@@ -114,3 +114,59 @@ def test_admin_menu_includes_staging() -> None:
     from diana.telegram.handlers.callbacks import ADMIN_MENU_TEXT
 
     assert "/staging" in ADMIN_MENU_TEXT
+
+
+# --- Gray-zone policy candidates in the review queue -------------------------
+
+
+def _policy_candidate(*, generalization: str = "regla de ejemplo", scope: str = "all"):
+    return SimpleNamespace(
+        id=uuid4(),
+        status="pending",
+        candidate_type="policy",
+        payload={
+            "question": "¿Qué hago si pide descuento?",
+            "draft": "borrador del bot",
+            "generalization": generalization,
+            "rule": generalization,
+            "scope": scope,
+            "vip_id": None,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_empty_queue_checks_both_types() -> None:
+    staging = AsyncMock()
+    staging.list_pending_examples = AsyncMock(return_value=[])
+    staging.list_pending_policies = AsyncMock(return_value=[])
+    token, rows = await load_pending_staging_list(staging=staging, limit=5)
+    assert token == "empty"
+    assert rows == []
+    staging.list_pending_examples.assert_awaited_once_with(limit=5)
+    staging.list_pending_policies.assert_awaited_once_with(limit=5)
+
+
+@pytest.mark.asyncio
+async def test_load_lists_examples_then_policies() -> None:
+    c1, c2 = _candidate(), _candidate()
+    p1 = _policy_candidate()
+    staging = AsyncMock()
+    staging.list_pending_examples = AsyncMock(return_value=[c1, c2])
+    staging.list_pending_policies = AsyncMock(return_value=[p1])
+    token, rows = await load_pending_staging_list(staging=staging)
+    assert token == "listed"
+    assert rows == [c1, c2, p1]
+
+
+def test_format_policy_candidate_body_shows_rule_scope_and_draft() -> None:
+    body = format_staging_candidate_body(_policy_candidate(scope="vip"))
+    assert "Regla" in body
+    assert "regla de ejemplo" in body
+    assert "borrador del bot" in body
+    assert "🔒 Solo este VIP" in body
+
+
+def test_format_policy_candidate_global_scope() -> None:
+    body = format_staging_candidate_body(_policy_candidate(scope="all"))
+    assert "🌍 A todos" in body

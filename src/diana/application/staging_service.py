@@ -307,5 +307,16 @@ class StagingService:
             limit=limit,
         )
 
+    async def list_pending_policies(self, limit: int = 10) -> list:
+        """Return pending policy candidates (gray zone doctrines) FIFO."""
+        return await self._staging.list_pending(
+            candidate_type="policy",
+            limit=limit,
+        )
+
+    async def get_candidate(self, candidate_id: UUID) -> object | None:
+        """Read one staging candidate (for type-routed promotion)."""
+        return await self._staging.get_by_id(candidate_id)
+
 
 __all__ = ["StagingService"]

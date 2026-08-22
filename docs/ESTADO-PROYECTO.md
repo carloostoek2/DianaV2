@@ -177,10 +177,10 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 > Pendientes de implementación y operación al 2026-08-21. Ningún ítem está "en curso de implementación"; se listan porque aún no existen o están diferidos. Referencia de IDs: `docs/INFORME_AUDITORIA.md` y `REQUERIMIENTOS.md`.
 
 ### Requerimientos no implementados (auditoría 2026-07)
-- **AUTH-03 — Tope configurable de VIPs:** no implementado. No existe límite/capacidad de VIPs en `settings.py` (solo `vip_history_seed_limit`, que limita seed de historial, no cantidad de VIPs).
-- **AUTH-07 — Modo observación silenciosa de chats no-VIP:** no implementado. Solo existe training mode que responde; no hay rama de observación pasiva/silencio.
-- ~~**GAP-11 — Generalización explícita al crear políticas**~~ → **CERRADO 2026-08-22** (alcance preguntado a la dueña; ver Fila 2).
-- **REE-02 / COG-15 — Recontacto con pipeline reducido:** no implementado. `recontact_service.py` usa plantillas fijas (`{nombre}`/`{producto}`), sin personalización por pipeline ni pipeline reducido.
+- **AUTH-03 — Tope configurable de VIPs:** ~~no implementado~~ → **DESCARTADO por decisión de producto (2026-08-22).** El sistema está pensado para una base pequeña de VIPs; un tope solo crearía fricción innecesaria (llegar al 11 con tope de 10 no aporta valor).
+- **AUTH-07 — Modo observación silenciosa de chats no-VIP:** **DIFERIDO por decisión de producto (2026-08-22).** Tiene sentido como extensión del modo sombra, pero primero se acopla el modo sombra VIP recién activado (sistema + dueña) antes de extender la observación a no-VIP.
+- ~~**GAP-11 — Generalización explícita al crear políticas**~~ → **CERRADO 2026-08-22** (alcance preguntado a la dueña; ver Fila 2). Además, el 2026-08-22 se **conectó la promoción**: las reglas de zona gris ahora aparecen en la cola de revisión (📋 Cola de revisión) y la dueña puede **activarlas** (✅) o descartarlas, respetando el alcance elegido. Antes quedaban como candidatas huérfanas sin superficie de activación.
+- **REE-02 / COG-15 — Recontacto con pipeline reducido:** no implementado. `recontact_service.py` usa plantillas fijas (`{nombre}`/`{producto}`), sin personalización por pipeline ni pipeline reducido. **PRIORIDAD de producto (2026-08-22): Fila 3 se redujo a este ítem.**
 - **MODE-09 — Feedback post-send autónomo dedicado:** no implementado. Solo existe la corrección de turno (Destacar/Reprender); no hay calificador post-envío.
 - ~~**ADM-03 — Cambio de LLM en caliente**~~ → **CERRADO 2026-08-22** (`HotSwapLLMProvider` + superficie Configuración → Modelo de IA; ver Fila 2).
 

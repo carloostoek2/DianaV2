@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -27,17 +28,20 @@ logger = logging.getLogger("diana.telegram")
 
 _SNIPPET_MAX = 80
 
-STAGING_UNAVAILABLE_UX = "Staging not available"
-STAGING_EMPTY_UX = "No pending example candidates"
+STAGING_UNAVAILABLE_UX = "Cola de revisión no disponible"
+STAGING_EMPTY_UX = "No hay nada pendiente de revisión"
 
 _TOKEN_UX: dict[str, tuple[str, bool]] = {
-    "promoted": ("Promoted", False),
-    "discarded": ("Discarded", False),
-    "forbidden": ("Not authorized", True),
+    "promoted": ("Aplicado", False),
+    "discarded": ("Descartado", False),
+    "forbidden": ("No autorizado", True),
     "unavailable": (STAGING_UNAVAILABLE_UX, True),
-    "invalid": ("Invalid callback", True),
-    "stale": ("Already handled or not found", True),
-    "atencion_blocked": ("Atencion corrections cannot become VIP examples", True),
+    "invalid": ("Dato inválido", True),
+    "stale": ("Ya fue revisado o no existe", True),
+    "atencion_blocked": (
+        "Las correcciones de Atención no pueden convertirse en ejemplos VIP",
+        True,
+    ),
 }
 
 
@@ -49,10 +53,29 @@ def _truncate(text: str, max_len: int = _SNIPPET_MAX) -> str:
 
 
 def format_staging_candidate_body(candidate: Any) -> str:
-    """Owner-facing body for one pending example candidate."""
+    """Owner-facing body for one pending staging candidate.
+
+    Policy candidates (gray-zone doctrine rules) render the rule, the draft
+    and the chosen scope; example candidates keep the original/corrected
+    pair. New text is neutral Mexican Spanish (AGENTS.md §0.6).
+    """
     cid = str(getattr(candidate, "id", ""))
     short = cid[:8] if cid else "?"
     payload = getattr(candidate, "payload", None) or {}
+    if getattr(candidate, "candidate_type", "example") == "policy":
+        rule = _truncate(str(payload.get("generalization") or payload.get("rule") or ""))
+        draft = _truncate(str(payload.get("draft") or ""))
+        scope = (
+            "🔒 Solo este VIP"
+            if payload.get("scope") == "vip"
+            else "🌍 A todos"
+        )
+        return (
+            f"Regla {short}\n"
+            f"Regla: {rule}\n"
+            f"Borrador: {draft}\n"
+            f"Alcance: {scope}"
+        )
     original = _truncate(str(payload.get("original_draft", "")))
     corrected = _truncate(str(payload.get("corrected_text", "")))
     return (
@@ -67,13 +90,14 @@ async def load_pending_staging_list(
     staging: StagingService | None,
     limit: int = 10,
 ) -> tuple[str, list[Any]]:
-    """Load pending example queue. Returns (token, rows).
+    """Load the pending review queue: example candidates + gray-zone rules.
 
-    Tokens: unavailable | empty | listed
+    Returns (token, rows). Tokens: unavailable | empty | listed.
     """
     if staging is None:
         return "unavailable", []
     rows = await staging.list_pending_examples(limit=limit)
+    rows = [*rows, *await staging.list_pending_policies(limit=limit)]
     if not rows:
         return "empty", []
     return "listed", list(rows)
@@ -97,6 +121,40 @@ async def dispatch_staging_callback(
     action, candidate_id = parsed
     try:
         if action == "promote":
+            # Route by candidate type: gray-zone doctrine rules promote to a
+            # live policy (with the scope chosen by the owner, GAP-11);
+            # corrections promote to the example bank.
+            candidate = await staging.get_candidate(candidate_id)
+            if candidate is not None and getattr(
+                candidate, "candidate_type", "example"
+            ) == "policy":
+                payload = getattr(candidate, "payload", None) or {}
+                vip_raw = payload.get("vip_id")
+                vip_id = UUID(vip_raw) if vip_raw else None
+                trigger = str(
+                    payload.get("question")
+                    or payload.get("generalization")
+                    or "regla de zona gris"
+                )[:80]
+                rule = str(
+                    payload.get("generalization") or payload.get("rule") or ""
+                ).strip()
+                await staging.promote_to_policy(
+                    candidate_id,
+                    trigger=trigger,
+                    rule=rule,
+                    scope=str(payload.get("scope") or "all"),
+                    vip_id=vip_id,
+                )
+                logger.info(
+                    "staging_policy_promoted",
+                    extra={
+                        "candidate_id": str(candidate_id),
+                        "actor_id": actor_id,
+                        "scope": payload.get("scope"),
+                    },
+                )
+                return "promoted"
             await staging.promote_to_example(candidate_id)
             logger.info(
                 "staging_promoted",
@@ -170,7 +228,7 @@ def build_staging_router(
         if token == "empty":
             await message.answer(STAGING_EMPTY_UX)
             return
-        await message.answer(f"Pending examples ({len(rows)}):")
+        await message.answer(f"Cola de revisión ({len(rows)}):")
         for row in rows:
             await message.answer(
                 format_staging_candidate_body(row),
