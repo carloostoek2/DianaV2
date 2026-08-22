@@ -101,14 +101,16 @@ class SqlTurnCategoryLogRepo:
             return [turn_category_log_orm_to_record(r) for r in result.scalars()]
 
     async def list_recent_with_draft(self, limit: int = 10) -> list[dict]:
-        """Recent classifications joined with their generated draft.
+        """Recent classifications joined with their full decision context.
 
         Owner consult surface (``AdminShadowService.render_decisions``): every
-        row carries the draft the pipeline actually generated (the same text
-        the owner approves), so the shadow verdict can be compared with the
-        real message side by side. ``draft`` is None when the turn has no
-        trace row yet (or the generator never produced text, e.g. template
-        cut without a stored text).
+        row carries the generated draft (the same text the owner approves),
+        the evaluation profile, the comprehension, the retrieved knowledge and
+        the real decision — so the full-autonomy shadow verdict can be
+        recomputed with the live Decider and compared with the real outcome.
+        ``draft`` / ``evaluation`` / ``comprehension`` / ``decision`` are None
+        when the turn has no trace row yet (or the pipeline never produced
+        them, e.g. template cut).
         """
         stmt = (
             select(
@@ -120,6 +122,10 @@ class SqlTurnCategoryLogRepo:
                 TurnCategoryLog.would_autonomous,
                 TurnCategoryLog.created_at,
                 PipelineTrace.generated_text.label("draft"),
+                PipelineTrace.evaluation.label("evaluation"),
+                PipelineTrace.comprehension.label("comprehension"),
+                PipelineTrace.decision.label("decision"),
+                PipelineTrace.retrieved.label("retrieved"),
             )
             .outerjoin(
                 PipelineTrace, PipelineTrace.turn_id == TurnCategoryLog.turn_id

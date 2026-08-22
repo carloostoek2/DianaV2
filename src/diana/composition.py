@@ -532,6 +532,15 @@ def build_app(
         runtime_thresholds=runtime_thresholds,
     )
 
+    # Shadow simulation decider: same matrix, autonomy switch ON — used ONLY by
+    # the owner consult surface (modo sombra) to re-decide stored turns and
+    # show what WOULD have happened under full autonomy. Never decides live.
+    shadow_decider = Decider(
+        feature_gray_zone_enabled=feature_gray_zone_enabled,
+        feature_autonomous_mode=True,
+        runtime_thresholds=runtime_thresholds,
+    )
+
     # AMS L2 gate — always constructed; with L1 false is_autonomous_enabled → False.
     ams = AutonomousModeService(
         feature_autonomous_mode=feature_autonomous_mode,
@@ -944,6 +953,7 @@ def build_app(
         turn_categories=turn_category_log_repo,
         trust_budget=vip_trust_budget_repo,
         vips=vips,
+        decider=shadow_decider,
         thresholds=ShadowThresholds(
             trust_min=settings.trust_budget_threshold,
             classifier_confidence_min=settings.classifier_confidence_min,

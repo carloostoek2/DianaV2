@@ -111,6 +111,15 @@ class Decider:
             ),
         )
 
+    def autonomous_mins(self) -> tuple[float, float, float]:
+        """Current autonomous minimums ``(safety, doctrine, naturalness)``.
+
+        Read-only accessor for owner-facing surfaces (e.g. the shadow-mode
+        calibration view) so they can display the exact thresholds the matrix
+        uses, including live runtime updates. Does not change the decision.
+        """
+        return self._autonomous_mins()
+
     def decide(
         self,
         evaluation: EvaluationProfile,

@@ -24,6 +24,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 
 from diana.application.mexico_tz import cdmx_local_date
+from diana.cognitive.models import Comprehension, EvaluationProfile
 
 logger = logging.getLogger("diana.application")
 
@@ -36,10 +37,23 @@ _DEFAULT_TRUST_MIN = 0.90
 _DEFAULT_CLASSIFIER_CONFIDENCE_MIN = 0.70
 _DRAFT_TEXT = "Holis 😁"
 _SUMMARY_DAYS = 7
-_DRAFTS_LIMIT = 10
+_DECISIONS_LIMIT = 10
 
 _TRUST_OK = "✅ cumple"
 _TRUST_BELOW = "⏳ en camino"
+
+# Decisor reasons → owner-facing labels (full-autonomy simulation).
+_ESCALATE_LABELS = {
+    "safety_below_threshold": "seguridad por debajo del mínimo",
+    "risk_high": "riesgo alto en la conversación",
+    "frustracion_directa": "el VIP está molesta",
+}
+_REAL_DECISION_LABELS = {
+    "send": "enviar sola",
+    "approve": "aprobar (revisión de la dueña)",
+    "escalate": "escalar",
+    "consult_doctrine": "consultar doctrina",
+}
 
 
 @dataclass(frozen=True)
@@ -80,7 +94,14 @@ class VipNameReader(Protocol):
 
 
 class AdminShadowService:
-    """Formats shadow-mode evidence for the owner menu (read-only)."""
+    """Formats shadow-mode evidence for the owner menu (read-only).
+
+    ``decider`` is a cognitive Decider built with ``feature_autonomous_mode
+    =True`` (the real decision matrix with the autonomy switch on): every
+    stored turn is re-decided with it, so the view answers "what would Diana
+    have done with full autonomy on this real message?" — the calibration
+    surface the owner asked for.
+    """
 
     def __init__(
         self,
@@ -89,11 +110,13 @@ class AdminShadowService:
         trust_budget: TrustBudgetShadowReader,
         vips: VipNameReader,
         thresholds: ShadowThresholds | None = None,
+        decider: Any | None = None,
     ) -> None:
         self._turn_categories = turn_categories
         self._trust_budget = trust_budget
         self._vips = vips
         self._thresholds = thresholds or ShadowThresholds()
+        self._decider = decider
 
     async def render_summary(self) -> str:
         """Global view: totals, 7-day trend and thresholds."""
@@ -183,14 +206,15 @@ class AdminShadowService:
                 )
         return "\n".join(lines)
 
-    async def render_decisions(self, limit: int = _DRAFTS_LIMIT) -> str:
-        """Recent turns: draft + shadow verdict + why not, side by side.
+    async def render_decisions(self, limit: int = _DECISIONS_LIMIT) -> str:
+        """Recent turns: draft + full-autonomy shadow verdict + reasons.
 
-        Each entry shows the draft the pipeline actually generated (the same
-        message the owner approves), the fast-lane verdict and the reason —
-        category, classifier confidence vs. its floor, and the trust gate when
-        the fast-lane said yes. This is the calibration surface: the owner
-        compares the draft with the reason and sees what would need to change.
+        Each entry re-runs the REAL Decisor (with the autonomy switch on)
+        over the turn's stored evaluation/comprehension, so the owner sees
+        what would have happened under full autonomy: sent alone (thresholds
+        met), blocked by a threshold, escalated, or pending doctrine — plus
+        the trust gate per (VIP, category) that "opens" autonomy as it is
+        earned. The generated draft is the same message the owner approves.
         """
         try:
             rows = await self._turn_categories.list_recent_with_draft(limit)
@@ -204,14 +228,14 @@ class AdminShadowService:
         trust_by_key = {
             (r.vip_id, r.turn_category): float(r.trust_score) for r in trust_rows
         }
-        conf_min = self._thresholds.classifier_confidence_min
         trust_min = self._thresholds.trust_min
 
         lines = [
             "🤖 Modo sombra — Borradores y decisiones",
             "",
-            "El borrador es el mismo que te llega para aprobar; al lado, "
-            "el veredicto sombra y el motivo:",
+            "Simulación con autonomía total: cada turno real se re-decide "
+            "con el Decisor y el interruptor de autonomía ENCENDIDO. El "
+            "borrador es el mismo que te llega para aprobar.",
         ]
         if not rows:
             lines += ["", "Todavía no hay turnos medidos."]
@@ -226,41 +250,97 @@ class AdminShadowService:
             confidence = row.get("confidence")
             conf_label = f"{confidence:.2f}" if confidence is not None else "—"
             draft = (row.get("draft") or "").strip()
-            would = bool(row.get("would_autonomous"))
 
             lines.append(
                 f"\n{i}. {when} · {name} · {category} (conf. {conf_label})"
             )
-            if would:
-                lines.append("   ✅ Habría enviado sola (saludo confiable)")
-                lines.append(
-                    f'   Con: "{self._thresholds.draft_text}"'
-                )
-                trust = trust_by_key.get((row.get("vip_id"), category))
-                if trust is not None:
-                    mark = "✅ cumple" if trust >= trust_min else "⏳ en camino"
-                    lines.append(
-                        f"   Confianza {trust:.2f} vs {trust_min:.2f}: {mark}"
-                    )
-                lines.append(
-                    "   Nota: el interruptor maestro está apagado — nada "
-                    "se envía sola hoy, solo se mide."
-                )
-            elif category != "fatico":
-                lines.append(
-                    f"   ❌ No candidata: turno {category} — hoy la autonomía "
-                    "solo considera saludos cortos"
-                )
-            else:
-                lines.append(
-                    f"   ❌ Saludo, pero clasificador inseguro: confianza "
-                    f"{conf_label} < {conf_min:.2f}"
-                )
+            lines.extend(
+                self._full_autonomy_lines(row, trust_by_key, trust_min)
+            )
             if draft:
                 lines.append(f'   Borrador generado: "{draft}"')
             else:
                 lines.append("   (sin borrador guardado en este turno)")
         return "\n".join(lines)
+
+    def _full_autonomy_lines(
+        self, row: dict, trust_by_key: dict, trust_min: float
+    ) -> list[str]:
+        """Re-decide one stored turn with the real Decider (autonomy ON)."""
+        if self._decider is None:
+            return ["   (simulación no disponible)"]
+
+        evaluation_dict = row.get("evaluation")
+        comprehension_dict = row.get("comprehension")
+        if not evaluation_dict or not comprehension_dict:
+            return [
+                "   — sin evaluación guardada en este turno "
+                "(plantilla o pipeline cortado)"
+            ]
+        try:
+            evaluation = EvaluationProfile.model_validate(evaluation_dict)
+            comprehension = Comprehension.model_validate(comprehension_dict)
+        except Exception:
+            logger.warning(
+                "shadow_evaluation_unparseable",
+                extra={"turn_id": str(row.get("turn_id"))},
+            )
+            return ["   — evaluación no legible para simular el veredicto"]
+
+        decision = self._decider.decide(
+            evaluation,
+            comprehension,
+            retrieved=row.get("retrieved") or {},
+        )
+
+        # Real outcome reference (what the pipeline actually decided).
+        real = row.get("decision") or {}
+        real_label = _REAL_DECISION_LABELS.get(
+            real.get("action"), str(real.get("action") or "?")
+        )
+        lines = [f"   Decisión real: {real_label}"]
+        lines.append(
+            f"   Seguridad {evaluation.safety:.2f} · doctrina "
+            f"{evaluation.doctrine:.2f} · naturalidad "
+            f"{evaluation.naturalness:.2f}"
+        )
+
+        if decision.action == "send":
+            lines.append("   ✅ CON AUTONOMÍA TOTAL: habría enviado sola")
+        elif decision.action == "escalate":
+            reason = _ESCALATE_LABELS.get(decision.reason, decision.reason)
+            lines.append(
+                f"   ❌ Con autonomía: no habría enviado — {reason}"
+            )
+        elif decision.action == "consult_doctrine":
+            lines.append(
+                "   ❌ Con autonomía: no habría enviado — doctrina "
+                "pendiente (zona gris)"
+            )
+        else:  # approve (autonomous_below_threshold)
+            lines.append("   ❌ Con autonomía: no habría enviado — umbrales no alcanzados:")
+            safety_min, doctrine_min, naturalness_min = self._decider.autonomous_mins()
+            for label, value, minv in (
+                ("Seguridad", evaluation.safety, safety_min),
+                ("Doctrina", evaluation.doctrine, doctrine_min),
+                ("Naturalidad", evaluation.naturalness, naturalness_min),
+            ):
+                mark = "✅" if value >= minv else "❌"
+                lines.append(f"     {label} {value:.2f} vs {minv:.2f} {mark}")
+
+        # The "earning" gate: per-(VIP, category) trust opens autonomy.
+        trust = trust_by_key.get((row.get("vip_id"), row.get("category")))
+        if trust is not None:
+            mark = _TRUST_OK if trust >= trust_min else _TRUST_BELOW
+            lines.append(
+                f"   Confianza {trust:.2f} vs {trust_min:.2f}: {mark} "
+                "(así se va abriendo la autonomía por VIP)"
+            )
+        lines.append(
+            "   Nota: el interruptor maestro está apagado — nada se "
+            "envía sola hoy, solo se mide."
+        )
+        return lines
 
 
 def _fmt_day(value: date | datetime | None) -> str:
