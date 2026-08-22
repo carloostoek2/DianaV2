@@ -151,6 +151,7 @@ created on upgrade and intentionally retained on downgrade (shared DB-level reso
 - [`docs/ANEXO_T-TRAZABILIDAD.md`](docs/ANEXO_T-TRAZABILIDAD.md) — owner DM traceability (implemented)
 - [`.planning/quick/F3-PHASE-STATUS.md`](.planning/quick/F3-PHASE-STATUS.md) — F3 implementation status + flag ops order
 - [`docs/OPS_SINGLE_INSTANCE.md`](docs/OPS_SINGLE_INSTANCE.md) — single-process ops assumption
+- [`docs/MINIBOT_HARNESS.md`](docs/MINIBOT_HARNESS.md) — harness de pruebas externo (userbot Telethon) contra el sandbox
 - [`docs/PRODUCT_OWNER_ADMIN_SANDBOX.md`](docs/PRODUCT_OWNER_ADMIN_SANDBOX.md) — owner admin, real VIP facts/notes, sandbox fixtures (**implemented**; product source of truth)
 - [`AGENTS.md`](AGENTS.md) — hard module limits for agents
 

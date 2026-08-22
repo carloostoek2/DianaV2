@@ -218,6 +218,7 @@ Modelos ORM autoritativos en `src/diana/infrastructure/db/models.py` (tablas del
 | `docs/ANEXO_T-TRAZABILIDAD.md` | Trazabilidad interactiva (Anexo T) |
 | `docs/MVP_COMPONENT_DESIGN.md` | Guía de componentes de Fase 1 |
 | `docs/REQUERIMIENTOS.md` | Qué debe cumplir el sistema (producto) |
+| `docs/MINIBOT_HARNESS.md` | Harness de pruebas externo (userbot Telethon) contra el sandbox |
 | `wiki/` | Conocimiento detallado: conceptos, módulos, contratos, tablas, decisiones, seguridad, operaciones (`wiki/SCHEMA.md` para el esquema) |
 
 ## 8. Decisiones de arquitectura (ADRs)
