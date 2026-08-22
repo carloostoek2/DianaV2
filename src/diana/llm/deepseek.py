@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import httpx
 from pydantic import BaseModel, SecretStr
 
+from diana.llm.pii_masker import MaskResult, mask_pii, unmask_pii
+
 logger = logging.getLogger(__name__)
 
 _FENCE_RE = re.compile(
@@ -114,6 +116,7 @@ class DeepSeekProvider:
         client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
         thinking_enabled: bool = True,
+        pii_masking: bool = True,
     ) -> None:
         if not isinstance(api_key, SecretStr):
             raise TypeError("api_key must be a pydantic SecretStr")
@@ -124,6 +127,10 @@ class DeepSeekProvider:
         self._base_url = validate_llm_base_url(base_url)
         self._model = model
         self._thinking_enabled = thinking_enabled
+        # PII masking is a privacy default: personal identifiers are replaced
+        # before the payload leaves the process and restored on the reply, so
+        # masking is behavior-transparent. Disable only for debugging.
+        self._pii_masking = pii_masking
         self._owns_client = client is None
         # Thinking adds CoT latency; give more room than the plain-text default.
         self._timeout = timeout if not thinking_enabled else max(timeout, 120.0)
@@ -139,6 +146,38 @@ class DeepSeekProvider:
         if self._owns_client:
             await self._client.aclose()
 
+    def _mask_messages(self, messages: list[dict]) -> tuple[list[dict], dict[str, str]]:
+        """Mask string contents before the payload crosses to the provider.
+
+        Non-string contents (never expected today) pass through untouched so
+        masking can never crash the call. Returns the masked messages plus the
+        placeholder → original mapping for unmasking the reply.
+        """
+        if not self._pii_masking:
+            return messages, {}
+        masked_messages: list[dict] = []
+        mapping: dict[str, str] = {}
+        stats: dict[str, int] = {}
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, str):
+                result: MaskResult = mask_pii(content)
+                mapping.update(result.mapping)
+                for label, count in result.stats.items():
+                    stats[label] = stats.get(label, 0) + count
+                masked_messages.append({**message, "content": result.masked})
+            else:
+                masked_messages.append(message)
+        if stats:
+            logger.debug("pii masked outbound: %s", stats)
+        return masked_messages, mapping
+
+    @staticmethod
+    def _unmask(text: str, mapping: dict[str, str]) -> str:
+        if not mapping:
+            return text
+        return unmask_pii(text, mapping)
+
     async def generate(
         self,
         messages: list[dict],
@@ -150,9 +189,10 @@ class DeepSeekProvider:
         if max_tokens is None:
             max_tokens = 4096 if self._thinking_enabled else 1024
         thinking_type = "enabled" if self._thinking_enabled else "disabled"
+        outbound, mapping = self._mask_messages(messages)
         payload = {
             "model": self._model,
-            "messages": messages,
+            "messages": outbound,
             "temperature": temperature,
             "max_tokens": max_tokens,
             # Free-text drafts may use thinking for better quality.
@@ -160,7 +200,7 @@ class DeepSeekProvider:
             "thinking": {"type": thinking_type},
         }
         data = await self._chat_completions(payload)
-        content = self._extract_content(data)
+        content = self._unmask(self._extract_content(data), mapping)
         if not content.strip():
             logger.error(
                 "deepseek generate empty content",
@@ -198,9 +238,10 @@ class DeepSeekProvider:
             augmented.extend(messages[1:])
         else:
             augmented = [{"role": "system", "content": instruction}, *messages]
+        outbound, mapping = self._mask_messages(augmented)
         payload: dict[str, Any] = {
             "model": self._model,
-            "messages": augmented,
+            "messages": outbound,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
@@ -210,7 +251,7 @@ class DeepSeekProvider:
             "thinking": {"type": "disabled"},
         }
         data = await self._chat_completions(payload)
-        content = self._extract_content(data)
+        content = self._unmask(self._extract_content(data), mapping)
         cleaned = strip_json_fences(content)
         if not cleaned.strip():
             logger.error(

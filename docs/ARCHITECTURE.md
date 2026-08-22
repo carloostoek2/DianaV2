@@ -157,8 +157,11 @@ Valores leídos de `.env` del repo (runtime). Los defaults del código en `src/d
 | `FEATURE_MOOD_ENGINE` | `true` | Motor de mood (shadow) |
 | `FEATURE_TRUST_BUDGET` | `true` | Presupuesto de confianza (shadow) |
 | `FEATURE_LINK_ENABLED` | `true` | Vínculo Lucien → Diana |
+| `FEATURE_PII_MASKING_ENABLED` | `true` | Masking de PII en el borde LLM (default seguro; única excepción a la convención de flags en false) |
 
 > **Nota — `FEATURE_AUTONOMOUS_MODE=false`:** la ruta de autoenvío SÍ está cableada tras el flag en `src/diana/application/turn_orchestrator.py` (~304 y ~2549, demote a approve) y `src/diana/application/recontact_service.py` (~209), pero deshabilitada. Los flags de evolución de agente (`*_DETECTOR`, `*_SYNTHESIS`, `*_AUTONOMY`, `*_MOOD`, `*_TRUST_BUDGET`) están `true` en **modo medición (shadow)**: miden y registran, no cambian decisiones.
+
+> **Nota — masking de PII (2026-08-22):** en el borde de salida del LLM (`DeepSeekProvider`) se enmascaran correos, teléfonos, tarjetas (Luhn), @usuarios y enlaces con marcadores a prueba de colisiones, y se restauran en la respuesta si el modelo los repite (transparente para el VIP y para `pipeline_traces`). Nombres propios no se enmascaran (personalización). Ver `src/diana/llm/pii_masker.py` y `docs/ACUERDO-PROVEEDOR-LLM.md`.
 
 ## 5. Modelo de datos
 

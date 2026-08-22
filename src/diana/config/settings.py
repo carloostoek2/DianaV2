@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # Structured JSON nodes (Analyst/Evaluator) always keep thinking off.
     # Default on: better draft quality; raise max_tokens budget via provider.
     llm_thinking_enabled: bool = True
+    # Privacy: personal identifiers (emails, phones, payment cards, @handles,
+    # URLs) are masked before any outbound LLM call and restored on the reply.
+    # Default ON (privacy-first): masking is behavior-transparent because the
+    # reply is unmasked before it reaches the VIP or is persisted. Disable only
+    # for debugging — this is the one flag that defaults to safe.
+    feature_pii_masking_enabled: bool = True
     global_mode: Literal["supervised", "autonomous", "fake_delivery"] = "supervised"
     delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3
     delivery_retry_backoff_seconds: Annotated[float, Field(gt=0)] = 0.05

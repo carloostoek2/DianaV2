@@ -47,6 +47,7 @@ merge; those seeds are **not** live overrides today.
 | **F6** Link Lucien→Diana | `feature_link_enabled` / `FEATURE_LINK_ENABLED` | **yes** | Coordinator chat receives `[LINK] vip_kicked` → dedup by `event_id` → owner DM (Expulsar/Desactivar/Mantener). Migration **028**. Active in `.env` |
 | **Feedback calidad** | `feature_quality_feedback_enabled` / `FEATURE_QUALITY_FEEDBACK_ENABLED` | **yes** | Destacar/Reprender on VIP drafts, gold/vip banks, gold-first retrieval (migration **029**). Active in `.env` |
 | **Saludo puro VIP** | `feature_phatic_auto_send` / `FEATURE_PHATIC_AUTO_SEND` | **yes** | Direct send of short pure-greeting turns (else approve) |
+| **Privacidad PII** | `feature_pii_masking_enabled` / `FEATURE_PII_MASKING_ENABLED` | **no** | Masks emails, phones, cards (Luhn), @handles, URLs at the LLM boundary and restores echoed placeholders on replies. Default **true** (privacy-first, transparent); disable only for debugging |
 
 **Freeze** is implemented on the gray-zone / freeze path (middleware + Behavior
 delivery hard-check). **Traceability (Anexo T)** is available for the owner DM:

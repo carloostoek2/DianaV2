@@ -1,10 +1,10 @@
 # Estado del proyecto — Diana Business Bot (DianaV2)
 
-**Fecha:** 2026-08-21
-**Rama:** main · **Head:** `b592192` (fix de doctrine en resolución free-text; origin/main = local al inicio de esta actualización).
+**Fecha:** 2026-08-22
+**Rama:** main · **Head:** `7cf8ce7` (fix(application): gate per-VIP state writes under sandbox).
 **Bot en producción:** Fase 6 (link Lucien→Diana) desplegada y verificada E2E — bot-to-bot DM, aceptación real pasada. Flags `FEATURE_LINK_ENABLED` y `FEATURE_QUALITY_FEEDBACK_ENABLED` activos en `.env`. <!-- VERIFY: estado del deploy real (Railway+EC2) y aceptación E2E no verificables desde el repo -->
 **Base de datos (repo):** Alembic head `029_feedback_quality` (cadena 001→029).
-**Base de datos (producción):** último snapshot verificado = `026` (2026-08-11). Apply de **027 / 028 / 029 en producción: SIN VERIFICAR** (pendiente operativo, no de implementación).
+**Base de datos (producción):** **VERIFICADO 2026-08-22: 001→029 aplicadas.** Las migraciones 027 (ephemeral_events), 028 (link_events) y 029 (feedback quality) ya estaban aplicadas en la base real de Supabase; se confirmó además la presencia de datos reales (`link_events` 14 filas, `examples.quality='gold'` 2 filas, `ephemeral_events` 1 fila). El ítem operativo pendiente quedó cerrado.
 
 ---
 
@@ -27,6 +27,7 @@
 | Feedback de calidad | Implementado — activo |
 | Eventos temporales | Implementado |
 | Integración Lucien → Diana (Fase 6) | Implementado — activo |
+| Privacidad: masking de PII al LLM | Implementado — activo |
 | Autonomía conversacional | En evolución (medición shadow) |
 | Autoenvío autónomo | No habilitado |
 
@@ -115,6 +116,16 @@ Spec `docs/SPEC-FEEDBACK.md`. Pool `feedback-calidad` cerrado (4 ítems). **Acti
 ### Eventos temporales ✅ (IMPLEMENTADO — sin flag, 2026-08-12)
 La dueña puede cargar un dato de contexto con fecha de inicio y fin (menú 📅 Eventos temporales). Entra al contexto como `knowledge.ephemeral` (global, no por VIP). No se mezcla con la memoria del VIP ni con el banco de ejemplos. Migración **027**. Siempre cableado.
 
+### Privacidad — masking de PII al LLM ✅ (IMPLEMENTADO — ACTIVO, 2026-08-22)
+Cierre de la deuda "Masking de PII previo al envío al LLM (SPEC-FASE5 §12.7, F3)".
+
+- **Dónde:** en el borde de salida hacia el proveedor (`DeepSeekProvider.generate` / `generate_structured`), un único punto que cubre todas las llamadas: analista, generador, evaluador, memoria, backfill y síntesis de perfiles.
+- **Qué se enmascara:** correos, teléfonos (formatos MX e internacionales), tarjetas (validadas con checksum Luhn), @usuarios y enlaces → reemplazados por marcadores `[correo]`, `[telefono]`, `[tarjeta]`, `[usuario]`, `[enlace]` a prueba de colisiones.
+- **Transparencia total:** si el modelo repite un marcador en la respuesta, se restaura al valor original antes de llegar al VIP o persistirse (el texto que ve el VIP y lo que queda en `pipeline_traces` no cambia). Nombres propios **no** se enmascaran (personalización los necesita; el acuerdo legal con el proveedor cubre esa parte).
+- **Flag:** `FEATURE_PII_MASKING_ENABLED` (default `true` en código — única excepción a la convención de flags en false, porque es privacidad y es transparente por diseño). Interruptor para depuración.
+- **Acuerdo con el proveedor:** guía de negociación lista en `docs/ACUERDO-PROVEEDOR-LLM.md` (qué pedir a DeepSeek: ubicación, retención, entrenamiento, seguridad, subprocesadores, DPA).
+- Verificado: suite unit **2796 passed / 0 failed** (20 tests nuevos de masking).
+
 ### UX de la dueña (A1–A13) ✅ cerrado 2026-08-12
 Menú unificado como superficie principal. Progreso en vivo al aprobar (visto → escribiendo → enviado), “Regenerando…” al pedir otra versión, avisos honestos si el botón ya no aplica, nombre del VIP en el borrador, tipos de archivo etiquetados, doctrina en texto libre (`dr:`). Detalle en `docs/UX.md`.
 
@@ -159,12 +170,13 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 - **Ficha de perfil EA-06 con historial de versiones:** no implementada (la ficha muestra memoria y confianza, pero no el historial de versiones de `vip_profile_history`).
 
 ### Operativo y despliegue
-- **Migraciones 027-029 en producción:** pendiente de verificación (operativo). Apply en producción SIN VERIFICAR (último snapshot verificado = `026`, 2026-08-11).
+- ~~Migraciones 027-029 en producción: pendiente~~ → **CERRADO 2026-08-22**: verificadas aplicadas en la base real (ver cabecera).
+- **Acuerdo con el proveedor de IA (DeepSeek):** pendiente de gestión de la dueña — guía en `docs/ACUERDO-PROVEEDOR-LLM.md`. No bloquea al bot (el masking ya está activo).
 - **Fase 4 de evolución de agente (iniciativa contextual):** especificada pero diferida por decisión de producto (no confundir con la Fase 4 de Atención general, implementada).
 
 ### Deuda técnica / mejoras menores (trazadas)
-- Masking de PII previo al envío al LLM (privacidad, F3 — ver SPEC-FASE5 §12.7).
-- Retención/modelo local y acuerdo de procesamiento con el proveedor (privacidad, F3).
+- Ampliar el masking a direcciones/CURP/RFC y nombres (versión 2; hoy cubre correos, teléfonos, tarjetas, @usuarios y enlaces).
+- Retención/modelo local y acuerdo de procesamiento con el proveedor (privacidad, F3 — la parte legal sigue pendiente de la dueña).
 - Recalibración del umbral de dedup 0.85 tras uso real.
 - Calibración de deriva: score 0.25 vs umbral 0.1 (esperado tras cambios de persona; se re-ancla en ~4 semanas).
 - `reasonix.toml` untracked (config local de tooling — decidir si va a `.gitignore`).
@@ -174,6 +186,7 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 ## 4. Referencias
 
 - SPECs: `docs/SPEC-FASE4.md`, `docs/SPEC-FASE5.md`, `docs/SPEC-FASE6.md`, `docs/SPEC-FEEDBACK.md`, `docs/SPEC-EVOLUCION-AGENTE.md` (v1.2, pool evo-agente F0-F5 shadow).
+- Privacidad: `docs/ACUERDO-PROVEEDOR-LLM.md` (guía del acuerdo con el proveedor de IA) y `src/diana/llm/pii_masker.py` (masking, tests en `tests/unit/llm/test_pii_masker.py`).
 - Auditoría docs 2026-08-16: `.planning/quick/docs-audit-2026-08-16/`.
 - Trazabilidad del pipeline: `.planning/quick/20260805-f5-perfil-vip/` (PLAN-POOL2/3/4.md, SUMMARYs, AUDITs, REVIEWs, SECURITYs).
 - Logs de agentes: `.planning/quick/gsd-*.log`.

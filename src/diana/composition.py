@@ -461,6 +461,7 @@ def build_app(
             api_key=settings.deepseek_api_key,
             base_url=settings.llm_base_url,
             thinking_enabled=settings.llm_thinking_enabled,
+            pii_masking=settings.feature_pii_masking_enabled,
         )
 
     # F2 knowledge services (Item 1)

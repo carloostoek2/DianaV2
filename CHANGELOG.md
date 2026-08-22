@@ -2,6 +2,18 @@
 
 Highlights of what's new and fixed in Diana, from her early releases through the latest work.
 
+## PII masking at the LLM boundary + production DB verified — 2026-08-22
+
+### ✨ New Features
+- **PII masking before every LLM call**: emails, phone numbers (MX and international), payment cards (Luhn-validated), @handles and URLs are replaced with collision-safe placeholders before the payload leaves the system — in every LLM call (analysis, generation, evaluation, memory, profile synthesis). If the model echoes a placeholder, it is restored to the original value on the reply, so the VIP-facing text and stored traces are unchanged. Controlled by `FEATURE_PII_MASKING_ENABLED` (default on, privacy-first).
+- **Provider agreement guide**: `docs/ACUERDO-PROVEEDOR-LLM.md` explains what to ask the LLM provider (data location, retention, training opt-out, security, subprocessors, DPA) — the legal layer that complements the technical masking.
+
+### 🔧 Improvements
+- **Production DB verified at head 029**: migrations 027 (temporary events), 028 (Lucien link) and 029 (quality feedback) were confirmed applied in the real Supabase database, with live data present (`link_events` 14 rows, gold examples 2). The operational pending item is closed; project state doc updated.
+
+### ✅ Tests
+- 2796 unit tests passing (20 new masking tests).
+
 ## Minibot test harness, doctrine fix, and doc refresh — 2026-08-21
 
 ### ✨ New Features
