@@ -1100,8 +1100,8 @@ def menu_shadow_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text="💬 Mensajes que habría enviado",
-                callback_data=encode_menu("sombra", "drafts"),
+                text="💬 Borradores y decisiones",
+                callback_data=encode_menu("sombra", "decisions"),
             )
         ],
         _menu_back_row(),

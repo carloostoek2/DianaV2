@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.ports import TurnCategoryLogRecord
-from diana.infrastructure.db.models import TurnCategoryLog
+from diana.infrastructure.db.models import PipelineTrace, TurnCategoryLog
 
 
 def turn_category_log_orm_to_record(row: TurnCategoryLog) -> TurnCategoryLogRecord:
@@ -99,6 +99,37 @@ class SqlTurnCategoryLogRepo:
                 .limit(limit)
             )
             return [turn_category_log_orm_to_record(r) for r in result.scalars()]
+
+    async def list_recent_with_draft(self, limit: int = 10) -> list[dict]:
+        """Recent classifications joined with their generated draft.
+
+        Owner consult surface (``AdminShadowService.render_decisions``): every
+        row carries the draft the pipeline actually generated (the same text
+        the owner approves), so the shadow verdict can be compared with the
+        real message side by side. ``draft`` is None when the turn has no
+        trace row yet (or the generator never produced text, e.g. template
+        cut without a stored text).
+        """
+        stmt = (
+            select(
+                TurnCategoryLog.turn_id,
+                TurnCategoryLog.vip_id,
+                TurnCategoryLog.chat_id,
+                TurnCategoryLog.category,
+                TurnCategoryLog.confidence,
+                TurnCategoryLog.would_autonomous,
+                TurnCategoryLog.created_at,
+                PipelineTrace.generated_text.label("draft"),
+            )
+            .outerjoin(
+                PipelineTrace, PipelineTrace.turn_id == TurnCategoryLog.turn_id
+            )
+            .order_by(TurnCategoryLog.created_at.desc())
+            .limit(limit)
+        )
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            return [dict(r._mapping) for r in result.all()]
 
     async def daily_counts(self, days: int = 7) -> list[dict]:
         """Per-day totals over the last ``days`` days (shadow consult surface).

@@ -45,15 +45,21 @@ def _turn(vip_id, *, confidence=0.70, when=None):
 
 
 class _FakeTurnCategories:
-    def __init__(self, would=None, counts=None, *, fail=False):
+    def __init__(self, would=None, counts=None, rows=None, *, fail=False):
         self._would = would or []
         self._counts = counts or []
+        self._rows = rows or []
         self._fail = fail
 
     async def list_would_autonomous(self, limit: int):
         if self._fail:
             raise RuntimeError("boom")
         return self._would[:limit]
+
+    async def list_recent_with_draft(self, limit: int):
+        if self._fail:
+            raise RuntimeError("boom")
+        return self._rows[:limit]
 
     async def daily_counts(self, days: int):
         if self._fail:
@@ -85,12 +91,15 @@ def _build(
     trust=None,
     vips=None,
     counts=None,
+    rows=None,
     *,
     thresholds=None,
     fail=False,
 ):
     return AdminShadowService(
-        turn_categories=_FakeTurnCategories(would=turns, counts=counts, fail=fail),
+        turn_categories=_FakeTurnCategories(
+            would=turns, counts=counts, rows=rows, fail=fail
+        ),
         trust_budget=_FakeTrust(rows=trust, fail=fail),
         vips=_FakeVips(vips=vips),
         thresholds=thresholds,
@@ -166,28 +175,79 @@ async def test_by_vip_empty() -> None:
     assert "Todavía no hay confianza medida para ningún VIP." in body
 
 
+def _decision_row(
+    vip_id,
+    *,
+    category="fatico",
+    confidence=0.70,
+    would=True,
+    draft="Hola, ¿en qué te ayudo?",
+    when=None,
+):
+    return {
+        "turn_id": uuid4(),
+        "vip_id": vip_id,
+        "chat_id": 42,
+        "category": category,
+        "confidence": confidence,
+        "would_autonomous": would,
+        "created_at": when or datetime(2026, 8, 22, 15, 42, tzinfo=UTC),
+        "draft": draft,
+    }
+
+
 # ---------------------------------------------------------------------------
-# render_drafts
+# render_decisions (draft + verdict + reason)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_drafts_shows_would_be_message() -> None:
+async def test_decisions_shows_draft_verdict_and_trust_gate() -> None:
     vip_id = uuid4()
     service = _build(
-        turns=[_turn(vip_id, confidence=0.70)],
-        vips=[_vip(vip_id, name="María")],
+        rows=[_decision_row(vip_id, confidence=0.70)],
+        trust=[_trust(vip_id, category="fatico", score=0.45, auton=9)],
+        vips=[_vip(vip_id, name="Hug Vbs")],
     )
-    body = await service.render_drafts()
-    assert "1. 22/08 · María · fatico (conf. 0.70)" in body
-    assert 'Habría enviado: "Holis 😁"' in body
+    body = await service.render_decisions()
+    assert "1. 22/08 · Hug Vbs · fatico (conf. 0.70)" in body
+    assert "✅ Habría enviado sola (saludo confiable)" in body
+    assert 'Con: "Holis 😁"' in body
+    assert "Confianza 0.45 vs 0.90: ⏳ en camino" in body
+    assert "el interruptor maestro está apagado" in body
+    assert 'Borrador generado: "Hola, ¿en qué te ayudo?"' in body
 
 
 @pytest.mark.asyncio
-async def test_drafts_empty() -> None:
+async def test_decisions_non_candidate_shows_reason_and_draft() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[_decision_row(vip_id, category="informativo", would=False)],
+        vips=[_vip(vip_id, name="Alfonso")],
+    )
+    body = await service.render_decisions()
+    assert "❌ No candidata: turno informativo" in body
+    assert "hoy la autonomía solo considera saludos cortos" in body
+    assert 'Borrador generado: "Hola, ¿en qué te ayudo?"' in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_insecure_greeting_shows_confidence_reason() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[_decision_row(vip_id, category="fatico", confidence=0.50, would=False)],
+        vips=[_vip(vip_id)],
+    )
+    body = await service.render_decisions()
+    assert "❌ Saludo, pero clasificador inseguro" in body
+    assert "confianza 0.50 < 0.70" in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_empty() -> None:
     service = _build()
-    body = await service.render_drafts()
-    assert "Todavía no hay turnos donde habría enviado sola." in body
+    body = await service.render_decisions()
+    assert "Todavía no hay turnos medidos." in body
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +261,8 @@ def test_shadow_keyboard_actions_and_back() -> None:
     assert len(rows) == 4
     assert rows[0][0].callback_data == "m:sombra:summary"
     assert rows[1][0].callback_data == "m:sombra:vips"
-    assert rows[2][0].callback_data == "m:sombra:drafts"
+    assert rows[2][0].text == "💬 Borradores y decisiones"
+    assert rows[2][0].callback_data == "m:sombra:decisions"
     assert rows[3][0].callback_data == "m:root"
 
 
@@ -217,12 +278,11 @@ def test_parse_sombra_callbacks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_sombra_renders_summary() -> None:
+async def test_dispatch_sombra_renders_decisions() -> None:
     vip_id = uuid4()
     service = _build(
-        counts=[{"day": date(2026, 8, 22), "total": 4, "autonomous": 1}],
-        trust=[_trust(vip_id)],
-        vips=[_vip(vip_id)],
+        rows=[_decision_row(vip_id, category="informativo", would=False)],
+        vips=[_vip(vip_id, name="Alfonso")],
     )
     msg = AsyncMock(spec=Message)
     msg.message_id = 1
@@ -233,7 +293,7 @@ async def test_dispatch_sombra_renders_summary() -> None:
 
     await _dispatch_action(
         msg,
-        parsed=MenuCallback(category="sombra", action="summary"),
+        parsed=MenuCallback(category="sombra", action="decisions"),
         actor_id=999,
         vips=_FakeVips(),
         admin_trace=None,
@@ -247,5 +307,5 @@ async def test_dispatch_sombra_renders_summary() -> None:
     )
     call_args = msg.edit_text.call_args
     assert call_args is not None
-    assert "Modo sombra — Resumen" in call_args[0][0]
-    assert "Totales: 4 turnos medidos · 1 habría enviado sola" in call_args[0][0]
+    assert "Borradores y decisiones" in call_args[0][0]
+    assert "❌ No candidata: turno informativo" in call_args[0][0]

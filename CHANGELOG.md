@@ -8,11 +8,11 @@ Highlights of what's new and fixed in Diana, from her early releases through the
 - **🤖 Modo sombra in the owner menu**: a read-only consult section (no notifications) where the owner can check, on demand:
   - **Resumen y umbrales**: measured turns over the last 7 days with daily trend, totals ("would have sent alone", owner corrections), current thresholds (trust 0.90, classifier 0.70) and the would-be autonomous message.
   - **Confianza por VIP**: trust score per (VIP, category) compared to the threshold (✅ cumple / ⏳ en camino), with the "autónomos" (would-have-sent) and correction counters.
-  - **Mensajes que habría enviado**: the last 10 turns where the fast-lane would have auto-sent — date, VIP, category, classifier confidence and the message it would have delivered.
+  - **Borradores y decisiones**: the last 10 measured turns with the real generated draft (the same message the owner approves) side by side with the shadow verdict and the reason — non-candidate turn (autonomy today only covers short greetings), insecure greeting classifier (confidence below 0.70), or confident greeting with the trust gate (score vs 0.90) and the master-switch note. The owner compares the draft with the reason and sees what to adjust without digging through the history.
 - Nothing about the shadow measurement changes: it still records without deciding; the section only reads (`AdminShadowService`).
 
 ### 🔧 Improvements
-- New repo read methods (`turn_category_log.daily_counts` / `list_would_autonomous`, `vip_trust_budget.list_all`) powering the views.
+- New repo read methods (`turn_category_log.daily_counts` / `list_would_autonomous` / `list_recent_with_draft`, `vip_trust_budget.list_all`) powering the views. No schema changes: the draft was already persisted in `pipeline_traces.generated_text`.
 
 ### ✅ Tests
 - 2806 unit tests passing (new `test_admin_shadow_service.py`; root-menu layout tests updated for the new button).

@@ -131,8 +131,9 @@ Sección **"🤖 Modo sombra"** en el menú de la dueña (consulta bajo demanda,
 
 - **📊 Resumen y umbrales:** turnos medidos en los últimos 7 días con tendencia diaria, totales ("habría enviado sola", correcciones de la dueña), umbrales actuales (confianza 0.90, clasificador 0.70) y el mensaje que habría enviado (`"Holis 😁"`).
 - **👥 Confianza por VIP:** score por (VIP, categoría) comparado con el umbral (✅ cumple / ⏳ en camino), contadores de autónomos y correcciones.
-- **💬 Mensajes que habría enviado:** últimos 10 turnos donde el fast-lane habría autoenviado, con fecha, VIP, categoría, confianza del clasificador y el mensaje habría sido.
+- **💬 Borradores y decisiones:** últimos 10 turnos con el **borrador real generado** (el mismo que la dueña aprueba) junto al veredicto sombra y el **motivo**: turno no candidato (la autonomía hoy solo cubre saludos), saludo con clasificador inseguro (confianza < 0.70), o saludo confiable con la compuerta de confianza (score vs 0.90) y nota del interruptor maestro apagado. La dueña compara el borrador con el motivo y ve qué ajustar sin ir al historial.
 - **Nada cambia en el comportamiento:** la sección es solo lectura (`AdminShadowService`); los flags de autonomía siguen apagados.
+- **Sin migraciones:** el borrador ya se persistía (`pipeline_traces.generated_text`); la vista solo lo une con `turn_category_log`.
 
 Verificado contra la base real: 69 turnos medidos en 7 días, 14 "habría enviado", 6 VIPs con confianza 0.15–0.45 (ninguno sobre el umbral).
 

@@ -772,7 +772,7 @@ async def _dispatch_action(
     # ==================================================================
     # Modo sombra — consulta (read-only)
     # ==================================================================
-    if category == "sombra" and action in ("summary", "vips", "drafts"):
+    if category == "sombra" and action in ("summary", "vips", "decisions"):
         if shadow_admin is None:
             await _show(
                 message,
@@ -786,7 +786,7 @@ async def _dispatch_action(
             elif action == "vips":
                 body = await shadow_admin.render_by_vip()
             else:
-                body = await shadow_admin.render_drafts()
+                body = await shadow_admin.render_decisions()
         except Exception:
             logger.exception("shadow_menu_render_failed")
             await _show(

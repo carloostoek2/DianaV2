@@ -11,8 +11,9 @@ Views (all neutral Mexican Spanish):
   the would-be autonomous message.
 - ``render_by_vip`` — trust score vs. threshold per VIP and turn category,
   with the "autónomos" (would-have-sent) counter.
-- ``render_drafts`` — the most recent turns where the fast-lane would have
-  auto-sent, with the message it would have delivered.
+- ``render_decisions`` — recent turns with the generated draft (the same
+  message the owner approves), the shadow verdict and WHY the fast-lane would
+  or would not have sent alone, plus the trust gate when applicable.
 """
 
 from __future__ import annotations
@@ -60,6 +61,8 @@ class TurnCategoryShadowReader(Protocol):
     """Reads the shadow turn classifications (repo subset)."""
 
     async def list_would_autonomous(self, limit: int) -> list[Any]: ...
+
+    async def list_recent_with_draft(self, limit: int) -> list[dict]: ...
 
     async def daily_counts(self, days: int) -> list[dict]: ...
 
@@ -180,40 +183,83 @@ class AdminShadowService:
                 )
         return "\n".join(lines)
 
-    async def render_drafts(self, limit: int = _DRAFTS_LIMIT) -> str:
-        """The most recent turns where the fast-lane would have auto-sent."""
+    async def render_decisions(self, limit: int = _DRAFTS_LIMIT) -> str:
+        """Recent turns: draft + shadow verdict + why not, side by side.
+
+        Each entry shows the draft the pipeline actually generated (the same
+        message the owner approves), the fast-lane verdict and the reason —
+        category, classifier confidence vs. its floor, and the trust gate when
+        the fast-lane said yes. This is the calibration surface: the owner
+        compares the draft with the reason and sees what would need to change.
+        """
         try:
-            rows = await self._turn_categories.list_would_autonomous(limit)
+            rows = await self._turn_categories.list_recent_with_draft(limit)
+            trust_rows = await self._trust_budget.list_all()
             vips = await self._vips.list_active()
         except Exception:
-            logger.exception("shadow_drafts_read_failed")
-            return _unavailable("mensajes que habría enviado")
+            logger.exception("shadow_decisions_read_failed")
+            return _unavailable("borradores y decisiones")
 
         names = {v.id: (v.display_name or str(v.telegram_user_id)) for v in vips}
+        trust_by_key = {
+            (r.vip_id, r.turn_category): float(r.trust_score) for r in trust_rows
+        }
+        conf_min = self._thresholds.classifier_confidence_min
+        trust_min = self._thresholds.trust_min
+
         lines = [
-            "🤖 Modo sombra — Mensajes que habría enviado",
+            "🤖 Modo sombra — Borradores y decisiones",
             "",
-            "Últimos turnos donde Diana habría enviado sola "
-            "(medición, nunca envío real):",
+            "El borrador es el mismo que te llega para aprobar; al lado, "
+            "el veredicto sombra y el motivo:",
         ]
         if not rows:
-            lines += ["", "Todavía no hay turnos donde habría enviado sola."]
+            lines += ["", "Todavía no hay turnos medidos."]
             return "\n".join(lines)
 
         for i, row in enumerate(rows, 1):
-            name = names.get(row.vip_id, str(row.vip_id)[:8]) if row.vip_id else "?"
-            when = _fmt_day(row.created_at)
-            conf = (
-                f"{row.confidence:.2f}"
-                if row.confidence is not None
-                else "—"
+            name = names.get(row["vip_id"], str(row["vip_id"])[:8]) if row.get(
+                "vip_id"
+            ) else "?"
+            when = _fmt_day(row["created_at"])
+            category = row.get("category") or "?"
+            confidence = row.get("confidence")
+            conf_label = f"{confidence:.2f}" if confidence is not None else "—"
+            draft = (row.get("draft") or "").strip()
+            would = bool(row.get("would_autonomous"))
+
+            lines.append(
+                f"\n{i}. {when} · {name} · {category} (conf. {conf_label})"
             )
-            lines += [
-                "",
-                f"{i}. {when} · {name} · {row.category} "
-                f"(conf. {conf})",
-                f'   Habría enviado: "{self._thresholds.draft_text}"',
-            ]
+            if would:
+                lines.append("   ✅ Habría enviado sola (saludo confiable)")
+                lines.append(
+                    f'   Con: "{self._thresholds.draft_text}"'
+                )
+                trust = trust_by_key.get((row.get("vip_id"), category))
+                if trust is not None:
+                    mark = "✅ cumple" if trust >= trust_min else "⏳ en camino"
+                    lines.append(
+                        f"   Confianza {trust:.2f} vs {trust_min:.2f}: {mark}"
+                    )
+                lines.append(
+                    "   Nota: el interruptor maestro está apagado — nada "
+                    "se envía sola hoy, solo se mide."
+                )
+            elif category != "fatico":
+                lines.append(
+                    f"   ❌ No candidata: turno {category} — hoy la autonomía "
+                    "solo considera saludos cortos"
+                )
+            else:
+                lines.append(
+                    f"   ❌ Saludo, pero clasificador inseguro: confianza "
+                    f"{conf_label} < {conf_min:.2f}"
+                )
+            if draft:
+                lines.append(f'   Borrador generado: "{draft}"')
+            else:
+                lines.append("   (sin borrador guardado en este turno)")
         return "\n".join(lines)
 
 
