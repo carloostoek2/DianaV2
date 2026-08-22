@@ -2,6 +2,16 @@
 
 Highlights of what's new and fixed in Diana, from her early releases through the latest work.
 
+## Fila 2: owner control — policy scope, profile history, hot LLM swap — 2026-08-22
+
+### ✨ New Features
+- **GAP-11 — Policy scope choice**: when resolving a gray-zone doctrine query (free text or "usar borrador"), the owner now chooses **🔒 Solo este VIP** or **🌍 A todos** before the rule is saved. The scope travels in the staging candidate payload so the eventual promotion scopes the live policy. Atencion queries (no VIP) resolve global directly, unchanged.
+- **EA-06 — Profile version history**: the VIP ficha now shows a **📚 Historial de versiones** section (last 5 versions, date + diff summary) from `vip_profile_history`. No migration; flag OFF keeps the ficha byte-identical.
+- **ADM-03 — Hot LLM swap**: `HotSwapLLMProvider` re-reads `system_config["llm"]` (model/base_url/api_key) on a 30s TTL and rebuilds the provider without a restart. Owner surface: **⚙️ Configuración → 🤖 Modelo de IA** (view active model, change with a text wizard, reset to default). New `LLM_MODEL` setting (default `deepseek-v4-flash`); no overrides → byte-identical to the base provider.
+
+### ✅ Tests
+- 2841 unit tests passing.
+
 ## Shadow mode consult section in the owner menu — 2026-08-22
 
 ### ✨ New Features

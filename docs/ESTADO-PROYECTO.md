@@ -126,6 +126,15 @@ Cierre de la deuda "Masking de PII previo al envío al LLM (SPEC-FASE5 §12.7, F
 - **Acuerdo con el proveedor:** guía de negociación lista en `docs/ACUERDO-PROVEEDOR-LLM.md` (qué pedir a DeepSeek: ubicación, retención, entrenamiento, seguridad, subprocesadores, DPA).
 - Verificado: suite unit **2796 passed / 0 failed** (20 tests nuevos de masking).
 
+### Fila 2 — Control de la dueña ✅ (COMPLETA, 2026-08-22)
+Tres mejoras de control cerradas:
+
+- **GAP-11 — Alcance al crear políticas:** al resolver una consulta de zona gris (responder con texto o usar borrador), la dueña elige **"🔒 Solo este VIP"** o **"🌍 A todos"** antes de guardar la regla. El alcance (`vip_id`/`scope`) viaja en el candidato de staging para que la promoción respete el alcance. Consultas de Atención (sin VIP) resuelven global directo, sin cambio.
+- **EA-06 — Historial de versiones del perfil:** la ficha del VIP muestra la sección **📚 Historial de versiones** (últimas 5, con fecha y resumen del cambio), alimentada de `vip_profile_history` (sin migración). Flag OFF → ficha byte-idéntica.
+- **ADM-03 — Cambio de modelo de IA en caliente:** `HotSwapLLMProvider` relee la config `system_config["llm"]` (modelo/servidor/llave) con TTL de 30s y reconstruye el proveedor sin reiniciar. Superficie: **⚙️ Configuración → 🤖 Modelo de IA** (ver modelo activo, cambiar con wizard de texto, restablecer). Nuevo setting `LLM_MODEL` (default `deepseek-v4-flash`). Sin overrides → comportamiento byte-idéntico al proveedor base.
+
+Suite: **2841 unit tests passing**.
+
 ### Consulta del modo sombra en el menú de la dueña ✅ (IMPLEMENTADO, 2026-08-22)
 Sección **"🤖 Modo sombra"** en el menú de la dueña (consulta bajo demanda, sin notificaciones):
 
@@ -170,15 +179,15 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 ### Requerimientos no implementados (auditoría 2026-07)
 - **AUTH-03 — Tope configurable de VIPs:** no implementado. No existe límite/capacidad de VIPs en `settings.py` (solo `vip_history_seed_limit`, que limita seed de historial, no cantidad de VIPs).
 - **AUTH-07 — Modo observación silenciosa de chats no-VIP:** no implementado. Solo existe training mode que responde; no hay rama de observación pasiva/silencio.
-- **GAP-11 — Generalización explícita al crear políticas:** parcial. El campo `generalization` existe y se persiste (`gray_zone_service.py`, `policy_distiller.py`), pero `doctrine.py` (~265-273) pasa `generalization=rule=text` sin preguntar el alcance a la dueña.
+- ~~**GAP-11 — Generalización explícita al crear políticas**~~ → **CERRADO 2026-08-22** (alcance preguntado a la dueña; ver Fila 2).
 - **REE-02 / COG-15 — Recontacto con pipeline reducido:** no implementado. `recontact_service.py` usa plantillas fijas (`{nombre}`/`{producto}`), sin personalización por pipeline ni pipeline reducido.
 - **MODE-09 — Feedback post-send autónomo dedicado:** no implementado. Solo existe la corrección de turno (Destacar/Reprender); no hay calificador post-envío.
-- **ADM-03 — Cambio de LLM en caliente:** no implementado. `DeepSeekProvider` fija `base_url` en construcción desde `settings.llm_base_url`; no hay override vía `system_config` (los overrides existentes son solo para `phatic_classifier`, `profile_synthesis`, `trust_budget`).
+- ~~**ADM-03 — Cambio de LLM en caliente**~~ → **CERRADO 2026-08-22** (`HotSwapLLMProvider` + superficie Configuración → Modelo de IA; ver Fila 2).
 
 ### Evolución de agente — pendiente real
 - **Autoenvío (doble puerta): deshabilitado.** `FEATURE_AUTONOMOUS_MODE=false`; la ruta de envío autónomo está cableada tras el flag (`turn_orchestrator.py` ~304/2549, `recontact_service.py` ~209) pero apagada. En shadow solo se acumula medición (trust budget por VIP/categoría, `recent_trend`); no hay envío autónomo.
 - **Cola durable `synthesis_queue` para síntesis de perfiles:** no implementada (hoy guard en memoria).
-- **Ficha de perfil EA-06 con historial de versiones:** no implementada (la ficha muestra memoria y confianza, pero no el historial de versiones de `vip_profile_history`).
+- ~~**Ficha de perfil EA-06 con historial de versiones**~~ → **CERRADO 2026-08-22** (sección 📚 en la ficha; ver Fila 2).
 
 ### Operativo y despliegue
 - ~~Migraciones 027-029 en producción: pendiente~~ → **CERRADO 2026-08-22**: verificadas aplicadas en la base real (ver cabecera).
