@@ -47,6 +47,10 @@ class ProfileAdminResult:
     # existing constructor/tests byte-identical (A7). Only wired with the flag
     # ON (flag OFF → None → no query, byte-identical).
     trust_budget: list[dict] | None = None
+    # Evo-Agente Fase 5 (EA-06): vip_profile_history rows shown as the
+    # 📚 Historial de versiones section of the ficha (newest-first, capped).
+    # Default None keeps every existing constructor/tests byte-identical (A7).
+    profile_history: list[dict] | None = None
 
 
 class ProfileAdminService:

@@ -279,9 +279,14 @@ async def test_doctrine_free_text_session_captures_text(admin_ctx: dict) -> None
             )
 
         async def resolve_with_doctrine(
-            self, query_id: UUID, generalization: str, rule: str
+            self,
+            query_id: UUID,
+            generalization: str,
+            rule: str,
+            *,
+            vip_id=None,
         ) -> object:
-            self.resolved.append((generalization, rule))
+            self.resolved.append((generalization, rule, vip_id))
             return SimpleNamespace(id=uuid4())
 
         async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
@@ -303,7 +308,9 @@ async def test_doctrine_free_text_session_captures_text(admin_ctx: dict) -> None
         coordinator=g["coordinator"],
     )
     assert status == "resolved"
-    assert gz.resolved == [("Siempre ofrecer 10% si piden 3 unidades", "Siempre ofrecer 10% si piden 3 unidades")]
+    assert gz.resolved == [
+        ("Siempre ofrecer 10% si piden 3 unidades", "Siempre ofrecer 10% si piden 3 unidades", None)
+    ]
     # Session consumed after capture.
     assert sessions.resolve(OWNER) == ("none", None)
     # The turn moved to pending approval with the owner text as draft.
@@ -384,9 +391,14 @@ async def test_doctrine_free_text_router_forwards_coordinator(
             )
 
         async def resolve_with_doctrine(
-            self, query_id: UUID, generalization: str, rule: str
+            self,
+            query_id: UUID,
+            generalization: str,
+            rule: str,
+            *,
+            vip_id=None,
         ) -> object:
-            self.resolved.append((generalization, rule))
+            self.resolved.append((generalization, rule, vip_id))
             return SimpleNamespace(id=uuid4())
 
         async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
@@ -414,6 +426,7 @@ async def test_doctrine_free_text_router_forwards_coordinator(
     assert gz.resolved == [(
         "Siempre ofrecer 10% si piden 3 unidades",
         "Siempre ofrecer 10% si piden 3 unidades",
+        None,
     )]
 
 

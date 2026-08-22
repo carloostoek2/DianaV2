@@ -22,7 +22,7 @@ from diana.telegram.handlers.doctrine import (
 OWNER = 999001
 
 
-def _query_row(*, status: str = "open") -> SimpleNamespace:
+def _query_row(*, status: str = "open", vip_id: UUID | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid4(),
         status=status,
@@ -31,6 +31,7 @@ def _query_row(*, status: str = "open") -> SimpleNamespace:
         draft="borrador del bot",
         chat_id=6502396879,
         business_connection_id="bc-vip",
+        vip_id=vip_id,
     )
 
 
@@ -192,3 +193,127 @@ async def test_free_text_lookup_error_returns_error(
         admin=admin,
     )
     assert status == "error"
+
+
+# --- GAP-11: scope question before resolution ------------------------------
+
+
+from diana.telegram.handlers.admin import handle_admin_text  # noqa: E402
+from diana.telegram.handlers.doctrine import (  # noqa: E402
+    DoctrinePending,
+    handle_doctrine_scope_choice,
+)
+
+
+def test_session_attach_text_and_pop_pending() -> None:
+    store = DoctrineSessionStore()
+    turn_id = uuid4()
+    store.start(OWNER, turn_id, mode="free_text")
+    assert store.attach_text(OWNER, "regla nueva") is True
+    pending = store.pop_pending(OWNER)
+    assert pending is not None
+    assert pending.turn_id == turn_id
+    assert pending.mode == "free_text"
+    assert pending.text == "regla nueva"
+    # attach on a missing session never creates one
+    assert store.attach_text(OWNER, "x") is False
+
+
+@pytest.mark.asyncio
+async def test_admin_text_vip_query_prompts_scope() -> None:
+    """VIP doctrine text is kept and the scope question is asked (no resolve)."""
+    gz = AsyncMock()
+    gz.get_open_query_by_turn_id.return_value = _query_row(vip_id=uuid4())
+    sessions = DoctrineSessionStore()
+    turn_id = uuid4()
+    sessions.start(OWNER, turn_id, mode="free_text")
+
+    status = await handle_admin_text(
+        text="regla nueva",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=AsyncMock(),
+        admin=AsyncMock(),
+        correct_sessions=object(),  # type: ignore[arg-type]  # doctrine branch returns first
+        doctrine_sessions=sessions,
+        gray_zone=gz,
+        coordinator=AsyncMock(),
+    )
+    assert status == "doctrine_scope_prompted"
+    gz.resolve_with_doctrine.assert_not_awaited()
+    # The text is stored and the pending turn is still live for the ds: callback.
+    assert sessions.peek_turn_id(OWNER) == turn_id
+    pending = sessions.pop_pending(OWNER)
+    assert pending is not None and pending.text == "regla nueva"
+
+
+@pytest.mark.asyncio
+async def test_admin_text_atencion_resolves_global_directly() -> None:
+    """Atencion queries (no VIP) have nothing to scope — resolve global now."""
+    gz = AsyncMock()
+    gz.get_open_query_by_turn_id.return_value = _query_row(vip_id=None)
+    gz.resolve_with_doctrine.return_value = _candidate()
+    sessions = DoctrineSessionStore()
+    turn_id = uuid4()
+    sessions.start(OWNER, turn_id, mode="free_text")
+
+    status = await handle_admin_text(
+        text="regla de atencion",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=AsyncMock(),
+        admin=AsyncMock(),
+        correct_sessions=object(),  # type: ignore[arg-type]
+        doctrine_sessions=sessions,
+        gray_zone=gz,
+        coordinator=AsyncMock(),
+    )
+    assert status == "resolved"
+    gz.resolve_with_doctrine.assert_awaited_once_with(
+        ANY, "regla de atencion", "regla de atencion", vip_id=None
+    )
+    assert sessions.resolve(OWNER) == ("none", None)
+
+
+@pytest.mark.asyncio
+async def test_scope_choice_free_text_scopes_to_vip() -> None:
+    vip_id = uuid4()
+    gz = AsyncMock()
+    gz.get_open_query_by_turn_id.return_value = _query_row(vip_id=vip_id)
+    gz.resolve_with_doctrine.return_value = _candidate()
+    turn_id = uuid4()
+
+    status = await handle_doctrine_scope_choice(
+        gray_zone=gz,
+        coordinator=AsyncMock(),
+        turn_id=turn_id,
+        scope="vip",
+        pending=DoctrinePending(
+            turn_id=turn_id, mode="free_text", text="regla para este VIP"
+        ),
+    )
+    assert status == "resolved"
+    gz.resolve_with_doctrine.assert_awaited_once_with(
+        ANY, "regla para este VIP", "regla para este VIP", vip_id=vip_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_scope_choice_draft_mode_uses_query_draft() -> None:
+    vip_id = uuid4()
+    gz = AsyncMock()
+    gz.get_open_query_by_turn_id.return_value = _query_row(vip_id=vip_id)
+    gz.resolve_with_doctrine.return_value = _candidate()
+    turn_id = uuid4()
+
+    status = await handle_doctrine_scope_choice(
+        gray_zone=gz,
+        coordinator=AsyncMock(),
+        turn_id=turn_id,
+        scope="all",
+        pending=DoctrinePending(turn_id=turn_id, mode="draft"),
+    )
+    assert status == "resolved"
+    gz.resolve_with_doctrine.assert_awaited_once_with(
+        ANY, "borrador del bot", "borrador del bot", vip_id=None
+    )

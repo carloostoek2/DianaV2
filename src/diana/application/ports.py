@@ -212,6 +212,8 @@ class GrayZoneServicePort(Protocol):
         query_id: UUID,
         generalization: str,
         rule: str,
+        *,
+        vip_id: UUID | None = None,
     ) -> object: ...
 
     async def confirm_and_apply(

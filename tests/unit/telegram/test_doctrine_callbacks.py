@@ -78,7 +78,7 @@ class FakeGrayZone:
     def __init__(self) -> None:
         self.queries: dict[UUID, FakeQuery] = {}
         self.candidates: list[FakeCandidate] = []
-        self.resolve_calls: list[tuple[UUID, str, str]] = []
+        self.resolve_calls: list[tuple[UUID, str, str, UUID | None]] = []
         self.confirm_calls: list[tuple[UUID, UUID]] = []
         self.discard_calls: list[UUID] = []
         self.reopen_calls: list[UUID] = []
@@ -111,9 +111,14 @@ class FakeGrayZone:
         return self.queries.get(turn_id)
 
     async def resolve_with_doctrine(
-        self, query_id: UUID, generalization: str, rule: str,
+        self,
+        query_id: UUID,
+        generalization: str,
+        rule: str,
+        *,
+        vip_id: UUID | None = None,
     ) -> FakeCandidate:
-        self.resolve_calls.append((query_id, generalization, rule))
+        self.resolve_calls.append((query_id, generalization, rule, vip_id))
         if query_id in self._resolve_errors_by_qid():
             raise RuntimeError(f"simulated resolve error for {query_id}")
         candidate = FakeCandidate()
@@ -178,10 +183,12 @@ async def test_resolve_with_draft_resolves_query() -> None:
 
     # Verify resolve_with_doctrine was called with the draft
     assert len(gray_zone.resolve_calls) == 1
-    qid, gen, rule = gray_zone.resolve_calls[0]
+    qid, gen, rule, scoped_vip = gray_zone.resolve_calls[0]
     assert qid == query.id
     assert gen == "use-this-draft"
     assert rule == "use-this-draft"
+    # Default scope (all) → vip_id None.
+    assert scoped_vip is None
 
     # Verify confirm_and_apply was called
     assert len(gray_zone.confirm_calls) == 1
@@ -586,12 +593,21 @@ def _callback(data: str, *, user_id: int) -> CallbackQuery:
     return cq
 
 
+def _callback_with_message(data: str, *, user_id: int) -> CallbackQuery:
+    cq = _callback(data, user_id=user_id)
+    msg = AsyncMock()
+    msg.answer = AsyncMock(return_value=True)
+    object.__setattr__(cq, "message", msg)
+    return cq
+
+
 def _handler_for_prefix(router, prefix: str):
-    # Registration order in build_doctrine_router: dr, dx, de
+    # Registration order in build_doctrine_router: dr, dx, de, ds
     by_prefix = {
         "dr:": router.callback_query.handlers[0].callback,
         "dx:": router.callback_query.handlers[1].callback,
-        "de:": router.callback_query.handlers[2].callback,
+        "ds:": router.callback_query.handlers[2].callback,
+        "de:": router.callback_query.handlers[3].callback,
     }
     return by_prefix[prefix]
 
@@ -697,3 +713,174 @@ def test_parse_doctrine_callback_invalid() -> None:
     assert parse_doctrine_callback("invalid") is None
     assert parse_doctrine_callback(":") is None
     assert parse_doctrine_callback("dr:not-a-uuid") is None
+
+
+# --- GAP-11: doctrine scope choice (ds:) ----------------------------------
+
+
+from diana.telegram.handlers.doctrine import (  # noqa: E402
+    DoctrineSessionStore,
+)
+from diana.telegram.keyboards import (  # noqa: E402
+    doctrine_scope_keyboard,
+    encode_doctrine_scope,
+    parse_doctrine_scope,
+)
+
+
+def test_parse_doctrine_scope_valid() -> None:
+    tid = uuid4()
+    assert parse_doctrine_scope(f"ds:{tid}:vip") == (tid, "vip")
+    assert parse_doctrine_scope(f"ds:{tid}:all") == (tid, "all")
+    assert parse_doctrine_scope(f"ds:{tid}:cancel") == (tid, "cancel")
+
+
+def test_parse_doctrine_scope_invalid() -> None:
+    tid = uuid4()
+    assert parse_doctrine_scope("") is None
+    assert parse_doctrine_scope(f"ds:{tid}") is None
+    assert parse_doctrine_scope(f"ds:{tid}:otro") is None
+    assert parse_doctrine_scope("ds:not-a-uuid:vip") is None
+
+
+def test_doctrine_scope_keyboard_under_64_bytes() -> None:
+    tid = uuid4()
+    kb = doctrine_scope_keyboard(tid)
+    for row in kb.inline_keyboard:
+        for btn in row:
+            assert len(btn.callback_data.encode("utf-8")) <= 64
+
+
+@pytest.mark.asyncio
+async def test_dx_prompts_scope_for_vip_query() -> None:
+    """GAP-11: 'usar borrador' with a VIP query asks the scope first."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    q = gray_zone.add_query(turn_id, draft="draft-vip")
+    q.vip_id = uuid4()
+    sessions = DoctrineSessionStore()
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        owner_telegram_id=OWNER,
+        doctrine_sessions=sessions,
+    )
+    handler = _handler_for_prefix(router, "dx:")
+    query = _callback_with_message(
+        encode_doctrine_resolve_callback(turn_id), user_id=OWNER
+    )
+    await handler(query)
+    # Not resolved yet — scope question sent instead.
+    assert len(gray_zone.resolve_calls) == 0
+    query.message.answer.assert_awaited_once()
+    body = query.message.answer.await_args.args[0]
+    assert "¿Esta regla aplica solo a este VIP" in body
+    assert sessions.peek_turn_id(OWNER) == turn_id
+
+
+@pytest.mark.asyncio
+async def test_ds_scope_vip_resolves_with_vip_scope() -> None:
+    """ds:<turn>:vip resolves a pending free-text doctrine scoped to the VIP."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    vip_id = uuid4()
+    q = gray_zone.add_query(turn_id, draft="draft")
+    q.vip_id = vip_id
+    sessions = DoctrineSessionStore()
+    sessions.start(OWNER, turn_id, mode="free_text", text="regla para este VIP")
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        owner_telegram_id=OWNER,
+        doctrine_sessions=sessions,
+    )
+    handler = _handler_for_prefix(router, "ds:")
+    query = _callback(encode_doctrine_scope(turn_id, "vip"), user_id=OWNER)
+    await handler(query)
+    assert len(gray_zone.resolve_calls) == 1
+    _, gen, rule, scoped_vip = gray_zone.resolve_calls[0]
+    assert gen == "regla para este VIP"
+    assert scoped_vip == vip_id
+    # Session consumed.
+    assert sessions.resolve(OWNER) == ("none", None)
+
+
+@pytest.mark.asyncio
+async def test_ds_scope_all_resolves_global() -> None:
+    """ds:<turn>:all resolves with vip_id None (global rule)."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    q = gray_zone.add_query(turn_id, draft="draft")
+    q.vip_id = uuid4()
+    sessions = DoctrineSessionStore()
+    sessions.start(OWNER, turn_id, mode="free_text", text="regla global")
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        owner_telegram_id=OWNER,
+        doctrine_sessions=sessions,
+    )
+    handler = _handler_for_prefix(router, "ds:")
+    query = _callback(encode_doctrine_scope(turn_id, "all"), user_id=OWNER)
+    await handler(query)
+    _, _, _, scoped_vip = gray_zone.resolve_calls[0]
+    assert scoped_vip is None
+
+
+@pytest.mark.asyncio
+async def test_ds_cancel_pops_pending() -> None:
+    gray_zone = FakeGrayZone()
+    turn_id = uuid4()
+    sessions = DoctrineSessionStore()
+    sessions.start(OWNER, turn_id, mode="free_text", text="x")
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+        doctrine_sessions=sessions,
+    )
+    handler = _handler_for_prefix(router, "ds:")
+    query = _callback(encode_doctrine_scope(turn_id, "cancel"), user_id=OWNER)
+    await handler(query)
+    assert "Cancelado" in query.answer.await_args.args[0]
+    assert sessions.resolve(OWNER) == ("none", None)
+    assert len(gray_zone.resolve_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_ds_without_pending_alerts_expired() -> None:
+    gray_zone = FakeGrayZone()
+    turn_id = uuid4()
+    sessions = DoctrineSessionStore()
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+        doctrine_sessions=sessions,
+    )
+    handler = _handler_for_prefix(router, "ds:")
+    query = _callback(encode_doctrine_scope(turn_id, "vip"), user_id=OWNER)
+    await handler(query)
+    args, kwargs = query.answer.await_args
+    assert kwargs.get("show_alert") is True
+    assert "expiró" in (args[0] if args else "")
+
+
+@pytest.mark.asyncio
+async def test_ds_non_owner_forbidden() -> None:
+    gray_zone = FakeGrayZone()
+    turn_id = uuid4()
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+    )
+    handler = _handler_for_prefix(router, "ds:")
+    query = _callback(encode_doctrine_scope(turn_id, "vip"), user_id=OTHER)
+    await handler(query)
+    args, kwargs = query.answer.await_args
+    assert kwargs.get("show_alert") is True
+    assert "No autorizado" in (args[0] if args else "")

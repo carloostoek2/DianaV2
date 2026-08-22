@@ -19,6 +19,7 @@ _ACTION_NEXT = "nx"
 _ACTION_DOCTRINE_RESPOND = "dr"
 _ACTION_DOCTRINE_RESOLVE = "dx"
 _ACTION_DOCTRINE_ESCALATE = "de"
+_ACTION_DOCTRINE_SCOPE = "ds"
 _ACTION_VIEW_TRACE = "vt"
 _ACTION_TRACE_DETAIL = "td"
 _ACTION_TRACE_PAGE = "tp"
@@ -306,6 +307,59 @@ def encode_doctrine_escalate_callback(turn_id: UUID) -> str:
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
     return data
+
+
+def encode_doctrine_scope(turn_id: UUID, scope: str) -> str:
+    """Build callback_data for doctrine scope choice: ds:<uuid>:<vip|all|cancel>."""
+    data = f"{_ACTION_DOCTRINE_SCOPE}:{turn_id}:{scope}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_doctrine_scope(data: str) -> tuple[UUID, str] | None:
+    """Parse ds:<uuid>:<scope> → (turn_id, scope); None on malformed data."""
+    if not data or not data.startswith(f"{_ACTION_DOCTRINE_SCOPE}:"):
+        return None
+    rest = data[len(_ACTION_DOCTRINE_SCOPE) + 1 :]
+    parts = rest.split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        turn_id = UUID(parts[0])
+    except ValueError:
+        return None
+    scope = parts[1]
+    if scope not in ("vip", "all", "cancel"):
+        return None
+    return (turn_id, scope)
+
+
+def doctrine_scope_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+    """Scope choice for a new doctrine rule (GAP-11): this VIP or everyone.
+
+    Also offers a cancel that discards the pending doctrine response.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔒 Solo este VIP",
+                    callback_data=encode_doctrine_scope(turn_id, "vip"),
+                ),
+                InlineKeyboardButton(
+                    text="🌍 A todos",
+                    callback_data=encode_doctrine_scope(turn_id, "all"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Cancelar",
+                    callback_data=encode_doctrine_scope(turn_id, "cancel"),
+                ),
+            ],
+        ]
+    )
 
 
 def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:

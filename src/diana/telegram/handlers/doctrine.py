@@ -10,6 +10,7 @@ Flow (SPEC-FASE2 6.2):
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Literal
 from uuid import UUID
@@ -23,7 +24,11 @@ from diana.application.turn_coordinator import (
     ChatLockTimeoutError,
     TurnCoordinator,
 )
-from diana.telegram.keyboards import parse_doctrine_callback
+from diana.telegram.keyboards import (
+    doctrine_scope_keyboard,
+    parse_doctrine_callback,
+    parse_doctrine_scope,
+)
 
 logger = logging.getLogger("diana.telegram")
 
@@ -34,17 +39,38 @@ _RESULT_MESSAGES: dict[str, tuple[str, bool]] = {
     "error": ("Error al procesar la solicitud", True),
 }
 
+DOCTRINE_SCOPE_PROMPT = (
+    "¿Esta regla aplica solo a este VIP o a todos?\n\n"
+    "Es la lección que Diana guardará para casos futuros."
+)
+
 DEFAULT_DOCTRINE_TTL = timedelta(minutes=15)
 DoctrineClockFn = Callable[[], datetime]
 DoctrineResolveState = Literal["live", "expired", "none"]
+DoctrineMode = Literal["free_text", "draft"]
+DoctrineScope = Literal["vip", "all"]
+
+
+@dataclass
+class DoctrinePending:
+    """Pending doctrine response awaiting a scope choice (GAP-11).
+
+    ``mode`` tells the scope callback how to resolve:
+    - "free_text": the owner typed the doctrine (``text`` is the rule/draft).
+    - "draft": the owner chose "Usar borrador" (the query draft is the rule).
+    """
+
+    turn_id: UUID
+    mode: DoctrineMode
+    text: str | None = None
 
 
 class DoctrineSessionStore:
-    """Process-local FSM: owner_id → awaiting free-text doctrine for turn_id.
+    """Process-local FSM: owner_id → pending doctrine response for turn_id.
 
     Same pattern as ``CorrectSessionStore`` (callbacks.py) but for gray zone
-    doctrine responses: the owner pressed "Responder consulta" and the next
-    free-text DM is captured as doctrine for that turn.
+    doctrine responses: after the owner provides doctrine (free text or
+    "usar borrador"), the scope choice is captured before resolution.
 
     In-memory only (single-instance). Restart clears all sessions; multi-replica
     would need a shared store (out of scope — see docs/OPS_SINGLE_INSTANCE.md).
@@ -57,29 +83,77 @@ class DoctrineSessionStore:
         ttl: timedelta = DEFAULT_DOCTRINE_TTL,
         clock: DoctrineClockFn | None = None,
     ) -> None:
-        self._awaiting: dict[int, tuple[UUID, datetime]] = {}
+        self._awaiting: dict[int, tuple[DoctrinePending, datetime]] = {}
         self._ttl = ttl
         self._clock: DoctrineClockFn = clock or (lambda: datetime.now(UTC))
 
-    def start(self, owner_id: int, turn_id: UUID) -> None:
-        self._awaiting[owner_id] = (turn_id, self._clock())
+    def start(
+        self,
+        owner_id: int,
+        turn_id: UUID,
+        *,
+        mode: DoctrineMode = "free_text",
+        text: str | None = None,
+    ) -> None:
+        self._awaiting[owner_id] = (
+            DoctrinePending(turn_id=turn_id, mode=mode, text=text),
+            self._clock(),
+        )
         logger.info(
             "doctrine_session_started",
             extra={
                 "owner_id": owner_id,
                 "turn_id": str(turn_id),
+                "mode": mode,
                 "ttl_s": int(self._ttl.total_seconds()),
             },
         )
 
-    def pop(self, owner_id: int) -> UUID | None:
+    def attach_text(self, owner_id: int, text: str) -> bool:
+        """Attach the owner's free-text doctrine to a live session.
+
+        Returns False when there is no live session (never silently creates
+        one). The entry is kept so the scope callback can consume it.
+        """
+        item = self._awaiting.get(owner_id)
+        if item is None:
+            return False
+        pending, started = item
+        if self._clock() - started > self._ttl:
+            self._awaiting.pop(owner_id, None)
+            return False
+        self._awaiting[owner_id] = (
+            DoctrinePending(
+                turn_id=pending.turn_id, mode=pending.mode, text=text
+            ),
+            started,
+        )
+        return True
+
+    def pop_pending(self, owner_id: int) -> DoctrinePending | None:
+        """Pop the pending doctrine response (TTL-checked)."""
         item = self._awaiting.pop(owner_id, None)
         if item is None:
             return None
-        turn_id, started = item
+        pending, started = item
         if self._clock() - started > self._ttl:
             return None
-        return turn_id
+        return pending
+
+    def peek_turn_id(self, owner_id: int) -> UUID | None:
+        """Turn id of a live pending response (no consume), for scope prompt."""
+        item = self._awaiting.get(owner_id)
+        if item is None:
+            return None
+        pending, started = item
+        if self._clock() - started > self._ttl:
+            return None
+        return pending.turn_id
+
+    def pop(self, owner_id: int) -> UUID | None:
+        """Legacy alias: pop the pending turn id (TTL-checked)."""
+        pending = self.pop_pending(owner_id)
+        return pending.turn_id if pending is not None else None
 
     def resolve(
         self, owner_id: int
@@ -93,18 +167,18 @@ class DoctrineSessionStore:
         item = self._awaiting.get(owner_id)
         if item is None:
             return ("none", None)
-        turn_id, started = item
+        pending, started = item
         if self._clock() - started > self._ttl:
             self._awaiting.pop(owner_id, None)
             logger.info(
                 "doctrine_session_expired",
                 extra={
                     "owner_id": owner_id,
-                    "turn_id": str(turn_id),
+                    "turn_id": str(pending.turn_id),
                 },
             )
-            return ("expired", turn_id)
-        return ("live", turn_id)
+            return ("expired", pending.turn_id)
+        return ("live", pending.turn_id)
 
     def cancel(self, owner_id: int) -> None:
         self._awaiting.pop(owner_id, None)
@@ -112,8 +186,8 @@ class DoctrineSessionStore:
     def cancel_turn(self, turn_id: UUID) -> int:
         """Clear any doctrine sessions awaiting this turn (supersede / terminal)."""
         removed = 0
-        for oid, (tid, _) in list(self._awaiting.items()):
-            if tid == turn_id:
+        for oid, (pending, _) in list(self._awaiting.items()):
+            if pending.turn_id == turn_id:
                 self._awaiting.pop(oid, None)
                 removed += 1
         return removed
@@ -128,11 +202,15 @@ async def _resolve_query_with_doctrine(
     rule: str,
     draft: str,
     admin: AdminService | None = None,
+    scope: DoctrineScope = "all",
 ) -> str:
     """Shared resolution core: doctrine text → candidate → confirm → deliver.
 
     Used by both the draft path (generalization=rule=draft=query.draft) and
-    the free-text path (all three = the owner's text). Returns status token:
+    the free-text path (all three = the owner's text). ``scope`` decides
+    whether the new rule applies to this VIP only (``vip``) or to everyone
+    (``all``); the candidate payload carries the chosen ``vip_id`` so the
+    eventual promotion honors it (GAP-11). Returns status token:
     'resolved', 'escalated', 'not_found', or 'error'.
     """
     try:
@@ -148,10 +226,13 @@ async def _resolve_query_with_doctrine(
         return "not_found"
 
     try:
+        vip_id = getattr(query, "vip_id", None)
+        scoped_vip_id = vip_id if scope == "vip" else None
         candidate = await gray_zone.resolve_with_doctrine(
             query.id,
             generalization,
             rule,
+            vip_id=scoped_vip_id,
         )
         # If confirm_and_apply fails below, resolve_with_doctrine already
         # created an orphan staging candidate. The query stays open so it
@@ -253,12 +334,15 @@ async def handle_doctrine_free_text(
     turn_id: UUID,
     text: str,
     admin: AdminService | None = None,
+    scope: DoctrineScope = "all",
 ) -> str:
     """Resolve a gray zone query with the owner's free-text doctrine.
 
     The owner's text plays both roles (SPEC-FASE2 6.2): it is the answer
     delivered to the VIP (via supervised approval) and the generalization
     stored as doctrine. ``text`` must be non-empty (callers gate this).
+    ``scope`` sets whether the new rule applies to this VIP or to everyone
+    (GAP-11).
 
     Returns status token: 'resolved', 'escalated', 'not_found', or 'error'.
     """
@@ -270,6 +354,7 @@ async def handle_doctrine_free_text(
         rule=text,
         draft=text,
         admin=admin,
+        scope=scope,
     )
 
 
@@ -279,6 +364,7 @@ async def handle_doctrine_resolve_with_draft(
     coordinator: TurnCoordinator,
     turn_id: UUID,
     admin: AdminService | None = None,
+    scope: DoctrineScope = "all",
 ) -> str:
     """Resolve using the existing query draft as doctrine, then confirm.
 
@@ -312,6 +398,7 @@ async def handle_doctrine_resolve_with_draft(
         rule=query.draft,
         draft=query.draft,
         admin=admin,
+        scope=scope,
     )
 
 
@@ -358,6 +445,43 @@ async def handle_doctrine_escalate(
             extra={"turn_id": str(turn_id), "query_id": str(query.id)},
         )
         return "error"
+
+
+async def handle_doctrine_scope_choice(
+    *,
+    gray_zone: GrayZoneServicePort,
+    coordinator: TurnCoordinator,
+    turn_id: UUID,
+    scope: DoctrineScope,
+    admin: AdminService | None = None,
+    pending: DoctrinePending | None = None,
+) -> str:
+    """Resolve a pending doctrine response with the chosen scope (GAP-11).
+
+    ``pending`` carries the owner's free-text doctrine when it came from the
+    "Responder consulta" flow (mode ``free_text``); for the "Usar borrador"
+    flow (mode ``draft``) the query draft is used. Returns the usual status
+    token.
+    """
+    if pending is not None and pending.mode == "free_text":
+        text = (pending.text or "").strip()
+        if not text:
+            return "error"
+        return await handle_doctrine_free_text(
+            gray_zone=gray_zone,
+            coordinator=coordinator,
+            turn_id=turn_id,
+            text=text,
+            admin=admin,
+            scope=scope,
+        )
+    return await handle_doctrine_resolve_with_draft(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+        admin=admin,
+        scope=scope,
+    )
 
 
 def build_doctrine_router(
@@ -418,12 +542,86 @@ def build_doctrine_router(
         if turn_id is None:
             await callback.answer("Dato de consulta inválido", show_alert=True)
             return
+        actor_id = callback.from_user.id if callback.from_user else None
 
-        status = await handle_doctrine_resolve_with_draft(
+        # GAP-11: ask the scope before resolving. Atencion queries have no VIP
+        # (vip_id None) — nothing to choose, resolve global immediately.
+        try:
+            query = await gray_zone.get_open_query_by_turn_id(turn_id)
+        except Exception:
+            logger.exception(
+                "doctrine_scope_lookup_error", extra={"turn_id": str(turn_id)}
+            )
+            await callback.answer(
+                _RESULT_MESSAGES["error"][0], show_alert=True
+            )
+            return
+        if query is None:
+            await callback.answer(
+                _RESULT_MESSAGES["not_found"][0], show_alert=True
+            )
+            return
+        if getattr(query, "vip_id", None) is None:
+            status = await handle_doctrine_resolve_with_draft(
+                gray_zone=gray_zone,
+                coordinator=coordinator,
+                turn_id=turn_id,
+                admin=admin,
+                scope="all",
+            )
+            text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
+            await callback.answer(text, show_alert=alert)
+            return
+
+        if actor_id is not None:
+            sessions.start(actor_id, turn_id, mode="draft")
+        if callback.message:
+            try:
+                await callback.message.answer(
+                    DOCTRINE_SCOPE_PROMPT,
+                    reply_markup=doctrine_scope_keyboard(turn_id),
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_scope_prompt_failed",
+                    extra={"turn_id": str(turn_id)},
+                )
+        await callback.answer()
+
+    @router.callback_query(lambda c: c.data and c.data.startswith("ds:"))
+    async def on_doctrine_scope(callback: CallbackQuery, **_: Any) -> None:
+        if not _is_owner(callback):
+            await callback.answer("No autorizado", show_alert=True)
+            return
+        parsed = parse_doctrine_scope(callback.data or "")
+        if parsed is None:
+            await callback.answer("Dato de consulta inválido", show_alert=True)
+            return
+        turn_id, scope = parsed
+        actor_id = callback.from_user.id if callback.from_user else None
+
+        if scope == "cancel":
+            if actor_id is not None:
+                sessions.pop_pending(actor_id)
+            await callback.answer("Cancelado")
+            return
+
+        pending = sessions.pop_pending(actor_id) if actor_id is not None else None
+        if pending is None or pending.turn_id != turn_id:
+            await callback.answer(
+                "La respuesta de doctrina expiró — presiona Responder consulta "
+                "de nuevo",
+                show_alert=True,
+            )
+            return
+
+        status = await handle_doctrine_scope_choice(
             gray_zone=gray_zone,
             coordinator=coordinator,
             turn_id=turn_id,
+            scope=scope,  # type: ignore[arg-type]
             admin=admin,
+            pending=pending,
         )
         text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
         await callback.answer(text, show_alert=alert)
@@ -450,10 +648,13 @@ def build_doctrine_router(
 
 
 __all__ = [
+    "DoctrinePending",
+    "DoctrineScope",
     "DoctrineSessionStore",
     "build_doctrine_router",
     "handle_doctrine_escalate",
     "handle_doctrine_free_text",
     "handle_doctrine_respond",
     "handle_doctrine_resolve_with_draft",
+    "handle_doctrine_scope_choice",
 ]

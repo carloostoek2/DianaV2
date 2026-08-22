@@ -102,12 +102,18 @@ class GrayZoneService:
         query_id: UUID,
         generalization: str,
         rule: str,
+        *,
+        vip_id: UUID | None = None,
     ) -> object:
         """Resolve a gray zone query with owner-provided doctrine.
 
         Creates a StagingCandidate (type='policy') with the distilled policy
         as payload. The candidate must be confirmed by the owner to become
         active (StagingService.promote_to_policy in Item 3).
+
+        ``vip_id`` carries the GAP-11 scope choice: the query's VIP when the
+        owner chose "Solo este VIP", or None for "A todos". The payload keeps
+        it so the eventual promotion can scope the live policy.
 
         Does NOT close the query or unfreeze here — that happens on
         confirmation (Item 3). Returns the StagingCandidate row.
@@ -129,6 +135,9 @@ class GrayZoneService:
             "generalization": generalization,
             "rule": rule,
             "query_id": str(query_id),
+            # GAP-11: scope of the new rule — this VIP (vip_id set) or all.
+            "vip_id": str(vip_id) if vip_id is not None else None,
+            "scope": "vip" if vip_id is not None else "all",
         }
         candidate = await self._staging.insert("policy", payload, query.turn_id)
 

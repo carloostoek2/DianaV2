@@ -29,6 +29,7 @@ from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.sandbox import SandboxService
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.telegram.handlers.doctrine import (
+    DOCTRINE_SCOPE_PROMPT,
     DoctrineSessionStore,
     handle_doctrine_free_text,
 )
@@ -36,7 +37,7 @@ from diana.telegram.handlers.callbacks import (
     SESSION_EXPIRED_UX,
     CorrectSessionStore,
 )
-from diana.telegram.keyboards import reprimand_combo_keyboard
+from diana.telegram.keyboards import doctrine_scope_keyboard, reprimand_combo_keyboard
 
 DOCTRINE_SESSION_EXPIRED_UX = (
     "Sesión de doctrina expirada — presiona Responder consulta de nuevo"
@@ -294,18 +295,35 @@ async def handle_admin_text(
         if state == "expired":
             return "doctrine_session_expired"
         if state == "live" and pending_turn is not None:
-            doctrine_sessions.cancel(actor_id)
             if gray_zone is None:
                 return "doctrine_unavailable"
             if coordinator is None:
                 return "doctrine_unavailable"
-            return await handle_doctrine_free_text(
-                gray_zone=gray_zone,
-                coordinator=coordinator,
-                turn_id=pending_turn,
-                text=stripped,
-                admin=admin,
-            )
+            # GAP-11: ask the scope before resolving. Atencion queries have no
+            # VIP (vip_id None) — nothing to choose, resolve global directly.
+            try:
+                query = await gray_zone.get_open_query_by_turn_id(pending_turn)
+            except Exception:
+                logger.exception(
+                    "doctrine_text_lookup_error",
+                    extra={"turn_id": str(pending_turn)},
+                )
+                return "error"
+            if query is None:
+                doctrine_sessions.cancel(actor_id)
+                return "not_found"
+            if getattr(query, "vip_id", None) is None:
+                doctrine_sessions.cancel(actor_id)
+                return await handle_doctrine_free_text(
+                    gray_zone=gray_zone,
+                    coordinator=coordinator,
+                    turn_id=pending_turn,
+                    text=stripped,
+                    admin=admin,
+                    scope="all",
+                )
+            doctrine_sessions.attach_text(actor_id, stripped)
+            return "doctrine_scope_prompted"
 
     # Free-text correct follow-up takes priority when session is open.
     # resolve distinguishes expired (UX) vs never-started (silent ignore).
@@ -910,6 +928,21 @@ def build_admin_router(
                     gray_zone=gray_zone,
                     coordinator=coordinator,
                 )
+                if status == "doctrine_scope_prompted":
+                    # GAP-11: the doctrine text is stored; ask the scope now.
+                    pending_turn = doctrine_s.peek_turn_id(actor_id)
+                    if pending_turn is not None:
+                        try:
+                            await message.answer(
+                                DOCTRINE_SCOPE_PROMPT,
+                                reply_markup=doctrine_scope_keyboard(pending_turn),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "doctrine_scope_prompt_failed",
+                                extra={"turn_id": str(pending_turn)},
+                            )
+                    return
                 await _answer_doctrine_status(message, status)
                 return
 
