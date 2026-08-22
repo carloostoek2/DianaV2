@@ -1,17 +1,15 @@
 # Harness de pruebas con minibot
 
 **Fecha:** 2026-08-21
-**Repo del harness:** `~/repos/minibot` (userbot Telethon)
+**Repo del harness:** 
+(userbot Telethon)
 
 ## Propósito
 
-`minibot` es un **harness de pruebas** para DianaV2. Corre sobre la cuenta de la
-dueña como un **userbot (Telethon)** y simula distintos perfiles de suscriptor
-en el chat de prueba, evaluando las respuestas de Diana con un LLM. Al ser un
-usuario normal, sí ve y responde los mensajes en el chat de prueba (a diferencia
-de un bot, que no recibe los mensajes de otro bot).
+`minibot` es un **harness de pruebas** para DianaV2. Corre sobre la cuenta de un usuario como un **userbot (Telethon)** y simula distintos perfiles de suscriptor
+en el chat de prueba, evaluando las respuestas de Diana con un LLM.
 
-No es un componente de DianaV2: es un proceso externo que **se integra con el
+No es un componente de DianaV2: es un minibot externo con LLM distinto que **se integra con el
 sandbox** de DianaV2 y con la **entrega de respuestas** del modo supervisado.
 
 ## Modelo de integración
@@ -42,10 +40,8 @@ En el DM de DianaV2 (como dueña):
 /sandbox on <chat_id> <perfil>
 ```
 
-Perfiles disponibles en `src/diana/config/sandbox_profiles.json`:
+Perfiles disponibles:
 `nuevo`, `cercano`, `distante`, `intenso`, `vip_largo`, `inyeccion_previa`.
-También puedes usar `/menu` → "🧪 Modo de prueba" y reenviar un mensaje del
-chat objetivo.
 
 ### 2. Entrega de respuestas al chat
 
@@ -87,7 +83,7 @@ chat de prueba. Dos opciones:
 ## Flujo de trabajo
 
 1. (Dueña) Activa sandbox en DianaV2 para el chat de prueba y elige perfil.
-2. (Dueña) Escribe en tus Mensajes guardados (minibot es un userbot):
+2. (Dueña) Escribe en privado con minibot 
    - `/perfiles` — lista los agentes.
    - `/test <perfil> --turns 3` — corre el test del perfil.
    - `/test_all --turns 2` — corre los 5 agentes en secuencia.
@@ -109,12 +105,12 @@ chat de prueba. Dos opciones:
 El agente `adversarial` genera un set amplio de probes (inyección de prompt,
 jailbreak, manipulación, extracción de información, acoso) para comprobar los
 límites del bot. Es una prueba autorizada sobre el bot propio, confinada al
-sandbox (sin persistencia real).
+sandbox (sin persistencia real)
 
 ## Resultados
 
-- Cada corrida se guarda en `results/runs/<run_id>.jsonl` (auditoría por turno).
-- El índice está en `results/results.db` (SQLite); `/resultados` lo consulta.
+- Cada corrida se guarda para auditoría por turno.
+- El índice está en comando especial
 
 ## Validación sin entorno real
 
@@ -125,10 +121,3 @@ python scripts/dry_run.py   # en el repo minibot
 Corre el pipeline completo (persona → respuesta simulada → evaluación) para los
 5 agentes sin tocar Telegram.
 
-## Referencias
-
-- Docs del harness: `~/repos/minibot/README.md`, `docs/SETUP_TELEGRAM.md`,
-  `docs/TESTING.md`, `docs/INVESTIGACION_TELEGRAM.md`.
-- Sandbox de DianaV2: `docs/SPEC-FASE2.md`, `src/diana/application/sandbox.py`,
-  `src/diana/config/sandbox_profiles.json`.
-- Modos de operación: `wiki/concepts/modos-de-operacion.md`.
