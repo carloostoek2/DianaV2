@@ -5841,6 +5841,153 @@ async def test_vip_mood_engines_cache_capped() -> None:
     assert set(orch._vip_mood_engines) == set(keys[5:])  # FIFO: oldest evicted
 
 
+@pytest.mark.asyncio
+async def test_mood_engine_skipped_in_sandbox(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sandbox: a sandbox turn never writes vip_mood_state (mood_skipped_sandbox)."""
+    import logging
+
+    from diana.application.sandbox import SandboxService
+
+    decision = Decision(
+        action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+    )
+    mood_engine = _FakeMoodEngine()
+    mood_state = _FakeVipMoodState()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        mood_engine=mood_engine,
+        vip_mood_state=mood_state,
+    )
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {
+            "label": "x",
+            "description": "",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "nuevo")
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        await g["orch"]._run_mood_engine(turn_id, 100, _vip(vip_id=vip_id))
+    assert mood_engine.signal_calls == []
+    assert mood_state.upsert_calls == []
+    assert any("mood_skipped_sandbox" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_trust_budget_skipped_in_sandbox(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sandbox: a sandbox turn never increments the trust budget."""
+    import logging
+
+    from diana.application.sandbox import SandboxService
+
+    trust = _FakeTrustBudget()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(
+            Decision(action="approve", reason="ok", evaluation=_eval(), draft_text="d")
+        ),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        trust_budget=trust,
+    )
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {
+            "label": "x",
+            "description": "",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "nuevo")
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        await g["orch"]._run_trust_budget(
+            turn_id,
+            100,
+            _vip(vip_id=vip_id),
+            _cat_log_record(turn_id=turn_id, vip_id=vip_id),
+        )
+    assert trust.autonomous_calls == []
+    assert any("trust_budget_skipped_sandbox" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_profile_synthesis_trigger_skipped_in_sandbox(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sandbox: a sandbox turn never enqueues profile synthesis."""
+    import logging
+
+    from diana.application.sandbox import SandboxService
+
+    trigger = _FakeProfileSynthesisTrigger()
+    vip_id = uuid4()
+    g = _build(
+        FakeDirector(
+            Decision(
+                action="approve", reason="good", evaluation=_eval(), draft_text="draft A"
+            )
+        ),
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        emotional_detector=_FakeEmotionalDetector(_signal_detected()),
+        emotional_signal_log=_FakeEmotionalSignalLog(),
+        profile_synthesis_trigger=trigger,
+    )
+    MINIMAL_SIX = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {
+            "label": "x",
+            "description": "",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    sandbox = SandboxService(profiles=MINIMAL_SIX)
+    sandbox.activate(100, "nuevo")
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    turn_id = uuid4()
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        await g["orch"]._run_profile_synthesis_trigger(
+            turn_id, 100, _vip(vip_id=vip_id), _signal_detected()
+        )
+    assert trigger.calls == []
+    assert any("profile_synthesis_skipped_sandbox" in r.message for r in caplog.records)
+
+
 # --- Evo-Agente Fase 5: shadow trust-budget hook ------------------------------
 
 

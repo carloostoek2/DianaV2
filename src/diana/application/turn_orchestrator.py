@@ -629,6 +629,12 @@ class TurnOrchestrator:
         """
         if self._profile_synthesis_trigger is None:
             return
+        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+            logger.info(
+                "profile_synthesis_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
         try:
             await self._profile_synthesis_trigger.evaluate_and_maybe_enqueue(
                 incoming.vip_id,
@@ -777,6 +783,16 @@ class TurnOrchestrator:
             return
         if incoming.vip_id is None:
             return
+        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+            logger.info(
+                "mood_skipped_sandbox",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "vip_id": str(incoming.vip_id),
+                },
+            )
+            return
         trace_reader = self._trace_reader
         if trace_reader is None:
             return
@@ -877,6 +893,16 @@ class TurnOrchestrator:
         if incoming.vip_id is None:
             return
         if category_log is None or not category_log.would_autonomous:
+            return
+        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+            logger.info(
+                "trust_budget_skipped_sandbox",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "vip_id": str(incoming.vip_id),
+                },
+            )
             return
         try:
             turn = await self._coordinator.get_turn(turn_id)
