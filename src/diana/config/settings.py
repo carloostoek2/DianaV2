@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     database_url: SecretStr  # must be postgresql+asyncpg://...
     deepseek_api_key: SecretStr = SecretStr("")
     llm_base_url: str = "https://api.deepseek.com"
+    # Boot-time default model; the owner can switch it at runtime via the
+    # admin surface (ADM-03, system_config key "llm") without a restart.
+    llm_model: str = "deepseek-v4-flash"
     # DeepSeek v4 "thinking" (chain-of-thought) for free-text drafts only.
     # Structured JSON nodes (Analyst/Evaluator) always keep thinking off.
     # Default on: better draft quality; raise max_tokens budget via provider.

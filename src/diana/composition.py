@@ -133,6 +133,7 @@ from diana.infrastructure.db.repositories.profiles import ProfilesRepo
 from diana.learning.post_turn import LearningService
 from diana.llm.deepseek import DeepSeekProvider
 from diana.llm.fake import FakeLLM
+from diana.llm.hot_swap import LLM_CONFIG_KEY, HotSwapLLMProvider
 from diana.telegram.actuator import AiogramTelegramActuator
 from diana.telegram.handlers.callbacks import CorrectSessionStore
 from diana.telegram.handlers.doctrine import (
@@ -459,11 +460,23 @@ def build_app(
         provider = FakeLLM()
         logger.warning("using FakeLLM — set DEEPSEEK_API_KEY for production")
     else:
-        provider = DeepSeekProvider(
+        base = DeepSeekProvider(
             api_key=settings.deepseek_api_key,
             base_url=settings.llm_base_url,
+            model=settings.llm_model,
             thinking_enabled=settings.llm_thinking_enabled,
             pii_masking=settings.feature_pii_masking_enabled,
+        )
+        # ADM-03: hot-swap the model/base_url at runtime via system_config
+        # key "llm" (admin surface) without a restart. No overrides → the
+        # wrapper delegates to the base provider untouched.
+        provider = HotSwapLLMProvider(
+            base=base,
+            api_key=settings.deepseek_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            thinking_enabled=settings.llm_thinking_enabled,
+            config_source=lambda: config_store.get(LLM_CONFIG_KEY),
         )
 
     # F2 knowledge services (Item 1)
@@ -1065,6 +1078,9 @@ def build_app(
         admin_trace=admin_trace,
         admin_metrics=admin_metrics,
         shadow_admin=shadow_admin,
+        llm_config_store=config_store,
+        llm_default_model=settings.llm_model,
+        llm_default_base_url=settings.llm_base_url,
         profile_admin=profile_admin,
         persona_admin=persona_admin_service,
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,

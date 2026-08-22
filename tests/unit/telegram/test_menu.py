@@ -1526,3 +1526,116 @@ def test_format_vip_profile_history_truncates_long_summary() -> None:
 
     assert "…" in text
     assert len([l for l in text.splitlines() if l.startswith("  • v1")][0]) < 160
+
+
+# --- ADM-03: LLM hot-swap admin surface (Configuración → Modelo de IA) ------
+
+
+class _FakeLlmConfigStore:
+    def __init__(self, value=None) -> None:
+        self.value = value
+        self.set_calls: list[object] = []
+
+    async def get(self, key: str):
+        assert key == "llm"
+        return self.value
+
+    async def set(self, key: str, value: object) -> None:
+        assert key == "llm"
+        self.set_calls.append(value)
+        self.value = value
+
+
+@pytest.mark.asyncio
+async def test_config_llm_renders_status_with_override() -> None:
+    store = _FakeLlmConfigStore({"model": "deepseek-chat"})
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("config", "llm"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        llm_config_store=store,
+        llm_default_model="deepseek-v4-flash",
+        llm_default_base_url="https://api.deepseek.com",
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+    )
+    call_args = msg.edit_text.call_args
+    assert call_args is not None
+    assert "Modelo activo: deepseek-chat" in call_args[0][0]
+    assert "sin reiniciar" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_config_llm_renders_default_when_no_override() -> None:
+    store = _FakeLlmConfigStore(None)
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("config", "llm"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        llm_config_store=store,
+        llm_default_model="deepseek-v4-flash",
+        llm_default_base_url="https://api.deepseek.com",
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+    )
+    body = msg.edit_text.call_args[0][0]
+    assert "Modelo activo: deepseek-v4-flash" in body
+
+
+@pytest.mark.asyncio
+async def test_config_llm_set_starts_wizard_session() -> None:
+    sessions = MenuSessionStore()
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("config", "llm_set"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        llm_config_store=_FakeLlmConfigStore(None),
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=sessions,
+    )
+    assert sessions.status(_OWNER_ID) == "live"
+    body = msg.edit_text.call_args[0][0]
+    assert "nombre del modelo" in body
+
+
+@pytest.mark.asyncio
+async def test_config_llm_reset_clears_override() -> None:
+    store = _FakeLlmConfigStore({"model": "deepseek-chat"})
+    msg = _msg()
+    await _dispatch_action(
+        msg,
+        parsed=_callback("config", "llm_reset"),
+        actor_id=_OWNER_ID,
+        vips=InMemoryVipStore(),
+        admin_trace=None,
+        admin_metrics=None,
+        llm_config_store=store,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=MenuSessionStore(),
+    )
+    assert store.set_calls == [{}]
+    assert "restablecido" in msg.edit_text.call_args[0][0]

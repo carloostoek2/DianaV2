@@ -69,6 +69,7 @@ from diana.telegram.keyboards import (
     menu_confirm_delete_keyboard,
     menu_event_confirm_delete_keyboard,
     menu_event_confirm_keyboard,
+    menu_llm_keyboard,
     menu_event_detail_keyboard,
     menu_event_duration_keyboard,
     menu_event_list_keyboard,
@@ -520,6 +521,9 @@ def build_menu_router(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     shadow_admin: AdminShadowService | None = None,
+    llm_config_store: Any | None = None,
+    llm_default_model: str = "",
+    llm_default_base_url: str = "",
     sandbox: SandboxService | None = None,
     staging: StagingService | None = None,
     coordinator: TurnCoordinator | None = None,
@@ -656,6 +660,9 @@ def build_menu_router(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             shadow_admin=shadow_admin,
+            llm_config_store=llm_config_store,
+            llm_default_model=llm_default_model,
+            llm_default_base_url=llm_default_base_url,
             sandbox=sandbox,
             staging=staging,
             coordinator=coordinator,
@@ -769,6 +776,52 @@ def build_menu_router(
             await _handle_event_edit_body_text(
                 message, bot, session, ephemeral_event_service, sessions
             )
+        elif session.kind == "llm_model":
+            # ADM-03: owner types the new model name → saved to system_config.
+            model = (message.text or "").strip()
+            if not model:
+                await _edit_or_answer(
+                    bot,
+                    "El nombre del modelo no puede estar vacío. Usa /cancelar "
+                    "para abortar.",
+                    session=session,
+                    fallback=message,
+                )
+                return
+            if llm_config_store is None:
+                await _edit_or_answer(
+                    bot,
+                    "Modelo de IA no disponible.",
+                    session=session,
+                    fallback=message,
+                )
+                return
+            try:
+                current = (await llm_config_store.get("llm")) or {}
+                merged = {**current, "model": model}
+                await llm_config_store.set("llm", merged)
+            except Exception:
+                logger.exception("llm_model_set_failed")
+                await _edit_or_answer(
+                    bot,
+                    "Error al guardar el modelo. Reintenta más tarde.",
+                    session=session,
+                    fallback=message,
+                )
+                return
+            logger.info(
+                "llm_model_set",
+                extra={"actor_id": owner_id, "model": model},
+            )
+            await _edit_or_answer(
+                bot,
+                f"✅ Modelo actualizado: {model}\n\n"
+                "Aplica en la siguiente conversación (menos de un minuto), "
+                "sin reiniciar el bot.",
+                session=session,
+                fallback=message,
+                keyboard=menu_llm_keyboard(),
+            )
 
     return router
 
@@ -787,6 +840,9 @@ async def _dispatch_action(
     admin_trace: AdminTraceService | None,
     admin_metrics: AdminMetricsService | None,
     shadow_admin: AdminShadowService | None = None,
+    llm_config_store: Any | None = None,
+    llm_default_model: str = "",
+    llm_default_base_url: str = "",
     sandbox: SandboxService | None,
     staging: StagingService | None,
     coordinator: TurnCoordinator | None,
@@ -1487,6 +1543,69 @@ async def _dispatch_action(
             },
         )
         await _show(message, MENU_CATEGORY_TEXT["config"], menu_config_keyboard(new_state))
+        return
+
+    # ==================================================================
+    # Config — LLM admin (ADM-03): model hot-swap without restart
+    # ==================================================================
+    if category == "config" and action in ("llm", "llm_set", "llm_reset"):
+        if llm_config_store is None:
+            await _show(
+                message,
+                "Modelo de IA no disponible.",
+                menu_back_keyboard(encode_menu("config")),
+            )
+            return
+        if action == "llm_set":
+            sessions.start(actor_id, "llm_model")
+            await _show(
+                message,
+                "✏️ Escribe el nombre del modelo que quieres usar "
+                "(ej. deepseek-chat).\n\n"
+                "El cambio aplica en menos de un minuto, sin reiniciar el bot.\n\n"
+                "Usa /cancelar para abortar.",
+                menu_back_keyboard(encode_menu("config")),
+            )
+            return
+        if action == "llm_reset":
+            try:
+                await llm_config_store.set("llm", {})
+            except Exception:
+                logger.exception("llm_config_reset_failed")
+                await _show(
+                    message,
+                    "Error al restablecer el modelo. Reintenta más tarde.",
+                    menu_llm_keyboard(),
+                )
+                return
+            logger.info("llm_config_reset", extra={"actor_id": actor_id})
+            await _show(
+                message,
+                "🔄 Modelo restablecido al predeterminado.",
+                menu_llm_keyboard(),
+            )
+            return
+        # action == "llm": status view
+        try:
+            overrides = await llm_config_store.get("llm") or {}
+        except Exception:
+            logger.exception("llm_config_read_failed")
+            await _show(
+                message,
+                "Error al consultar el modelo. Reintenta más tarde.",
+                menu_llm_keyboard(),
+            )
+            return
+        model = overrides.get("model") or llm_default_model or "deepseek-v4-flash"
+        base_url = overrides.get("base_url") or llm_default_base_url or "https://api.deepseek.com"
+        body = (
+            "🤖 Modelo de IA\n\n"
+            f"Modelo activo: {model}\n"
+            f"Servidor: {base_url}\n\n"
+            "Puedes cambiar el modelo en caliente: el bot lo usa en la "
+            "siguiente conversación, sin reiniciar."
+        )
+        await _show(message, body, menu_llm_keyboard())
         return
 
     # Unknown / unmapped action — should not normally happen.

@@ -1702,12 +1702,37 @@ def menu_history_keyboard() -> InlineKeyboardMarkup:
 
 
 def menu_config_keyboard(enabled: bool) -> InlineKeyboardMarkup:
-    """Configuration keyboard with a single toggle button for training mode."""
+    """Configuration keyboard with the training-mode toggle and the LLM admin."""
     toggle_text = "Modo Entrenamiento: ON ✅" if enabled else "Modo Entrenamiento: OFF ❌"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=toggle_text, callback_data=encode_menu("config", "toggle"))],
+            [InlineKeyboardButton(text="🤖 Modelo de IA", callback_data=encode_menu("config", "llm"))],
             _menu_back_row(),
+        ]
+    )
+
+
+def menu_llm_keyboard() -> InlineKeyboardMarkup:
+    """LLM admin: change the model at runtime (ADM-03) or reset to default."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Cambiar modelo",
+                    callback_data=encode_menu("config", "llm_set"),
+                ),
+                InlineKeyboardButton(
+                    text="🔄 Restablecer",
+                    callback_data=encode_menu("config", "llm_reset"),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Volver",
+                    callback_data=encode_menu("config"),
+                ),
+            ],
         ]
     )
 
