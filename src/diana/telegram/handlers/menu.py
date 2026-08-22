@@ -331,6 +331,34 @@ def _trust_section_lines(trust_rows: list[dict]) -> list[str]:
     return lines
 
 
+def _profile_history_lines(
+    history_rows: list[dict], *, max_versions: int = 5
+) -> list[str]:
+    """Render the 📚 Historial de versiones section (EA-06).
+
+    Newest-first (the repo returns newest-first); each entry shows the version
+    number, the date and the diff summary truncated to a readable snippet.
+    """
+    if not history_rows:
+        return []
+    lines = ["\n📚 Historial de versiones:"]
+    for row in history_rows[:max_versions]:
+        version = row.get("version", "?")
+        created = row.get("created_at")
+        when = str(created)[:10] if created else "—"
+        diff = (row.get("diff_summary") or "").strip()
+        snippet = _truncate_text(diff, max_len=90) if diff else "sin resumen"
+        lines.append(f"  • v{version} · {when} — {snippet}")
+    return lines
+
+
+def _truncate_text(text: str, max_len: int = 90) -> str:
+    text = text or ""
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
+
 def _format_vip_profile(result: Any) -> str:
     """Format a ``ProfileAdminResult`` for display."""
     if result.status == "vip_not_found":
@@ -347,6 +375,7 @@ def _format_vip_profile(result: Any) -> str:
         result.status == "profile_empty"
         and not memory_lines
         and not (result.trust_budget or [])
+        and not (result.profile_history or [])
     ):
         return f"Ficha de {name}\n\nSin datos todavia."
 
@@ -379,6 +408,9 @@ def _format_vip_profile(result: Any) -> str:
     # Evo-Agente Fase 5 (EA-06): the 🔐 Confianza section — additive, follows
     # the memory section; empty rows render nothing (no orphan header).
     lines.extend(_trust_section_lines(result.trust_budget or []))
+    # Evo-Agente Fase 5 (EA-06): 📚 Historial de versiones — additive, follows
+    # the trust section; empty rows render nothing (no orphan header).
+    lines.extend(_profile_history_lines(result.profile_history or []))
 
     return "\n".join(lines)
 

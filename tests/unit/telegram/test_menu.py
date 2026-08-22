@@ -1448,3 +1448,81 @@ async def test_menu_session_text_expired_warns_and_clears() -> None:
     reply_text = msg.reply.await_args.args[0]
     assert "expiró" in reply_text
     assert sessions.status(_OWNER_ID) == "none"  # expired entry cleaned up
+
+
+# --- Evo-Agente Fase 5 (EA-06): 📚 Historial de versiones de la ficha ---
+
+
+def test_format_vip_profile_renders_version_history() -> None:
+    """The ficha shows the profile version history with date and diff summary."""
+    from diana.application.profile_admin_service import ProfileAdminResult
+
+    result = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {"city": "CDMX"}, "notes": []},
+        profile_history=[
+            {
+                "version": 3,
+                "created_at": "2026-08-22T21:17:00+00:00",
+                "diff_summary": "Cliente más cercano, mencionó un viaje",
+            },
+            {
+                "version": 2,
+                "created_at": "2026-08-10T12:00:00+00:00",
+                "diff_summary": "Nuevo interés: café de especialidad",
+            },
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "📚 Historial de versiones" in text
+    assert "v3 · 2026-08-22 — Cliente más cercano, mencionó un viaje" in text
+    assert "v2 · 2026-08-10 — Nuevo interés: café de especialidad" in text
+
+
+def test_format_vip_profile_empty_manual_with_history_keeps_card() -> None:
+    """A VIP with only version history still gets a ficha (no 'Sin datos')."""
+    from diana.application.profile_admin_service import ProfileAdminResult
+
+    result = ProfileAdminResult(
+        status="profile_empty",
+        telegram_user_id=555,
+        display_name="Alice",
+        content=None,
+        memory=None,
+        profile_history=[
+            {
+                "version": 1,
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "diff_summary": "Perfil inicial",
+            }
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "📚 Historial de versiones" in text
+    assert "Sin datos" not in text
+
+
+def test_format_vip_profile_history_truncates_long_summary() -> None:
+    from diana.application.profile_admin_service import ProfileAdminResult
+
+    long_diff = "x" * 200
+    result = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {}, "notes": []},
+        profile_history=[
+            {"version": 1, "created_at": "2026-08-01T00:00:00+00:00", "diff_summary": long_diff}
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "…" in text
+    assert len([l for l in text.splitlines() if l.startswith("  • v1")][0]) < 160

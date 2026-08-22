@@ -971,6 +971,14 @@ def build_app(
         trust_budget=(
             trust_budget_service if settings.feature_trust_budget else None
         ),
+        # Evo-Agente Fase 5 (EA-06): 📚 Historial de versiones section of the
+        # ficha — only wired with the synthesis flag ON (flag OFF → None → no
+        # query, byte-identical).
+        profile_history=(
+            vip_profile_history_repo
+            if settings.feature_profile_synthesis_enabled
+            else None
+        ),
     )
 
     # VIP DM history seed (Telethon personal session) — optional until env is set.

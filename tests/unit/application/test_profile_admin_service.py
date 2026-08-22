@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -578,3 +579,87 @@ async def test_show_profile_trust_db_error_never_breaks_ficha(
     assert r.status == "profile_ok"
     assert r.trust_budget is None
     assert r.content == {"facts": {"city": "BA"}, "notes": []}
+
+
+# --- Evo-Agente Fase 5 (EA-06): profile version history in show_profile ---
+
+
+class FakeHistoryRepo:
+    def __init__(self, rows=None, *, fail: bool = False) -> None:
+        self._rows = rows or []
+        self._fail = fail
+
+    async def list_by_vip(self, vip_id: UUID):
+        if self._fail:
+            raise RuntimeError("boom")
+        return self._rows
+
+
+@pytest.mark.asyncio
+async def test_show_profile_includes_version_history() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(555, display_name="Alice")
+    profiles = FakeProfilesRepo()
+    history = FakeHistoryRepo(
+        rows=[
+            SimpleNamespace(
+                version=3,
+                created_at=datetime(2026, 8, 22, 21, 17, tzinfo=UTC),
+                diff_summary="Cliente más cercano",
+            ),
+            SimpleNamespace(
+                version=2,
+                created_at=datetime(2026, 8, 10, 12, 0, tzinfo=UTC),
+                diff_summary="Nuevo interés",
+            ),
+        ]
+    )
+    service = ProfileAdminService(
+        profiles=profiles,
+        vips=vips,
+        owner_telegram_id=OWNER,
+        profile_history=history,
+    )
+
+    result = await service.show_profile(OWNER, 555)
+
+    assert result.profile_history is not None
+    assert result.profile_history[0]["version"] == 3
+    assert result.profile_history[0]["diff_summary"] == "Cliente más cercano"
+    assert result.profile_history[1]["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_show_profile_history_failure_is_best_effort() -> None:
+    """A history DB error must never break the owner ficha."""
+    vips = InMemoryVipStore()
+    await vips.add(555, display_name="Alice")
+    profiles = FakeProfilesRepo()
+    history = FakeHistoryRepo(fail=True)
+    service = ProfileAdminService(
+        profiles=profiles,
+        vips=vips,
+        owner_telegram_id=OWNER,
+        profile_history=history,
+    )
+
+    result = await service.show_profile(OWNER, 555)
+
+    assert result.status == "profile_empty"
+    assert result.profile_history is None
+
+
+@pytest.mark.asyncio
+async def test_show_profile_without_history_wiring_returns_none() -> None:
+    """Flag OFF (history not wired) → no query, profile_history None."""
+    vips = InMemoryVipStore()
+    await vips.add(555, display_name="Alice")
+    service = ProfileAdminService(
+        profiles=FakeProfilesRepo(),
+        vips=vips,
+        owner_telegram_id=OWNER,
+    )
+
+    result = await service.show_profile(OWNER, 555)
+
+    assert result.profile_history is None

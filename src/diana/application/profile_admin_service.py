@@ -65,6 +65,7 @@ class ProfileAdminService:
         clock: Callable[[], datetime] | None = None,
         memories: Any | None = None,
         trust_budget: Any | None = None,
+        profile_history: Any | None = None,
     ) -> None:
         self._profiles = profiles
         self._vips = vips
@@ -77,6 +78,9 @@ class ProfileAdminService:
         # Evo-Agente Fase 5 (EA-06): optional trust-budget service (flag-gated;
         # flag OFF → None → no query, byte-identical).
         self._trust_budget = trust_budget
+        # Evo-Agente Fase 5 (EA-06): optional vip_profile_history reader
+        # (flag-gated; flag OFF → None → no query, byte-identical).
+        self._profile_history = profile_history
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -144,6 +148,29 @@ class ProfileAdminService:
                 )
                 rows = None
             trust_rows = rows or None
+        # Evo-Agente Fase 5 (EA-06): profile version history (newest-first,
+        # capped for display). Best-effort like the trust rows — a DB error
+        # must never break the owner ficha.
+        history_rows: list[dict] | None = None
+        if self._profile_history is not None:
+            try:
+                rows = await self._profile_history.list_by_vip(vip.id)
+                history_rows = [
+                    {
+                        "version": r.version,
+                        "created_at": r.created_at,
+                        "diff_summary": r.diff_summary,
+                    }
+                    for r in rows
+                ]
+                if not history_rows:
+                    history_rows = None
+            except Exception:
+                logger.exception(
+                    "profile_history_rows_failed",
+                    extra={"telegram_user_id": telegram_user_id},
+                )
+                history_rows = None
         row = await self._profiles.get_by_vip_id(vip.id)
         content = None if row is None else row.get("content")
         if row is None or is_hollow_content(content):
@@ -154,6 +181,7 @@ class ProfileAdminService:
                 content={"facts": {}, "notes": []},
                 memory=memory_rows,
                 trust_budget=trust_rows,
+                profile_history=history_rows,
             )
         # Prefer normalized schema for structured rows; keep legacy flat as-is.
         display: dict | None
@@ -172,6 +200,7 @@ class ProfileAdminService:
             content=display,
             memory=memory_rows,
             trust_budget=trust_rows,
+            profile_history=history_rows,
         )
 
     async def set_fact(
