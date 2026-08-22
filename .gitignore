@@ -44,10 +44,14 @@ reasonix.toml
 wiki/.ua/intermediate/
 
 # Understand-Anything (root) — scratch intermedio y trash de análisis
-# (knowledge-graph.json / meta.json / fingerprints.json / config.json SÍ se commitean)
 .ua/intermediate/
 .ua/.trash-*/
 
+# Understand-Anything (root) — artefactos regenerados en cada análisis
+# (se re-escanean; versionar solo config.json y .understandignore)
+.ua/fingerprints.json
+.ua/knowledge-graph.json
+.ua/meta.json
 
 # Understand-Anything (root) — logs locales de la herramienta (no se versionan)
 .ua/*.log
