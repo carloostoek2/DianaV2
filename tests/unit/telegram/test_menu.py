@@ -564,6 +564,55 @@ def test_menu_root_has_config_button() -> None:
     assert shadow_btn.callback_data == "m:sombra"
 
 
+def test_menu_root_autonomy_button_flag_gated() -> None:
+    """Fila 4: the 🧭 Camino a la autonomía button only appears with the flag."""
+    from diana.telegram.keyboards import menu_root_keyboard
+
+    base = menu_root_keyboard()
+    assert all(
+        btn.callback_data != "m:autonomia"
+        for row in base.inline_keyboard
+        for btn in row
+    )
+
+    with_autonomy = menu_root_keyboard(show_autonomy=True)
+    data = [
+        btn.callback_data
+        for row in with_autonomy.inline_keyboard
+        for btn in row
+    ]
+    assert "m:autonomia" in data
+
+
+def test_menu_autonomy_keyboard_and_actions() -> None:
+    """The panel keyboard + per-VIP activation callbacks stay within 64 bytes."""
+    from diana.telegram.keyboards import (
+        menu_autonomy_keyboard,
+        menu_autonomy_vip_keyboard,
+        parse_menu_callback,
+    )
+
+    kb = menu_autonomy_keyboard()
+    data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "m:autonomia:global" in data
+    assert "m:autonomia:comparativas" in data
+    assert "m:autonomia:vips" in data
+    assert all(len(d.encode("utf-8")) <= 64 for d in data)
+
+    vip_kb = menu_autonomy_vip_keyboard(
+        [(123, "Ana", True, False), (456, "Beto", False, True)]
+    )
+    data = [btn.callback_data for row in vip_kb.inline_keyboard for btn in row]
+    assert "m:autonomia:activate:123" in data
+    assert "m:autonomia:deactivate:456" in data
+
+    parsed = parse_menu_callback("m:autonomia:activate:123")
+    assert parsed is not None
+    assert parsed.category == "autonomia"
+    assert parsed.action == "activate"
+    assert parsed.extra == "123"
+
+
 @pytest.mark.asyncio
 async def test_config_toggle_activates_training_mode() -> None:
     """Toggle with current=False calls set_enabled(True) and shows ON."""

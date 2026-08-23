@@ -19,6 +19,10 @@ from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_shadow_service import AdminShadowService, ShadowThresholds
 from diana.application.admin_service import AdminService
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.autonomy_readiness_service import AutonomyReadinessService
+from diana.application.outcome_log_service import OutcomeLogService
+from diana.application.reaction_signal import ReactionSignalClassifier
+from diana.application.text_quality_heuristics import TextQualityScorer
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
 from diana.application.calibration_service import CalibrationService
@@ -90,6 +94,9 @@ from diana.infrastructure.db.repositories.learning_metrics import (
 )
 from diana.infrastructure.db.repositories.metrics_data import SqlMetricsDataSource
 from diana.infrastructure.db.repositories.staging import StagingCandidateRepo
+from diana.infrastructure.db.repositories.synthesis_queue import (
+    SqlProfileSynthesisQueueRepo,
+)
 from diana.infrastructure.db.repositories.approvals import SqlPendingApprovalStore
 from diana.infrastructure.db.repositories.deliveries import SqlPendingDeliveryStore
 from diana.infrastructure.db.repositories.escalations import SqlEscalationStore
@@ -123,6 +130,7 @@ from diana.infrastructure.db.repositories.vip_profile_history import (
 from diana.infrastructure.db.repositories.vip_trust_budget import (
     SqlVipTrustBudgetRepo,
 )
+from diana.infrastructure.db.repositories.turn_outcome import SqlTurnOutcomeLogRepo
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore
@@ -322,6 +330,12 @@ class AppContainer:
     admin_metrics: AdminMetricsService | None = None
     shadow_admin: AdminShadowService | None = None
     profile_admin: ProfileAdminService | None = None
+    # Fila 4 (SPEC-AUTONOMIA-CALIBRACION): outcome ledger + readiness panel.
+    outcome_log: OutcomeLogService | None = None
+    autonomy_readiness: AutonomyReadinessService | None = None
+    turn_outcome_repo: SqlTurnOutcomeLogRepo | None = None
+    # Message history (C3 reaction job reads the VIP follow-up window).
+    history: Any | None = None
     runtime_thresholds: RuntimeThresholds | None = None
     turns: SqlTurnStore | None = None
     runtime_timers: SqlRuntimeTimerStore | None = None
@@ -389,6 +403,11 @@ def build_app(
     vip_trust_budget_repo = SqlVipTrustBudgetRepo(sf)
     turn_category_log_repo = SqlTurnCategoryLogRepo(sf)
     emotional_signal_repo = SqlEmotionalSignalLogRepo(sf)
+    # Fila 4: outcome ledger repo (reads existing tables + turn_outcome_log).
+    turn_outcome_repo = SqlTurnOutcomeLogRepo(sf)
+    # Forbidden keywords: the boot-loaded mutable list (load_forbidden_keywords
+    # mutates this exact object at startup) — the H1 scorer sees live updates.
+    forbidden_keywords: list[str] = []
 
     token = settings.telegram_bot_token.get_secret_value()
     bot_inst = bot or Bot(token=token)
@@ -555,6 +574,30 @@ def build_app(
         runtime_thresholds=runtime_thresholds,
     )
 
+    # Fila 4 (SPEC-AUTONOMIA-CALIBRACION): the outcome ledger service. Built
+    # ALWAYS (shadow_admin pattern) — the orchestrator/admin/reaction hooks are
+    # wired only when the quality flag is on; the readiness panel reads the
+    # on-the-fly comparativas regardless.
+    outcome_log = OutcomeLogService(
+        decider=shadow_decider,
+        store=turn_outcome_repo,
+        source=turn_outcome_repo,
+        scorer=(
+            TextQualityScorer(forbidden_keywords=forbidden_keywords)
+            if settings.feature_autonomy_quality_enabled
+            else None
+        ),
+        vips=vips,
+        trust_budget=trust_budget_service,
+        reaction_classifier=(
+            ReactionSignalClassifier()
+            if settings.feature_autonomy_quality_enabled
+            else None
+        ),
+        enabled=settings.feature_autonomy_quality_enabled,
+        reaction_window_hours=settings.outcome_reaction_window_hours,
+    )
+
     # AMS L2 gate — always constructed; with L1 false is_autonomous_enabled → False.
     ams = AutonomousModeService(
         feature_autonomous_mode=feature_autonomous_mode,
@@ -652,6 +695,11 @@ def build_app(
             trust_budget_service if settings.feature_trust_budget else None
         ),
         feature_quality_feedback_enabled=settings.feature_quality_feedback_enabled,
+        # Fila 4: owner-resolution half of the outcome ledger (flag-gated).
+        outcome=(
+            outcome_log if settings.feature_autonomy_quality_enabled else None
+        ),
+        feature_autonomy_readiness_enabled=settings.feature_autonomy_readiness_enabled,
     )
 
     catalog = get_persona_catalog()
@@ -838,6 +886,9 @@ def build_app(
             activity=turns,
             volume_threshold=settings.profile_synthesis_volume_threshold,
             inactivity_minutes=settings.profile_synthesis_inactivity_minutes,
+            # Fila 4 C4: durable queue (migration 031) — pending resynthesis
+            # survives restarts. Enabled whenever synthesis itself is on.
+            queue=SqlProfileSynthesisQueueRepo(sf),
         )
     orchestrator = TurnOrchestrator(
         coordinator=coordinator,
@@ -885,6 +936,13 @@ def build_app(
         trust_budget=(
             trust_budget_service if settings.feature_trust_budget else None
         ),
+        # Fila 4: post-turn outcome hook + C3 reaction hook (flag-gated; None
+        # → both hooks no-op, byte-identical) + the readiness kill for the
+        # shadow trust increment (readiness ON → outcome-driven trust only).
+        outcome_log=(
+            outcome_log if settings.feature_autonomy_quality_enabled else None
+        ),
+        feature_autonomy_readiness_enabled=settings.feature_autonomy_readiness_enabled,
     )
 
     # Evo-Agente Fase 5 (review round 1, S1): surface the inert combo — the
@@ -912,8 +970,8 @@ def build_app(
     # A8), matching the autonomous-path behaviour byte-for-byte.
     admin.set_post_turn_hook(orchestrator._maybe_post_turn)
 
-    # Forbidden keywords loaded at boot (async load deferred to startup helper).
-    forbidden_keywords: list[str] = []
+    # Forbidden keywords loaded at boot (async load deferred to startup helper;
+    # the list object was created above so the H1 scorer sees live updates).
     sessions = CorrectSessionStore()
     # Free-text doctrine sessions (dr: flow) — shared between the doctrine
     # router (opens the session) and the admin router (captures the text).
@@ -982,6 +1040,18 @@ def build_app(
             trust_min=settings.trust_budget_threshold,
             classifier_confidence_min=settings.classifier_confidence_min,
         ),
+    )
+    # Fila 4 — Camino a la autonomía (C5/C6): built ALWAYS (the menu renders
+    # "sin datos" when nothing is measured); the recommendation/activation is
+    # gated by feature_autonomy_recommendation_enabled.
+    autonomy_readiness = AutonomyReadinessService(
+        outcome=outcome_log,
+        trust=vip_trust_budget_repo,
+        vips=vips,
+        window_days=settings.autonomy_window_days,
+        confidence_min=settings.autonomy_confidence_min,
+        match_rate_min=settings.autonomy_match_rate_min,
+        recommendation_enabled=settings.feature_autonomy_recommendation_enabled,
     )
     profile_admin = ProfileAdminService(
         profiles=profiles_repo,
@@ -1089,6 +1159,8 @@ def build_app(
         admin_trace=admin_trace,
         admin_metrics=admin_metrics,
         shadow_admin=shadow_admin,
+        autonomy_readiness=autonomy_readiness,
+        feature_autonomy_recommendation_enabled=settings.feature_autonomy_recommendation_enabled,
         llm_config_store=config_store,
         llm_default_model=settings.llm_model,
         llm_default_base_url=settings.llm_base_url,
@@ -1152,6 +1224,10 @@ def build_app(
         shadow_admin=shadow_admin,
         profile_admin=profile_admin,
         runtime_thresholds=runtime_thresholds,
+        outcome_log=outcome_log,
+        autonomy_readiness=autonomy_readiness,
+        turn_outcome_repo=turn_outcome_repo,
+        history=history,
         persona_admin=persona_admin_service,
         turns=turns,
         runtime_timers=runtime_timers_store,

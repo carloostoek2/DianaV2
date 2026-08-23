@@ -1,0 +1,385 @@
+"""Unit tests for the Fila 4 outcome-log service (Fase A: coincidence)."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime
+from uuid import uuid4
+
+import pytest
+
+from diana.application.outcome_log_service import (
+    OutcomeLogService,
+    compute_blocked_dims,
+    derive_owner_outcome,
+    shadow_verdict_from_decision,
+)
+from diana.cognitive.decider import Decider
+from diana.cognitive.models import Decision, EvaluationProfile
+
+
+def _evaluation(**overrides: float) -> dict:
+    base = {
+        "naturalness": 0.8,
+        "precision": 0.8,
+        "doctrine": 0.8,
+        "consistency": 0.8,
+        "safety": 0.95,
+        "coverage": 0.8,
+        "empathy": 0.8,
+    }
+    base.update(overrides)
+    return base
+
+
+def _comprehension() -> dict:
+    return {
+        "intent": "preguntar",
+        "topics": [],
+        "emotion": "neutral",
+        "urgency": "media",
+        "risk": "bajo",
+        "needs_memory": False,
+        "needs_policy": False,
+        "needs_schedule": False,
+        "needs_examples": False,
+        "needs_history": False,
+        "needs_context": False,
+    }
+
+
+class FakeSource:
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    async def list_finished_source_turns(self, *, window_days: int, limit: int = 200):
+        return self._rows
+
+
+class TestShadowVerdictMapping:
+    def test_send(self) -> None:
+        decision = Decision(
+            action="send", reason="autonomous_ok", evaluation=EvaluationProfile(**_evaluation())
+        )
+        assert shadow_verdict_from_decision(decision) == ("send", "autonomous_ok")
+
+    def test_escalate(self) -> None:
+        decision = Decision(
+            action="escalate", reason="risk_high", evaluation=EvaluationProfile(**_evaluation())
+        )
+        assert shadow_verdict_from_decision(decision) == ("escalate", "risk_high")
+
+    def test_doctrine(self) -> None:
+        decision = Decision(
+            action="consult_doctrine", reason="doctrine_not_found", evaluation=EvaluationProfile(**_evaluation())
+        )
+        assert shadow_verdict_from_decision(decision) == ("doctrine", "doctrine_not_found")
+
+    def test_approve_is_blocked(self) -> None:
+        decision = Decision(
+            action="approve", reason="autonomous_below_threshold", evaluation=EvaluationProfile(**_evaluation())
+        )
+        assert shadow_verdict_from_decision(decision) == ("blocked", "autonomous_below_threshold")
+
+
+class TestDeriveOwnerOutcome:
+    def test_escalated(self) -> None:
+        assert derive_owner_outcome("escalated", "cancelled", False) == "escalated"
+
+    def test_delivered_corrected_via_staging(self) -> None:
+        assert derive_owner_outcome("delivered", "corrected", True) == "corrected"
+
+    def test_delivered_corrected_via_approval_status(self) -> None:
+        assert derive_owner_outcome("delivered", "corrected", False) == "corrected"
+
+    def test_delivered_approved_as_is(self) -> None:
+        assert derive_owner_outcome("delivered", "approved", False) == "approved_as_is"
+
+    def test_open_turn_is_none(self) -> None:
+        assert derive_owner_outcome("pending_approval", "waiting", False) is None
+        assert derive_owner_outcome("superseded", None, False) is None
+        assert derive_owner_outcome("failed", None, False) is None
+
+
+class TestComputeBlockedDims:
+    def test_all_met_no_blocked(self) -> None:
+        evaluation = EvaluationProfile(**_evaluation())
+        assert compute_blocked_dims(evaluation, (0.9, 0.8, 0.7)) == []
+
+    def test_low_safety_only(self) -> None:
+        evaluation = EvaluationProfile(**_evaluation(safety=0.5))
+        assert compute_blocked_dims(evaluation, (0.9, 0.8, 0.7)) == ["safety"]
+
+    def test_low_doctrine_and_naturalness(self) -> None:
+        evaluation = EvaluationProfile(**_evaluation(doctrine=0.3, naturalness=0.2))
+        assert sorted(compute_blocked_dims(evaluation, (0.9, 0.8, 0.7))) == [
+            "doctrine",
+            "naturalness",
+        ]
+
+
+def _make_service(source: FakeSource) -> OutcomeLogService:
+    decider = Decider(feature_autonomous_mode=True)
+    return OutcomeLogService(decider=decider, source=source)
+
+
+def _row(
+    *,
+    status: str = "delivered",
+    approval_status: str | None = "approved",
+    evaluation: dict | None = None,
+    corrected_text: str | None = None,
+    comprehension: dict | None = None,
+) -> dict:
+    return {
+        "turn_id": uuid4(),
+        "vip_id": uuid4(),
+        "chat_id": 123,
+        "status": status,
+        "created_at": datetime.now(UTC),
+        "draft": "Hola, ¿cómo estás?",
+        "evaluation": evaluation or _evaluation(),
+        "comprehension": comprehension or _comprehension(),
+        "retrieved": {},
+        "decision": {"action": "approve", "reason": "ok_for_human_review"},
+        "approval_status": approval_status,
+        "corrected_text": corrected_text,
+        "has_staging_correction": corrected_text is not None,
+    }
+
+
+class TestListComparativas:
+    def test_acierto(self) -> None:
+        service = _make_service(FakeSource([_row()]))
+        rows = asyncio.run(service.list_comparativas())
+        assert rows[0].shadow_verdict == "send"
+        assert rows[0].owner_outcome == "approved_as_is"
+        assert rows[0].label == "acierto"
+
+    def test_desacuerdo_correction(self) -> None:
+        service = _make_service(FakeSource([_row(corrected_text="Mejor así")]))
+        rows = asyncio.run(service.list_comparativas())
+        assert rows[0].label == "desacuerdo"
+        assert rows[0].corrected_text == "Mejor así"
+
+    def test_conservadora(self) -> None:
+        service = _make_service(FakeSource([_row(evaluation=_evaluation(safety=0.5))]))
+        rows = asyncio.run(service.list_comparativas())
+        assert rows[0].shadow_verdict == "blocked"
+        assert rows[0].owner_outcome == "approved_as_is"
+        assert rows[0].label == "conservadora"
+        assert rows[0].extra["blocked_dims"] == ["safety"]
+
+    def test_escalated_owner(self) -> None:
+        service = _make_service(FakeSource([_row(status="escalated", approval_status="cancelled")]))
+        rows = asyncio.run(service.list_comparativas())
+        assert rows[0].owner_outcome == "escalated"
+        assert rows[0].label == "desacuerdo"  # shadow said send, owner escalated
+
+    def test_unparseable_evaluation_yields_none(self) -> None:
+        service = _make_service(FakeSource([_row(evaluation={"weird": 1})]))
+        rows = asyncio.run(service.list_comparativas())
+        assert rows[0].shadow_verdict is None
+        assert rows[0].label is None
+
+
+class TestCoincidenceSummary:
+    def test_rate_and_counts(self) -> None:
+        rows = [
+            _row(),  # acierto
+            _row(),  # acierto
+            _row(corrected_text="x"),  # desacuerdo
+            _row(evaluation=_evaluation(safety=0.5)),  # conservadora
+        ]
+        service = _make_service(FakeSource(rows))
+        summary = asyncio.run(service.coincidence_summary())
+        assert summary["n"] == 4
+        assert summary["aciertos"] == 2
+        assert summary["desacuerdos"] == 1
+        assert summary["conservadora"] == 1
+        assert summary["rate"] == pytest.approx(2 / 3)
+        assert len(summary["desacuerdos_list"]) == 1
+
+    def test_empty_denominator_rate_none(self) -> None:
+        service = _make_service(FakeSource([_row(evaluation=_evaluation(safety=0.5))]))
+        summary = asyncio.run(service.coincidence_summary())
+        assert summary["rate"] is None
+
+
+# ---------------------------------------------------------------------------
+# Fase B — persistent ledger writes (fake store, no DB)
+# ---------------------------------------------------------------------------
+
+
+class FakeOutcomeStore:
+    """In-memory TurnOutcomeLogStore for service tests."""
+
+    def __init__(self) -> None:
+        self.rows: dict = {}
+        self.outcome_calls: list[tuple] = []
+        self.signal_calls: list[tuple] = []
+
+    async def insert(self, record):
+        self.rows[str(record.turn_id)] = record
+        return record
+
+    async def get_by_turn_id(self, turn_id):
+        return self.rows.get(str(turn_id))
+
+    async def update_outcome(self, turn_id, *, owner_outcome, sent_score, quality_delta):
+        rec = self.rows.get(str(turn_id))
+        if rec is None:
+            return None
+        updated = rec.model_copy(
+            update={
+                "owner_outcome": owner_outcome,
+                "sent_score": sent_score,
+                "quality_delta": quality_delta,
+            }
+        )
+        self.rows[str(turn_id)] = updated
+        return updated
+
+    async def update_signal(self, turn_id, *, vip_signal):
+        rec = self.rows.get(str(turn_id))
+        if rec is None:
+            return None
+        updated = rec.model_copy(update={"vip_signal": vip_signal})
+        self.rows[str(turn_id)] = updated
+        return updated
+
+    async def list_by_vip_since(self, vip_id, *, since, limit=200):
+        return []
+
+    async def list_recent(self, *, since, limit=500):
+        return list(self.rows.values())
+
+    async def count_safety_escalations_since(self, *, since):
+        return 0
+
+
+class FakeTrustBudget:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    async def record_outcome(self, turn_id, *, event, value):
+        self.calls.append((str(turn_id), event, value))
+        return object()
+
+
+def _fase_b_service(store, trust_budget, scorer=None):
+    decider = Decider(feature_autonomous_mode=True)
+    return OutcomeLogService(
+        decider=decider,
+        store=store,
+        scorer=scorer,
+        trust_budget=trust_budget,
+        enabled=True,
+    )
+
+
+def _trace(*, evaluation: dict | None = None, draft: str = "Hola, ¿cómo estás?") -> dict:
+    return {
+        "evaluation": evaluation or _evaluation(),
+        "comprehension": _comprehension(),
+        "retrieved": {},
+        "generated_text": draft,
+    }
+
+
+class TestRecordShadow:
+    def test_writes_verdict_and_score(self) -> None:
+        store = FakeOutcomeStore()
+        svc = _fase_b_service(store, FakeTrustBudget(), scorer=lambda text, vip_name=None: 0.8)
+        turn_id = uuid4()
+        vip_id = uuid4()
+
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace()))
+
+        rec = store.rows[str(turn_id)]
+        assert rec.shadow_verdict == "send"
+        assert rec.draft_score == pytest.approx(0.8)
+        assert rec.owner_outcome is None
+
+    def test_blocked_with_dims(self) -> None:
+        store = FakeOutcomeStore()
+        svc = _fase_b_service(store, FakeTrustBudget())
+        turn_id = uuid4()
+
+        asyncio.run(
+            svc.record_shadow(turn_id, vip_id=uuid4(), trace=_trace(evaluation=_evaluation(safety=0.5)))
+        )
+
+        rec = store.rows[str(turn_id)]
+        assert rec.shadow_verdict == "blocked"
+        assert rec.blocked_dims == ["safety"]
+
+    def test_disabled_is_noop(self) -> None:
+        store = FakeOutcomeStore()
+        svc = OutcomeLogService(
+            decider=Decider(feature_autonomous_mode=True),
+            store=store,
+            enabled=False,
+        )
+        asyncio.run(svc.record_shadow(uuid4(), vip_id=uuid4(), trace=_trace()))
+        assert store.rows == {}
+
+    def test_no_trace_is_noop(self) -> None:
+        store = FakeOutcomeStore()
+        svc = _fase_b_service(store, FakeTrustBudget())
+        asyncio.run(svc.record_shadow(uuid4(), vip_id=uuid4(), trace=None))
+        assert store.rows == {}
+
+
+class TestRecordOwnerOutcome:
+    def test_corrected_computes_delta(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(
+            store, trust, scorer=lambda text, vip_name=None: (0.9 if "mejor" in text else 0.7)
+        )
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace(draft="borrador")))
+
+        updated = asyncio.run(
+            svc.record_owner_outcome(
+                turn_id, owner_outcome="corrected", sent_text="mejor texto", vip_id=vip_id
+            )
+        )
+
+        assert updated is not None
+        assert updated.owner_outcome == "corrected"
+        assert updated.sent_score == pytest.approx(0.9)
+        assert updated.quality_delta == pytest.approx(0.9 - 0.7)
+        assert ("label", "corrected") in [(e, v) for _t, e, v in trust.calls]
+
+    def test_escalated_has_no_sent_score(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        asyncio.run(svc.record_shadow(turn_id, vip_id=uuid4(), trace=_trace()))
+
+        updated = asyncio.run(
+            svc.record_owner_outcome(turn_id, owner_outcome="escalated", sent_text=None, vip_id=uuid4())
+        )
+
+        assert updated.owner_outcome == "escalated"
+        assert updated.sent_score is None
+        assert updated.quality_delta is None
+
+
+class TestRecordReaction:
+    def test_signal_persisted_and_trust_event(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        asyncio.run(svc.record_shadow(turn_id, vip_id=uuid4(), trace=_trace()))
+
+        updated = asyncio.run(svc.record_reaction(turn_id, vip_signal="negative"))
+
+        assert updated.vip_signal == "negative"
+        assert trust.calls[-1] == (str(turn_id), "signal", "negative")
+

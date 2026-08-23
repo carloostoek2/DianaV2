@@ -159,6 +159,27 @@ class Settings(BaseSettings):
     trust_dispersion_high: float = 0.25    # 5.2: dispersión del EvaluationProfile que invalida autoenvío
     trust_trend_window_days: int = 14      # ventana "tendencia reciente" de la ficha (EA-06)
 
+    # Fila 4 — Camino a la autonomía (SPEC-AUTONOMIA-CALIBRACION.md). All
+    # default off; each phase behind its own flag (regla de oro AGENTS.md §1).
+    feature_autonomy_readiness_enabled: bool = False
+    # Fase A: C1 motor de coincidencia + comparativas (panel, read-only).
+    feature_autonomy_coincidence_enabled: bool = False
+    # Fase B: C2 heurística H1 + C3 señal H2 + escritura turn_outcome_log (030).
+    feature_autonomy_quality_enabled: bool = False
+    # Fase D: C6 puerta de recomendación + botón de activación por VIP.
+    feature_autonomy_recommendation_enabled: bool = False
+    # C3: ventana de reacción del VIP tras una entrega (horas). Constante fija
+    # con override manual por system_config clave `outcome_reaction`; NUNCA
+    # auto-calibrada.
+    outcome_reaction_window_hours: int = 6
+    # C6 puerta (aprobadas por producto, spec §8). Ventana de coincidencia.
+    autonomy_window_days: int = 14
+    # Umbral de confianza por (VIP, categoría) para recomendar (coincide con
+    # trust_budget_threshold; constante espejo del spec).
+    autonomy_confidence_min: float = 0.9
+    # Tasa de coincidencia mínima para recomendar (spec §8).
+    autonomy_match_rate_min: float = 0.95
+
     # Ops surface (Telegram process edge) — single-instance defaults.
     # health_host is loopback-only (SEC-HEALTH-01); no public bind via env.
     health_host: str = "127.0.0.1"

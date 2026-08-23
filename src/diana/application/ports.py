@@ -398,6 +398,10 @@ class VipStore(Protocol):
         """Set display_name for an active VIP. None if missing or inactive. Never reactivates."""
         ...
 
+    async def set_auto_send(self, vip_id: UUID, enabled: bool) -> bool:
+        """Fila 4 C6: toggle ``auto_send`` (L2 double gate). False if unknown."""
+        ...
+
 
 @runtime_checkable
 class LinkEventStore(Protocol):
@@ -599,6 +603,122 @@ class VipTrustBudgetRecord(BaseModel):
     last_correction_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class ProfileSynthesisQueueRecord(BaseModel):
+    """profile_synthesis_queue row shape (Fila 4 C4 — durable synthesis queue)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vip_id: UUID
+    trigger: str  # volume | session_close | strong_signal | emotional_signal
+    status: str = "pending"  # pending | processing
+    attempts: int = 0
+    enqueued_at: datetime | None = None
+    started_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@runtime_checkable
+class ProfileSynthesisQueueStore(Protocol):
+    """Durable synthesis-queue persistence (no trigger logic here)."""
+
+    async def upsert_pending(self, vip_id: UUID, trigger: str) -> ProfileSynthesisQueueRecord: ...
+
+    async def drain(self, limit: int = 100) -> list[ProfileSynthesisQueueRecord]:
+        """Claim pending → processing atomically (CAS)."""
+        ...
+
+    async def complete(self, vip_id: UUID) -> bool:
+        """Remove the row after synthesis."""
+        ...
+
+    async def recover_stale(self, *, max_age_seconds: int = 3600) -> int:
+        """Reset abandoned processing rows back to pending."""
+        ...
+
+    async def list_pending(self, limit: int = 100) -> list[ProfileSynthesisQueueRecord]: ...
+
+
+class TurnOutcomeLogRecord(BaseModel):
+    """turn_outcome_log row shape (Fila 4, SPEC-AUTONOMIA-CALIBRACION §7).
+
+    Written post-turn (shadow side) and updated when the owner resolves
+    (owner_outcome/sent_score/quality_delta) and when the VIP reaction window
+    closes (vip_signal). ``blocked_dims`` is the list of evaluation dimensions
+    below the autonomous mins when ``shadow_verdict == "blocked"`` (panel
+    "cuellos por dimensión"). Pure calibration metric — never feeds memories /
+    examples / vip_profile (anti-contamination).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID | None = None
+    turn_id: UUID
+    vip_id: UUID | None
+    shadow_verdict: str | None = None  # send | blocked | escalate | doctrine
+    shadow_reason: str | None = None
+    owner_outcome: str | None = None  # approved_as_is | corrected | escalated
+    draft_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    sent_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    quality_delta: float | None = None
+    blocked_dims: list[str] = Field(default_factory=list)
+    vip_signal: str | None = None  # positive | neutral | negative | silence
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@runtime_checkable
+class TurnOutcomeLogStore(Protocol):
+    """turn_outcome_log persistence (Fila 4 — the learning circle ledger)."""
+
+    async def insert(self, record: TurnOutcomeLogRecord) -> TurnOutcomeLogRecord: ...
+
+    async def get_by_turn_id(self, turn_id: UUID) -> TurnOutcomeLogRecord | None: ...
+
+    async def update_outcome(
+        self,
+        turn_id: UUID,
+        *,
+        owner_outcome: str,
+        sent_score: float | None,
+        quality_delta: float | None,
+    ) -> TurnOutcomeLogRecord | None: ...
+
+    async def update_signal(
+        self, turn_id: UUID, *, vip_signal: str
+    ) -> TurnOutcomeLogRecord | None: ...
+
+    async def list_by_vip_since(
+        self, vip_id: UUID, *, since: datetime, limit: int = 200
+    ) -> list[TurnOutcomeLogRecord]: ...
+
+    async def list_recent(
+        self, *, since: datetime, limit: int = 500
+    ) -> list[TurnOutcomeLogRecord]: ...
+
+    async def count_safety_escalations_since(self, *, since: datetime) -> int: ...
+
+    async def find_pending_signal_for_chat(
+        self, chat_id: int, *, since: datetime
+    ) -> TurnOutcomeLogRecord | None:
+        """C3: most recent row for a chat still missing its VIP reaction."""
+        ...
+
+    async def list_signal_pending(
+        self, *, window_hours: int, limit: int = 200
+    ) -> list[dict]:
+        """C3 job: rows without a reaction whose window already closed."""
+        ...
+
+
+@runtime_checkable
+class OutcomeSourceReader(Protocol):
+    """Fase A on-the-fly source: finished VIP turns with decision context."""
+
+    async def list_finished_source_turns(
+        self, *, window_days: int, limit: int = 200
+    ) -> list[dict]: ...
 
 
 @runtime_checkable
@@ -1131,10 +1251,13 @@ __all__ = [
     "MemoryInsert",
     "MessageHistoryWriter",
     "OwnerNotifierPort",
+    "OutcomeSourceReader",
     "PendingApprovalStore",
     "PendingDeliveryStore",
     "PersonaAdminStore",
     "PersonaVersionRecord",
+    "ProfileSynthesisQueueRecord",
+    "ProfileSynthesisQueueStore",
     "PromoExecutionRecord",
     "PromoExecutionStore",
     "PromoTriggerRecord",
@@ -1147,6 +1270,8 @@ __all__ = [
     "TraceReader",
     "TrainingModeStore",
     "TurnCategoryLogRecord",
+    "TurnOutcomeLogRecord",
+    "TurnOutcomeLogStore",
     "TurnRecord",
     "TurnStore",
     "VipInboundMessage",

@@ -945,3 +945,113 @@ class EmotionalSignalLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
+
+
+class TurnOutcomeLog(Base):
+    """Per-turn learning-circle ledger (Fila 4, migration 030).
+
+    The Fila 4 ledger: written post-turn (shadow verdict + draft score),
+    updated when the owner resolves (outcome + sent score + quality delta) and
+    when the VIP reaction window closes (vip_signal). Vocabularies are TEXT +
+    CHECK (never native PG enums), mirroring the other agent-evolution tables.
+
+    ANTI-CONTAMINATION: this table is a pure calibration metric — it must
+    never feed ``memories``, ``examples`` or ``vip_profile``.
+    """
+
+    __tablename__ = "turn_outcome_log"
+    __table_args__ = (
+        CheckConstraint(
+            "shadow_verdict IN ('send','blocked','escalate','doctrine')",
+            name="ck_turn_outcome_log_shadow_verdict",
+        ),
+        CheckConstraint(
+            "owner_outcome IS NULL OR owner_outcome IN "
+            "('approved_as_is','corrected','escalated')",
+            name="ck_turn_outcome_log_owner_outcome",
+        ),
+        CheckConstraint(
+            "vip_signal IS NULL OR vip_signal IN "
+            "('positive','neutral','negative','silence')",
+            name="ck_turn_outcome_log_vip_signal",
+        ),
+        Index(
+            "ix_turn_outcome_log_vip_id_created_at",
+            "vip_id",
+            text("created_at DESC"),
+        ),
+        Index("ix_turn_outcome_log_created_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"),
+    )
+    turn_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("turns.id"), nullable=False, unique=True,
+    )
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id"), nullable=False,
+    )
+    shadow_verdict: Mapped[str] = mapped_column(Text, nullable=False)
+    shadow_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sent_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_delta: Mapped[float | None] = mapped_column(Float, nullable=True)
+    blocked_dims: Mapped[list[Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("'[]'::jsonb")
+    )
+    vip_signal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class ProfileSynthesisQueue(Base):
+    """Durable profile-synthesis queue (Fila 4 C4, migration 031).
+
+    Persists the in-memory synthesis guard (``ProfileSynthesisTriggerService``)
+    so pending/processing resynthesis survives restarts: ``pending`` → claimed
+    atomically to ``processing`` by the job's drain; ``recover_stale`` resets
+    abandoned ``processing`` rows back to ``pending`` at job start (pattern
+    ``backfill_queue.recover_stale``).
+
+    ``trigger`` vocab: volume | session_close | strong_signal | emotional_signal
+    (Text + CHECK, never a native PG enum).
+    """
+
+    __tablename__ = "profile_synthesis_queue"
+    __table_args__ = (
+        CheckConstraint(
+            "trigger IN "
+            "('volume','session_close','strong_signal','emotional_signal')",
+            name="ck_profile_synthesis_queue_trigger",
+        ),
+        CheckConstraint(
+            "status IN ('pending','processing')",
+            name="ck_profile_synthesis_queue_status",
+        ),
+    )
+
+    vip_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vips.id", ondelete="CASCADE"), primary_key=True,
+    )
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'")
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    enqueued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )

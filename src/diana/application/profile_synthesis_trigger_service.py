@@ -31,7 +31,10 @@ from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
-from diana.application.ports import VipProfileRecord
+from diana.application.ports import (
+    ProfileSynthesisQueueStore,
+    VipProfileRecord,
+)
 from diana.application.strong_signal_heuristics import match as strong_signal_match
 from diana.cognitive.models import SynthesisTrigger
 
@@ -77,6 +80,10 @@ class ProfileSynthesisTriggerService:
         activity: SynthesisActivitySource,
         volume_threshold: int,
         inactivity_minutes: int,
+        # Fila 4 C4: optional durable queue (migration 031). When wired, the
+        # per-turn hook and the scan PERSIST enqueues; the job drains from the
+        # queue and releases on completion — pending work survives restarts.
+        queue: ProfileSynthesisQueueStore | None = None,
     ) -> None:
         self._profile_reader = profile_reader
         self._activity = activity
@@ -84,6 +91,10 @@ class ProfileSynthesisTriggerService:
         self._inactivity_minutes = max(1, int(inactivity_minutes))
         self._pending: dict[UUID, SynthesisTrigger] = {}
         self._in_flight: set[UUID] = set()
+        self._queue = queue
+
+    def has_durable_queue(self) -> bool:
+        return self._queue is not None
 
     def apply_overrides(self, config: dict) -> None:
         """Manual threshold override from ``system_config`` key ``profile_synthesis``.
@@ -117,6 +128,27 @@ class ProfileSynthesisTriggerService:
         """
         if vip_id in self._pending or vip_id in self._in_flight:
             return False
+        self._pending[vip_id] = trigger
+        return True
+
+    async def enqueue_durable(self, vip_id: UUID, trigger: SynthesisTrigger) -> bool:
+        """In-memory dedup + durable pending upsert (Fila 4 C4).
+
+        Returns False when the VIP is already pending/in-flight in THIS
+        process (fast dedup — no DB write). Otherwise persists the pending row
+        (a re-enqueue from another process refreshes the trigger).
+        """
+        if vip_id in self._pending or vip_id in self._in_flight:
+            return False
+        if self._queue is not None:
+            try:
+                await self._queue.upsert_pending(vip_id, trigger)
+            except Exception:
+                logger.exception(
+                    "profile_synthesis_queue_enqueue_failed",
+                    extra={"vip_id": str(vip_id), "trigger": trigger},
+                )
+                # Fail-open: keep the in-memory guard so the job still sees it.
         self._pending[vip_id] = trigger
         return True
 
@@ -157,7 +189,7 @@ class ProfileSynthesisTriggerService:
         # The guard is re-checked inside enqueue (an await may have raced with
         # the scan/drain); when it dedups, nothing was enqueued → return None,
         # coherent with the docstring contract (fix round nit).
-        if trigger is not None and not self.enqueue(vip_id, trigger):
+        if trigger is not None and not await self._enqueue(vip_id, trigger):
             return None
         return trigger
 
@@ -181,9 +213,17 @@ class ProfileSynthesisTriggerService:
                 or last_activity > profile.last_synthesized_at
             )
             if has_new:
-                if self.enqueue(vip_id, "session_close"):
+                if await self._enqueue(vip_id, "session_close"):
                     enqueued += 1
         return enqueued
+
+    async def _enqueue(
+        self, vip_id: UUID, trigger: SynthesisTrigger
+    ) -> bool:
+        """Route to the in-memory or durable enqueue (Fila 4 C4)."""
+        if self._queue is not None:
+            return await self.enqueue_durable(vip_id, trigger)
+        return self.enqueue(vip_id, trigger)
 
     def drain_pending(self) -> list[tuple[UUID, SynthesisTrigger]]:
         """Move every pending VIP to in-flight and return ``[(vip_id, trigger)]``.
@@ -197,6 +237,45 @@ class ProfileSynthesisTriggerService:
             self._in_flight.add(vip_id)
         return items
 
+    async def drain_pending_durable(self, limit: int = 100) -> list[tuple[UUID, SynthesisTrigger]]:
+        """Claim pending rows from the durable queue (CAS) + in-memory guard.
+
+        Returns ``[(vip_id, trigger)]`` for the job to synthesize; ``release``
+        (durable) must be called in a ``finally`` per item.
+        """
+        if self._queue is None:
+            return self.drain_pending()
+        claimed = await self._queue.drain(limit=limit)
+        items: list[tuple[UUID, SynthesisTrigger]] = []
+        for record in claimed:
+            if record.vip_id in self._pending:
+                del self._pending[record.vip_id]
+            self._in_flight.add(record.vip_id)
+            items.append((record.vip_id, record.trigger))
+        return items
+
     def release(self, vip_id: UUID) -> None:
         """Allow ``vip_id`` to be enqueued again after synthesis (finally)."""
         self._in_flight.discard(vip_id)
+
+    async def release_durable(self, vip_id: UUID) -> None:
+        """Durable release: remove the queue row + in-memory release (finally)."""
+        if self._queue is not None:
+            try:
+                await self._queue.complete(vip_id)
+            except Exception:
+                logger.exception(
+                    "profile_synthesis_queue_release_failed",
+                    extra={"vip_id": str(vip_id)},
+                )
+        self._in_flight.discard(vip_id)
+
+    async def recover_stale(self, max_age_seconds: int = 3600) -> int:
+        """Reset abandoned ``processing`` rows back to ``pending`` (job start)."""
+        if self._queue is None:
+            return 0
+        try:
+            return await self._queue.recover_stale(max_age_seconds=max_age_seconds)
+        except Exception:
+            logger.exception("profile_synthesis_queue_recover_failed")
+            return 0

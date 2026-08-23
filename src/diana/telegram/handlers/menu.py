@@ -24,6 +24,7 @@ from aiogram.types import CallbackQuery, Message
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_shadow_service import AdminShadowService
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.autonomy_readiness_service import AutonomyReadinessService
 from diana.application.ephemeral_event_service import EphemeralEventService
 from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.ports import (
@@ -64,6 +65,8 @@ from diana.telegram.keyboards import (
     MenuCallback,
     encode_menu,
     encode_menu_vip,
+    menu_autonomy_keyboard,
+    menu_autonomy_vip_keyboard,
     menu_back_keyboard,
     menu_config_keyboard,
     menu_confirm_delete_keyboard,
@@ -262,6 +265,7 @@ _CATEGORY_KEYBOARDS: dict[str, Any] = {
     "metrics": menu_metrics_keyboard,
     "history": menu_history_keyboard,
     "sombra": menu_shadow_keyboard,
+    "autonomia": menu_autonomy_keyboard,
 }
 
 
@@ -522,6 +526,8 @@ def build_menu_router(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     shadow_admin: AdminShadowService | None = None,
+    autonomy_readiness: AutonomyReadinessService | None = None,
+    feature_autonomy_recommendation_enabled: bool = False,
     llm_config_store: Any | None = None,
     llm_default_model: str = "",
     llm_default_base_url: str = "",
@@ -543,6 +549,10 @@ def build_menu_router(
     # Flag-gate the whole panel (not just the button): with the feature off the
     # admin surface is inert, matching the sandbox/staging pattern.
     persona_admin = persona_admin if feature_persona_admin_enabled else None
+    # Fila 4: the panel only exists when the readiness service is wired.
+    autonomy_readiness = (
+        autonomy_readiness if feature_autonomy_recommendation_enabled else None
+    )
 
     def _is_owner(message: Message) -> bool:
         return is_private_owner_message(message, owner_telegram_id)
@@ -555,7 +565,10 @@ def build_menu_router(
             return
         await message.answer(
             MENU_ROOT_TEXT,
-            reply_markup=menu_root_keyboard(show_persona=feature_persona_admin_enabled),
+            reply_markup=menu_root_keyboard(
+                show_persona=feature_persona_admin_enabled,
+                show_autonomy=autonomy_readiness is not None,
+            ),
         )
 
     # ---- m:* callbacks ----
@@ -580,7 +593,10 @@ def build_menu_router(
                 await _show(
                     callback.message,
                     MENU_ROOT_TEXT,
-                    menu_root_keyboard(show_persona=feature_persona_admin_enabled),
+                    menu_root_keyboard(
+                        show_persona=feature_persona_admin_enabled,
+                        show_autonomy=autonomy_readiness is not None,
+                    ),
                 )
             return
 
@@ -645,6 +661,20 @@ def build_menu_router(
                 )
                 return
 
+            if parsed.category == "autonomia":
+                if autonomy_readiness is None:
+                    await _show(
+                        msg,
+                        "El camino a la autonomía no está disponible.",
+                        menu_back_keyboard(encode_menu("root")),
+                    )
+                    return
+                text = MENU_CATEGORY_TEXT.get(parsed.category)
+                if text is None:
+                    return
+                await _show(msg, text, menu_autonomy_keyboard())
+                return
+
             build_kb = _CATEGORY_KEYBOARDS.get(parsed.category)
             text = MENU_CATEGORY_TEXT.get(parsed.category)
             if build_kb is None or text is None:
@@ -661,6 +691,7 @@ def build_menu_router(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             shadow_admin=shadow_admin,
+            autonomy_readiness=autonomy_readiness,
             llm_config_store=llm_config_store,
             llm_default_model=llm_default_model,
             llm_default_base_url=llm_default_base_url,
@@ -841,6 +872,7 @@ async def _dispatch_action(
     admin_trace: AdminTraceService | None,
     admin_metrics: AdminMetricsService | None,
     shadow_admin: AdminShadowService | None = None,
+    autonomy_readiness: AutonomyReadinessService | None = None,
     llm_config_store: Any | None = None,
     llm_default_model: str = "",
     llm_default_base_url: str = "",
@@ -895,6 +927,73 @@ async def _dispatch_action(
                 message,
                 "Error del sistema al cargar el modo sombra. Reintenta más tarde.",
                 menu_back_keyboard(encode_menu("sombra")),
+            )
+            return
+        return
+
+    # ==================================================================
+    # Camino a la autonomía — panel C5 + activación C6 (flag-gated)
+    # ==================================================================
+    if category == "autonomia":
+        if autonomy_readiness is None:
+            await _show(
+                message,
+                "El camino a la autonomía no está disponible.",
+                menu_back_keyboard(encode_menu("root")),
+            )
+            return
+        try:
+            if action in ("global", "comparativas", "vips"):
+                if action == "global":
+                    body = await autonomy_readiness.render_global()
+                elif action == "comparativas":
+                    body = await autonomy_readiness.render_comparativas()
+                else:
+                    body = await autonomy_readiness.render_by_vip()
+                    readiness = await autonomy_readiness.list_readiness()
+                    buttons: list[tuple[int, str, bool, bool]] = []
+                    for item in readiness:
+                        vip = await vips.get_by_id(item.vip_id)
+                        if vip is None:
+                            continue
+                        buttons.append(
+                            (
+                                vip.telegram_user_id,
+                                item.display_name,
+                                item.ready,
+                                item.auto_send,
+                            )
+                        )
+                    await _show(message, body, menu_autonomy_vip_keyboard(buttons))
+                    return
+                await _show(message, body, menu_autonomy_keyboard())
+                return
+            if action in ("activate", "deactivate"):
+                user_id_raw = parsed.extra
+                try:
+                    user_id = int(user_id_raw or "")
+                except (TypeError, ValueError):
+                    user_id = 0
+                vip = await vips.get_by_telegram_user_id(user_id)
+                if vip is None:
+                    await _show(
+                        message,
+                        "El VIP ya no existe.",
+                        menu_back_keyboard(encode_menu("autonomia")),
+                    )
+                    return
+                if action == "activate":
+                    ok, text = await autonomy_readiness.activate(vip.id)
+                else:
+                    ok, text = await autonomy_readiness.deactivate(vip.id)
+                await _show(message, text, menu_autonomy_keyboard())
+                return
+        except Exception:
+            logger.exception("autonomy_menu_render_failed")
+            await _show(
+                message,
+                "Error del sistema al cargar el panel. Reintenta más tarde.",
+                menu_back_keyboard(encode_menu("autonomia")),
             )
             return
         return

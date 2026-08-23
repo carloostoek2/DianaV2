@@ -221,6 +221,11 @@ class TurnOrchestrator:
         mood_engine: object | None = None,
         vip_mood_state: object | None = None,
         trust_budget: object | None = None,
+        # Fila 4 (SPEC-AUTONOMIA-CALIBRACION): outcome-log service (flag-gated)
+        # + the readiness kill for the shadow trust increment (when the Fila 4
+        # layer is ON, trust adjustments come ONLY from resolved outcomes).
+        outcome_log: object | None = None,
+        feature_autonomy_readiness_enabled: bool = False,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -260,6 +265,13 @@ class TurnOrchestrator:
         # Evo-Agente Fase 5: trust-budget service (flag-gated; None when flag
         # off → ``_run_trust_budget`` is a no-op, byte-identical).
         self._trust_budget = trust_budget
+        # Fila 4 (SPEC-AUTONOMIA-CALIBRACION): outcome-log service (flag-gated;
+        # None → both outcome hooks are no-ops) and the readiness kill-switch
+        # for the SHADOW trust increment (readiness ON → trust is outcome-
+        # driven via ``TrustBudgetService.record_outcome``; the per-turn
+        # "would have sent" increment would double-count).
+        self._outcome_log = outcome_log
+        self._autonomy_readiness = bool(feature_autonomy_readiness_enabled)
         # Per-VIP mood engines forked from the injected prototype with a stable
         # seed per VIP (review round 1, S5) — deterministic bounded noise so the
         # same conversation reproduces the same mood trace across restarts.
@@ -477,6 +489,12 @@ class TurnOrchestrator:
                 extra={"turn_id": str(turn_id), "chat_id": chat_id},
             )
             return
+        # Fila 4 (SPEC-AUTONOMIA-CALIBRACION §4): the SHADOW half of the
+        # learning circle — re-decide the stored turn with the autonomy switch
+        # ON and write shadow_verdict + draft_score to turn_outcome_log.
+        # Best-effort (never breaks the turn); flag-gated (no-op when the
+        # service is None); idempotent by turn_id.
+        await self._run_outcome_log(turn_id, chat_id)
         await self._learning.run_post_turn(turn_id)
         # F5 Pool 3 (F5-04 / REQ-MEM-07): post-turn incremental memory
         # extraction, composed AFTER LearningService (never modified). Best-
@@ -890,6 +908,11 @@ class TurnOrchestrator:
         """
         if self._trust_budget is None:
             return
+        # Fila 4 readiness ON → the trust budget is outcome-driven only
+        # (record_outcome fires on resolved owner outcomes). The per-turn
+        # shadow increment would double-count against it.
+        if self._autonomy_readiness:
+            return
         if incoming.vip_id is None:
             return
         if category_log is None or not category_log.would_autonomous:
@@ -927,6 +950,105 @@ class TurnOrchestrator:
         except Exception:
             log_swallowed(
                 logger, "trust_budget_error", turn_id=str(turn_id), chat_id=chat_id
+            )
+
+    async def _run_outcome_log(self, turn_id: UUID, chat_id: int) -> None:
+        """Fila 4 shadow half (C1/C2): write the outcome-log row post-turn.
+
+        Reads the committed trace, re-decides it with the SHADOW Decider
+        (autonomy ON) and persists shadow_verdict + draft_score. Best-effort,
+        flag-gated, idempotent by turn_id. Skips turns whose decision was
+        never applied (superseded / failed) and non-VIP turns.
+        """
+        if self._outcome_log is None:
+            return
+        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+            return
+        trace_reader = self._trace_reader
+        if trace_reader is None:
+            return
+        try:
+            turn = await self._coordinator.get_turn(turn_id)
+            if turn is None:
+                return
+            # Only turns whose decision was actually applied (delivered /
+            # escalated / pending_approval / gray_zone / ...). Superseded and
+            # failed turns never reached an owner outcome — no row.
+            if turn.status in (
+                TurnStatus.SUPERSEDED.value,
+                TurnStatus.FAILED.value,
+            ):
+                return
+            if turn.vip_id is None:
+                return
+            trace = await trace_reader.get_full_trace(turn_id)
+            if trace is None:
+                return
+            record = await self._outcome_log.record_shadow(
+                turn_id, vip_id=turn.vip_id, trace=trace
+            )
+            if record is not None:
+                logger.info(
+                    "outcome_log_shadow",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": chat_id,
+                        "shadow_verdict": record.shadow_verdict,
+                    },
+                )
+        except Exception:
+            log_swallowed(
+                logger, "outcome_log_error", turn_id=str(turn_id), chat_id=chat_id
+            )
+
+    async def _run_outcome_reaction(
+        self,
+        turn_id: UUID,
+        chat_id: int,
+        incoming: VipInboundMessage,
+    ) -> None:
+        """Fila 4 C3 immediate hook: classify THIS message as the reaction.
+
+        When the VIP follows up after a delivered turn (within the reaction
+        window), the previous outcome row is resolved by chat and the current
+        message + its comprehension classify the reaction (H2). Best-effort
+        and idempotent (record_reaction no-ops on the same signal).
+        """
+        if self._outcome_log is None:
+            return
+        if incoming.vip_id is None:
+            return
+        trace_reader = self._trace_reader
+        if trace_reader is None:
+            return
+        try:
+            window = self._outcome_log.reaction_window_seconds()
+            since = datetime.now(UTC) - timedelta(seconds=window)
+            pending = await self._outcome_log.find_pending_signal_for_chat(
+                chat_id, since=since
+            )
+            if pending is None:
+                return
+            trace = await trace_reader.get_full_trace(turn_id)
+            comprehension = (trace or {}).get("comprehension")
+            signal = self._outcome_log.classify_reaction(
+                incoming.text, comprehension
+            )
+            await self._outcome_log.record_reaction(
+                pending.turn_id, vip_signal=signal
+            )
+            logger.info(
+                "outcome_reaction",
+                extra={
+                    "turn_id": str(pending.turn_id),
+                    "chat_id": chat_id,
+                    "follow_up_turn_id": str(turn_id),
+                    "signal": signal,
+                },
+            )
+        except Exception:
+            log_swallowed(
+                logger, "outcome_reaction_error", turn_id=str(turn_id), chat_id=chat_id
             )
 
     async def _maybe_post_turn_terminal(
@@ -1990,6 +2112,10 @@ class TurnOrchestrator:
         await self._run_trust_budget(
             turn_id, incoming.chat_id, incoming, category_log, vip_epoch
         )
+        # Fila 4 (C3 immediate): this VIP message may be the reaction to the
+        # last delivered turn of the chat (within the reaction window). Flag-
+        # gated + best-effort; idempotent by signal value.
+        await self._run_outcome_reaction(turn_id, incoming.chat_id, incoming)
         await self._run_profile_synthesis_trigger(
             turn_id, incoming.chat_id, incoming, signal
         )

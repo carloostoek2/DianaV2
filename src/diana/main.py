@@ -22,6 +22,7 @@ from diana.jobs.backfill import BackfillJob
 from diana.jobs.calibration import CalibrationJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
 from diana.jobs.metrics import MetricsJob
+from diana.jobs.outcome_reaction import OutcomeReactionJob
 from diana.jobs.profile_synthesis_job import ProfileSynthesisJob
 from diana.jobs.recontact import RecontactJob
 from diana.jobs.trace_purge import TracePurgeJob
@@ -107,6 +108,9 @@ async def async_main() -> None:
     # F3 Pool 3: observational metrics always; calibration only if flag on.
     metrics_job = _setup_metrics_job(app)
     calibration_job = _setup_calibration_job(app)
+    # Fila 4 (C3): close VIP reaction windows (classify / silence) — only when
+    # the quality measurement flag is on.
+    outcome_reaction_job = _setup_outcome_reaction_job(app)
     # Evo-Agente Fase 1: profile-synthesis cycle (scan + drain + synthesize).
     profile_synthesis_job = _setup_profile_synthesis_job(app)
     # F5 Pool 2: backfill scheduler (flag-gated; recover_stale inside start()).
@@ -151,6 +155,7 @@ async def async_main() -> None:
         await _cancel_job(backfill_job, "backfill_job")
         await _cancel_job(profile_synthesis_job, "profile_synthesis_job")
         await _cancel_job(calibration_job, "calibration_job")
+        await _cancel_job(outcome_reaction_job, "outcome_reaction_job")
         await _cancel_job(metrics_job, "metrics_job")
         await _cancel_job(recontact_job, "recontact_job")
         await _cancel_job(purge_job, "purge_job")
@@ -273,6 +278,33 @@ def _setup_calibration_job(app: AppContainer) -> asyncio.Task | None:
     job = CalibrationJob(app.calibration, interval_seconds=3600)
     task = asyncio.create_task(job.start())
     logger.info("calibration_job_started", extra={"interval_seconds": 3600})
+    return task
+
+
+def _setup_outcome_reaction_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the C3 reaction backstop only when the Fila 4 quality flag is on."""
+    if (
+        not app.settings.feature_autonomy_quality_enabled
+        or app.outcome_log is None
+        or app.history is None
+    ):
+        logger.info("outcome_reaction_job_skipped_flag_off")
+        return None
+
+    job = OutcomeReactionJob(
+        app.outcome_log,
+        app.history,
+        window_hours=app.settings.outcome_reaction_window_hours,
+        interval_seconds=3600,
+    )
+    task = asyncio.create_task(job.start())
+    logger.info(
+        "outcome_reaction_job_started",
+        extra={
+            "window_hours": app.settings.outcome_reaction_window_hours,
+            "interval_seconds": 3600,
+        },
+    )
     return task
 
 

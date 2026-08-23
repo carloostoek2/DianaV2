@@ -189,6 +189,59 @@ class TrustBudgetService:
             correction_time=self._clock(),
         )
 
+    async def record_outcome(
+        self, turn_id: Any, *, event: str, value: str
+    ) -> VipTrustBudgetRecord | None:
+        """Fila 4 outcome-driven trust event (SPEC-AUTONOMIA-CALIBRACION §7).
+
+        When the Fila 4 readiness layer is ON, this is the SINGLE source of
+        trust adjustments (the shadow ``record_autonomous`` increment and the
+        ``record_correction`` decrement are disabled to avoid double counting).
+        Same asymmetric mechanics, event-mapped:
+
+        - ``event="label"`` (C1): ``desacuerdo`` → −decrement (correction);
+          ``acierto`` → +increment; ``conservadora`` → no change.
+        - ``event="signal"`` (C3): ``negative`` → −decrement;
+          ``positive`` → +increment; ``neutral``/``silence`` → no change.
+
+        Resolves (VIP, category) by ``turn_id`` via ``turn_category_log``
+        (same reader as ``record_correction``); unclassified / non-VIP turns
+        are a no-op. Never auto-calibrated — the deltas are the fixed
+        conservative +0.05 / −0.20 pair.
+        """
+        log = await self._turn_category_log.get_by_turn_id(turn_id)
+        if log is None or log.vip_id is None:
+            return None
+        if event == "label":
+            if value == "desacuerdo":
+                return await self._store.decrement_correction(
+                    log.vip_id,
+                    log.category,
+                    delta=self._decrement,
+                    initial=self._initial,
+                    correction_time=self._clock(),
+                )
+            if value == "acierto":
+                return await self._store.increment_autonomous(
+                    log.vip_id, log.category, delta=self._increment, initial=self._initial
+                )
+            return None  # conservadora → no change
+        if event == "signal":
+            if value == "negative":
+                return await self._store.decrement_correction(
+                    log.vip_id,
+                    log.category,
+                    delta=self._decrement,
+                    initial=self._initial,
+                    correction_time=self._clock(),
+                )
+            if value == "positive":
+                return await self._store.increment_autonomous(
+                    log.vip_id, log.category, delta=self._increment, initial=self._initial
+                )
+            return None  # neutral / silence → no change
+        return None
+
     # -- double gate (EA-01, exposed pure, NOT wired to any real send) ---------
 
     def get_threshold(self, turn_category: TurnCategory) -> float:

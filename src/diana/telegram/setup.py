@@ -9,6 +9,7 @@ from aiogram import Dispatcher, Router
 
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_shadow_service import AdminShadowService
+from diana.application.autonomy_readiness_service import AutonomyReadinessService
 from diana.application.ephemeral_event_service import EphemeralEventService
 from diana.application.link import LinkCoordinator
 from diana.application.memory_approval_service import MemoryApprovalService
@@ -107,6 +108,9 @@ def build_dispatcher(
     admin_trace: AdminTraceService | None = None,
     admin_metrics: AdminMetricsService | None = None,
     shadow_admin: AdminShadowService | None = None,
+    # Fila 4: panel 🧭 Camino a la autonomía (C5/C6; flag-gated at menu).
+    autonomy_readiness: AutonomyReadinessService | None = None,
+    feature_autonomy_recommendation_enabled: bool = False,
     llm_config_store: Any | None = None,
     llm_default_model: str = "",
     llm_default_base_url: str = "",
@@ -231,6 +235,8 @@ def build_dispatcher(
             admin_trace=admin_trace,
             admin_metrics=admin_metrics,
             shadow_admin=shadow_admin,
+            autonomy_readiness=autonomy_readiness,
+            feature_autonomy_recommendation_enabled=feature_autonomy_recommendation_enabled,
             llm_config_store=llm_config_store,
             llm_default_model=llm_default_model,
             llm_default_base_url=llm_default_base_url,

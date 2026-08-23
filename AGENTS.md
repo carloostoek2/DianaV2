@@ -96,7 +96,7 @@ Principios rectores (no negociables):
 6. Toda decisión es reconstruible a partir de objetos persistidos.
 7. El Turn Coordinator garantiza la serialización por chat (REQ-NFR-02).
 
-Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
+Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
 ---
 
@@ -306,6 +306,46 @@ business_message VIP
 
 Invariante: que el Analista marque `saludar` NO basta. Sin keyword de saludo o con más de 4 palabras, nunca se usa la plantilla.
 
+4.18 Círculo de aprendizaje de la Fila 4 (FEATURE_AUTONOMY_QUALITY_ENABLED)
+
+```
+Turno real terminado (VIP)
+  → POST-TURNO (nunca en el pipeline):
+      → OutcomeLogService re-decide el turno guardado con el Decisor sombra
+        (autonomía ON) → shadow_verdict (send/blocked/escalate/doctrine)
+      → Heurística H1 puntúa el borrador → draft_score (sin LLM)
+      → Escribe turn_outcome_log (migración 030; idempotente por turn_id)
+  → Dueña resuelve (aprobar / corregir / escalar):
+      → AdminService actualiza owner_outcome + sent_score + quality_delta
+      → TrustBudgetService.record_outcome (evento label: acierto +0.05 /
+        desacuerdo −0.20 / conservadora 0) — ÚNICA fuente de trust con Fila 4 ON
+  → Reacción del VIP (C3, ventana configurable):
+      → Hook inmediato al llegar el siguiente mensaje (emotion + léxico H2)
+      → Job de respaldo marca silence / clasifica por texto (jobs/outcome_reaction.py)
+      → record_outcome (evento signal: positive +0.05 / negative −0.20)
+```
+
+Invariantes: la evaluación es 100 % heurística (C1 compara, C2 puntúa, C3 lee reacción — sin LLM); todos los escritos son post-turno; `turn_outcome_log` es métrica pura (anti-contaminación: nunca alimenta `memories`/`examples`/`vip_profile`); con `FEATURE_AUTONOMY_READINESS_ENABLED` ON el trust budget es guiado por resultados (el incremento sombra `record_autonomous` y `record_correction` quedan desactivados para evitar doble conteo).
+
+4.19 Panel "🧭 Camino a la autonomía" + activación por VIP (FEATURE_AUTONOMY_RECOMMENDATION_ENABLED)
+
+```
+Dueña abre el panel (sección del menú, junto al modo sombra)
+  → AutonomyReadinessService renderiza:
+      - Preparación global (coincidencia vs 95 %, cuellos por dimensión,
+        escalaciones por seguridad)
+      - Comparativas (aciertos/desacuerdos/conservadora + lista de desacuerdos)
+      - Por VIP (✅ listo / ⏳ falta cuánto) con evolución de confianza
+  → Botón "Activar" por VIP SOLO si se cumplen las 3 condiciones:
+      confianza ≥ 0.90 · coincidencia global ≥ 95 % (2 semanas)
+      · cero escalaciones por seguridad en la ventana
+  → Activar escribe vips.auto_send (L2 de la doble puerta) — la recomendación
+    NUNCA envía por su cuenta; el kill-switch maestro FEATURE_AUTONOMOUS_MODE
+    sigue gobernando el envío real
+```
+
+Invariante: la activación es un botón por VIP; nunca automática. El Decisor y el Director no se tocan (la capa solo mide y recomienda).
+
 ---
 
 4. Contratos críticos que ningún agente puede romper
@@ -468,6 +508,7 @@ SPEC-FASE4.md Atención general (canal no-VIP)
 SPEC-FASE5.md Perfil de memoria por VIP
 SPEC-FASE6.md Vínculo Lucien→Diana (migración real 028)
 SPEC-FEEDBACK.md Destacar/Reprender y bancos gold/vip (migración real 029)
+SPEC-AUTONOMIA-CALIBRACION.md Fila 4 — Camino a la autonomía (círculo de aprendizaje, migraciones 030–031)
 ARCHITECTURE.md Arquitectura consolidada del sistema actual (entrada técnica única; mapa de módulos y flujos en §2–§3)
 contratos_restantes.md · contrato_analista.md Contratos detallados de los nodos (Anexos A y C+)
 ANEXO_T-TRAZABILIDAD.md Sistema de trazabilidad interactiva (Anexo T)
@@ -475,6 +516,6 @@ AGENTS.md (este) Límites que ningún agente puede cruzar al tocar el código, c
 
 ---
 
-Fin de AGENTS.md v1.4 (Fase 3 + flujos 4.13–4.17; candado de texto del saludo 2026-08-17)
+Fin de AGENTS.md v1.5 (Fase 3 + flujos 4.13–4.19; Fila 4 — Camino a la autonomía, migraciones 030–031)
 Última actualización: Agosto 2026
 Equipo de Arquitectura — Producto completo implementado (sistema actual).

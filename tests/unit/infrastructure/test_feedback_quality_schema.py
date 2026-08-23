@@ -130,4 +130,5 @@ def test_orm_example_and_policy_expose_feedback_columns() -> None:
 
     assert "scope" in Policy.__table__.c
     assert "quality" not in Policy.__table__.c
-    assert len(Base.metadata.tables) == 34
+    # 35 pre-Fila-4 tables + turn_outcome_log (030) + profile_synthesis_queue (031).
+    assert len(Base.metadata.tables) == 36

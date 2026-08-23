@@ -184,5 +184,23 @@ class SqlVipStore:
             await session.refresh(row)
             return vip_orm_to_record(row)
 
+    async def set_auto_send(self, vip_id: UUID, enabled: bool) -> bool:
+        """Fila 4 C6: toggle ``vips.auto_send`` (L2 of the double gate).
+
+        Returns False when the VIP does not exist. The master kill-switch
+        ``FEATURE_AUTONOMOUS_MODE`` keeps governing the real send — this only
+        flips the per-VIP permit the owner controls from the panel.
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Vip).where(Vip.id == vip_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                return False
+            row.auto_send = bool(enabled)
+            await session.commit()
+            return True
+
 
 __all__ = ["SqlVipStore", "vip_is_allowed", "vip_orm_to_record"]

@@ -143,6 +143,11 @@ class AdminService:
         post_turn: Callable[[UUID, int], Awaitable[None]] | None = None,
         trust_budget: object | None = None,
         feature_quality_feedback_enabled: bool = False,
+        # Fila 4 (SPEC-AUTONOMIA-CALIBRACION): outcome-log service (flag-gated)
+        # + readiness kill for record_correction (readiness ON → the desacuerdo
+        # event from record_outcome is the single trust decrement).
+        outcome: object | None = None,
+        feature_autonomy_readiness_enabled: bool = False,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -164,6 +169,10 @@ class AdminService:
         # off → the correction event is a no-op, byte-identical).
         self._trust_budget = trust_budget
         self._feature_quality_feedback_enabled = bool(feature_quality_feedback_enabled)
+        # Fila 4: outcome-log service + readiness kill-switch for
+        # record_correction (readiness ON → outcome-driven trust only).
+        self._outcome = outcome
+        self._autonomy_readiness = bool(feature_autonomy_readiness_enabled)
 
     @property
     def quality_feedback_enabled(self) -> bool:
@@ -660,13 +669,17 @@ class AdminService:
         # that never landed (review round 1, S6). Flag OFF → trust_budget None
         # → no-op (byte-identical).
         if self._trust_budget is not None and correction_persisted:
-            try:
-                await self._trust_budget.record_correction(turn_id)
-            except Exception:
-                logger.exception(
-                    "trust_budget_correction_failed",
-                    extra={"turn_id": str(turn_id)},
-                )
+            # Fila 4 readiness ON → the desacuerdo event from record_outcome
+            # is the single trust decrement (record_correction would double-
+            # count against it). Byte-identical pre-Fila-4 behavior otherwise.
+            if not self._autonomy_readiness:
+                try:
+                    await self._trust_budget.record_correction(turn_id)
+                except Exception:
+                    logger.exception(
+                        "trust_budget_correction_failed",
+                        extra={"turn_id": str(turn_id)},
+                    )
         delivery = await self._resolve_and_deliver(turn_id, corrected_text=stripped)
         return delivery, candidate_id
 
@@ -912,6 +925,23 @@ class AdminService:
                 # turn is actually extractable).
                 escalated_here = True
                 await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
+                # Fila 4 (C1): owner escalated → outcome row owner_outcome =
+                # escalated (no sent text → no scores). Best-effort.
+                if self._outcome is not None:
+                    try:
+                        await self._outcome.record_owner_outcome(
+                            turn_id,
+                            owner_outcome="escalated",
+                            sent_text=None,
+                            vip_id=turn.vip_id,
+                        )
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "outcome_owner_escalate_failed",
+                            turn_id=str(turn_id),
+                            chat_id=chat_id,
+                        )
         finally:
             # REQ-MEM-07 parity with the autonomous path: an owner-escalated turn
             # is ESCALATED — a terminal, extractable outcome. Fire the post-turn
@@ -1103,6 +1133,33 @@ class AdminService:
                     # R3: mark eligible BEFORE the transition (see above).
                     post_turn_eligible = True
                     await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
+                    # Fila 4 (C1/C2): owner-resolution half of the outcome log —
+                    # approved_as_is / corrected + the sent score + quality
+                    # delta + the trust label event. Best-effort (a failure must
+                    # never fail the already-completed delivery).
+                    if self._outcome is not None:
+                        try:
+                            await self._outcome.record_owner_outcome(
+                                turn_id,
+                                owner_outcome=(
+                                    "corrected"
+                                    if corrected_text is not None
+                                    else "approved_as_is"
+                                ),
+                                sent_text=(
+                                    corrected_text
+                                    if corrected_text is not None
+                                    else claimed.draft_text
+                                ),
+                                vip_id=claimed.vip_id,
+                            )
+                        except Exception:
+                            log_swallowed(
+                                logger,
+                                "outcome_owner_resolution_failed",
+                                turn_id=str(turn_id),
+                                chat_id=chat_id,
+                            )
                     # Fix round (R2): bookkeeping AFTER the confirmed transition
                     # is best-effort — a failure here must never fail the
                     # already-completed delivery nor strand the post-turn hook.

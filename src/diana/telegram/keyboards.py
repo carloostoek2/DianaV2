@@ -938,6 +938,15 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
         "con los umbrales y el mensaje que habría mandado. Es solo "
         "información — nada de esto cambia cómo responde hoy."
     ),
+    "autonomia": (
+        "🧭 Camino a la autonomía\n\n"
+        "Aquí ves la evidencia para decidir si Diana puede empezar a "
+        "responder sola con cada VIP: la coincidencia entre lo que habría "
+        "enviado y lo que tú aprobaste, la confianza por VIP y el botón "
+        "para activar el envío autónomo cuando se cumplen las condiciones. "
+        "El interruptor maestro sigue apagado — activar solo recomienda y "
+        "habilita por VIP."
+    ),
     "config": "⚙️ Configuración\n\nControla el comportamiento del bot. Por ahora solo está disponible el Modo Entrenamiento.",
     "personalidad": (
         "🎭 Personalidad y reglas\n\n"
@@ -1111,11 +1120,13 @@ def _menu_back_row() -> list[InlineKeyboardButton]:
     return [InlineKeyboardButton(text="🔙 Volver", callback_data=encode_menu("root"))]
 
 
-def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
+def menu_root_keyboard(show_persona: bool = False, show_autonomy: bool = False) -> InlineKeyboardMarkup:
     """Main menu: the logical categories (VIPs, Review, Sandbox, Metrics, History, Events, Shadow, Config).
 
     ``show_persona`` adds the "Personalidad y reglas" category (Item 3), gated by
     ``FEATURE_PERSONA_ADMIN_ENABLED`` so the default layout is unchanged.
+    ``show_autonomy`` adds the Fila 4 "Camino a la autonomía" category, gated by
+    ``FEATURE_AUTONOMY_READINESS_ENABLED``.
     """
     rows = [
         [InlineKeyboardButton(text="👥 Mis VIPs", callback_data=encode_menu("vips"))],
@@ -1126,6 +1137,13 @@ def menu_root_keyboard(show_persona: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📅 Eventos temporales", callback_data=encode_menu("event"))],
         [InlineKeyboardButton(text="🤖 Modo sombra", callback_data=encode_menu("sombra"))],
     ]
+    if show_autonomy:
+        rows.append([
+            InlineKeyboardButton(
+                text="🧭 Camino a la autonomía",
+                callback_data=encode_menu("autonomia"),
+            )
+        ])
     if show_persona:
         rows.append([
             InlineKeyboardButton(
@@ -1160,6 +1178,64 @@ def menu_shadow_keyboard() -> InlineKeyboardMarkup:
         ],
         _menu_back_row(),
     ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def menu_autonomy_keyboard() -> InlineKeyboardMarkup:
+    """Fila 4 panel: global preparation, comparativas, per-VIP readiness."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="📈 Preparación global",
+                callback_data=encode_menu("autonomia", "global"),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💬 Comparativas",
+                callback_data=encode_menu("autonomia", "comparativas"),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⚖️ Por VIP",
+                callback_data=encode_menu("autonomia", "vips"),
+            )
+        ],
+        _menu_back_row(),
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def menu_autonomy_vip_keyboard(
+    vips_data: list[tuple[int, str, bool, bool]],
+) -> InlineKeyboardMarkup:
+    """Per-VIP activation controls: ``(user_id, display_name, ready, auto_send)``.
+
+    Only actionable VIPs get a button: activate when ready (and not already
+    on), deactivate when on. Not-ready VIPs are shown as ⏳ in the text only.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for user_id, name, ready, auto_send in vips_data:
+        if auto_send:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🔴 Apagar {name}",
+                        callback_data=encode_menu("autonomia", f"deactivate:{user_id}"),
+                    )
+                ]
+            )
+        elif ready:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🟢 Activar {name}",
+                        callback_data=encode_menu("autonomia", f"activate:{user_id}"),
+                    )
+                ]
+            )
+    rows.append(_menu_back_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

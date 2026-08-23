@@ -35,9 +35,20 @@ async def run_profile_synthesis_cycle(
     ``finally`` releases the in-flight item, and an outer ``finally`` releases
     every remaining drained VIP that never reached the loop — a timeout or
     cancel must never leave a VIP stuck in ``_in_flight`` forever.
+
+    Fila 4 C4: when the trigger has a durable queue, the cycle recovers stale
+    ``processing`` rows, drains from the queue (CAS claim) and releases durably
+    — pending work survives restarts.
     """
+    durable = bool(getattr(trigger_service, "has_durable_queue", lambda: False)())
+    if durable:
+        await trigger_service.recover_stale()
     scan = await trigger_service.scan_inactivity(datetime.now(UTC))
-    pending = trigger_service.drain_pending()
+    pending = (
+        await trigger_service.drain_pending_durable()
+        if durable
+        else trigger_service.drain_pending()
+    )
     results: list[str] = []
     released: set[UUID] = set()
     try:
@@ -52,7 +63,10 @@ async def run_profile_synthesis_cycle(
                 )
                 results.append("failed")
             finally:
-                trigger_service.release(vip_id)
+                if durable:
+                    await trigger_service.release_durable(vip_id)
+                else:
+                    trigger_service.release(vip_id)
                 released.add(vip_id)
     finally:
         # B1: on cancel/timeout (asyncio.wait_for) the loop exits mid-way —
@@ -60,7 +74,10 @@ async def run_profile_synthesis_cycle(
         # guard never leaks in-flight items across ticks.
         for vip_id, _trigger in pending:
             if vip_id not in released:
-                trigger_service.release(vip_id)
+                if durable:
+                    await trigger_service.release_durable(vip_id)
+                else:
+                    trigger_service.release(vip_id)
 
     logger.info(
         "profile_synthesis_cycle_complete",
@@ -68,6 +85,7 @@ async def run_profile_synthesis_cycle(
             "scanned": scan,
             "items": len(pending),
             "results": results,
+            "durable": durable,
         },
     )
     return {"scanned": scan, "items": len(pending), "results": results}
