@@ -56,6 +56,8 @@ INFRA:
 
 **Nota (actualizada a 2026-08-21)**: Este párrafo preveía que `learning_metrics`, `profiles` y `contexts` quedaran reservados para Fase 3. Hoy la Fase 3 está implementada: `learning_metrics` es una tabla existente y usada (agregación semanal en `src/diana/jobs/metrics.py` y `src/diana/application/metrics_service.py`); `profiles` y `contexts` están implementados y poblados (extracción post-turno `extract_post_turn`, backfill y `replace_vip_profile` en `src/diana/infrastructure/db/repositories/memories.py`). Ver `docs/SPEC-FASE3.md` y `docs/ARCHITECTURE.md`.
 
+**Nota (2026-08-21, bases vectoriales)**: `contexts` quedó creada en la migración 003 pero sin repo ni escritor hasta ahora. Con esta actualización se implementó su fin de diseño (REQ-MEM-06): `ContextsRepo` + `ContextStoreService` post-turno (flag `FEATURE_CONTEXT_ENABLED`) persisten el contexto interpretado con embedding y expiración, y `ContextRetriever` lo lee con fallback a la derivación en vivo. Además `ProfilesRepo` ahora computa embeddings reales del contenido (antes ceros) y expone `find_by_similarity`. `FEATURE_MEMORY_ENABLED` alineado a `true` también en `system_config` (la semilla 003 lo dejó en `false`).
+
 ### H1: EmbeddingService — **cumplido**
 **Nuevo archivo:**
 - `src/diana/cognitive/embedding.py` — `EmbeddingService` con `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384 dims), método `embed(text) -> list[float]`, carga lazy del modelo

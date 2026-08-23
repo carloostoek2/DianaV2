@@ -75,6 +75,7 @@ def build_default_registry(
     *,
     history_limit: int = DEFAULT_HISTORY_LIMIT,
     memory_repo: Any = None,
+    context_repo: Any = None,
     policy_repo: Any = None,
     examples_repo: Any = None,
     profile_repo: Any = None,
@@ -88,7 +89,9 @@ def build_default_registry(
 ) -> CapabilityRegistry:
     """Register capabilities and fail-fast for the planner universe.
 
-    Seats: history/context REAL; persona_facts/voice_patterns from static
+    Seats: history/context REAL; context prefers a non-expired persisted
+    snapshot (REQ-MEM-06) when ``context_repo`` is provided, live derivation
+    otherwise; persona_facts/voice_patterns from static
     catalogs (empty → always None); memory/policy/examples REAL when their
     ``*_repo`` and ``embedding_service`` are provided, STUB otherwise (policy
     may still match static_policies); profile REAL when ``profile_repo`` is
@@ -109,7 +112,12 @@ def build_default_registry(
     )
     registry.register(
         "knowledge.context",
-        ContextRetriever(history_port, limit=history_limit, clock=resolved_clock.now),
+        ContextRetriever(
+            history_port,
+            limit=history_limit,
+            clock=resolved_clock.now,
+            repo=context_repo,
+        ),
     )
     registry.register(
         "knowledge.profile",

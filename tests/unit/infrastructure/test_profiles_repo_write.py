@@ -171,3 +171,56 @@ async def test_delete_by_vip_id_existing_deletes_and_commits() -> None:
     assert deleted is True
     sf._session.delete.assert_awaited_once_with(row)
     sf._session.commit.assert_awaited()
+
+
+class FakeEmbedder:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def embed(self, text: str) -> list[float]:
+        self.calls.append(text)
+        return [float(ord(c)) for c in text[:8]] + [0.0] * 376
+
+
+@pytest.mark.asyncio
+async def test_set_fact_with_embedder_writes_real_embedding() -> None:
+    """The vector feature of the profile store: with an embedder injected the
+    embedding reflects the content instead of zeros."""
+    vip_id = uuid4()
+    sf = _make_session_factory(row=None)
+    repo = ProfilesRepo(sf, embedder=FakeEmbedder())
+
+    out = await repo.set_fact(vip_id, "city", "CDMX")
+
+    sf._session.add.assert_called_once()
+    added = sf._session.add.call_args[0][0]
+    # Real (non-zero) embedding of the profile content.
+    assert any(x != 0.0 for x in added.embedding)
+    assert len(added.embedding) == 384
+    assert out["content"]["facts"]["city"] == "CDMX"
+
+
+@pytest.mark.asyncio
+async def test_find_by_similarity_returns_matching_rows() -> None:
+    vip_id = uuid4()
+    row = SimpleNamespace(
+        vip_id=vip_id,
+        tipo="summary",
+        content={"facts": {"city": "CDMX"}, "notes": []},
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+    sf = _make_session_factory()
+    scalars = MagicMock()
+    scalars.all = MagicMock(return_value=[row])
+    sf._session.execute = AsyncMock(
+        return_value=MagicMock(scalars=MagicMock(return_value=scalars))
+    )
+    repo = ProfilesRepo(sf)
+
+    rows = await repo.find_by_similarity([0.0] * 384, threshold=0.7)
+
+    assert len(rows) == 1
+    assert rows[0]["content"]["facts"]["city"] == "CDMX"
+    stmt = sf._session.execute.await_args.args[0]
+    assert "<=>" in str(stmt)

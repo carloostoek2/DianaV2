@@ -150,6 +150,85 @@ async def test_context_retriever_empty_history() -> None:
     assert "hora_actual" in ctx
 
 
+class FakeContextRepo:
+    """Minimal contexts-repo fake: returns configured active snapshots."""
+
+    def __init__(self, rows: list[dict] | None = None, *, raise_on_call: bool = False) -> None:
+        self._rows = rows or []
+        self._raise_on_call = raise_on_call
+
+    async def find_active_by_chat(self, chat_id: int, *, vip_id=None, limit: int = 20):
+        if self._raise_on_call:
+            raise RuntimeError("context repo boom")
+        return self._rows
+
+
+@pytest.mark.asyncio
+async def test_context_retriever_prefers_persisted_snapshot_with_repo() -> None:
+    """REQ-MEM-06: with a repo wired and an active row, the retriever returns
+    the persisted interpreted facts (day/hour refreshed live)."""
+    port = InMemoryMessageHistory(
+        {7: [{"role": "vip", "text": "x", "timestamp": "2026-07-01T08:00:00+00:00"}]}
+    )
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    repo = FakeContextRepo(
+        [
+            {
+                "content": {
+                    "tipo": "interpretado",
+                    "hechos": {
+                        "waiting_for_reply_since": "2026-07-01T08:00:00+00:00",
+                        "is_first_message_of_day": False,
+                        "dia_semana": "miercoles",
+                        "hora_actual": "12:00",
+                    },
+                }
+            }
+        ]
+    )
+    retriever = ContextRetriever(port, clock=lambda: fixed, repo=repo)
+    ctx = await retriever.fetch(_turn(7), _comprehension())
+    # Persisted temporal facts win...
+    assert ctx["waiting_for_reply_since"] == "2026-07-01T08:00:00+00:00"
+    assert ctx["is_first_message_of_day"] is False
+    # ...but day/hour are refreshed from the live clock (UTC 12:00 = CDMX 06:00).
+    assert ctx["dia_semana"] == "miercoles"
+    assert ctx["hora_actual"] == "06:00"
+
+
+@pytest.mark.asyncio
+async def test_context_retriever_repo_empty_falls_back_to_live() -> None:
+    """With a repo but no active rows, the retriever derives from history
+    exactly as before (fallback path)."""
+    port = InMemoryMessageHistory(
+        {
+            7: [
+                {"role": "vip", "text": "first", "timestamp": "2026-07-01T09:00:00+00:00"},
+                {"role": "assistant", "text": "second"},
+            ]
+        }
+    )
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(port, clock=lambda: fixed, repo=FakeContextRepo([]))
+    ctx = await retriever.fetch(_turn(7), _comprehension())
+    assert ctx["waiting_for_reply_since"] == "2026-07-01T09:00:00+00:00"
+    assert ctx["is_first_message_of_day"] is True
+
+
+@pytest.mark.asyncio
+async def test_context_retriever_repo_failure_falls_back_to_live() -> None:
+    """Repo failures never break the turn: fallback to live derivation."""
+    port = InMemoryMessageHistory(
+        {7: [{"role": "vip", "text": "x", "timestamp": "2026-07-01T09:00:00+00:00"}]}
+    )
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    retriever = ContextRetriever(
+        port, clock=lambda: fixed, repo=FakeContextRepo(raise_on_call=True)
+    )
+    ctx = await retriever.fetch(_turn(7), _comprehension())
+    assert ctx["waiting_for_reply_since"] == "2026-07-01T09:00:00+00:00"
+
+
 @pytest.mark.asyncio
 async def test_context_waiting_when_last_is_vip() -> None:
     port = InMemoryMessageHistory(

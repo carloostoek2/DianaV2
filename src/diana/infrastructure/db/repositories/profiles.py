@@ -6,7 +6,9 @@ This module re-exports them and implements VIP-scoped SQL writers.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -46,11 +48,53 @@ def profile_to_dict(row: Profile) -> dict:
     }
 
 
-class ProfilesRepo:
-    """VIP permanent profile store (BR-15: every query filters by vip_id)."""
+def _content_to_embedding_text(content: dict) -> str:
+    """Serialize profile content to a stable text blob for embedding.
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    Facts/notes are the semantic payload; the rest of the metadata (dates,
+    provenance) is dropped so the vector tracks *what the VIP profile says*,
+    not how it was edited.
+    """
+    parts: list[str] = []
+    facts = content.get("facts") or {}
+    for key, value in facts.items():
+        parts.append(f"{key}: {value}")
+    for note in content.get("notes") or []:
+        if isinstance(note, dict):
+            parts.append(str(note.get("texto") or note.get("text") or note))
+        else:
+            parts.append(str(note))
+    return "\n".join(parts)
+
+
+class ProfilesRepo:
+    """VIP permanent profile store (BR-15: every query filters by vip_id).
+
+    The ``embedding`` column (vector(384), F2) is now real: when an
+    ``embedder`` is injected, every write recomputes the embedding of the
+    profile content so semantic similarity lookups work (``find_by_similarity``).
+    Without an embedder the column falls back to zeros (backward-compatible
+    with pre-F2 callers/tests).
+    """
+
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        embedder: Any | None = None,
+    ) -> None:
         self._sf = session_factory
+        self._embedder = embedder
+
+    async def _embed_content(self, content: dict) -> list[float]:
+        """Embed the profile content, or return zeros when no embedder."""
+        if self._embedder is None:
+            return list(_ZERO_EMBEDDING)
+        text = _content_to_embedding_text(content).strip()
+        if not text:
+            return list(_ZERO_EMBEDDING)
+        vec = await self._embedder.embed(text)
+        return [float(x) for x in vec]
 
     async def _load(self, session: AsyncSession, vip_id: UUID) -> Profile | None:
         result = await session.execute(
@@ -64,6 +108,28 @@ class ProfilesRepo:
             row = await self._load(session, vip_id)
             return profile_to_dict(row) if row else None
 
+    async def find_by_similarity(
+        self,
+        embedding: list[float],
+        *,
+        threshold: float,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Return profiles whose content is semantically close to ``embedding``.
+
+        Cosine similarity > ``threshold`` (distance < ``1 - threshold``).
+        Unscoped (any VIP) by design: this is the vector feature of the
+        profile store — e.g. finding VIPs whose profile matches a topic.
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Profile)
+                .where(Profile.embedding.cosine_distance(embedding) < 1 - threshold)
+                .order_by(Profile.embedding.cosine_distance(embedding))
+                .limit(limit)
+            )
+            return [profile_to_dict(row) for row in result.scalars().all()]
+
     async def set_fact(self, vip_id: UUID, key: str, value: str) -> dict:
         """Upsert row if missing; set ``facts[key]=value``; return profile dict."""
         # Validate early so empty/oversize key/value never opens a DB session.
@@ -73,7 +139,7 @@ class ProfilesRepo:
             if row is None:
                 row = Profile(
                     vip_id=vip_id,
-                    embedding=list(_ZERO_EMBEDDING),
+                    embedding=await self._embed_content(content),
                     content=content,
                     tipo="summary",
                 )
@@ -82,6 +148,7 @@ class ProfilesRepo:
                 row.content = apply_set_fact(
                     normalize_content(row.content), key, value
                 )
+                row.embedding = await self._embed_content(row.content)
                 flag_modified(row, "content")
             await session.commit()
             await session.refresh(row)
@@ -97,6 +164,7 @@ class ProfilesRepo:
                 normalize_content(row.content), key
             )
             row.content = new_content
+            row.embedding = await self._embed_content(row.content)
             flag_modified(row, "content")
             await session.commit()
             await session.refresh(row)
@@ -113,7 +181,7 @@ class ProfilesRepo:
             if row is None:
                 row = Profile(
                     vip_id=vip_id,
-                    embedding=list(_ZERO_EMBEDDING),
+                    embedding=await self._embed_content(content),
                     content=content,
                     tipo="summary",
                 )
@@ -122,6 +190,7 @@ class ProfilesRepo:
                 row.content = apply_add_note(
                     normalize_content(row.content), text, note_date
                 )
+                row.embedding = await self._embed_content(row.content)
                 flag_modified(row, "content")
             await session.commit()
             await session.refresh(row)
@@ -139,6 +208,7 @@ class ProfilesRepo:
             if not deleted:
                 return None
             row.content = new_content
+            row.embedding = await self._embed_content(row.content)
             flag_modified(row, "content")
             await session.commit()
             await session.refresh(row)
@@ -165,4 +235,5 @@ __all__ = [
     "is_hollow_content",
     "normalize_content",
     "profile_to_dict",
+    "_content_to_embedding_text",
 ]

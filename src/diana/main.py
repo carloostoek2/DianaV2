@@ -199,6 +199,9 @@ def _setup_agent_data_purge_job(app: AppContainer) -> asyncio.Task | None:
         (app.vip_profile_history_repo, app.settings.vip_profile_history_ttl_days),
         (app.turn_category_log_repo, app.settings.turn_category_log_ttl_days),
         (app.emotional_signal_log_repo, app.settings.emotional_signal_log_ttl_days),
+        # REQ-MEM-06: interpreted context snapshots are expiry-gated rows
+        # (expires_at); the store's purge hook deletes only truly expired ones.
+        (app.contexts_repo, 1),
     ]
     stores = [(s, ttl) for s, ttl in stores if s is not None]
     if not stores:

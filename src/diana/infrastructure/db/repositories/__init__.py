@@ -19,6 +19,7 @@ from diana.infrastructure.db.repositories.persona_versions import (
     persona_version_orm_to_record,
 )
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
+from diana.infrastructure.db.repositories.contexts import ContextsRepo
 from diana.infrastructure.db.repositories.traces import SqlTraceStore
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 from diana.infrastructure.db.repositories.vips import SqlVipStore, vip_orm_to_record
@@ -57,6 +58,7 @@ from diana.infrastructure.db.repositories.link_events import (
 
 __all__ = [
     "SqlCalibrationDataSource",
+    "ContextsRepo",
     "EphemeralEventRepo",
     "ephemeral_event_orm_to_record",
     "SqlEmotionalSignalLogRepo",

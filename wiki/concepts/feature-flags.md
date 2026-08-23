@@ -20,7 +20,8 @@ Runtime: pydantic `Settings` lee env `FEATURE_*` (campos `feature_*`). Default d
 
 | Flag | Default | Efecto |
 |------|---------|--------|
-| `FEATURE_MEMORY_ENABLED` | false | Retrievers/extracción/backfill de memoria VIP |
+| `FEATURE_MEMORY_ENABLED` | false | Retrievers/extracción/backfill de memoria VIP. **En `.env` y `system_config`: `true`** (alineado 2026-08-21; la semilla 003 quedó en `false`) |
+| `FEATURE_CONTEXT_ENABLED` | false | Store de contexto interpretado (REQ-MEM-06): escritor post-turno `ContextStoreService` + lectura de la tabla `contexts` por el retriever. **En `.env` y `system_config`: `true`** (nuevo, 2026-08-21) |
 | `FEATURE_GRAY_ZONE_ENABLED` | false | Consulta de doctrina / freeze |
 | `FEATURE_STAGING_ENABLED` | false | Staging de correcciones |
 | `FEATURE_SANDBOX_ENABLED` | false | Sandbox + FakeDelivery |
@@ -96,7 +97,7 @@ Documentado en `.env.example`. Pool saludo-cognitivo 2026-08-16 (`e10d4cd`…`21
 
 ## Estado de producción
 
-Snapshot verificado en [[estado-del-proyecto]] (2026-08-21): `FEATURE_LINK_ENABLED=true` y `FEATURE_QUALITY_FEEDBACK_ENABLED=true` en `.env` (Fase 6 desplegada y feedback activo); `FEATURE_AUTONOMOUS_MODE=false` (la doble puerta del autoenvío queda cableada pero deshabilitada); evo-agente ON en medición; `FEATURE_GENERAL_MODE_ENABLED=true`; memoria on. Apply de 027–029 en producción: **sin verificar** (pendiente operativo).
+Snapshot verificado en [[estado-del-proyecto]] (2026-08-21): `FEATURE_LINK_ENABLED=true` y `FEATURE_QUALITY_FEEDBACK_ENABLED=true` en `.env` (Fase 6 desplegada y feedback activo); `FEATURE_AUTONOMOUS_MODE=false` (la doble puerta del autoenvío queda cableada pero deshabilitada); evo-agente ON en medición; `FEATURE_GENERAL_MODE_ENABLED=true`; memoria on (`.env` y `system_config`); `FEATURE_CONTEXT_ENABLED=true` (nuevo). Apply de 027–029 en producción: **sin verificar** (pendiente operativo).
 
 Relacionado: [[modos-de-operacion]], [[esquema-fase6]], [[esquema-conocimiento]], [[calibracion-de-umbrales]].
 

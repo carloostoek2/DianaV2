@@ -76,6 +76,9 @@ class Settings(BaseSettings):
 
     # F2 feature flag static defaults (runtime reading via SqlSystemConfigStore is Item 3).
     feature_memory_enabled: bool = False
+    feature_context_enabled: bool = False
+    # TTL (hours) for interpreted context snapshots (REQ-MEM-06 contexts table).
+    context_ttl_hours: int = 24
     feature_gray_zone_enabled: bool = False
     feature_staging_enabled: bool = False
     feature_sandbox_enabled: bool = False

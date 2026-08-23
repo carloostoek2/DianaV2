@@ -213,6 +213,7 @@ class TurnOrchestrator:
         trace_reader: TraceReader | None = None,
         atencion_cycles: AtencionCycleStore | None = None,
         memory_extraction: object | None = None,
+        context_store: object | None = None,
         emotional_detector: object | None = None,
         emotional_signal_log: object | None = None,
         profile_synthesis_trigger: object | None = None,
@@ -252,6 +253,7 @@ class TurnOrchestrator:
         self._trace_reader = trace_reader
         self._atencion_cycles = atencion_cycles
         self._memory_extraction = memory_extraction
+        self._context_store = context_store
         self._emotional_detector = emotional_detector
         self._emotional_signal_log = emotional_signal_log
         self._profile_synthesis_trigger = profile_synthesis_trigger
@@ -511,6 +513,21 @@ class TurnOrchestrator:
                     log_swallowed(
                         logger,
                         "memory_extraction_error",
+                        turn_id=str(turn_id),
+                        chat_id=chat_id,
+                    )
+        # REQ-MEM-06 (F2, unwired until now): persist the interpreted temporal
+        # context of this chat with expiry. Best-effort strict (same pattern
+        # as memory extraction): a failure never propagates to the turn.
+        if self._context_store is not None:
+            record = getattr(self._context_store, "record_post_turn", None)
+            if callable(record):
+                try:
+                    await record(turn_id)  # type: ignore[misc]  # object-typed dep
+                except Exception:
+                    log_swallowed(
+                        logger,
+                        "context_store_error",
                         turn_id=str(turn_id),
                         chat_id=chat_id,
                     )

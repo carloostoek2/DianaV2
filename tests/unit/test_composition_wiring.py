@@ -420,12 +420,13 @@ def test_composition_schedule_and_clock_wired(_comp_src: str) -> None:
 
 
 def test_composition_profiles_repo_wired(_comp_src: str) -> None:
-    """Item4: ProfilesRepo constructed and passed as profile_repo= to registry."""
+    """Item4: ProfilesRepo constructed (with embedder) and passed as profile_repo= to registry."""
     assert (
         "from diana.infrastructure.db.repositories.profiles import ProfilesRepo"
         in _comp_src
     )
-    assert "profiles_repo = ProfilesRepo(sf)" in _comp_src
+    assert "profiles_repo = ProfilesRepo(sf" in _comp_src
+    assert "embedder=embedding_svc" in _comp_src
     assert "profile_repo=profiles_repo" in _comp_src
     # Not injected into SandboxService (writer residual / PLAN OOS).
     sandbox_idx = _comp_src.find("SandboxService(")

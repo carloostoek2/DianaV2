@@ -110,6 +110,7 @@ from diana.infrastructure.db.repositories.recontact_schedules import (
     RecontactScheduleRepo,
 )
 from diana.infrastructure.db.repositories.system_config import SqlSystemConfigStore
+from diana.infrastructure.db.repositories.contexts import ContextsRepo
 from diana.infrastructure.db.repositories.persona_versions import PersonaVersionRepo
 from diana.infrastructure.db.repositories.daily_message_limits import (
     SqlDailyMessageLimitStore,
@@ -344,6 +345,8 @@ class AppContainer:
     ephemeral_event_service: EphemeralEventService | None = None
     backfill_queue: MemoryBackfillQueue | None = None
     backfill_wake: asyncio.Event | None = None
+    # REQ-MEM-06: interpreted context store (repo always built; writer gated).
+    contexts_repo: ContextsRepo | None = None
     # Evo-Agente Fase 0: shadow emotional detector (None when flag off).
     emotional_detector: EmotionalSignalDetector | None = None
     # Evo-Agente Fase 1: profile-synthesis trigger + service (None when flag off).
@@ -504,7 +507,11 @@ def build_app(
     memories_repo = MemoriesRepo(sf)
     policies_repo = PoliciesRepo(sf)
     examples_repo = ExamplesRepo(sf)
-    profiles_repo = ProfilesRepo(sf)
+    profiles_repo = ProfilesRepo(sf, embedder=embedding_svc)
+    # REQ-MEM-06: interpreted temporal context store (table created in
+    # migration 003, left unwired until now). Repo is always built; the
+    # registry and the post-turn writer are gated on the context flag below.
+    contexts_repo = ContextsRepo(sf)
 
     # ---- F2 Item 3: feature flags, gray zone, sandbox ----
     # Feature flags come from Settings (source of truth). DB-side overrides
@@ -751,9 +758,16 @@ def build_app(
             "memory_feature_disabled",
             extra={"feature_memory_enabled": False},
         )
+    # REQ-MEM-06: the context repo is injected only when the context flag is
+    # on — flag OFF → ContextRetriever keeps deriving from history (byte-
+    # identical to the pre-F2 behavior).
+    effective_context_repo = (
+        contexts_repo if settings.feature_context_enabled else None
+    )
     registry = build_default_registry(
         history,
         memory_repo=effective_memory_repo,
+        context_repo=effective_context_repo,
         policy_repo=policies_repo,
         examples_repo=examples_repo,
         profile_repo=profiles_repo,
@@ -839,6 +853,19 @@ def build_app(
         notifier=notifier,
         dedup_threshold=settings.backfill_dedup_threshold,
     )
+    # REQ-MEM-06: post-turn interpreted-context writer — built ALWAYS (same
+    # pattern), injected into the orchestrator only when the context flag is
+    # ON. Flag OFF → context_store=None → post-turn hook no-op (A8).
+    from diana.application.context_store_service import ContextStoreService
+
+    context_store = ContextStoreService(
+        feature_context_enabled=settings.feature_context_enabled,
+        embedder=embedding_svc,
+        history=history,
+        contexts=contexts_repo,
+        turns=turns,
+        ttl_hours=settings.context_ttl_hours,
+    )
     # Evo-Agente Fase 0: build the detector ALWAYS (pure constants); flag OFF
     # → emotional_detector=None → the orchestrator hook is a no-op (A8).
     detector = EmotionalSignalDetector()
@@ -917,6 +944,9 @@ def build_app(
         atencion_cycles=atencion_cycles,
         memory_extraction=(
             memory_extraction if settings.feature_memory_enabled else None
+        ),
+        context_store=(
+            context_store if settings.feature_context_enabled else None
         ),
         emotional_detector=(
             detector if settings.feature_emotional_detector_enabled else None
@@ -1235,6 +1265,7 @@ def build_app(
         ephemeral_event_service=ephemeral_event_service,
         backfill_queue=backfill_queue,
         backfill_wake=backfill_wake,
+        contexts_repo=contexts_repo,
         emotional_detector=(
             detector if settings.feature_emotional_detector_enabled else None
         ),

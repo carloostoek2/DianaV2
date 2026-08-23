@@ -146,6 +146,20 @@ class RecordingExtraction:
         self.calls.append((turn_id, chat_id))
 
 
+class RecordingContextStore:
+    """Fake post-turn context writer (REQ-MEM-06): records turn_ids."""
+
+    def __init__(self, *, raise_on_call: bool = False) -> None:
+        self.calls: list[UUID] = []
+        self._raise_on_call = raise_on_call
+
+    async def record_post_turn(self, turn_id: UUID) -> bool:
+        if self._raise_on_call:
+            raise RuntimeError("context store boom")
+        self.calls.append(turn_id)
+        return True
+
+
 class FakeGrayZone:
     """Fake GrayZoneService for consult_doctrine tests."""
 
@@ -235,6 +249,7 @@ def _build(
     trace_reader: object | None = None,
     atencion_cycles: object | None = None,
     memory_extraction: object | None = None,
+    context_store: object | None = None,
     emotional_detector: object | None = None,
     emotional_signal_log: object | None = None,
     profile_synthesis_trigger: object | None = None,
@@ -312,6 +327,7 @@ def _build(
         trace_reader=trace_reader,
         atencion_cycles=atencion_cycles,
         memory_extraction=memory_extraction,
+        context_store=context_store,
         emotional_detector=emotional_detector,
         emotional_signal_log=emotional_signal_log,
         profile_synthesis_trigger=profile_synthesis_trigger,
@@ -1059,6 +1075,83 @@ async def test_plantilla_saludo_flag_off_demotes_to_approve() -> None:
     assert len(g["notifier"].drafts) == 1
     assert g["notifier"].drafts[0].reason == "phatic_auto_send_disabled"
     assert g["learning"].calls == [turn_id]
+
+
+# ── REQ-MEM-06: post-turn interpreted-context writer (best-effort) ─────────
+
+
+@pytest.mark.asyncio
+async def test_post_turn_context_store_called_on_terminal_turn() -> None:
+    """Context store runs after the learning circle on a terminal turn."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    store = RecordingContextStore()
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        context_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert g["learning"].calls == [turn_id]
+    assert store.calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_post_turn_context_store_not_called_when_none() -> None:
+    """Default wiring (context_store=None) → writer never invoked; the
+    pre-context behavior stays byte-identical."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+    assert g["orch"]._context_store is None  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert g["learning"].calls == [turn_id]
+
+
+@pytest.mark.asyncio
+async def test_post_turn_context_store_error_does_not_break_turn() -> None:
+    """R1: a context-store failure is swallowed — the delivered turn completes."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="auto reply",
+    )
+    store = RecordingContextStore(raise_on_call=True)
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        context_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert g["learning"].calls == [turn_id]
+    assert g["actuator"].send_count() >= 1
 
 
 @pytest.mark.asyncio

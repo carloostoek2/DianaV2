@@ -150,7 +150,8 @@ Verificado contra la base real: 69 turnos medidos en 7 días, 14 "habría enviad
 Menú unificado como superficie principal. Progreso en vivo al aprobar (visto → escribiendo → enviado), “Regenerando…” al pedir otra versión, avisos honestos si el botón ya no aplica, nombre del VIP en el borrador, tipos de archivo etiquetados, doctrina en texto libre (`dr:`). Detalle en `docs/UX.md`.
 
 ### Otros
-- Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria).
+- Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria; alineado también en `system_config` — antes la semilla 003 quedó en `false`).
+- Flag `FEATURE_CONTEXT_ENABLED=true` (2026-08-21): activa el store de contexto interpretado (REQ-MEM-06).
 - Migraciones en repo: **001–029**. En producción: **verificadas al head 029** (2026-08-22).
 - Persona sin reglas de voseo; español neutro. CHANGELOG.md vigente.
 - Auditoría de documentación 2026-08-16: wiki + estado alineados al código post-11-ago. Informes en `.planning/quick/docs-audit-2026-08-16/`.
@@ -185,9 +186,9 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 - ~~**ADM-03 — Cambio de LLM en caliente**~~ → **CERRADO 2026-08-22** (`HotSwapLLMProvider` + superficie Configuración → Modelo de IA; ver Fila 2).
 
 ### Evolución de agente — pendiente real
-- **Fila 4 — Camino a la autonomía:** diseño aprobado por producto en `docs/SPEC-AUTONOMIA-CALIBRACION.md` v1.0 (círculo de aprendizaje: simulación → comparación con la decisión real de la dueña → heurísticas de calidad y reacción del VIP → ajuste de confianza → recomendación de activación gradual por VIP). Pendientes de implementación por fases: motor de coincidencia + comparativas, heurísticas de calidad (H1) y reacción post-envío (H2) + migración 030, cola durable de síntesis, puerta de recomendación por VIP.
-- **Autoenvío (doble puerta): deshabilitado.** `FEATURE_AUTONOMOUS_MODE=false`; la ruta de envío autónomo está cableada tras el flag (`turn_orchestrator.py` ~304/2549, `recontact_service.py` ~209) pero apagada. En shadow solo se acumula medición (trust budget por VIP/categoría, `recent_trend`); no hay envío autónomo.
-- **Cola durable `synthesis_queue` para síntesis de perfiles:** no implementada (hoy guard en memoria) — parte de la Fila 4 (Fase C de la SPEC).
+- ~~**Fila 4 — Camino a la autonomía:** diseño aprobado por producto~~ → **EN IMPLEMENTACIÓN (2026-08-22, `docs/SPEC-AUTONOMIA-CALIBRACION.md` v1.0).** Fases A–C construidas detrás de flags en `false` (`FEATURE_AUTONOMY_READINESS_ENABLED` + derivados): motor de coincidencia C1 (puro, `coincidence.py`) + comparativas on-the-fly, heurísticas H1/H2 sin LLM, migración **030** (`turn_outcome_log`, círculo de aprendizaje post-turno), `record_outcome` en el trust budget (sin doble conteo con `FEATURE_AUTONOMY_READINESS_ENABLED` ON), job C3 de reacción/silencio, migración **031** (`profile_synthesis_queue`, cola durable de síntesis). La puerta de recomendación C6 + botón por VIP ya existe en servicio (`autonomy_readiness_service.py`) y el panel 🧭 en el menú, pero la **activación real del envío autónomo sigue apagada** (kill-switch maestro).
+- **Autoenvío (doble puerta): deshabilitado.** `FEATURE_AUTONOMOUS_MODE=false`; la ruta de envío autónomo está cableada tras el flag (`turn_orchestrator.py` ~304/2549, `recontact_service.py` ~209) pero apagada. En shadow solo se acumula medición (trust budget por VIP/categoría, `recent_trend`); no hay envío autónomo. El panel 🧭 solo recomienda y activa `vips.auto_send` por VIP cuando se cumplen las 3 condiciones (§8) y el flag maestro está encendido.
+- ~~**Cola durable `synthesis_queue` para síntesis de perfiles**~~ → **IMPLEMENTADO 2026-08-22 (Fila 4, Fase C):** migración 031 + `SqlProfileSynthesisQueueRepo`; `ProfileSynthesisTriggerService` persiste enqueues y el job drena desde la cola con `recover_stale` al arrancar (pendiente de aplicación de la migración en producción).
 - ~~**Ficha de perfil EA-06 con historial de versiones**~~ → **CERRADO 2026-08-22** (sección 📚 en la ficha; ver Fila 2).
 
 ### Operativo y despliegue
