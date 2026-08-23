@@ -228,6 +228,7 @@ def _make_service(
     is_sandbox_vip=None,
     history: InMemoryMessageHistoryWriter | None = None,
     sandbox=None,
+    personalizer=None,
 ) -> tuple[RecontactService, dict]:
     schedules = schedules or InMemoryRecontactScheduleStore()
     vips = vips or InMemoryVipStore()
@@ -256,6 +257,7 @@ def _make_service(
         is_sandbox_vip=is_sandbox_vip,
         history=history,
         sandbox=sandbox,
+        personalizer=personalizer,
     )
     deps = {
         "schedules": schedules,
@@ -1006,3 +1008,69 @@ async def test_flag_off_execute_no_owner_history() -> None:
     assert deps["behavior"].deliver_calls == []
     # No chat written — store empty
     assert history._messages == {}  # noqa: SLF001 — test isolation check
+
+
+# --- Reduced-pipeline personalization (REE-02/COG-15) ------------------------
+
+
+class FakePersonalizer:
+    def __init__(self, text: str | None = None, *, fail: bool = False) -> None:
+        self.text = text
+        self.fail = fail
+        self.calls: list[tuple] = []
+
+    async def personalize(self, *, vip_id: UUID, template: str, nombre: str) -> str:
+        self.calls.append((vip_id, template, nombre))
+        if self.fail:
+            raise RuntimeError("boom")
+        return self.text or template
+
+
+@pytest.mark.asyncio
+async def test_render_for_vip_uses_personalizer_when_wired() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="Ana")
+    personalizer = FakePersonalizer(text="¡Ana! Pensé en ti, ¿cómo va todo?")
+    service, _ = _make_service(vips=vips, personalizer=personalizer)
+    vip_id = (await vips.get_by_telegram_user_id(123)).id
+
+    text = await service._render_for_vip(vip_id, ["Hola {nombre}"])
+    assert text == "¡Ana! Pensé en ti, ¿cómo va todo?"
+    assert personalizer.calls and personalizer.calls[0][1] == "Hola Ana"
+
+
+@pytest.mark.asyncio
+async def test_render_for_vip_falls_back_on_personalizer_error() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="Ana")
+    service, _ = _make_service(
+        vips=vips, personalizer=FakePersonalizer(fail=True)
+    )
+    vip_id = (await vips.get_by_telegram_user_id(123)).id
+
+    text = await service._render_for_vip(vip_id, ["Hola {nombre}"])
+    assert text == "Hola Ana"
+
+
+@pytest.mark.asyncio
+async def test_render_for_vip_empty_personalization_falls_back() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="Ana")
+    service, _ = _make_service(vips=vips, personalizer=FakePersonalizer(text=""))
+    vip_id = (await vips.get_by_telegram_user_id(123)).id
+
+    text = await service._render_for_vip(vip_id, ["Hola {nombre}"])
+    assert text == "Hola Ana"
+
+
+@pytest.mark.asyncio
+async def test_render_for_vip_personalize_off_uses_template() -> None:
+    vips = InMemoryVipStore()
+    await vips.add(123, display_name="Ana")
+    service, _ = _make_service(vips=vips, personalizer=FakePersonalizer(text="X"))
+    # Config says personalize=false → template path.
+    service._personalize_flag = False
+    vip_id = (await vips.get_by_telegram_user_id(123)).id
+
+    text = await service._render_for_vip(vip_id, ["Hola {nombre}"])
+    assert text == "Hola Ana"

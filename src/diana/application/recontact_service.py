@@ -77,6 +77,7 @@ class RecontactService:
         is_sandbox_vip: Callable[[UUID], Awaitable[bool]] | None = None,
         history: MessageHistoryWriter | None = None,
         sandbox: object | None = None,
+        personalizer: object | None = None,
     ) -> None:
         self._enabled = feature_recontact_enabled
         self._schedules = schedules
@@ -94,11 +95,15 @@ class RecontactService:
         self._is_sandbox_vip = is_sandbox_vip
         self._history = history
         self._sandbox = sandbox
+        # Reduced-pipeline personalization (REE-02/COG-15): optional
+        # RecontactPersonalizer. When wired, ``personalize: true`` in the
+        # recontact config turns it on; any failure falls back to templates.
+        self._personalizer = personalizer
 
     async def schedule_recontact(self, vip_id: UUID) -> RecontactScheduleRecord | None:
         if not self._enabled:
             return None
-        days, _templates = await self._load_config()
+        days, _templates, _personalize = await self._load_config()
         now = self._clock.now()
         next_at = now + timedelta(days=days)
         rec = await self._schedules.upsert_pending(
@@ -188,7 +193,7 @@ class RecontactService:
             )
             return "blocked"
 
-        days, templates = await self._load_config()
+        days, templates, _personalize = await self._load_config()
         now = self._clock.now()
 
         route = await self._route_resolver.resolve(vip_id)
@@ -302,7 +307,28 @@ class RecontactService:
         if vip is not None and vip.display_name:
             nombre = vip.display_name
         idx = vip_id.int % len(templates)
-        return render_template(templates[idx], nombre=nombre, producto="")
+        template = render_template(templates[idx], nombre=nombre, producto="")
+        if self._personalizer is None or not self._personalize_enabled:
+            return template
+        try:
+            personalized = await self._personalizer.personalize(
+                vip_id=vip_id, template=template, nombre=nombre
+            )
+        except Exception:
+            logger.exception(
+                "recontact_personalize_failed",
+                extra={"vip_id": str(vip_id)},
+            )
+            return template
+        return personalized or template
+
+    @property
+    def _personalize_enabled(self) -> bool:
+        """Config key ``personalize``; defaults to ON when a personalizer is wired."""
+        flag = getattr(self, "_personalize_flag", None)
+        if flag is None:
+            return self._personalizer is not None
+        return bool(flag)
 
     async def _complete_and_reschedule(
         self, vip_id: UUID, *, now: datetime, days: int
@@ -315,12 +341,16 @@ class RecontactService:
             vip_id, last_contact_at=now, next_contact_at=next_at
         )
 
-    async def _load_config(self) -> tuple[int, list[str]]:
+    async def _load_config(self) -> tuple[int, list[str], bool]:
         try:
             raw: Mapping[str, object] = await self._config.get_recontact_config()
         except Exception:
             logger.exception("recontact_config_load_failed")
-            return _DEFAULT_INACTIVITY_DAYS, list(_DEFAULT_TEMPLATES)
+            return (
+                _DEFAULT_INACTIVITY_DAYS,
+                list(_DEFAULT_TEMPLATES),
+                self._personalizer is not None,
+            )
 
         days_raw = raw.get("inactivity_days", _DEFAULT_INACTIVITY_DAYS)
         try:
@@ -336,7 +366,14 @@ class RecontactService:
             templates = [str(t) for t in templates_raw if str(t).strip()]
         if not templates:
             templates = list(_DEFAULT_TEMPLATES)
-        return days, templates
+
+        personalize_raw = raw.get("personalize")
+        if isinstance(personalize_raw, bool):
+            personalize = personalize_raw
+        else:
+            personalize = self._personalizer is not None
+        self._personalize_flag = personalize
+        return days, templates, personalize
 
 
 def _as_aware(value: datetime, ref: datetime) -> datetime:

@@ -35,6 +35,7 @@ from diana.application.mood_engine import MoodEngine
 from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.persona_catalog_provider import PersonaCatalogProvider
 from diana.application.promo_service import PromoService
+from diana.application.recontact_personalizer import RecontactPersonalizer
 from diana.application.recontact_service import (
     ApprovalsDeliveriesRouteResolver,
     RecontactService,
@@ -588,6 +589,15 @@ def build_app(
             return False
         return sandbox.is_active(vip.telegram_user_id)
 
+    # Reduced-pipeline recontact personalization (REE-02/COG-15): LLM +
+    # VIP memory/profile/policies; fail-soft to the fixed templates.
+    recontact_personalizer = RecontactPersonalizer(
+        llm=provider,
+        memories=memories_repo,
+        policies=policies_repo,
+        profiles=vip_profile_repo,
+    )
+
     recontact = RecontactService(
         feature_recontact_enabled=feature_recontact_enabled,
         schedules=recontact_schedules_repo,
@@ -607,6 +617,7 @@ def build_app(
         is_sandbox_vip=_is_sandbox_vip if sandbox is not None else None,
         history=history,
         sandbox=sandbox,
+        personalizer=recontact_personalizer,
     )
 
     from diana.application.approval_ui import ApprovalDraftVoider

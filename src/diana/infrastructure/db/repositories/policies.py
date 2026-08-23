@@ -97,5 +97,27 @@ class PoliciesRepo:
             result = await session.execute(stmt)
             return [policy_to_dict(row) for row in result.scalars().all()]
 
+    async def list_active_for_vip(
+        self, vip_id: UUID, limit: int = 5
+    ) -> list[dict]:
+        """Active policies visible to a VIP (globals + scoped), newest first.
+
+        Recontact personalization context (REE-02/COG-15): no embeddings, just
+        the active rules the VIP must respect.
+        """
+        async with self._sf() as session:
+            stmt = (
+                select(Policy)
+                .where(
+                    Policy.is_active.is_(True),
+                    (Policy.valid_until.is_(None)) | (Policy.valid_until > func.now()),
+                    vip_id_visibility_clause(Policy.vip_id, vip_id),
+                )
+                .order_by(Policy.created_at.desc())
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            return [policy_to_dict(row) for row in result.scalars().all()]
+
 
 __all__ = ["PoliciesRepo", "policy_to_dict", "vip_id_visibility_clause"]

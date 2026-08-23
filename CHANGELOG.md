@@ -2,6 +2,15 @@
 
 Highlights of what's new and fixed in Diana, from her early releases through the latest work.
 
+## Personalized recontact (Fila 3) + gray-zone policy promotion — 2026-08-22
+
+### ✨ New Features
+- **Personalized recontact (REE-02/COG-15)**: `RecontactPersonalizer` — a reduced pipeline (no Analyst/Planner) that gathers the VIP's visible memory (sensitive category excluded), recent profile trend and active policies (global + VIP-scoped), and asks the LLM to rewrite the base recontact template with that context: max two sentences, neutral Spanish, never invents data. Fail-soft by contract: any error falls back to the rendered template, so recontact can never break. On by default once wired (config `personalize: false` disables). Verified against production: messages personalized with real VIP data.
+- **Gray-zone policy promotion**: doctrine rules from the gray zone now appear in the owner review queue (📋 Cola de revisión) with rule/draft/scope, and promote to a live policy honoring the GAP-11 scope — they no longer sit as orphan candidates. Review-queue texts moved to neutral Spanish.
+
+### ✅ Tests
+- 2861 unit tests passing.
+
 ## Fila 2: owner control — policy scope, profile history, hot LLM swap — 2026-08-22
 
 ### ✨ New Features
