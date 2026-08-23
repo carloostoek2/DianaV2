@@ -185,8 +185,9 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 - ~~**ADM-03 — Cambio de LLM en caliente**~~ → **CERRADO 2026-08-22** (`HotSwapLLMProvider` + superficie Configuración → Modelo de IA; ver Fila 2).
 
 ### Evolución de agente — pendiente real
+- **Fila 4 — Camino a la autonomía:** diseño aprobado por producto en `docs/SPEC-AUTONOMIA-CALIBRACION.md` v1.0 (círculo de aprendizaje: simulación → comparación con la decisión real de la dueña → heurísticas de calidad y reacción del VIP → ajuste de confianza → recomendación de activación gradual por VIP). Pendientes de implementación por fases: motor de coincidencia + comparativas, heurísticas de calidad (H1) y reacción post-envío (H2) + migración 030, cola durable de síntesis, puerta de recomendación por VIP.
 - **Autoenvío (doble puerta): deshabilitado.** `FEATURE_AUTONOMOUS_MODE=false`; la ruta de envío autónomo está cableada tras el flag (`turn_orchestrator.py` ~304/2549, `recontact_service.py` ~209) pero apagada. En shadow solo se acumula medición (trust budget por VIP/categoría, `recent_trend`); no hay envío autónomo.
-- **Cola durable `synthesis_queue` para síntesis de perfiles:** no implementada (hoy guard en memoria).
+- **Cola durable `synthesis_queue` para síntesis de perfiles:** no implementada (hoy guard en memoria) — parte de la Fila 4 (Fase C de la SPEC).
 - ~~**Ficha de perfil EA-06 con historial de versiones**~~ → **CERRADO 2026-08-22** (sección 📚 en la ficha; ver Fila 2).
 
 ### Operativo y despliegue
@@ -205,7 +206,7 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 
 ## 4. Referencias
 
-- SPECs: `docs/SPEC-FASE4.md`, `docs/SPEC-FASE5.md`, `docs/SPEC-FASE6.md`, `docs/SPEC-FEEDBACK.md`, `docs/SPEC-EVOLUCION-AGENTE.md` (v1.2, pool evo-agente F0-F5 shadow).
+- SPECs: `docs/SPEC-FASE4.md`, `docs/SPEC-FASE5.md`, `docs/SPEC-FASE6.md`, `docs/SPEC-FEEDBACK.md`, `docs/SPEC-EVOLUCION-AGENTE.md` (v1.2, pool evo-agente F0-F5 shadow), `docs/SPEC-AUTONOMIA-CALIBRACION.md` (v1.0, Fila 4 — camino a la autonomía, diseño aprobado).
 - Privacidad: `docs/ACUERDO-PROVEEDOR-LLM.md` (guía del acuerdo con el proveedor de IA) y `src/diana/llm/pii_masker.py` (masking, tests en `tests/unit/llm/test_pii_masker.py`).
 - Auditoría docs 2026-08-16: `.planning/quick/docs-audit-2026-08-16/`.
 - Trazabilidad del pipeline: `.planning/quick/20260805-f5-perfil-vip/` (PLAN-POOL2/3/4.md, SUMMARYs, AUDITs, REVIEWs, SECURITYs).
