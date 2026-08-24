@@ -28,6 +28,9 @@ _METADATA_HOSTS = frozenset(
         "169.254.169.254",
     }
 )
+# Free-text thinking: lowest effort; callers below the floor skip thinking/ladder.
+_REASONING_EFFORT = "low"
+_THINKING_MAX_TOKENS_FLOOR = 512
 
 
 def validate_llm_base_url(base_url: str) -> str:
@@ -188,29 +191,70 @@ class DeepSeekProvider:
         # With thinking on, CoT + final draft share the token budget.
         if max_tokens is None:
             max_tokens = 4096 if self._thinking_enabled else 1024
-        thinking_type = "enabled" if self._thinking_enabled else "disabled"
+        # Tiny explicit budgets (e.g. recontact 180) must not enable thinking
+        # or burn the cap-empty retry ladder.
+        use_thinking = self._thinking_enabled and max_tokens >= _THINKING_MAX_TOKENS_FLOOR
         outbound, mapping = self._mask_messages(messages)
-        payload = {
-            "model": self._model,
-            "messages": outbound,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            # Free-text drafts may use thinking for better quality.
-            # Never fall back to reasoning_content as the draft (leak risk).
-            "thinking": {"type": thinking_type},
-        }
-        data = await self._chat_completions(payload)
-        content = self._unmask(self._extract_content(data), mapping)
-        if not content.strip():
+
+        if not use_thinking:
+            data = await self._chat_completions(
+                {
+                    "model": self._model,
+                    "messages": outbound,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "thinking": {"type": "disabled"},
+                }
+            )
+            content = self._unmask(self._extract_content(data), mapping)
+            if not content.strip():
+                logger.error(
+                    "deepseek generate empty content",
+                    extra={
+                        "model": self._model,
+                        "attempt": 1,
+                        "thinking": "disabled",
+                        "reasoning_effort": None,
+                        "finish_reason": _finish_reason(data),
+                        "had_reasoning": _has_reasoning_content(data),
+                    },
+                )
+            return content
+
+        # Thinking on: attempt 1–2 with effort=low; attempt 3 thinking off.
+        # Never use reasoning_content as the draft (leak risk).
+        content = ""
+        for attempt in (1, 2, 3):
+            thinking_on = attempt < 3
+            thinking_type = "enabled" if thinking_on else "disabled"
+            payload: dict[str, Any] = {
+                "model": self._model,
+                "messages": outbound,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "thinking": {"type": thinking_type},
+            }
+            if thinking_on:
+                payload["reasoning_effort"] = _REASONING_EFFORT
+            data = await self._chat_completions(payload)
+            content = self._unmask(self._extract_content(data), mapping)
+            if content.strip():
+                return content
+            cap_empty = _is_cap_empty(data)
             logger.error(
                 "deepseek generate empty content",
                 extra={
                     "model": self._model,
+                    "attempt": attempt,
                     "thinking": thinking_type,
+                    "reasoning_effort": _REASONING_EFFORT if thinking_on else None,
                     "finish_reason": _finish_reason(data),
                     "had_reasoning": _has_reasoning_content(data),
                 },
             )
+            if not cap_empty:
+                return content
+            # attempt 1–2 cap-empty → continue; attempt 3 ends the ladder
         return content
 
     async def generate_structured(
@@ -340,3 +384,13 @@ def _has_reasoning_content(data: dict[str, Any]) -> bool:
         return False
     reasoning = message.get("reasoning_content")
     return isinstance(reasoning, str) and bool(reasoning.strip())
+
+
+def _is_cap_empty(data: dict[str, Any]) -> bool:
+    """True when CoT exhausted the token budget (empty content + length + reasoning)."""
+    content = DeepSeekProvider._extract_content(data)
+    return (
+        not content.strip()
+        and _finish_reason(data) == "length"
+        and _has_reasoning_content(data)
+    )
