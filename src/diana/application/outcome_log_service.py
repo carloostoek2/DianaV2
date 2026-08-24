@@ -347,9 +347,11 @@ class OutcomeLogService:
                 quality_delta=delta,
             )
             if updated is not None and self._trust_budget is not None:
-                await self._trust_budget.record_outcome(
-                    turn_id, event="label", value=owner_outcome
-                )
+                coincidence = label_turn(updated.shadow_verdict, owner_outcome)
+                if coincidence is not None:
+                    await self._trust_budget.record_outcome(
+                        turn_id, event="label", value=coincidence
+                    )
             return updated
         except Exception:
             logger.exception(

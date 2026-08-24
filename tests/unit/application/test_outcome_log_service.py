@@ -14,6 +14,8 @@ from diana.application.outcome_log_service import (
     derive_owner_outcome,
     shadow_verdict_from_decision,
 )
+from diana.application.ports import TurnCategoryLogRecord, TurnOutcomeLogRecord, VipTrustBudgetRecord
+from diana.application.trust_budget_service import TrustBudgetService
 from diana.cognitive.decider import Decider
 from diana.cognitive.models import Decision, EvaluationProfile
 
@@ -278,13 +280,107 @@ def _fase_b_service(store, trust_budget, scorer=None):
     )
 
 
-def _trace(*, evaluation: dict | None = None, draft: str = "Hola, ¿cómo estás?") -> dict:
+def _trace(
+    *,
+    evaluation: dict | None = None,
+    draft: str = "Hola, ¿cómo estás?",
+    comprehension: dict | None = None,
+) -> dict:
     return {
         "evaluation": evaluation or _evaluation(),
-        "comprehension": _comprehension(),
+        "comprehension": comprehension or _comprehension(),
         "retrieved": {},
         "generated_text": draft,
     }
+
+
+def _label_events(trust: FakeTrustBudget) -> list[tuple[str, str]]:
+    return [(event, value) for _turn, event, value in trust.calls]
+
+
+class _MemoryVipTrustBudgetStore:
+    """In-memory store replicating SQL repo clamp + counters (copied, not imported)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple, VipTrustBudgetRecord] = {}
+
+    async def get_by_vip_and_category(self, vip_id, turn_category):
+        return self.rows.get((vip_id, turn_category))
+
+    async def increment_autonomous(self, vip_id, turn_category, *, delta, initial):
+        key = (vip_id, turn_category)
+        current = self.rows.get(key)
+        if current is None:
+            record = VipTrustBudgetRecord(
+                vip_id=vip_id,
+                turn_category=turn_category,
+                trust_score=min(1.0, max(0.0, float(initial) + float(delta))),
+                autonomous_count=1,
+            )
+        else:
+            record = current.model_copy(
+                update={
+                    "trust_score": min(1.0, max(0.0, current.trust_score + float(delta))),
+                    "autonomous_count": current.autonomous_count + 1,
+                }
+            )
+        self.rows[key] = record
+        return record
+
+    async def decrement_correction(
+        self, vip_id, turn_category, *, delta, initial, correction_time
+    ):
+        key = (vip_id, turn_category)
+        current = self.rows.get(key)
+        if current is None:
+            record = VipTrustBudgetRecord(
+                vip_id=vip_id,
+                turn_category=turn_category,
+                trust_score=min(1.0, max(0.0, float(initial) - float(delta))),
+                correction_count=1,
+                last_correction_at=correction_time,
+            )
+        else:
+            record = current.model_copy(
+                update={
+                    "trust_score": min(1.0, max(0.0, current.trust_score - float(delta))),
+                    "correction_count": current.correction_count + 1,
+                    "last_correction_at": correction_time,
+                }
+            )
+        self.rows[key] = record
+        return record
+
+    async def list_by_vip(self, vip_id):
+        return [r for (vid, _cat), r in self.rows.items() if vid == vip_id]
+
+
+class _FakeTurnCategoryLogReader:
+    def __init__(self, rows: dict | None = None) -> None:
+        self.rows: dict = dict(rows or {})
+
+    async def get_by_turn_id(self, turn_id):
+        return self.rows.get(turn_id)
+
+
+def _log_record(*, turn_id, vip_id, category="informativo"):
+    return TurnCategoryLogRecord(
+        turn_id=turn_id,
+        vip_id=vip_id,
+        chat_id=100,
+        category=category,
+        would_autonomous=True,
+    )
+
+
+def _real_trust_budget(store, cat_log) -> TrustBudgetService:
+    return TrustBudgetService(
+        store=store,
+        turn_category_log=cat_log,
+        increment=0.05,
+        decrement=0.2,
+        initial=0.2,
+    )
 
 
 class TestRecordShadow:
@@ -352,7 +448,30 @@ class TestRecordOwnerOutcome:
         assert updated.owner_outcome == "corrected"
         assert updated.sent_score == pytest.approx(0.9)
         assert updated.quality_delta == pytest.approx(0.9 - 0.7)
-        assert ("label", "corrected") in [(e, v) for _t, e, v in trust.calls]
+        events = _label_events(trust)
+        assert ("label", "desacuerdo") in events
+        assert ("label", "corrected") not in events
+
+    def test_approved_as_is_is_acierto(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace(draft="borrador")))
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id,
+                owner_outcome="approved_as_is",
+                sent_text="borrador",
+                vip_id=vip_id,
+            )
+        )
+
+        events = _label_events(trust)
+        assert events == [("label", "acierto")]
+        assert ("label", "approved_as_is") not in events
 
     def test_escalated_has_no_sent_score(self) -> None:
         store = FakeOutcomeStore()
@@ -368,6 +487,180 @@ class TestRecordOwnerOutcome:
         assert updated.owner_outcome == "escalated"
         assert updated.sent_score is None
         assert updated.quality_delta is None
+        events = _label_events(trust)
+        assert ("label", "desacuerdo") in events
+        assert ("label", "escalated") not in events
+
+    def test_blocked_approved_is_conservadora(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(
+            svc.record_shadow(
+                turn_id,
+                vip_id=vip_id,
+                trace=_trace(evaluation=_evaluation(safety=0.5)),
+            )
+        )
+        assert store.rows[str(turn_id)].shadow_verdict == "blocked"
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id, owner_outcome="approved_as_is", sent_text="ok", vip_id=vip_id
+            )
+        )
+
+        assert _label_events(trust) == [("label", "conservadora")]
+
+    def test_blocked_corrected_skips_trust(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(
+            svc.record_shadow(
+                turn_id,
+                vip_id=vip_id,
+                trace=_trace(evaluation=_evaluation(safety=0.5)),
+            )
+        )
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id, owner_outcome="corrected", sent_text="otro", vip_id=vip_id
+            )
+        )
+
+        assert _label_events(trust) == []
+
+    def test_doctrine_approved_is_conservadora(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(
+            store.insert(
+                TurnOutcomeLogRecord(
+                    turn_id=turn_id,
+                    vip_id=vip_id,
+                    shadow_verdict="doctrine",
+                    shadow_reason="doctrine_not_found",
+                )
+            )
+        )
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id, owner_outcome="approved_as_is", sent_text="ok", vip_id=vip_id
+            )
+        )
+
+        assert _label_events(trust) == [("label", "conservadora")]
+
+    def test_escalate_approved_is_conservadora(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        comprehension = _comprehension()
+        comprehension["risk"] = "alto"
+        asyncio.run(
+            svc.record_shadow(
+                turn_id, vip_id=vip_id, trace=_trace(comprehension=comprehension)
+            )
+        )
+        assert store.rows[str(turn_id)].shadow_verdict == "escalate"
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id, owner_outcome="approved_as_is", sent_text="ok", vip_id=vip_id
+            )
+        )
+
+        assert _label_events(trust) == [("label", "conservadora")]
+
+    def test_missing_shadow_skips_trust(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(
+            store.insert(
+                TurnOutcomeLogRecord(
+                    turn_id=turn_id, vip_id=vip_id, shadow_verdict=None
+                )
+            )
+        )
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id,
+                owner_outcome="approved_as_is",
+                sent_text="ok",
+                vip_id=vip_id,
+            )
+        )
+
+        assert _label_events(trust) == []
+
+    def test_real_trust_budget_desacuerdo_decrements(self) -> None:
+        """send × corrected maps to desacuerdo → 0.2 − 0.2 = 0.0 (no prior increment)."""
+        store = FakeOutcomeStore()
+        budget_store = _MemoryVipTrustBudgetStore()
+        turn_id = uuid4()
+        vip_id = uuid4()
+        trust = _real_trust_budget(
+            budget_store,
+            _FakeTurnCategoryLogReader(
+                {turn_id: _log_record(turn_id=turn_id, vip_id=vip_id)}
+            ),
+        )
+        svc = _fase_b_service(store, trust)
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace()))
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id, owner_outcome="corrected", sent_text="otro", vip_id=vip_id
+            )
+        )
+
+        rec = budget_store.rows.get((vip_id, "informativo"))
+        assert rec is not None
+        assert rec.trust_score == pytest.approx(0.0)
+
+    def test_real_trust_budget_acierto_increments(self) -> None:
+        """send × approved_as_is maps to acierto → 0.2 + 0.05 = 0.25."""
+        store = FakeOutcomeStore()
+        budget_store = _MemoryVipTrustBudgetStore()
+        turn_id = uuid4()
+        vip_id = uuid4()
+        trust = _real_trust_budget(
+            budget_store,
+            _FakeTurnCategoryLogReader(
+                {turn_id: _log_record(turn_id=turn_id, vip_id=vip_id)}
+            ),
+        )
+        svc = _fase_b_service(store, trust)
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace()))
+
+        asyncio.run(
+            svc.record_owner_outcome(
+                turn_id,
+                owner_outcome="approved_as_is",
+                sent_text="Hola, ¿cómo estás?",
+                vip_id=vip_id,
+            )
+        )
+
+        rec = budget_store.rows.get((vip_id, "informativo"))
+        assert rec is not None
+        assert rec.trust_score == pytest.approx(0.25)
 
 
 class TestRecordReaction:
