@@ -31,6 +31,31 @@ def _openai_chat_response(content: str, *, status_code: int = 200) -> httpx.Resp
     return httpx.Response(status_code, json=body)
 
 
+def _cap_empty_response(
+    *,
+    content: str = "",
+    finish_reason: str = "length",
+    reasoning: str | None = "internal monologue never send this",
+    status_code: int = 200,
+) -> httpx.Response:
+    """Build a chat completion used by cap-empty ladder tests."""
+    message: dict = {"role": "assistant", "content": content}
+    if reasoning is not None:
+        message["reasoning_content"] = reasoning
+    body = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return httpx.Response(status_code, json=body)
+
+
 def _provider_with_transport(
     handler,
     *,
@@ -153,6 +178,7 @@ async def test_generate_structured_disables_thinking_mode() -> None:
         await provider.aclose()
         await client.aclose()
     assert seen["payload"].get("thinking") == {"type": "disabled"}
+    assert "reasoning_effort" not in seen["payload"]
 
 
 @pytest.mark.asyncio
@@ -172,6 +198,7 @@ async def test_generate_enables_thinking_mode_by_default() -> None:
         await provider.aclose()
         await client.aclose()
     assert seen["payload"].get("thinking") == {"type": "enabled"}
+    assert seen["payload"].get("reasoning_effort") == "low"
     assert seen["payload"].get("max_tokens") == 4096
 
 
@@ -192,30 +219,18 @@ async def test_generate_disables_thinking_when_flag_off() -> None:
         await provider.aclose()
         await client.aclose()
     assert seen["payload"].get("thinking") == {"type": "disabled"}
+    assert "reasoning_effort" not in seen["payload"]
     assert seen["payload"].get("max_tokens") == 1024
 
 
 @pytest.mark.asyncio
 async def test_generate_never_leaks_reasoning_content_as_draft() -> None:
-    """Empty content must not fall back to reasoning_content (owner/VIP leak)."""
+    """Cap-empty forever must not leak CoT; ladder stops at ≤3 HTTP."""
+    seen: dict = {"call_count": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        body = {
-            "id": "chatcmpl-test",
-            "object": "chat.completion",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": "",
-                        "reasoning_content": "internal monologue never send this",
-                    },
-                    "finish_reason": "length",
-                }
-            ],
-        }
-        return httpx.Response(200, json=body)
+        seen["call_count"] += 1
+        return _cap_empty_response()
 
     provider = _provider_with_transport(handler, thinking_enabled=True)
     client = provider._client
@@ -223,6 +238,150 @@ async def test_generate_never_leaks_reasoning_content_as_draft() -> None:
         text = await provider.generate([{"role": "user", "content": "x"}])
         assert text == ""
         assert "internal monologue" not in text
+        assert seen["call_count"] == 3
+        assert seen["call_count"] <= 3
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_cap_empty_retries_once_same_config_then_succeeds() -> None:
+    """First cap-empty → second same thinking+effort+max_tokens returns draft."""
+    seen: dict = {"payloads": [], "call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        payload = json.loads(request.content)
+        seen["payloads"].append(payload)
+        if seen["call_count"] == 1:
+            return _cap_empty_response()
+        return _openai_chat_response("recovered draft")
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == "recovered draft"
+        assert seen["call_count"] == 2
+        p0, p1 = seen["payloads"]
+        assert p0.get("thinking") == {"type": "enabled"}
+        assert p0.get("reasoning_effort") == "low"
+        assert p1.get("thinking") == p0.get("thinking")
+        assert p1.get("reasoning_effort") == p0.get("reasoning_effort")
+        assert p1.get("max_tokens") == p0.get("max_tokens")
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_double_cap_empty_falls_back_thinking_off() -> None:
+    """Two cap-empty calls → third with thinking off, same max_tokens."""
+    seen: dict = {"payloads": [], "call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        payload = json.loads(request.content)
+        seen["payloads"].append(payload)
+        if seen["call_count"] <= 2:
+            return _cap_empty_response()
+        return _openai_chat_response("fallback draft")
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == "fallback draft"
+        assert seen["call_count"] == 3
+        p0, p1, p2 = seen["payloads"]
+        assert p0.get("thinking") == {"type": "enabled"}
+        assert p0.get("reasoning_effort") == "low"
+        assert p1.get("thinking") == p0.get("thinking")
+        assert p1.get("reasoning_effort") == p0.get("reasoning_effort")
+        assert p2.get("thinking") == {"type": "disabled"}
+        assert "reasoning_effort" not in p2
+        assert p2.get("max_tokens") == p0.get("max_tokens")
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_double_cap_empty_thinking_off_still_empty_returns_empty_no_leak() -> None:
+    """3× empty (cap-empty ×2 then thinking-off empty) → '' without CoT leak."""
+    seen: dict = {"call_count": 0}
+    cot = "internal monologue never send this"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        if seen["call_count"] <= 2:
+            return _cap_empty_response(reasoning=cot)
+        return _cap_empty_response(
+            content="",
+            finish_reason="stop",
+            reasoning=cot,
+        )
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == ""
+        assert "internal monologue" not in text
+        assert seen["call_count"] == 3
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_empty_without_cap_predicate_does_not_retry() -> None:
+    """Empty + finish_reason=stop + no reasoning → exactly one HTTP → ''."""
+    seen: dict = {"call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        return _cap_empty_response(
+            content="",
+            finish_reason="stop",
+            reasoning=None,
+        )
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == ""
+        assert seen["call_count"] == 1
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_small_max_tokens_forces_thinking_off() -> None:
+    """Callers with max_tokens < 512 (e.g. recontact 180) skip thinking + ladder."""
+    seen: dict = {"payloads": [], "call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        seen["payloads"].append(json.loads(request.content))
+        return _openai_chat_response("short")
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate(
+            [{"role": "user", "content": "x"}],
+            max_tokens=180,
+        )
+        assert text == "short"
+        assert seen["call_count"] == 1
+        payload = seen["payloads"][0]
+        assert payload.get("thinking") == {"type": "disabled"}
+        assert "reasoning_effort" not in payload
+        assert payload.get("max_tokens") == 180
     finally:
         await provider.aclose()
         await client.aclose()
