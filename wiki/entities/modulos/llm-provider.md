@@ -29,7 +29,7 @@ Abstracción de proveedores de modelo de lenguaje (ADR-006). Interfaz abstracta 
 
 ## Implementación real (2026-08-11, actualizado 2026-08-24)
 
-`llm/` sigue con **2** archivos: `deepseek.py` (cliente OpenAI-compatible vía httpx, solo I/O) y `fake.py` (FakeLLM scriptable para tests). **Solo DeepSeek está implementado** — no hay cliente Anthropic en el árbol. Sin commits en `llm/` desde 2026-08-11.
+`llm/` sigue con **2** archivos: `deepseek.py` (cliente OpenAI-compatible vía httpx, solo I/O) y `fake.py` (FakeLLM scriptable para tests). **Solo DeepSeek está implementado** — no hay cliente Anthropic en el árbol.
 
 Toggle de thinking (landed 2026-08-09, omitido en el inventario del 11): `DeepSeekProvider(thinking_enabled=...)` cableado a `settings.llm_thinking_enabled` (default `True`).
 
