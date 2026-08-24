@@ -108,7 +108,7 @@ Un archivo sin caption ya no llega vacío. El handler de negocio antepone un tag
 
 ## Thinking del LLM (ops, no es un botón)
 
-`LLM_THINKING_ENABLED` default **ON**. Aplica solo a `generate()` (borradores de texto libre) con esfuerzo **low**; si el CoT agota el presupuesto de tokens, hay un reintento y luego un fallback con thinking apagado. El flag sigue siendo el interruptor maestro solo para borradores. Analyst/Evaluator (`generate_structured`) llevan thinking **siempre apagado**, independiente del flag.
+`LLM_THINKING_ENABLED` default **ON**. Aplica solo a `generate()` (borradores de texto libre) con esfuerzo **low**; si el CoT agota el presupuesto de tokens y el mensaje sale vacío, hay un reintento con la misma config y, si falla igual, un fallback con thinking apagado. Presupuestos cortos (p. ej. recontacto) saltan thinking. El flag sigue siendo el interruptor maestro solo para borradores. Analyst/Evaluator (`generate_structured`) llevan thinking **siempre apagado**, independiente del flag.
 
 ## Tokens honestos (Aprobar / Corregir / Escalar)
 
