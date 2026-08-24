@@ -56,6 +56,32 @@ def test_composition_doctrine_router_receives_admin(_comp_src: str) -> None:
     assert "admin=admin" in router_block
 
 
+def test_admin_receives_outcome_when_quality_enabled(_comp_src: str) -> None:
+    """Fila 4: AdminService outcome= is the quality-gated OutcomeLogService."""
+    start = _comp_src.find("admin = AdminService(")
+    assert start != -1
+    end = _comp_src.find("\n    )", start)
+    block = _comp_src[start:end]
+    assert "outcome=(" in block
+    assert (
+        "outcome_log if settings.feature_autonomy_quality_enabled else None"
+        in block
+    )
+
+
+def test_doctrine_escalate_callback_passes_admin_and_actor() -> None:
+    """de: router must forward injected admin + owner actor_id."""
+    root = Path(diana.__file__).resolve().parent
+    src = (root / "telegram" / "handlers" / "doctrine.py").read_text(
+        encoding="utf-8"
+    )
+    start = src.find("async def on_doctrine_escalate")
+    assert start != -1
+    block = src[start : src.find("return router", start)]
+    assert "admin=admin" in block
+    assert "actor_id" in block
+
+
 def test_composition_decider_receives_feature_flags(_comp_src: str) -> None:
     """Decider is wired with gray-zone + autonomous flags and thresholds."""
     assert "feature_gray_zone_enabled=" in _comp_src
