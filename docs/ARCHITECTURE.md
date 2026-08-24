@@ -142,6 +142,7 @@ Valores leídos de `.env` del repo (runtime). Los defaults del código en `src/d
 | `FEATURE_GRAY_ZONE_ENABLED` | `true` | Zona gris / consulta de doctrina + freeze |
 | `FEATURE_STAGING_ENABLED` | `true` | Staging Area y superficie `/staging` |
 | `FEATURE_SANDBOX_ENABLED` | `true` | Sandbox (perfiles ficticios) |
+| `FEATURE_SANDBOX_AUTO_SEND` | `true` | Sandbox test window: respuesta directa e instantánea en chats con sandbox activo (sin aprobación; bloqueos siguen notificando) |
 | `FEATURE_ADVANCED_BEHAVIOR` | `true` | Mensajes divididos y quirks humanos |
 | `FEATURE_PROMO_ENABLED` | `true` | Promo no-VIP (trigger exacto) |
 | `FEATURE_RECONTACT_ENABLED` | `true` | Recontacto por silencio |

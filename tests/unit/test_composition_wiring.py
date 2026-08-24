@@ -91,7 +91,8 @@ def test_composition_trace_reader_and_metrics_data_wired(_comp_src: str) -> None
     """
     orch_start = _comp_src.find("orchestrator = TurnOrchestrator(")
     assert orch_start != -1
-    orch_block = _comp_src[orch_start : orch_start + 900]
+    orch_end = _comp_src.find("\n    )", orch_start)
+    orch_block = _comp_src[orch_start:orch_end]
     assert "trace_reader=traces" in orch_block
     assert "metrics_data = SqlMetricsDataSource(sf)" in _comp_src
     assert "metrics_data=metrics_data" in _comp_src
@@ -114,7 +115,8 @@ def test_composition_orchestrator_catalog_provider_scoped_to_block(_comp_src: st
     """
     start = _comp_src.find("orchestrator = TurnOrchestrator(")
     assert start != -1
-    block = _comp_src[start : start + 900]
+    end = _comp_src.find("\n    )", start)
+    block = _comp_src[start:end]
     assert "persona_catalog_provider=persona_catalog_provider" in block
 
 

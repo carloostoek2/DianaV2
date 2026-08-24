@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     feature_gray_zone_enabled: bool = False
     feature_staging_enabled: bool = False
     feature_sandbox_enabled: bool = False
+    # Sandbox test window auto-send: when ON, chats with an active sandbox
+    # session deliver responses directly (instant, no owner approval).
+    # Real VIP traffic is never affected; escalations keep their notifications.
+    feature_sandbox_auto_send: bool = False
 
     # F3 feature flag static defaults (runtime DB merge is a later item).
     feature_autonomous_mode: bool = False

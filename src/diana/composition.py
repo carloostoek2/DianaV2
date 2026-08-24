@@ -933,6 +933,7 @@ def build_app(
         delivery_mode=settings.global_mode,
         feature_advanced_behavior=feature_advanced_behavior,
         feature_phatic_auto_send=settings.feature_phatic_auto_send,
+        feature_sandbox_auto_send=settings.feature_sandbox_auto_send,
         sandbox=sandbox,
         delay_policy=policy,
         runtime_timers=runtime_timers_store,

@@ -235,6 +235,7 @@ def _build(
     wire_autonomous: bool = False,
     feature_autonomous_mode: bool = False,
     feature_phatic_auto_send: bool = False,
+    feature_sandbox_auto_send: bool = False,
     feature_advanced_behavior: bool = False,
     global_mode: str = "supervised",
     delivery_mode: str = "supervised",
@@ -303,7 +304,9 @@ def _build(
             notifier=notifier,
         )
     # Plantilla auto-send needs behavior/vip_store/traces without AMS L1.
-    wire_deliver = bool(feature_phatic_auto_send or wire_autonomous)
+    wire_deliver = bool(
+        feature_phatic_auto_send or wire_autonomous or feature_sandbox_auto_send
+    )
     orch = TurnOrchestrator(
         coordinator=coordinator,
         director=director,  # type: ignore[arg-type]
@@ -320,6 +323,7 @@ def _build(
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
         feature_advanced_behavior=feature_advanced_behavior,
         feature_phatic_auto_send=feature_phatic_auto_send,
+        feature_sandbox_auto_send=feature_sandbox_auto_send,
         delay_policy=delay_policy,
         daily_message_limit_store=daily_limit,
         turns=turns,
@@ -348,6 +352,7 @@ def _build(
         "notifier": notifier,
         "turns": turns,
         "approvals": approvals,
+        "escalations": escalations,
         "coordinator": coordinator,
         "history": history,
         "traces": traces,
@@ -6079,6 +6084,169 @@ async def test_profile_synthesis_trigger_skipped_in_sandbox(
         )
     assert trigger.calls == []
     assert any("profile_synthesis_skipped_sandbox" in r.message for r in caplog.records)
+
+
+# --- Sandbox test window: FEATURE_SANDBOX_AUTO_SEND --------------------------
+
+
+def _sandbox_auto_send_service(chat_id: int = 100):
+    """SandboxService with one active session on ``chat_id`` (minimal catalog)."""
+    from diana.application.sandbox import SandboxService
+
+    minimal = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {
+            "label": "x",
+            "description": "",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    svc = SandboxService(profiles=minimal)
+    svc.activate(chat_id, "nuevo")
+    return svc
+
+
+@pytest.mark.asyncio
+async def test_sandbox_auto_send_flag_off_still_approves() -> None:
+    """Flag OFF: sandbox + approve keeps the owner approval queue (default)."""
+    decision = Decision(
+        action="approve",
+        reason="ok_for_human_review",
+        evaluation=_eval(),
+        draft_text="draft",
+    )
+    g = _build(FakeDirector(decision))
+    g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert await g["approvals"].get_by_turn(turn_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_auto_send_approve_delivers_direct() -> None:
+    """Flag ON + sandbox active: approve becomes a direct delivery, no queue."""
+    decision = Decision(
+        action="approve",
+        reason="ok_for_human_review",
+        evaluation=_eval(),
+        draft_text="respuesta de prueba",
+    )
+    g = _build(FakeDirector(decision), feature_sandbox_auto_send=True)
+    g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    # No approval was created for the owner.
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    # The message was sent to the sandbox chat.
+    sends = [c for c in g["actuator"].calls if c["op"] == "send_message"]
+    assert any(c["chat_id"] == 100 and c["text"] == "respuesta de prueba" for c in sends)
+    # Sandbox isolation: no durable owner history.
+    rows = await g["history"].get_recent(100)
+    assert not any(r.get("role") == "owner" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_auto_send_escalate_still_notifies() -> None:
+    """Flag ON + sandbox: escalate keeps the owner notification, no delivery."""
+    decision = Decision(
+        action="escalate",
+        reason="risk_high",
+        evaluation=_eval(),
+        draft_text=None,
+    )
+    g = _build(FakeDirector(decision), feature_sandbox_auto_send=True)
+    g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=100, vip_id=uuid4(), text="mensaje riesgoso")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "escalated"
+    assert g["actuator"].send_count() == 0
+    # The configured escalation notification was registered.
+    assert any(ev["turn_id"] == turn_id for ev in g["escalations"].events)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_auto_send_vip_id_none_delivers() -> None:
+    """Flag ON + sandbox chat without VIP record (atencion) still delivers."""
+    decision = Decision(
+        action="approve",
+        reason="ok_for_human_review",
+        evaluation=_eval(),
+        draft_text="hola de prueba",
+    )
+    g = _build(FakeDirector(decision), feature_sandbox_auto_send=True)
+    g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=100, vip_id=None, channel_type="atencion", text="hola")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert await g["approvals"].get_by_turn(turn_id) is None
+
+
+@pytest.mark.asyncio
+async def test_sandbox_auto_send_uses_instant_context() -> None:
+    """Flag ON + sandbox: the delivery context is instant (zero waits)."""
+    decision = Decision(
+        action="approve",
+        reason="ok_for_human_review",
+        evaluation=_eval(),
+        draft_text="instant reply",
+    )
+    deliverer = _MultiMidDeliverer()
+    g = _build(
+        FakeDirector(decision),
+        feature_sandbox_auto_send=True,
+        behavior_override=deliverer,
+    )
+    g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    await g["orch"].handle_vip_message(
+        _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
+    )
+    assert len(deliverer.ctxs) == 1
+    ctx = deliverer.ctxs[0]
+    assert ctx.chat_id == 100
+    assert ctx.instant is True
+    assert ctx.skip_initial_delay is True
+    assert ctx.allow_human_quirks is False
+    assert ctx.allow_split is False
+
+
+@pytest.mark.asyncio
+async def test_sandbox_auto_send_skips_pre_pipeline_delay() -> None:
+    """Flag ON + sandbox: no pre-pipeline wait and no delivery sleeps."""
+    decision = Decision(
+        action="approve",
+        reason="ok_for_human_review",
+        evaluation=_eval(),
+        draft_text="ya",
+    )
+    clock = ImmediateClock()
+    g = _build(
+        FakeDirector(decision),
+        feature_sandbox_auto_send=True,
+        clock=clock,
+        delay_policy=FixedDelayPolicy(initial=5.0, typing=1.0),
+    )
+    g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
+    )
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert clock.sleeps == []
 
 
 # --- Evo-Agente Fase 5: shadow trust-budget hook ------------------------------

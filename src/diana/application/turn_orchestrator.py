@@ -203,6 +203,10 @@ class TurnOrchestrator:
         feature_advanced_behavior: bool = False,
         # Pure plantilla_saludo auto-delivery (independent of AMS / phatic autonomy).
         feature_phatic_auto_send: bool = False,
+        # Sandbox test window auto-send: sandbox-active chats deliver directly
+        # and instantly (no owner approval, no human-like delays). Escalations
+        # and doctrine consults keep their configured owner notifications.
+        feature_sandbox_auto_send: bool = False,
         sandbox: object | None = None,
         delay_policy: DelayPolicy | None = None,
         runtime_timers: RuntimeTimerStore | None = None,
@@ -243,6 +247,7 @@ class TurnOrchestrator:
         self._delivery_mode = delivery_mode
         self._feature_advanced_behavior = bool(feature_advanced_behavior)
         self._feature_phatic_auto_send = bool(feature_phatic_auto_send)
+        self._feature_sandbox_auto_send = bool(feature_sandbox_auto_send)
         self._sandbox = sandbox
         self._delay_policy = delay_policy
         self._runtime_timers = runtime_timers
@@ -1314,11 +1319,19 @@ class TurnOrchestrator:
         mode = await self._resolve_effective_mode(
             incoming.vip_id, incoming.channel_type
         )
-        pre_delay = (
-            self._delay_policy.initial_delay_seconds(mode)
-            if self._delay_policy is not None
-            else 0.0
-        )
+        # Sandbox test window: no pre-pipeline wait (instant loop for the
+        # automated harness). Only when the flag is ON and the chat has an
+        # active sandbox session — real VIP traffic keeps its delays.
+        pre_delay = 0.0
+        if not (
+            self._feature_sandbox_auto_send
+            and self._sandbox_active(chat_id)
+        ):
+            pre_delay = (
+                self._delay_policy.initial_delay_seconds(mode)
+                if self._delay_policy is not None
+                else 0.0
+            )
 
         logger.info(
             "turn_delay_started",
@@ -1632,8 +1645,13 @@ class TurnOrchestrator:
 
         # OUTSIDE lock — cancel_pending can interrupt delays (Admin pattern).
         # Re-check freeze after lock release (race: freeze applied mid-pipeline).
+        # Sandbox test window is exempt: the session is an explicit owner
+        # test surface, and frozen/paused state belongs to the real VIP.
         vip_frozen = await self._is_vip_frozen(incoming.vip_id)
-        if vip_frozen:
+        if vip_frozen and not (
+            self._feature_sandbox_auto_send
+            and self._sandbox_active(chat_id)
+        ):
             async with self._coordinator.chat_scope(chat_id):
                 live = await self._coordinator.get_turn(turn_id)
                 if live is not None and not is_turn_status_terminal(live.status):
@@ -2208,6 +2226,30 @@ class TurnOrchestrator:
             decision=decision,
         )
 
+        # Sandbox test window auto-send: any approve/send decision on a chat
+        # with an active sandbox session is delivered directly and instantly,
+        # skipping the owner approval queue. Escalate / consult_doctrine keep
+        # their configured block notifications below. Flag-gated; real VIP
+        # traffic (no active sandbox) is never affected.
+        if (
+            self._feature_sandbox_auto_send
+            and self._sandbox_active(incoming.chat_id)
+            and decision.action in ("approve", "send")
+        ):
+            job = await self._prepare_sandbox_send(
+                turn_id=turn_id,
+                turn_ctx=turn_ctx,
+                decision=decision,
+                incoming=incoming,
+            )
+            if job is not None:
+                return turn_id, job
+            logger.info(
+                "sandbox_auto_send_failed_closed",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+            return turn_id, None
+
         if decision.action == "approve":
             await self._coordinator.transition(
                 turn_id, TurnStatus.PENDING_APPROVAL
@@ -2681,6 +2723,80 @@ class TurnOrchestrator:
             allow_split=advanced,
             allow_human_quirks=advanced,
             split_chars=4096,
+        )
+        return _AutonomousDeliverJob(text=draft, ctx=ctx, decision=decision)
+
+    async def _prepare_sandbox_send(
+        self,
+        *,
+        turn_id: UUID,
+        turn_ctx: IncomingTurn,
+        decision: Decision,
+        incoming: VipInboundMessage,
+    ) -> _AutonomousDeliverJob | None:
+        """Direct instant delivery for a sandbox-active chat (flag-gated).
+
+        Sandbox test window: no AMS gates and no frozen/paused checks — the
+        session is an explicit owner-activated test surface and product
+        isolation is ``should_persist``. Delivery uses ``instant=True`` so the
+        automated harness loop gets the response with zero human-like waits.
+        Only converts approve/send; escalations and doctrine consults never
+        reach this path.
+        """
+        draft = (decision.draft_text or "").strip()
+        if not draft:
+            logger.info(
+                "sandbox_send_empty_draft",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+            try:
+                await self._coordinator.mark_failed(turn_id, error="empty_draft")
+            except Exception:
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
+            await self._safe_notify_info(
+                f"Turn {turn_id} failed: empty_draft",
+                chat_id=incoming.chat_id,
+                event="owner_notify_failed_after_empty_draft",
+                turn_id=str(turn_id),
+            )
+            return None
+
+        if self._behavior is None:
+            logger.error(
+                "sandbox_behavior_not_wired",
+                extra={"turn_id": str(turn_id)},
+            )
+            try:
+                await self._coordinator.mark_failed(
+                    turn_id, error="sandbox_behavior_not_wired"
+                )
+            except Exception:
+                await self._maybe_post_turn_terminal(
+                    turn_id, incoming.chat_id
+                )
+                raise
+            return None
+
+        mode = self._effective_delivery_mode(incoming.chat_id)
+        if mode == "fake_delivery":
+            logger.info(
+                "delivery_mode_fake",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+        ctx = DeliveryContext(
+            chat_id=incoming.chat_id,
+            business_connection_id=str(turn_ctx.business_connection_id).strip(),
+            vip_id=incoming.vip_id,
+            telegram_message_id=incoming.telegram_message_id,
+            mode=mode,
+            is_frozen=False,
+            skip_initial_delay=True,
+            instant=True,
+            allow_split=False,
+            allow_human_quirks=False,
         )
         return _AutonomousDeliverJob(text=draft, ctx=ctx, decision=decision)
 

@@ -202,7 +202,7 @@ class BehaviorEngine:
                     success=False, cancelled=True, error="cancelled_before_start"
                 )
 
-            if ctx.skip_initial_delay:
+            if ctx.skip_initial_delay or ctx.instant:
                 initial = 0.0
             else:
                 initial = self._delay.initial_delay_seconds(ctx.mode)
@@ -224,7 +224,8 @@ class BehaviorEngine:
                 ))
 
             try:
-                await self._clock.sleep(initial)
+                if initial > 0:
+                    await self._clock.sleep(initial)
 
                 if quirk == "pause":
                     logger.info(
@@ -244,7 +245,10 @@ class BehaviorEngine:
                         initial=initial,
                     )
 
-                if ctx.telegram_message_id is not None:
+                if (
+                    ctx.telegram_message_id is not None
+                    and not ctx.instant
+                ):
                     pre_read = self._delay.pre_read_delay_seconds()
                     if pre_read > 0:
                         await self._clock.sleep(pre_read)
@@ -261,7 +265,7 @@ class BehaviorEngine:
                 typing_secs = 0.0
                 message_ids: list[int] = []
                 for index, text in enumerate(texts):
-                    if index == 0 or inter_message_gap:
+                    if not ctx.instant and (index == 0 or inter_message_gap):
                         if index > 0 and inter_message_gap:
                             gap = self._delay.inter_message_gap_seconds()
                             if gap > 0:

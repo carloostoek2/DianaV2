@@ -106,6 +106,24 @@ async def test_happy_path_sequence_order(
 
 
 @pytest.mark.asyncio
+async def test_instant_delivery_skips_all_human_like_waits(
+    engine_bundle: tuple,
+) -> None:
+    """instant=True: no initial delay, no read simulation, no typing bubble."""
+    engine, actuator, _, clock = engine_bundle
+    ctx = _ctx(instant=True)
+    result = await engine.deliver(["hola"], ctx, uuid4())
+
+    assert result.success is True
+    assert result.message_ids == [1]
+    assert clock.sleeps == []
+    # Only the message send happens — no read, no chat action.
+    assert [c["op"] for c in actuator.calls] == ["send_message"]
+    assert result.actual_delay_seconds == 0.0
+    assert result.typing_duration_seconds == 0.0
+
+
+@pytest.mark.asyncio
 async def test_multi_text_sends_each(
     engine_bundle: tuple,
 ) -> None:

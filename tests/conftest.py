@@ -25,6 +25,7 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "FEATURE_GRAY_ZONE_ENABLED",
         "FEATURE_STAGING_ENABLED",
         "FEATURE_SANDBOX_ENABLED",
+        "FEATURE_SANDBOX_AUTO_SEND",
         # F3 feature flags
         "FEATURE_AUTONOMOUS_MODE",
         "FEATURE_RECONTACT_ENABLED",

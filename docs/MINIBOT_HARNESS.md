@@ -47,8 +47,13 @@ Perfiles disponibles:
 
 En modo **supervisado**, DianaV2 retiene los borradores en el DM de la dueña
 (no los envía al chat). Para el bucle automático las respuestas deben llegar al
-chat de prueba. Dos opciones:
+chat de prueba. Tres opciones:
 
+- **Sandbox test window (recomendado):** `FEATURE_SANDBOX_AUTO_SEND=true` en el
+  `.env` de DianaV2. Con el sandbox activo en el chat de prueba, las respuestas
+  se envían **directas e instantáneas** a ese chat (sin aprobación y sin las
+  esperas humanas de Diana). Los VIP reales no se ven afectados; los bloqueos
+  (escalaciones, zona gris) siguen notificando a la dueña.
 - **Autónomo:** `GLOBAL_MODE=autonomous` + `FEATURE_AUTONOMOUS_MODE=true` en el
   `.env` de DianaV2. Envía automáticamente las respuestas con confianza
   suficiente. ⚠️ Verifica los umbrales para que los turnos de prueba no caigan
@@ -65,8 +70,9 @@ chat de prueba. Dos opciones:
 
 | Variable | Valor para el harness |
 | --- | --- |
-| `GLOBAL_MODE` | `autonomous` (o `supervised` + aprobación manual) |
+| `GLOBAL_MODE` | `supervised` (con `FEATURE_SANDBOX_AUTO_SEND=true`) o `autonomous` + aprobación manual |
 | `FEATURE_SANDBOX_ENABLED` | `true` |
+| `FEATURE_SANDBOX_AUTO_SEND` | `true` (respuesta directa e instantánea en el chat de prueba) |
 | `FEATURE_AUTONOMOUS_MODE` | `true` solo en autónomo (kill-switch maestro) |
 
 ### minibot (`.env` — ver repo minibot)
