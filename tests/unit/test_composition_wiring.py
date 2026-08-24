@@ -79,7 +79,7 @@ def test_doctrine_escalate_callback_passes_admin_and_actor() -> None:
     assert start != -1
     block = src[start : src.find("return router", start)]
     assert "admin=admin" in block
-    assert "actor_id" in block
+    assert "actor_id=actor_id" in block
 
 
 def test_composition_decider_receives_feature_flags(_comp_src: str) -> None:
