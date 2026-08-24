@@ -184,6 +184,7 @@ def _admin_graph(*, outcome, staging=None, quality: bool = False) -> dict:
         "approvals": approvals,
         "coordinator": coordinator,
         "actuator": actuator,
+        "notifier": notifier,
         "vips": vips,
         "owner_id": OWNER_ID,
         "outcome": outcome,
@@ -284,6 +285,36 @@ async def test_doctrine_escalate_send_shadow_is_desacuerdo() -> None:
     events = _label_events(trust)
     assert ("label", "desacuerdo") in events
     assert ("label", "escalated") not in events
+    assert store.rows[str(turn.id)].owner_outcome == "escalated"
+
+
+@pytest.mark.asyncio
+async def test_doctrine_escalate_discards_when_owner_notify_fails() -> None:
+    """Telegram notify must not skip discard_and_close / VIP unfreeze."""
+    store = FakeOutcomeStore()
+    trust = FakeTrustBudget()
+    outcome = _fase_b_service(store, trust)
+    g = _admin_graph(outcome=outcome)
+    gz = _memory_gray_zone(g["vips"])
+    turn = await _seed_gray_zone(g, gz, store, shadow="doctrine")
+
+    async def _boom(text: str, *, chat_id: int | None = None) -> None:
+        raise RuntimeError("telegram notify failed")
+
+    g["notifier"].notify_info = _boom  # type: ignore[method-assign]
+
+    status = await handle_doctrine_escalate(
+        gray_zone=gz,
+        coordinator=g["coordinator"],
+        turn_id=turn.id,
+        admin=g["admin"],
+        actor_id=OWNER_ID,
+    )
+
+    assert status == "escalated"
+    assert await gz.get_open_query_by_turn_id(turn.id) is None
+    vip = await g["vips"].get_by_id(turn.vip_id)
+    assert vip is not None and vip.frozen_until is None
     assert store.rows[str(turn.id)].owner_outcome == "escalated"
 
 

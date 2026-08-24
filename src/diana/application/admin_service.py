@@ -1045,10 +1045,18 @@ class AdminService:
             if escalated_here and self._post_turn is not None:
                 await self._trigger_post_turn_terminal(turn_id, chat_id)
 
-        await self._notifier.notify_info(
-            f"Turn {turn_id} escalated/discarded by owner",
-            chat_id=chat_id,
-        )
+        try:
+            await self._notifier.notify_info(
+                f"Turn {turn_id} escalated/discarded by owner",
+                chat_id=chat_id,
+            )
+        except Exception:
+            log_swallowed(
+                logger,
+                "owner_escalate_notify_failed",
+                turn_id=str(turn_id),
+                chat_id=chat_id,
+            )
         logger.info(
             "owner_escalate",
             extra={"turn_id": str(turn_id), "chat_id": chat_id},
