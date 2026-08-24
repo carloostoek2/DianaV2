@@ -329,13 +329,19 @@ class InMemoryEscalationStore:
         self.events: list[dict[str, Any]] = []
 
     async def create(
-        self, turn_id: UUID, *, tipo: str, motivo: str | None
+        self,
+        turn_id: UUID,
+        *,
+        tipo: str,
+        motivo: str | None,
+        business_connection_id: str | None = None,
     ) -> None:
         self.events.append(
             {
                 "turn_id": turn_id,
                 "tipo": tipo,
                 "motivo": motivo,
+                "business_connection_id": business_connection_id,
                 "notificado": False,
             }
         )
@@ -344,6 +350,12 @@ class InMemoryEscalationStore:
         for ev in self.events:
             if ev["turn_id"] == turn_id:
                 ev["notificado"] = True
+
+    async def get_business_connection_id(self, turn_id: UUID) -> str | None:
+        for ev in self.events:
+            if ev["turn_id"] == turn_id:
+                return ev.get("business_connection_id")
+        return None
 
 
 class InMemoryMessageHistoryWriter:

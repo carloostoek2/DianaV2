@@ -478,7 +478,10 @@ class AdminService:
         tipo = tipo_from_reason(decision.reason)
         reason = self._sandbox_reason(turn.chat_id, decision.reason)
         await self._escalations.create(
-            turn_id, tipo=tipo, motivo=reason
+            turn_id,
+            tipo=tipo,
+            motivo=reason,
+            business_connection_id=turn.business_connection_id,
         )
         await self._notifier.notify_escalation(
             EscalationNotification(
@@ -866,7 +869,8 @@ class AdminService:
         """Record owner mark that an escalation was a false positive (metrics).
 
         Thin entry point — no Telegram UI required. Returns False when the
-        mark store is not wired.
+        mark store is not wired. Sandbox test window: the mark is NOT
+        persisted (isolation) — test feedback must not pollute real metrics.
         """
         self._assert_owner(actor_id)
         if self._fp_marks is None:
@@ -875,12 +879,97 @@ class AdminService:
                 extra={"turn_id": str(turn_id)},
             )
             return False
+        turn = await self._turns.get(turn_id)
+        if (
+            turn is not None
+            and self._sandbox is not None
+            and self._sandbox.is_active(turn.chat_id)  # type: ignore[union-attr]
+        ):
+            logger.info(
+                "false_positive_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
+            )
+            return True
         await self._fp_marks.mark(turn_id)
         logger.info(
             "false_positive_marked",
             extra={"turn_id": str(turn_id)},
         )
         return True
+
+    async def handle_escalation_reply(
+        self,
+        turn_id: UUID,
+        text: str,
+        *,
+        actor_id: int | None = None,
+    ) -> DeliveryResult | None:
+        """Deliver a free-text owner reply to the escalated chat.
+
+        The escalation means Diana did NOT answer; the owner takes over by
+        writing the response and this method delivers it to the VIP chat
+        through the BehaviorEngine (same delivery path as an approved draft).
+        Returns None when the turn is missing.
+        """
+        self._assert_owner(actor_id)
+        stripped = (text or "").strip()
+        if not stripped:
+            raise ValueError("reply text must be non-empty")
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            logger.info(
+                "escalation_reply_missing_turn",
+                extra={"turn_id": str(turn_id)},
+            )
+            return None
+        if self._behavior is None:
+            logger.error(
+                "escalation_reply_behavior_not_wired",
+                extra={"turn_id": str(turn_id)},
+            )
+            return None
+        # The turn/approval rows do not carry the business connection; the
+        # escalation record stores it at notify time (migration 032).
+        bc = ""
+        if self._escalations is not None:
+            try:
+                stored = await self._escalations.get_business_connection_id(turn_id)
+                bc = stored or ""
+            except Exception:
+                log_swallowed(
+                    logger,
+                    "escalation_reply_bc_lookup_failed",
+                    turn_id=str(turn_id),
+                )
+        bc = bc.strip()
+        if not bc:
+            logger.info(
+                "escalation_reply_missing_bc",
+                extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
+            )
+            return None
+        advanced = self._feature_advanced_behavior
+        mode = self._effective_delivery_mode(turn.chat_id)
+        ctx = DeliveryContext(
+            chat_id=turn.chat_id,
+            business_connection_id=bc,
+            vip_id=turn.vip_id,
+            mode=mode,
+            is_frozen=False,
+            skip_initial_delay=True,
+            allow_split=advanced,
+            allow_human_quirks=advanced,
+            split_chars=4096,
+        )
+        logger.info(
+            "escalation_reply_send",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": turn.chat_id,
+                "vip_id": str(turn.vip_id) if turn.vip_id else None,
+            },
+        )
+        return await self._behavior.deliver([stripped], ctx, turn_id)
 
     async def handle_owner_escalate(
         self,

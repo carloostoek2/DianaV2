@@ -334,6 +334,27 @@ async def handle_admin_text(
         return "session_expired"
     if state == "live" and pending_turn is not None and not stripped.startswith("/"):
         sess = correct_sessions.get_session(actor_id)
+        if sess is not None and sess.mode == "escalation_reply":
+            try:
+                result = await admin.handle_escalation_reply(
+                    pending_turn, stripped, actor_id=actor_id
+                )
+            except OwnerAuthError:
+                correct_sessions.cancel(actor_id)
+                return "forbidden"
+            except ValueError:
+                # Keep session so owner can re-send non-empty text.
+                return "invalid_reply"
+            correct_sessions.cancel(actor_id)
+            if result is None:
+                correct_sessions.cancel_turn(pending_turn)
+                return "stale"
+            if result.cancelled:
+                correct_sessions.cancel_turn(pending_turn)
+                return "stale"
+            if result.success:
+                return "escalation_reply_sent"
+            return "deliver_failed"
         if sess is not None and sess.mode == "reprimand" and sess.phase == "reprimand_combo":
             return "reprimand_combo_use_buttons"
         if sess is not None and sess.mode == "reprimand":

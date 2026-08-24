@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from datetime import date
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -408,3 +410,123 @@ async def test_handle_admin_text_after_cancel_not_session_expired() -> None:
         correct_sessions=sessions,
     )
     assert result == "ignored"
+
+
+# --- Escalation DM actions (ver traza / falso positivo / responder) -----------
+
+
+async def _escalated_turn(g: dict) -> UUID:
+    """Mint an escalated turn on chat 42 (bc-1) with its escalation record."""
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, "escalated")
+    await g["admin"]._escalations.create(  # noqa: SLF001
+        turn.id, tipo="risk_high", motivo="risk", business_connection_id="bc-1"
+    )
+    return UUID(str(turn.id))
+
+
+@pytest.mark.asyncio
+async def test_escalation_fp_callback_marks_false_positive(graph: dict) -> None:
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    marks = InMemoryOwnerMarkStore()
+    g["admin"]._fp_marks = marks  # noqa: SLF001
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_escalation_callback("fp", turn_id),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
+    assert status == "escalation_fp_marked"
+    assert await marks.count_in_range(date(2000, 1, 1), date(2100, 1, 1)) == 1
+
+
+@pytest.mark.asyncio
+async def test_escalation_trace_callback_views_trace(graph: dict) -> None:
+    from types import SimpleNamespace
+
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    fake_trace = SimpleNamespace(get_full_trace=AsyncMock(return_value=object()))
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_escalation_callback("trace", turn_id),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        admin_trace=fake_trace,  # type: ignore[arg-type]
+    )
+    assert status == "escalation_trace_view"
+
+
+@pytest.mark.asyncio
+async def test_escalation_reply_callback_starts_session(graph: dict) -> None:
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_escalation_callback("reply", turn_id),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
+    assert status == "escalation_reply_prompted"
+    sess = g["sessions"].get_session(OWNER)
+    assert sess is not None and sess.mode == "escalation_reply"
+    assert sess.turn_id == turn_id
+
+
+@pytest.mark.asyncio
+async def test_escalation_reply_text_delivers_to_chat(graph: dict) -> None:
+    from diana.application.memory import InMemoryVipStore
+    from diana.telegram.handlers.admin import handle_admin_text
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_escalation_callback("reply", turn_id),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
+    result = await handle_admin_text(
+        text="tienes razón, te espero mañana",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+    )
+    assert result == "escalation_reply_sent"
+    sends = [c for c in g["actuator"].calls if c["op"] == "send_message"]
+    assert any(
+        c["chat_id"] == 42 and c["text"] == "tienes razón, te espero mañana"
+        for c in sends
+    )
+    assert g["sessions"].get_session(OWNER) is None
+
+
+@pytest.mark.asyncio
+async def test_escalation_callback_non_owner_forbidden(graph: dict) -> None:
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_escalation_callback("fp", turn_id),
+        actor_id=OTHER,
+        owner_telegram_id=OWNER,
+    )
+    assert status == "forbidden"

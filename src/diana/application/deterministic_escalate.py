@@ -61,7 +61,12 @@ async def handle_deterministic_escalation(
     await coordinator.transition(turn_id, TurnStatus.ESCALATED)
 
     motivo = ",".join(keywords_hit) if keywords_hit else tipo
-    await escalations.create(turn_id, tipo=tipo, motivo=motivo)
+    await escalations.create(
+        turn_id,
+        tipo=tipo,
+        motivo=motivo,
+        business_connection_id=business_connection_id,
+    )
     notify_reason = reason or f"{tipo}: {motivo}"
     await notifier.notify_escalation(
         EscalationNotification(
@@ -163,7 +168,12 @@ async def handle_deterministic_template_escalate(
     await coordinator.transition(turn_id, TurnStatus.ESCALATED)
 
     motivo = ",".join(keywords_hit) if keywords_hit else tipo
-    await escalations.create(turn_id, tipo=tipo, motivo=motivo)
+    await escalations.create(
+        turn_id,
+        tipo=tipo,
+        motivo=motivo,
+        business_connection_id=business_connection_id,
+    )
     notify_reason = reason or f"{tipo}: {motivo}"
     await notifier.notify_escalation(
         EscalationNotification(

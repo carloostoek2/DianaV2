@@ -36,6 +36,10 @@ _ACTION_METRICS_BACK = "mx:b"
 # Staging queue (sp: promote, sd: discard) — ≤64 bytes
 _ACTION_STAGING_PROMOTE = "sp"
 _ACTION_STAGING_DISCARD = "sd"
+# Escalation DM actions (est: trace, esfp: false positive, esr: reply) — ≤64 bytes
+_ACTION_ESC_TRACE = "est"
+_ACTION_ESC_FP = "esfp"
+_ACTION_ESC_REPLY = "esr"
 # Memory approval (mp: approve, md: discard) — F5 Pool 4, ≤64 bytes.
 # NOTE: the menu prefix is the literal "m:" (char 1 = ':'), so "mp:"/"md:"
 # never collide with the menu lambda (A1).
@@ -385,6 +389,66 @@ def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="⚠️ Escalar",
                     callback_data=encode_doctrine_escalate_callback(turn_id),
+                ),
+            ],
+        ]
+    )
+
+
+def encode_escalation_callback(action: str, turn_id: UUID) -> str:
+    """Build escalation callback_data: est|esfp|esr:<uuid> (≤64 bytes)."""
+    code = {
+        "trace": _ACTION_ESC_TRACE,
+        "fp": _ACTION_ESC_FP,
+        "reply": _ACTION_ESC_REPLY,
+    }.get(action)
+    if code is None:
+        raise ValueError(f"unknown escalation action: {action!r}")
+    data = f"{code}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_escalation_callback(data: str) -> tuple[str, UUID] | None:
+    """Parse escalation callback → (action, turn_id) or None.
+
+    Actions: "trace" (ver traza), "fp" (falso positivo), "reply" (responder).
+    """
+    if not data or ":" not in data:
+        return None
+    code, raw_id = data.split(":", 1)
+    action = {
+        _ACTION_ESC_TRACE: "trace",
+        _ACTION_ESC_FP: "fp",
+        _ACTION_ESC_REPLY: "reply",
+    }.get(code)
+    if action is None:
+        return None
+    try:
+        return action, UUID(raw_id)
+    except ValueError:
+        return None
+
+
+def escalation_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+    """Reply markup for escalation DMs: ver traza / falso positivo / responder."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔍 Ver traza",
+                    callback_data=encode_escalation_callback("trace", turn_id),
+                ),
+                InlineKeyboardButton(
+                    text="➖ Falso positivo",
+                    callback_data=encode_escalation_callback("fp", turn_id),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✍️ Responder al VIP",
+                    callback_data=encode_escalation_callback("reply", turn_id),
                 ),
             ],
         ]
@@ -1854,6 +1918,8 @@ __all__ = [
     "encode_doctrine_callback",
     "encode_doctrine_resolve_callback",
     "encode_doctrine_escalate_callback",
+    "encode_escalation_callback",
+    "escalation_keyboard",
     "encode_menu",
     "encode_menu_event",
     "encode_menu_event_action",
@@ -1902,6 +1968,7 @@ __all__ = [
     "metrics_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
+    "parse_escalation_callback",
     "parse_link_callback",
     "parse_menu_callback",
     "parse_metrics_callback",

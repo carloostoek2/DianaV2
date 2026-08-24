@@ -116,6 +116,43 @@ async def test_notify_escalation_includes_spanish_label() -> None:
     assert str(turn_id) in body
 
 
+def test_escalation_callback_encode_parse_roundtrip() -> None:
+    from diana.telegram.keyboards import (
+        encode_escalation_callback,
+        parse_escalation_callback,
+    )
+
+    tid = uuid4()
+    for action in ("trace", "fp", "reply"):
+        data = encode_escalation_callback(action, tid)
+        assert len(data.encode()) <= 64
+        assert parse_escalation_callback(data) == (action, tid)
+
+
+@pytest.mark.asyncio
+async def test_notify_escalation_includes_action_buttons() -> None:
+    from diana.telegram.keyboards import parse_escalation_callback
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=1))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    turn_id = uuid4()
+    await notifier.notify_escalation(
+        EscalationNotification(
+            turn_id=turn_id,
+            chat_id=42,
+            reason="risk_high",
+            tipo="risk_high",
+            vip_text="algo",
+        )
+    )
+    kwargs = bot.send_message.await_args.kwargs
+    markup = kwargs["reply_markup"]
+    flat = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+    actions = {parse_escalation_callback(d)[0] for d in flat}
+    assert actions == {"trace", "fp", "reply"}
+
+
 @pytest.mark.asyncio
 async def test_notify_link_includes_approved_copy_and_buttons() -> None:
     bot = MagicMock()

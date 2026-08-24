@@ -96,7 +96,7 @@ Principios rectores (no negociables):
 6. Toda decisión es reconstruible a partir de objetos persistidos.
 7. El Turn Coordinator garantiza la serialización por chat (REQ-NFR-02).
 
-Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
+Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
 ---
 
@@ -155,6 +155,7 @@ Prohibido:
 · 4.5 Zona Gris (FEATURE_GRAY_ZONE_ENABLED)
 · 4.6 Corrección → Staging (FEATURE_STAGING_ENABLED)
 · 4.7 Sandbox (FEATURE_SANDBOX_ENABLED)
+· 4.20 Sandbox test window — envío directo e instantáneo (FEATURE_SANDBOX_AUTO_SEND)
 
 🟠 [FASE 3 — Producto Completo] Flujos ACTIVOS (con flags)
 
@@ -345,6 +346,48 @@ Dueña abre el panel (sección del menú, junto al modo sombra)
 ```
 
 Invariante: la activación es un botón por VIP; nunca automática. El Decisor y el Director no se tocan (la capa solo mide y recomienda).
+
+4.20 Sandbox test window — envío directo e instantáneo (FEATURE_SANDBOX_AUTO_SEND)
+
+```
+business_message en un chat con sandbox activo + flag ON
+  → Pipeline completo normal (perfil ficticio)
+  → Decisor → action approve/send:
+      → TurnOrchestrator (capa de aplicación, NO el Decisor) convierte en
+        envío directo: _prepare_sandbox_send → BehaviorEngine.deliver()
+        con ctx.instant=True (sin espera previa, sin read/typing/gaps)
+      → No pasa por la cola de aprobación de la dueña
+  → Escalación / consulta de doctrina: flujos de notificación configurados
+    intactos (la dueña sigue recibiendo sus avisos)
+  → Aislamiento sandbox intacto: should_persist=false (sin memoria, sin
+    ejemplos, sin historial durable)
+```
+
+Invariantes: el flag apagado = comportamiento anterior byte a byte (el sandbox
+sigue pidiendo aprobación). La regla es por chat con sandbox activo — los VIP
+reales nunca se ven afectados, sin importar el valor del flag. El envío directo
+del sandbox no depende de FEATURE_AUTONOMOUS_MODE ni de auto_send por VIP
+(es una superficie de prueba explícita de la dueña). El motor no conoce
+"sandbox": solo actúa con ctx.instant cuando la capa de aplicación lo pide.
+
+4.21 Escalaciones — manejo desde el DM de la dueña (sin flag)
+
+```
+Escalación (Decisor o short-circuit determinístico) → DM a la dueña con botones:
+  🔍 Ver traza        → render del resumen de traza del turno (AdminTraceService)
+  ➖ Falso positivo   → AdminService.mark_false_positive (owner_marks; métricas)
+  ✍️ Responder al VIP → sesión de texto libre → AdminService.handle_escalation_reply
+                        → BehaviorEngine.deliver() al chat escalado
+```
+
+Reglas: la respuesta de la dueña es una acción manual (no pasa por el Decisor,
+igual que Corregir — el Decisor gobierna solo los envíos automáticos). El
+`business_connection_id` del chat escalado se persiste en
+`escalation_events.business_connection_id` al notificar (migración 032) porque
+el turno no lo guarda; sin ese dato el reply falla cerrado (nunca envía a ciegas).
+La marca de falso positivo es un flag de métrica (owner_marks), NO un ejemplo:
+no entra a memories/examples/policies ni enseña nada al sistema. En sandbox,
+`mark_false_positive` NO persiste (aislamiento igual que el aprendizaje).
 
 ---
 

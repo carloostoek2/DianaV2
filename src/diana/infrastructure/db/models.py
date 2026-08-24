@@ -234,6 +234,9 @@ class EscalationEvent(Base):
     )
     tipo: Mapped[str] = mapped_column(Text, nullable=False)
     motivo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Owner escalation reply needs the chat's business connection at deliver
+    # time (migration 032); the turn/approval rows do not carry it.
+    business_connection_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     notificado: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

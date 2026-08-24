@@ -246,6 +246,11 @@ class DeliveryContext(BaseModel):
     # When True the pre-send wait was already served before the pipeline,
     # so BehaviorEngine delivers without extra initial delay (typing still applies).
     skip_initial_delay: bool = False
+    # When True the engine acts the delivery with zero human-like waits:
+    # no initial delay, no read simulation, no typing bubble, no inter-message
+    # gaps. Used by the sandbox test window (FEATURE_SANDBOX_AUTO_SEND) so
+    # automated harness loops are instant. Never set for real VIP traffic.
+    instant: bool = False
     # Advanced behavior (H3.6) — fail-closed defaults; dual-gated in engine.
     allow_split: bool = False
     allow_human_quirks: bool = False
@@ -931,10 +936,19 @@ class BusinessConnectionStore(Protocol):
 @runtime_checkable
 class EscalationStore(Protocol):
     async def create(
-        self, turn_id: UUID, *, tipo: str, motivo: str | None
+        self,
+        turn_id: UUID,
+        *,
+        tipo: str,
+        motivo: str | None,
+        business_connection_id: str | None = None,
     ) -> None: ...
 
     async def mark_notified(self, turn_id: UUID) -> None: ...
+
+    async def get_business_connection_id(self, turn_id: UUID) -> str | None:
+        """Return the escalation's stored business_connection_id, if any."""
+        ...
 
 
 @runtime_checkable

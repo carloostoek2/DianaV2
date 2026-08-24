@@ -31,6 +31,7 @@ from diana.telegram.keyboards import (
     gold_scope_keyboard,
     menu_root_keyboard,
     parse_callback,
+    parse_escalation_callback,
     parse_gold_confirm,
     parse_metrics_callback,
     parse_reprimand_confirm,
@@ -300,6 +301,28 @@ async def dispatch_owner_callback(
             return "metrics_export"
         return "ignored"
 
+    # Escalation DM actions (est: trace / esfp: fp / esr: reply).
+    esc_action = parse_escalation_callback(callback_data)
+    if esc_action is not None:
+        if owner_telegram_id is not None and actor_id != owner_telegram_id:
+            return "forbidden"
+        esc_kind, esc_turn_id = esc_action
+        if esc_kind == "trace":
+            if admin_trace is None:
+                return "escalation_trace_unavailable"
+            trace = await admin_trace.get_full_trace(esc_turn_id)
+            return (
+                "escalation_trace_view"
+                if trace is not None
+                else "escalation_trace_not_found"
+            )
+        if esc_kind == "fp":
+            ok = await admin.mark_false_positive(esc_turn_id, actor_id=actor_id)
+            return "escalation_fp_marked" if ok else "escalation_fp_failed"
+        if esc_kind == "reply":
+            correct_sessions.start(actor_id, esc_turn_id, mode="escalation_reply")
+            return "escalation_reply_prompted"
+
     # Check trace callbacks first (vt, vtd, td, tdd, tp, tj, tb).
     trace_parsed = parse_trace_callback(callback_data)
     if trace_parsed is not None:
@@ -531,6 +554,47 @@ def build_callback_router(
     async def on_callback(query: CallbackQuery, **_: Any) -> None:
         actor_id = query.from_user.id if query.from_user else None
         data = query.data or ""
+
+        # ---- Escalation DM actions (est: trace / esfp: fp / esr: reply) ----
+        esc_action = parse_escalation_callback(data)
+        if esc_action is not None:
+            esc_kind, esc_turn_id = esc_action
+            if owner_telegram_id is not None and actor_id != owner_telegram_id:
+                await query.answer("No autorizado", show_alert=True)
+                return
+            if esc_kind == "trace":
+                if admin_trace is None:
+                    await query.answer("Traza no disponible", show_alert=True)
+                    return
+                view = await admin_trace.render_trace_summary(esc_turn_id)
+                if view is None:
+                    await query.answer("Traza no encontrada", show_alert=True)
+                    return
+                await query.answer()
+                if query.message is not None:
+                    await query.message.answer(view.text)
+                return
+            if esc_kind == "fp":
+                ok = await admin.mark_false_positive(
+                    esc_turn_id, actor_id=actor_id
+                )
+                await query.answer(
+                    "Falso positivo marcado ✅"
+                    if ok
+                    else "No se pudo marcar",
+                    show_alert=True,
+                )
+                return
+            if esc_kind == "reply":
+                sessions.start(actor_id, esc_turn_id, mode="escalation_reply")
+                await query.answer("Listo")
+                if query.message is not None:
+                    await query.message.answer(
+                        "✍️ Escribe la respuesta que quieres enviarle al "
+                        "suscriptor. La sesión expira en 15 minutos si no "
+                        "escribes nada."
+                    )
+                return
 
         # ---- Metrics dashboard callbacks (mx:e / mx:b) ----
         metrics_action = parse_metrics_callback(data)

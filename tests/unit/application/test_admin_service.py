@@ -1763,6 +1763,75 @@ async def test_mark_false_positive_noop_without_store() -> None:
     ok = await g["admin"].mark_false_positive(uuid4(), actor_id=OWNER_ID)
     assert ok is False
 
+
+@pytest.mark.asyncio
+async def test_mark_false_positive_skips_sandbox() -> None:
+    """Sandbox test window: FP marks are NOT persisted (isolation)."""
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+    from diana.application.sandbox import SandboxService
+    from datetime import date
+
+    minimal = {
+        "nuevo": {"label": "n", "description": "", "facts": {}, "notes": []},
+        "cercano": {"label": "c", "description": "", "facts": {}, "notes": []},
+        "distante": {"label": "d", "description": "", "facts": {}, "notes": []},
+        "intenso": {"label": "i", "description": "", "facts": {}, "notes": []},
+        "vip_largo": {"label": "v", "description": "", "facts": {}, "notes": []},
+        "inyeccion_previa": {
+            "label": "x",
+            "description": "",
+            "facts": {},
+            "notes": [],
+        },
+    }
+    g = _admin_graph()
+    marks = InMemoryOwnerMarkStore()
+    sandbox = SandboxService(profiles=minimal)
+    g["admin"]._fp_marks = marks  # noqa: SLF001
+    g["admin"]._sandbox = sandbox  # noqa: SLF001
+    turn = await g["coordinator"].begin_turn(chat_id=100, trigger_message_id=7)
+    sandbox.activate(100, "nuevo")
+    ok = await g["admin"].mark_false_positive(turn.id, actor_id=OWNER_ID)
+    assert ok is True
+    assert await marks.count_in_range(date(2000, 1, 1), date(2100, 1, 1)) == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_escalation_reply_delivers_to_chat() -> None:
+    """Owner reply to an escalated turn delivers to the chat via BehaviorEngine."""
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["escalations"].create(
+        turn.id, tipo="risk_high", motivo="risk", business_connection_id="bc-1"
+    )
+    result = await g["admin"].handle_escalation_reply(
+        turn.id, "te espero mañana", actor_id=OWNER_ID
+    )
+    assert result is not None and result.success is True
+    sends = [c for c in g["actuator"].calls if c["op"] == "send_message"]
+    assert any(c["chat_id"] == 42 and c["text"] == "te espero mañana" for c in sends)
+
+
+@pytest.mark.asyncio
+async def test_handle_escalation_reply_missing_turn_returns_none() -> None:
+    g = _admin_graph()
+    result = await g["admin"].handle_escalation_reply(
+        uuid4(), "hola", actor_id=OWNER_ID
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_handle_escalation_reply_without_escalation_record_returns_none() -> None:
+    """No escalation record → no bc → fail closed (never deliver blind)."""
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    result = await g["admin"].handle_escalation_reply(
+        turn.id, "hola", actor_id=OWNER_ID
+    )
+    assert result is None
+    assert g["actuator"].send_count() == 0
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "reason,expected_tipo",

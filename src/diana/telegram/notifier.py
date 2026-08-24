@@ -15,7 +15,12 @@ from diana.application.ports import (
 )
 from diana.application.escalation_labels import label_es_for_tipo
 from diana.application.draft_variants import format_draft_owner_text, read_versions
-from diana.telegram.keyboards import doctrine_keyboard, draft_keyboard, link_kick_keyboard
+from diana.telegram.keyboards import (
+    doctrine_keyboard,
+    draft_keyboard,
+    escalation_keyboard,
+    link_kick_keyboard,
+)
 
 logger = logging.getLogger("diana.telegram")
 
@@ -101,7 +106,11 @@ class AiogramOwnerNotifier:
         )
         if payload.vip_text:
             text += f"\nVIP: {payload.vip_text}"
-        await self._bot.send_message(chat_id=self._owner_id, text=text)
+        await self._bot.send_message(
+            chat_id=self._owner_id,
+            text=text,
+            reply_markup=escalation_keyboard(payload.turn_id),
+        )
 
     async def notify_doctrine(self, payload: DoctrineNotification) -> int | None:
         """Send a gray zone doctrine query to the owner DM."""
