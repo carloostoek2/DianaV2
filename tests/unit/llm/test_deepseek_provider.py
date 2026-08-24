@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 import pytest
@@ -224,22 +225,31 @@ async def test_generate_disables_thinking_when_flag_off() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_never_leaks_reasoning_content_as_draft() -> None:
-    """Cap-empty forever must not leak CoT; ladder stops at ≤3 HTTP."""
+async def test_generate_never_leaks_reasoning_content_as_draft(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cap-empty forever must not leak CoT in return or logs; ladder ≤3 HTTP."""
     seen: dict = {"call_count": 0}
+    cot = "internal monologue never send this"
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["call_count"] += 1
-        return _cap_empty_response()
+        return _cap_empty_response(reasoning=cot)
 
     provider = _provider_with_transport(handler, thinking_enabled=True)
     client = provider._client
     try:
-        text = await provider.generate([{"role": "user", "content": "x"}])
+        with caplog.at_level(logging.ERROR, logger="diana.llm.deepseek"):
+            text = await provider.generate([{"role": "user", "content": "x"}])
         assert text == ""
-        assert "internal monologue" not in text
+        assert cot not in text
         assert seen["call_count"] == 3
         assert seen["call_count"] <= 3
+        for rec in caplog.records:
+            assert cot not in rec.getMessage()
+            assert cot not in str(getattr(rec, "msg", ""))
+            extra_blob = " ".join(f"{k}={v}" for k, v in rec.__dict__.items())
+            assert cot not in extra_blob
     finally:
         await provider.aclose()
         await client.aclose()
@@ -382,6 +392,169 @@ async def test_generate_small_max_tokens_forces_thinking_off() -> None:
         assert payload.get("thinking") == {"type": "disabled"}
         assert "reasoning_effort" not in payload
         assert payload.get("max_tokens") == 180
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_empty_length_without_reasoning_does_not_retry() -> None:
+    """empty + length + no reasoning is not cap-empty → exactly 1 HTTP."""
+    seen: dict = {"call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        return _cap_empty_response(
+            content="",
+            finish_reason="length",
+            reasoning=None,
+        )
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == ""
+        assert seen["call_count"] == 1
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_empty_stop_with_reasoning_does_not_retry() -> None:
+    """empty + stop + reasoning is not cap-empty → exactly 1 HTTP."""
+    seen: dict = {"call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        return _cap_empty_response(
+            content="",
+            finish_reason="stop",
+            reasoning="internal monologue never send this",
+        )
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == ""
+        assert "internal monologue" not in text
+        assert seen["call_count"] == 1
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_floor_boundary_511_forces_thinking_off() -> None:
+    """max_tokens=511 is below the floor → thinking disabled, 1 HTTP."""
+    seen: dict = {"payloads": [], "call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        seen["payloads"].append(json.loads(request.content))
+        return _openai_chat_response("below floor")
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate(
+            [{"role": "user", "content": "x"}],
+            max_tokens=511,
+        )
+        assert text == "below floor"
+        assert seen["call_count"] == 1
+        payload = seen["payloads"][0]
+        assert payload.get("thinking") == {"type": "disabled"}
+        assert "reasoning_effort" not in payload
+        assert payload.get("max_tokens") == 511
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_floor_boundary_512_enables_thinking() -> None:
+    """max_tokens=512 meets the floor → thinking on + effort low."""
+    seen: dict = {"payloads": [], "call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        seen["payloads"].append(json.loads(request.content))
+        return _openai_chat_response("at floor")
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate(
+            [{"role": "user", "content": "x"}],
+            max_tokens=512,
+        )
+        assert text == "at floor"
+        assert seen["call_count"] == 1
+        payload = seen["payloads"][0]
+        assert payload.get("thinking") == {"type": "enabled"}
+        assert payload.get("reasoning_effort") == "low"
+        assert payload.get("max_tokens") == 512
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_flag_off_cap_empty_is_single_http() -> None:
+    """Master switch off → even cap-empty-shaped bodies stay 1 HTTP."""
+    seen: dict = {"payloads": [], "call_count": 0}
+    cot = "internal monologue never send this"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        seen["payloads"].append(json.loads(request.content))
+        return _cap_empty_response(reasoning=cot)
+
+    provider = _provider_with_transport(handler, thinking_enabled=False)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == ""
+        assert cot not in text
+        assert seen["call_count"] == 1
+        payload = seen["payloads"][0]
+        assert payload.get("thinking") == {"type": "disabled"}
+        assert "reasoning_effort" not in payload
+    finally:
+        await provider.aclose()
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_cap_empty_then_non_cap_empty_stops_without_third() -> None:
+    """Attempt1 cap-empty then attempt2 stop-empty → 2 HTTP, no thinking-off third."""
+    seen: dict = {"payloads": [], "call_count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["call_count"] += 1
+        seen["payloads"].append(json.loads(request.content))
+        if seen["call_count"] == 1:
+            return _cap_empty_response()
+        return _cap_empty_response(
+            content="",
+            finish_reason="stop",
+            reasoning=None,
+        )
+
+    provider = _provider_with_transport(handler, thinking_enabled=True)
+    client = provider._client
+    try:
+        text = await provider.generate([{"role": "user", "content": "x"}])
+        assert text == ""
+        assert seen["call_count"] == 2
+        p0, p1 = seen["payloads"]
+        assert p0.get("thinking") == {"type": "enabled"}
+        assert p0.get("reasoning_effort") == "low"
+        assert p1.get("thinking") == {"type": "enabled"}
+        assert p1.get("reasoning_effort") == "low"
     finally:
         await provider.aclose()
         await client.aclose()
