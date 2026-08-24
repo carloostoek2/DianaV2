@@ -203,6 +203,7 @@ async def _resolve_query_with_doctrine(
     draft: str,
     admin: AdminService | None = None,
     scope: DoctrineScope = "all",
+    actor_id: int | None = None,
 ) -> str:
     """Shared resolution core: doctrine text → candidate → confirm → deliver.
 
@@ -273,7 +274,24 @@ async def _resolve_query_with_doctrine(
                 # business_connection_id). The query is already closed, so
                 # escalate the turn — never leave it stuck in gray_zone.
                 try:
-                    await coordinator.transition(turn_id, "escalated")
+                    if admin is not None and actor_id is not None:
+                        applied = await admin.handle_owner_escalate(
+                            turn_id, actor_id=actor_id
+                        )
+                        if not applied:
+                            try:
+                                await gray_zone.reopen_query(query.id)
+                            except Exception:
+                                logger.exception(
+                                    "doctrine_resolve_reopen_error",
+                                    extra={
+                                        "turn_id": str(turn_id),
+                                        "query_id": str(query.id),
+                                    },
+                                )
+                            return "error"
+                    else:
+                        await coordinator.transition(turn_id, "escalated")
                 except Exception:
                     logger.exception(
                         "doctrine_resolve_fallback_escalate_error",
@@ -335,6 +353,7 @@ async def handle_doctrine_free_text(
     text: str,
     admin: AdminService | None = None,
     scope: DoctrineScope = "all",
+    actor_id: int | None = None,
 ) -> str:
     """Resolve a gray zone query with the owner's free-text doctrine.
 
@@ -355,6 +374,7 @@ async def handle_doctrine_free_text(
         draft=text,
         admin=admin,
         scope=scope,
+        actor_id=actor_id,
     )
 
 
@@ -365,6 +385,7 @@ async def handle_doctrine_resolve_with_draft(
     turn_id: UUID,
     admin: AdminService | None = None,
     scope: DoctrineScope = "all",
+    actor_id: int | None = None,
 ) -> str:
     """Resolve using the existing query draft as doctrine, then confirm.
 
@@ -399,6 +420,7 @@ async def handle_doctrine_resolve_with_draft(
         draft=query.draft,
         admin=admin,
         scope=scope,
+        actor_id=actor_id,
     )
 
 
@@ -407,11 +429,15 @@ async def handle_doctrine_escalate(
     gray_zone: GrayZoneServicePort,
     coordinator: TurnCoordinator,
     turn_id: UUID,
+    admin: AdminService | None = None,
+    actor_id: int | None = None,
 ) -> str:
     """Discard query and escalate the turn.
 
-    Order: coordinator.transition first (fails fast, reversible),
-    then discard_and_close (non-reversible side effect).
+    With ``admin`` injected, reuse ``handle_owner_escalate`` so Fila 4
+    persists ``owner_outcome="escalated"``. Without admin, legacy
+    ``coordinator.transition`` + discard. Order: mutate turn first
+    (fails fast), then discard_and_close.
 
     Returns status token: 'escalated', 'not_found', or 'error'.
     """
@@ -428,8 +454,14 @@ async def handle_doctrine_escalate(
         return "not_found"
 
     try:
-        # Transition first (fails fast, reversible) — then close the query.
-        await coordinator.transition(turn_id, "escalated")
+        if admin is not None:
+            applied = await admin.handle_owner_escalate(
+                turn_id, actor_id=actor_id
+            )
+            if not applied:
+                return "error"
+        else:
+            await coordinator.transition(turn_id, "escalated")
         await gray_zone.discard_and_close(query.id)
         logger.info(
             "doctrine_escalated",
@@ -455,6 +487,7 @@ async def handle_doctrine_scope_choice(
     scope: DoctrineScope,
     admin: AdminService | None = None,
     pending: DoctrinePending | None = None,
+    actor_id: int | None = None,
 ) -> str:
     """Resolve a pending doctrine response with the chosen scope (GAP-11).
 
@@ -474,6 +507,7 @@ async def handle_doctrine_scope_choice(
             text=text,
             admin=admin,
             scope=scope,
+            actor_id=actor_id,
         )
     return await handle_doctrine_resolve_with_draft(
         gray_zone=gray_zone,
@@ -481,6 +515,7 @@ async def handle_doctrine_scope_choice(
         turn_id=turn_id,
         admin=admin,
         scope=scope,
+        actor_id=actor_id,
     )
 
 
@@ -568,6 +603,7 @@ def build_doctrine_router(
                 turn_id=turn_id,
                 admin=admin,
                 scope="all",
+                actor_id=actor_id,
             )
             text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
             await callback.answer(text, show_alert=alert)
@@ -622,6 +658,7 @@ def build_doctrine_router(
             scope=scope,  # type: ignore[arg-type]
             admin=admin,
             pending=pending,
+            actor_id=actor_id,
         )
         text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
         await callback.answer(text, show_alert=alert)
@@ -636,10 +673,13 @@ def build_doctrine_router(
             await callback.answer("Dato de consulta inválido", show_alert=True)
             return
 
+        actor_id = callback.from_user.id if callback.from_user else None
         status = await handle_doctrine_escalate(
             gray_zone=gray_zone,
             coordinator=coordinator,
             turn_id=turn_id,
+            admin=admin,
+            actor_id=actor_id,
         )
         text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
         await callback.answer(text, show_alert=alert)

@@ -321,6 +321,7 @@ async def handle_admin_text(
                     text=stripped,
                     admin=admin,
                     scope="all",
+                    actor_id=actor_id,
                 )
             doctrine_sessions.attach_text(actor_id, stripped)
             return "doctrine_scope_prompted"
