@@ -193,7 +193,7 @@ Owner DM (Telegram)
               └── live delivery progress on approve: leído → escribiendo → enviado
 ```
 
-Gray-zone DMs (when `FEATURE_GRAY_ZONE_ENABLED`): **Responder consulta** (`dr:` free-text, 15 min) / **Usar borrador** / **Escalar**. If the VIP doctrine DM fails to send, the VIP is unfrozen and the turn demotes to a normal approve draft (`vip_doctrine_notify_failed`).
+Gray-zone DMs (when `FEATURE_GRAY_ZONE_ENABLED`): **Escribir regla** (`dr:` free-text RULE, 15 min + scope Solo este VIP / A todos) / **Escalar**. No **Usar borrador**. On submit: live policy + same-turn regen → regenerated draft on the approval queue; freeze held until successful send. If the VIP doctrine DM fails to send, the VIP is unfrozen and the turn demotes to a normal approve draft (`vip_doctrine_notify_failed`).
 
 ---
 

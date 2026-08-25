@@ -67,11 +67,11 @@ Desde `/turnos`, **🔙 Volver a turnos** restaura la **página exacta** (`vt:<i
 
 Teclado del DM de consulta (`doctrine_keyboard`):
 
-- **📝 Responder consulta** (`dr:`) — abre sesión 15 min. El siguiente texto del DM es a la vez el texto que recibirá el VIP y la regla para casos futuros.
-- **✅ Usar borrador** (`dx:`) — resuelve con el draft persistido.
+- **📝 Escribir regla** (`dr:`) — abre sesión 15 min. El siguiente texto del DM es una **REGLA / norma** de negocio (no el texto que recibirá el VIP). Diana regenera el borrador con esa regla y lo manda a la cola de aprobación. Alcance Solo este VIP / A todos vía `ds:`.
 - **⚠️ Escalar** (`de:`).
+- **✅ Usar borrador** (`dx:`) — **eliminado**. Callbacks viejos responden “Ya no disponible”.
 
-Si el bot no puede avisar a la dueña en un turno **VIP** (`send_doctrine_query` falla), no deja al VIP congelado 24 h: descarta la query (descongela) y degrada a `approve` con `reason=vip_doctrine_notify_failed`, y reenvía el borrador normal. Mismo patrón que el canal atención (F6).
+Si el bot no puede avisar a la dueña en un turno **VIP** (`send_doctrine_query` falla), no deja al VIP congelado 24 h: descarta la query (descongela) y degrada a `approve` con `reason=vip_doctrine_notify_failed`, y reenvía el borrador normal. Mismo patrón que el canal atención (F6). Congelación tras resolve: se mantiene hasta un envío real exitoso (`awaiting_send`).
 
 ## Menú de la dueña (`/start` o `/menu`)
 

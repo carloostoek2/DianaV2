@@ -74,11 +74,11 @@ class DoctrinePending:
 
 
 class DoctrineSessionStore:
-    """Process-local FSM: owner_id → pending doctrine response for turn_id.
+    """Process-local FSM: owner_id → pending RULE for turn_id.
 
     Same pattern as ``CorrectSessionStore`` (callbacks.py) but for gray zone
-    doctrine responses: after the owner provides doctrine (free text or
-    "usar borrador"), the scope choice is captured before resolution.
+    rule responses: after the owner writes a RULE (free text), the scope
+    choice (Solo este VIP / A todos) is captured before resolve+regen.
 
     In-memory only (single-instance). Restart clears all sessions; multi-replica
     would need a shared store (out of scope — see docs/OPS_SINGLE_INSTANCE.md).
@@ -396,7 +396,7 @@ def build_doctrine_router(
     """Build a Router with doctrine callback handlers.
 
     Handlers: ``dr:`` (write rule), ``ds:`` (scope), ``de:`` (escalate).
-    Legacy ``dx:`` answers as expired / unavailable (no Usar borrador).
+    Legacy ``dx:`` is registered as inert (answers \"Ya no disponible\").
     """
     router = Router(name="doctrine")
     sessions = doctrine_sessions or DoctrineSessionStore()
@@ -406,6 +406,17 @@ def build_doctrine_router(
             return False
         actor = callback.from_user.id if callback.from_user else None
         return actor == owner_telegram_id
+
+    @router.callback_query(lambda c: c.data and c.data.startswith("dx:"))
+    async def on_doctrine_legacy_draft(callback: CallbackQuery, **_: Any) -> None:
+        """Inert: Usar borrador removed from doctrine happy path."""
+        if not _is_owner(callback):
+            await callback.answer("No autorizado", show_alert=True)
+            return
+        await callback.answer(
+            "Ya no disponible — usa Escribir regla",
+            show_alert=True,
+        )
 
     @router.callback_query(lambda c: c.data and c.data.startswith("dr:"))
     async def on_doctrine_respond(callback: CallbackQuery, **_: Any) -> None:

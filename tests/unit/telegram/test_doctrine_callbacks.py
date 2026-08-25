@@ -256,14 +256,13 @@ def _callback_with_message(data: str, *, user_id: int) -> CallbackQuery:
 
 
 def _handler_for_prefix(router, prefix: str):
-    # Registration order in build_doctrine_router: dr, ds, de (no dx)
+    # Registration order: dx (inert), dr, ds, de
     by_prefix = {
-        "dr:": router.callback_query.handlers[0].callback,
-        "ds:": router.callback_query.handlers[1].callback,
-        "de:": router.callback_query.handlers[2].callback,
+        "dx:": router.callback_query.handlers[0].callback,
+        "dr:": router.callback_query.handlers[1].callback,
+        "ds:": router.callback_query.handlers[2].callback,
+        "de:": router.callback_query.handlers[3].callback,
     }
-    if prefix == "dx:":
-        raise AssertionError("dx: Usar borrador handler removed from doctrine router")
     return by_prefix[prefix]
 
 
@@ -563,14 +562,22 @@ def test_doctrine_keyboard_rule_only_no_usar_borrador() -> None:
     assert any(cb.startswith("de:") for cb in callbacks)
 
 
-def test_doctrine_router_has_no_dx_handler() -> None:
+@pytest.mark.asyncio
+async def test_doctrine_router_dx_is_inert() -> None:
+    """Legacy dx: answers unavailable; does not resolve-with-draft."""
+    gray_zone = FakeGrayZone()
     router = build_doctrine_router(
-        gray_zone=FakeGrayZone(),
+        gray_zone=gray_zone,
         coordinator=FakeCoordinator(),
         owner_telegram_id=OWNER,
     )
-    # Rule+escalate+scope only (dr/de/ds). No dx: Usar borrador handler.
-    assert len(router.callback_query.handlers) == 3
-    # Sanity: encode_doctrine_resolve_callback still exists for legacy strings
-    # but must not be wired on the router happy path.
-    assert encode_doctrine_resolve_callback(uuid4()).startswith("dx:")
+    assert len(router.callback_query.handlers) == 4
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id)
+    handler = _handler_for_prefix(router, "dx:")
+    query = _callback(encode_doctrine_resolve_callback(turn_id), user_id=OWNER)
+    await handler(query)
+    args, kwargs = query.answer.await_args
+    assert kwargs.get("show_alert") is True
+    assert "Ya no disponible" in (args[0] if args else "")
+    assert gray_zone.resolve_calls == []
