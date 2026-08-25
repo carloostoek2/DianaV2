@@ -1,8 +1,8 @@
 """Doctrine free-text flow — DoctrineSessionStore + handle_doctrine_free_text.
 
-Covers the dr: (Responder consulta) path from SPEC-FASE2 6.2: the owner
-presses the button, a session opens, and the next free-text DM is captured
-as doctrine (generalization + rule) and resolved into a supervised delivery.
+Owner writes a RULE (not the VIP reply). Happy path calls
+AdminService.resolve_doctrine_rule_and_enqueue; approval draft is the
+regenerated text (≠ raw rule).
 """
 
 from __future__ import annotations
@@ -35,16 +35,10 @@ def _query_row(*, status: str = "open", vip_id: UUID | None = None) -> SimpleNam
     )
 
 
-def _candidate() -> SimpleNamespace:
-    return SimpleNamespace(id=uuid4())
-
-
 @pytest.fixture
 def gray_zone() -> AsyncMock:
     gz = AsyncMock()
     gz.get_open_query_by_turn_id.return_value = _query_row()
-    gz.resolve_with_doctrine.return_value = _candidate()
-    gz.confirm_and_apply.return_value = None
     return gz
 
 
@@ -58,7 +52,7 @@ def coordinator() -> AsyncMock:
 @pytest.fixture
 def admin() -> AsyncMock:
     a = AsyncMock()
-    a.create_supervised_delivery_from_gray_zone.return_value = True
+    a.resolve_doctrine_rule_and_enqueue.return_value = "resolved"
     return a
 
 
@@ -114,7 +108,7 @@ async def test_free_text_resolves_and_delivers(
     coordinator: AsyncMock,
     admin: AsyncMock,
 ) -> None:
-    """Owner text becomes generalization+rule and the delivered draft."""
+    """Owner text is a RULE; orchestration goes through Admin resolve API."""
     text = "Siempre ofrecer 10% de descuento si piden 3 o más unidades"
     turn_id = uuid4()
 
@@ -127,15 +121,17 @@ async def test_free_text_resolves_and_delivers(
     )
 
     assert status == "resolved"
-    gray_zone.get_open_query_by_turn_id.assert_awaited_once_with(turn_id)
-    # The owner text is used as generalization AND rule.
-    args = gray_zone.resolve_with_doctrine.await_args.args
-    assert args[1] == text
-    assert args[2] == text
-    gray_zone.confirm_and_apply.assert_awaited_once()
-    # Supervised delivery uses the owner text as the draft to approve/send.
-    _, kwargs = admin.create_supervised_delivery_from_gray_zone.await_args
-    assert kwargs["draft_override"] == text
+    admin.resolve_doctrine_rule_and_enqueue.assert_awaited_once()
+    kwargs = admin.resolve_doctrine_rule_and_enqueue.await_args.kwargs
+    assert kwargs.get("rule_text") == text or (
+        admin.resolve_doctrine_rule_and_enqueue.await_args.args
+        and text in admin.resolve_doctrine_rule_and_enqueue.await_args.args
+    )
+    # Happy path must NOT write staging / confirm_and_apply from the handler.
+    gray_zone.resolve_with_doctrine.assert_not_awaited()
+    gray_zone.confirm_and_apply.assert_not_awaited()
+    # Approval draft is owned by Admin regen — never the raw rule as draft_override here.
+    admin.create_supervised_delivery_from_gray_zone.assert_not_awaited()
     coordinator.transition.assert_not_awaited()
 
 
@@ -154,8 +150,7 @@ async def test_free_text_no_open_query_returns_not_found(
         admin=admin,
     )
     assert status == "not_found"
-    gray_zone.resolve_with_doctrine.assert_not_awaited()
-    admin.create_supervised_delivery_from_gray_zone.assert_not_awaited()
+    admin.resolve_doctrine_rule_and_enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -164,7 +159,7 @@ async def test_free_text_delivery_failure_escalates_turn(
     coordinator: AsyncMock,
     admin: AsyncMock,
 ) -> None:
-    admin.create_supervised_delivery_from_gray_zone.return_value = False
+    admin.resolve_doctrine_rule_and_enqueue.return_value = "escalated"
     status = await handle_doctrine_free_text(
         gray_zone=gray_zone,
         coordinator=coordinator,
@@ -173,9 +168,7 @@ async def test_free_text_delivery_failure_escalates_turn(
         admin=admin,
     )
     assert status == "escalated"
-    coordinator.transition.assert_awaited_once_with(
-        ANY, "escalated"
-    )
+    admin.resolve_doctrine_rule_and_enqueue.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -252,26 +245,29 @@ async def test_admin_text_atencion_resolves_global_directly() -> None:
     """Atencion queries (no VIP) have nothing to scope — resolve global now."""
     gz = AsyncMock()
     gz.get_open_query_by_turn_id.return_value = _query_row(vip_id=None)
-    gz.resolve_with_doctrine.return_value = _candidate()
     sessions = DoctrineSessionStore()
     turn_id = uuid4()
     sessions.start(OWNER, turn_id, mode="free_text")
+    admin = AsyncMock()
+    admin.resolve_doctrine_rule_and_enqueue.return_value = "resolved"
 
     status = await handle_admin_text(
         text="regla de atencion",
         actor_id=OWNER,
         owner_telegram_id=OWNER,
         vips=AsyncMock(),
-        admin=AsyncMock(),
+        admin=admin,
         correct_sessions=object(),  # type: ignore[arg-type]
         doctrine_sessions=sessions,
         gray_zone=gz,
         coordinator=AsyncMock(),
     )
     assert status == "resolved"
-    gz.resolve_with_doctrine.assert_awaited_once_with(
-        ANY, "regla de atencion", "regla de atencion", vip_id=None
-    )
+    admin.resolve_doctrine_rule_and_enqueue.assert_awaited_once()
+    call_kwargs = admin.resolve_doctrine_rule_and_enqueue.await_args.kwargs
+    assert call_kwargs.get("rule_text") == "regla de atencion"
+    assert call_kwargs.get("vip_id") is None
+    gz.resolve_with_doctrine.assert_not_awaited()
     assert sessions.resolve(OWNER) == ("none", None)
 
 
@@ -280,8 +276,9 @@ async def test_scope_choice_free_text_scopes_to_vip() -> None:
     vip_id = uuid4()
     gz = AsyncMock()
     gz.get_open_query_by_turn_id.return_value = _query_row(vip_id=vip_id)
-    gz.resolve_with_doctrine.return_value = _candidate()
     turn_id = uuid4()
+    admin = AsyncMock()
+    admin.resolve_doctrine_rule_and_enqueue.return_value = "resolved"
 
     status = await handle_doctrine_scope_choice(
         gray_zone=gz,
@@ -291,20 +288,25 @@ async def test_scope_choice_free_text_scopes_to_vip() -> None:
         pending=DoctrinePending(
             turn_id=turn_id, mode="free_text", text="regla para este VIP"
         ),
+        admin=admin,
     )
     assert status == "resolved"
-    gz.resolve_with_doctrine.assert_awaited_once_with(
-        ANY, "regla para este VIP", "regla para este VIP", vip_id=vip_id
-    )
+    admin.resolve_doctrine_rule_and_enqueue.assert_awaited_once()
+    call_kwargs = admin.resolve_doctrine_rule_and_enqueue.await_args.kwargs
+    assert call_kwargs.get("rule_text") == "regla para este VIP"
+    assert call_kwargs.get("vip_id") == vip_id
+    assert call_kwargs.get("scope") == "vip"
+    gz.resolve_with_doctrine.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_scope_choice_draft_mode_uses_query_draft() -> None:
+async def test_scope_choice_rejects_draft_mode() -> None:
+    """mode=draft (Usar borrador) is removed from the doctrine happy path."""
     vip_id = uuid4()
     gz = AsyncMock()
     gz.get_open_query_by_turn_id.return_value = _query_row(vip_id=vip_id)
-    gz.resolve_with_doctrine.return_value = _candidate()
     turn_id = uuid4()
+    admin = AsyncMock()
 
     status = await handle_doctrine_scope_choice(
         gray_zone=gz,
@@ -312,8 +314,8 @@ async def test_scope_choice_draft_mode_uses_query_draft() -> None:
         turn_id=turn_id,
         scope="all",
         pending=DoctrinePending(turn_id=turn_id, mode="draft"),
+        admin=admin,
     )
-    assert status == "resolved"
-    gz.resolve_with_doctrine.assert_awaited_once_with(
-        ANY, "borrador del bot", "borrador del bot", vip_id=None
-    )
+    assert status in {"error", "not_found", "rejected"}
+    admin.resolve_doctrine_rule_and_enqueue.assert_not_awaited()
+    gz.resolve_with_doctrine.assert_not_awaited()

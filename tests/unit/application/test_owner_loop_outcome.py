@@ -32,7 +32,6 @@ from diana.cognitive.models import Decision, EvaluationProfile, IncomingTurn
 from diana.cognitive.policy_distiller import PolicyDistiller
 from diana.telegram.handlers.doctrine import (
     handle_doctrine_escalate,
-    handle_doctrine_resolve_with_draft,
 )
 
 from tests.unit.application.test_admin_service import _real_staging
@@ -385,14 +384,18 @@ async def test_gray_zone_resolve_then_approve_is_conservadora() -> None:
     gz = _memory_gray_zone(g["vips"])
     turn = await _seed_gray_zone(g, gz, store, shadow="doctrine")
 
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gz,
-        coordinator=g["coordinator"],
+    status = await g["admin"].resolve_doctrine_rule_and_enqueue(
         turn_id=turn.id,
-        admin=g["admin"],
+        rule_text="Ofrecer descuento 10% en 3+",
+        scope="all",
+        vip_id=None,
+        gray_zone=gz,
+        actor_id=OWNER_ID,
     )
     assert status == "resolved"
-    assert await gz.get_open_query_by_turn_id(turn.id) is None
+    # Query moves to awaiting_send (still held), not closed/open.
+    open_q = await gz.get_open_query_by_turn_id(turn.id)
+    assert open_q is None or getattr(open_q, "status", None) != "open"
 
     result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
 

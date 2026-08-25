@@ -550,3 +550,141 @@ async def test_reopen_query_requires_query_id(service: GrayZoneService) -> None:
     """reopen_query without a query id is a programmer error."""
     with pytest.raises(ValueError, match="query_id is required"):
         await service.reopen_query(None)
+
+
+# --- Live policy persist + awaiting_send (doctrine rule→regen contract) ---
+
+
+@pytest.mark.asyncio
+async def test_persist_live_policy_writes_active_row_no_staging(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+) -> None:
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id,
+        status="open",
+        vip_id=vip_record.id,
+        question="¿Hay descuento?",
+        draft="borrador",
+    )
+    policies_repo = AsyncMock()
+    policy = SimpleNamespace(
+        id=uuid4(),
+        rule="Ofrecer 10% en 3+",
+        scope="vip",
+        is_active=True,
+        vip_id=vip_record.id,
+        source_query_id=query_id,
+    )
+    policies_repo.insert.return_value = policy
+
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=policies_repo,
+    )
+    result = await service.persist_live_policy(
+        query_id,
+        "Ofrecer 10% en 3+",
+        vip_id=vip_record.id,
+        scope="vip",
+    )
+
+    policies_repo.insert.assert_awaited_once()
+    kwargs = policies_repo.insert.await_args.kwargs
+    assert kwargs["rule"] == "Ofrecer 10% en 3+"
+    assert kwargs["is_active"] is True
+    assert kwargs["scope"] == "vip"
+    assert kwargs["vip_id"] == vip_record.id
+    assert kwargs["source_query_id"] == query_id
+    staging_repo.insert.assert_not_awaited()
+    assert result is policy
+
+
+@pytest.mark.asyncio
+async def test_mark_awaiting_send_updates_status_without_unfreeze(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+) -> None:
+    await vip_store.freeze_vip(
+        vip_record.id, datetime.now(UTC) + timedelta(hours=6)
+    )
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id, status="open", vip_id=vip_record.id
+    )
+    query_repo.update_status.return_value = True
+
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=AsyncMock(),
+    )
+    await service.mark_awaiting_send(query_id)
+
+    assert query_repo.update_status.await_args.args[1] == "awaiting_send"
+    frozen = await vip_store.get_by_id(vip_record.id)
+    assert frozen is not None and frozen.frozen_until is not None
+
+
+@pytest.mark.asyncio
+async def test_close_awaiting_send_resolves_and_unfreezes(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+) -> None:
+    await vip_store.freeze_vip(
+        vip_record.id, datetime.now(UTC) + timedelta(hours=6)
+    )
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id, status="awaiting_send", vip_id=vip_record.id
+    )
+    query_repo.update_status.return_value = True
+
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=AsyncMock(),
+    )
+    await service.close_awaiting_send(query_id, unfreeze=True)
+
+    assert query_repo.update_status.await_args.args[1] == "resolved"
+    frozen = await vip_store.get_by_id(vip_record.id)
+    assert frozen is not None and frozen.frozen_until is None
+
+
+@pytest.mark.asyncio
+async def test_deactivate_policy_sets_inactive(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+) -> None:
+    policies_repo = AsyncMock()
+    policies_repo.deactivate.return_value = True
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=policies_repo,
+    )
+    policy_id = uuid4()
+    await service.deactivate_policy(policy_id)
+    policies_repo.deactivate.assert_awaited_once_with(policy_id)

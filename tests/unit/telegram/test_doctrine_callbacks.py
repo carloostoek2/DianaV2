@@ -1,4 +1,4 @@
-"""Doctrine callback handlers — respond, resolve-with-draft, escalate."""
+"""Doctrine callback handlers — write rule + escalate (no Usar borrador / dx:)."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from diana.telegram.handlers.doctrine import (
 )
 from diana.application.turn_coordinator import ChatLockTimeoutError
 from diana.telegram.keyboards import (
+    doctrine_keyboard,
     encode_doctrine_callback,
     encode_doctrine_escalate_callback,
     encode_doctrine_resolve_callback,
@@ -884,3 +885,31 @@ async def test_ds_non_owner_forbidden() -> None:
     args, kwargs = query.answer.await_args
     assert kwargs.get("show_alert") is True
     assert "No autorizado" in (args[0] if args else "")
+
+
+# --- New contract: no Usar borrador / no dx: happy path --------------------
+
+
+def test_doctrine_keyboard_rule_only_no_usar_borrador() -> None:
+    markup = doctrine_keyboard(uuid4())
+    labels = [btn.text or "" for row in markup.inline_keyboard for btn in row]
+    callbacks = [btn.callback_data or "" for row in markup.inline_keyboard for btn in row]
+    assert not any("Usar borrador" in label for label in labels)
+    assert any("regla" in label.lower() for label in labels)
+    assert any("Escalar" in label for label in labels)
+    assert not any(cb.startswith("dx:") for cb in callbacks)
+    assert any(cb.startswith("dr:") for cb in callbacks)
+    assert any(cb.startswith("de:") for cb in callbacks)
+
+
+def test_doctrine_router_has_no_dx_handler() -> None:
+    router = build_doctrine_router(
+        gray_zone=FakeGrayZone(),
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+    )
+    # Rule+escalate+scope only (dr/de/ds). No dx: Usar borrador handler.
+    assert len(router.callback_query.handlers) == 3
+    # Sanity: encode_doctrine_resolve_callback still exists for legacy strings
+    # but must not be wired on the router happy path.
+    assert encode_doctrine_resolve_callback(uuid4()).startswith("dx:")
