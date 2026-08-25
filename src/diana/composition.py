@@ -774,6 +774,7 @@ def build_app(
         policy_repo=policies_repo,
         examples_repo=examples_repo,
         profile_repo=profiles_repo,
+        profile_synthesis_repo=vip_profile_repo,
         embedding_service=embedding_svc,
         persona_facts=catalog["persona_facts"],
         voice_patterns=catalog["voice_patterns"],

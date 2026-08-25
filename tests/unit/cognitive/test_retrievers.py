@@ -1235,6 +1235,170 @@ async def test_profile_retriever_whitespace_only_facts_is_none() -> None:
     assert await retriever.fetch(turn, _comprehension()) is None
 
 
+# ── Profile dual-source (synthesized vip_profile + manual profiles) ─────────
+
+
+def _synth_record(
+    stable_traits: dict,
+    recent_trend: dict,
+    sensitivities: list,
+) -> dict:
+    return {
+        "vip_id": str(uuid4()),
+        "stable_traits": stable_traits,
+        "recent_trend": recent_trend,
+        "sensitivities": sensitivities,
+        "version": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_synthesis_only() -> None:
+    """Synthesis repo alone → {"tipo":"profile","content":{"sintesis":{...}}}."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    synthesis = AsyncMock()
+    synthesis.get_by_vip = AsyncMock(
+        return_value=_synth_record(
+            {"interes_en_cosplay": {"trait": "Interés en cosplay", "weight": 0.9, "evidence_count": 2}},
+            {"interes_en_cosplay": {"weight": 0.9, "direction": "increasing", "evidence_count": 2}},
+            [],
+        )
+    )
+    retriever = ProfileRetriever(synthesis_repo=synthesis)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    result = await retriever.fetch(turn, _comprehension())
+    assert result == {
+        "tipo": "profile",
+        "content": {
+            "sintesis": {
+                "stable_traits": {
+                    "interes_en_cosplay": {
+                        "trait": "Interés en cosplay",
+                        "weight": 0.9,
+                        "evidence_count": 2,
+                    }
+                },
+                "recent_trend": {
+                    "interes_en_cosplay": {
+                        "weight": 0.9,
+                        "direction": "increasing",
+                        "evidence_count": 2,
+                    }
+                },
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_filters_sensitive_traits() -> None:
+    """A trait flagged in sensitivities is dropped from stable_traits/trend."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    synthesis = AsyncMock()
+    synthesis.get_by_vip = AsyncMock(
+        return_value=_synth_record(
+            {
+                "interes_en_cosplay": {"trait": "Interés en cosplay", "weight": 0.9},
+                "incertidumbre_laboral": {
+                    "trait": "Incertidumbre laboral (fue despedido)",
+                    "weight": 0.9,
+                },
+            },
+            {
+                "interes_en_cosplay": {"weight": 0.9, "direction": "increasing"},
+                "incertidumbre_laboral": {"weight": 0.9, "direction": "increasing"},
+            },
+            [{"trait": "Incertidumbre laboral", "weight": 0.9, "evidence_count": 2}],
+        )
+    )
+    retriever = ProfileRetriever(synthesis_repo=synthesis)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    result = await retriever.fetch(turn, _comprehension())
+    synth = result["content"]["sintesis"]
+    assert "incertidumbre_laboral" not in synth["stable_traits"]
+    assert "incertidumbre_laboral" not in synth["recent_trend"]
+    assert "interes_en_cosplay" in synth["stable_traits"]
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_merges_synthesis_and_manual() -> None:
+    """Both repos → content carries both sintesis and manual blocks."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    synthesis = AsyncMock()
+    synthesis.get_by_vip = AsyncMock(
+        return_value=_synth_record(
+            {"interes_en_cosplay": {"trait": "Interés en cosplay", "weight": 0.9}},
+            {},
+            [],
+        )
+    )
+    manual = AsyncMock()
+    manual.get_by_vip_id = AsyncMock(
+        return_value={
+            "vip_id": str(vip_id),
+            "tipo": "summary",
+            "content": {"fact": "prefers morning"},
+        }
+    )
+    retriever = ProfileRetriever(repo=manual, synthesis_repo=synthesis)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    result = await retriever.fetch(turn, _comprehension())
+    assert result["tipo"] == "profile"
+    assert result["content"]["manual"] == {"fact": "prefers morning"}
+    assert (
+        result["content"]["sintesis"]["stable_traits"]["interes_en_cosplay"]["trait"]
+        == "Interés en cosplay"
+    )
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_synthesis_hollow_returns_none() -> None:
+    """Synthesis present but empty traits → None (ContextBuilder omits block)."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    synthesis = AsyncMock()
+    synthesis.get_by_vip = AsyncMock(
+        return_value=_synth_record({}, {}, [])
+    )
+    retriever = ProfileRetriever(synthesis_repo=synthesis)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    assert await retriever.fetch(turn, _comprehension()) is None
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_synthesis_miss_returns_none() -> None:
+    """Synthesis repo returns None → fetch None (no manual repo)."""
+    from unittest.mock import AsyncMock
+
+    vip_id = uuid4()
+    synthesis = AsyncMock()
+    synthesis.get_by_vip = AsyncMock(return_value=None)
+    retriever = ProfileRetriever(synthesis_repo=synthesis)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=vip_id)
+    assert await retriever.fetch(turn, _comprehension()) is None
+
+
+@pytest.mark.asyncio
+async def test_profile_retriever_synthesis_vip_id_none_not_called() -> None:
+    """Unidentified VIP → None and neither repo is called (BR-15)."""
+    from unittest.mock import AsyncMock
+
+    synthesis = AsyncMock()
+    manual = AsyncMock()
+    retriever = ProfileRetriever(repo=manual, synthesis_repo=synthesis)
+    turn = IncomingTurn(turn_id=uuid4(), chat_id=100, text="hola", vip_id=None)
+    assert await retriever.fetch(turn, _comprehension()) is None
+    synthesis.get_by_vip.assert_not_called()
+    manual.get_by_vip_id.assert_not_called()
+
+
 class _FakeProvider:
     """Minimal PersonaCatalogProvider double with a mutable catalog."""
 

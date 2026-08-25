@@ -15,7 +15,10 @@ from diana.cognitive.models import Comprehension, IncomingTurn
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MEMORY_THRESHOLD = 0.75
+# Calibrated: the top on-topic memory scored ~0.527 for a real turn (the old
+# 0.75 gate never fired). Set below the measured 0.5269 so the strict `>` gate
+# admits it.
+DEFAULT_MEMORY_THRESHOLD = 0.52
 DEFAULT_MEMORY_LIMIT = 5
 
 

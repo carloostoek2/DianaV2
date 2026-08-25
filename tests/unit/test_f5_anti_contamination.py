@@ -77,7 +77,7 @@ def test_visibility_statuses_keep_pending_out_of_context() -> None:
 @pytest.mark.asyncio
 async def test_memory_retriever_scopes_to_own_vip() -> None:
     """F5-10c: the retriever filters by vip_id (BR-15) — no cross-VIP leaks."""
-    from diana.cognitive.retrievers.memory import MemoryRetriever
+    from diana.cognitive.retrievers.memory import DEFAULT_MEMORY_THRESHOLD, MemoryRetriever
 
     vip_a = uuid4()
     embed = AsyncMock()
@@ -96,7 +96,7 @@ async def test_memory_retriever_scopes_to_own_vip() -> None:
     # broadens or substitutes the scope (BR-15). Repo-level isolation is
     # additionally covered in e2e (test_sql_memories_repo.py::isolates_vips).
     repo.find_by_vip_and_similarity.assert_awaited_once_with(
-        vip_a, ANY, threshold=0.75, limit=5
+        vip_a, ANY, threshold=DEFAULT_MEMORY_THRESHOLD, limit=5
     )
 
 

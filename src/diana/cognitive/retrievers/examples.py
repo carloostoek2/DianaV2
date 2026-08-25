@@ -18,7 +18,10 @@ from diana.cognitive.models import Comprehension, IncomingTurn
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EXAMPLES_THRESHOLD = 0.7
+# Calibrated: the best example match scored ~0.508 for a real turn (the old 0.7
+# gate never fired). Set below the measured 0.5077 so the strict `>` gate
+# admits it.
+DEFAULT_EXAMPLES_THRESHOLD = 0.50
 DEFAULT_EXAMPLES_LIMIT = 5
 
 

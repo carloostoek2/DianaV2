@@ -79,6 +79,7 @@ def build_default_registry(
     policy_repo: Any = None,
     examples_repo: Any = None,
     profile_repo: Any = None,
+    profile_synthesis_repo: Any = None,
     embedding_service: Any = None,
     persona_facts: list | None = None,
     voice_patterns: list | None = None,
@@ -95,7 +96,9 @@ def build_default_registry(
     catalogs (empty → always None); memory/policy/examples REAL when their
     ``*_repo`` and ``embedding_service`` are provided, STUB otherwise (policy
     may still match static_policies); profile REAL when ``profile_repo`` is
-    provided (PK VIP lookup), STUB otherwise; schedule REAL from fixed weekly
+    provided (PK VIP lookup), STUB otherwise, and additionally merges the
+    synthesized ``vip_profile`` when ``profile_synthesis_repo`` is provided;
+    schedule REAL from fixed weekly
     agenda (empty bloques still yields respuesta_libre). Profile is always
     registered (stub or real).
     """
@@ -121,7 +124,10 @@ def build_default_registry(
     )
     registry.register(
         "knowledge.profile",
-        ProfileRetriever(repo=profile_repo),
+        ProfileRetriever(
+            repo=profile_repo,
+            synthesis_repo=profile_synthesis_repo,
+        ),
     )
     registry.register(
         "knowledge.persona_facts",
