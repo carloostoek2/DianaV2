@@ -9,6 +9,7 @@ from __future__ import annotations
 
 
 import pytest
+from sqlalchemy import text
 
 from diana.infrastructure.db.repositories.synthesis_queue import (
     SqlProfileSynthesisQueueRepo,
@@ -36,6 +37,7 @@ async def test_upsert_pending_and_drain_claim(session_factory) -> None:
     assert [c.vip_id for c in claimed] == [vip.id]
     assert claimed[0].status == "processing"
     assert claimed[0].started_at is not None
+    await repo.complete(vip.id)  # keep the shared table clean for later tests
 
 
 @pytest.mark.db
@@ -61,12 +63,25 @@ async def test_recover_stale_resets_processing(session_factory) -> None:
     claimed = await repo.drain(limit=10)
     assert claimed[0].status == "processing"
 
+    # Age the row past the 1s window so recover_stale sees it as orphaned.
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "UPDATE profile_synthesis_queue "
+                "SET updated_at = now() - interval '5 seconds' "
+                "WHERE vip_id = :vip"
+            ),
+            {"vip": vip.id},
+        )
+        await session.commit()
+
     recovered = await repo.recover_stale(max_age_seconds=1)
     assert recovered == 1
 
     pending = await repo.list_pending(limit=10)
     assert [p.vip_id for p in pending] == [vip.id]
     assert pending[0].status == "pending"
+    await repo.complete(vip.id)  # keep the shared table clean
 
 
 @pytest.mark.db
@@ -81,3 +96,4 @@ async def test_upsert_refreshes_trigger_not_status(session_factory) -> None:
 
     assert refreshed.status == "processing"  # never downgraded
     assert refreshed.trigger == "strong_signal"
+    await repo.complete(vip.id)  # keep the shared table clean

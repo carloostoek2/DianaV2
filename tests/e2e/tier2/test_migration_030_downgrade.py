@@ -109,27 +109,31 @@ async def test_030_upgrade_constraints_and_downgrade(database_url: str) -> None:
                 ).scalar_one()
                 assert outcome_id is not None
 
-                # CHECK: bogus shadow_verdict is rejected.
+                # CHECK: bogus shadow_verdict is rejected. A constraint
+                # violation aborts the statement; run it inside a SAVEPOINT so
+                # the outer transaction stays usable for the checks below.
                 with pytest.raises(Exception):
-                    await conn.execute(
-                        text(
-                            "INSERT INTO turn_outcome_log "
-                            "(turn_id, vip_id, shadow_verdict) "
-                            "VALUES (gen_random_uuid(), :vip, 'bogus')"
-                        ),
-                        {"vip": vip_id},
-                    )
+                    async with conn.begin_nested():
+                        await conn.execute(
+                            text(
+                                "INSERT INTO turn_outcome_log "
+                                "(turn_id, vip_id, shadow_verdict) "
+                                "VALUES (gen_random_uuid(), :vip, 'bogus')"
+                            ),
+                            {"vip": vip_id},
+                        )
 
                 # UNIQUE turn_id: a second row for the same turn is rejected.
                 with pytest.raises(Exception):
-                    await conn.execute(
-                        text(
-                            "INSERT INTO turn_outcome_log "
-                            "(turn_id, vip_id, shadow_verdict) "
-                            "VALUES (:turn, :vip, 'send')"
-                        ),
-                        {"turn": turn_id, "vip": vip_id},
-                    )
+                    async with conn.begin_nested():
+                        await conn.execute(
+                            text(
+                                "INSERT INTO turn_outcome_log "
+                                "(turn_id, vip_id, shadow_verdict) "
+                                "VALUES (:turn, :vip, 'send')"
+                            ),
+                            {"turn": turn_id, "vip": vip_id},
+                        )
 
                 indexes = {
                     row.indexname

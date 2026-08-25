@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -107,6 +108,68 @@ class _FakeMetricsStore:
 
     async def get_previous_week(self, week_start: date) -> dict[str, float]:
         return dict(self.weeks.get(week_start - timedelta(days=7), {}))
+
+
+class _DoctrineGrayZone:
+    """Current-port fake for AdminService.resolve_doctrine_rule_and_enqueue happy path."""
+
+    def __init__(self, turn_id: UUID) -> None:
+        self.turn_id = turn_id
+        self.policies: list[tuple[UUID, str, UUID | None, str]] = []
+
+    async def get_open_query_by_turn_id(self, tid: UUID) -> SimpleNamespace:
+        assert tid == self.turn_id
+        return SimpleNamespace(
+            id=uuid4(),
+            turn_id=self.turn_id,
+            draft="draft",
+            question="q",
+            business_connection_id="bc-gray",
+            vip_id=None,
+        )
+
+    async def persist_live_policy(
+        self,
+        query_id: UUID,
+        rule: str,
+        *,
+        vip_id: UUID | None = None,
+        scope: str = "all",
+    ) -> SimpleNamespace:
+        self.policies.append((query_id, rule, vip_id, scope))
+        return SimpleNamespace(
+            id=uuid4(),
+            rule=rule,
+            scope=scope,
+            trigger_description=rule,
+            is_active=True,
+        )
+
+    def policy_override_payload(self, policy: SimpleNamespace) -> dict:
+        return {
+            "trigger_description": policy.trigger_description,
+            "rule": policy.rule,
+            "scope": policy.scope,
+            "is_active": True,
+        }
+
+    async def mark_awaiting_send(self, query_id: UUID) -> None:
+        return None
+
+    async def deactivate_policy(self, policy_id: UUID) -> bool:
+        return True
+
+    async def reopen_query(self, query_id: UUID) -> bool:
+        return True
+
+
+def _doctrine_director() -> AsyncMock:
+    director = AsyncMock()
+    director.handle_turn.return_value = SimpleNamespace(
+        action="approve",
+        draft_text="borrador regenerado",
+    )
+    return director
 
 
 @pytest.fixture
@@ -263,39 +326,9 @@ async def test_doctrine_free_text_session_captures_text(admin_ctx: dict) -> None
     )
     sessions = DoctrineSessionStore()
     sessions.start(OWNER, turn_id)
+    g["admin"].set_director(_doctrine_director())
+    gz = _DoctrineGrayZone(turn_id)
 
-    class _FakeGrayZone:
-        def __init__(self) -> None:
-            self.resolved: list[tuple[str, str]] = []
-
-        async def get_open_query_by_turn_id(self, tid: UUID) -> object:
-            assert tid == turn_id
-            return SimpleNamespace(
-                id=uuid4(),
-                turn_id=turn_id,
-                draft="draft",
-                question="q",
-                business_connection_id="bc-gray",
-            )
-
-        async def resolve_with_doctrine(
-            self,
-            query_id: UUID,
-            generalization: str,
-            rule: str,
-            *,
-            vip_id=None,
-        ) -> object:
-            self.resolved.append((generalization, rule, vip_id))
-            return SimpleNamespace(id=uuid4())
-
-        async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
-            return SimpleNamespace(id=query_id)
-
-        async def reopen_query(self, query_id: UUID) -> bool:
-            return True
-
-    gz = _FakeGrayZone()
     status = await handle_admin_text(
         text="Siempre ofrecer 10% si piden 3 unidades",
         actor_id=OWNER,
@@ -308,12 +341,15 @@ async def test_doctrine_free_text_session_captures_text(admin_ctx: dict) -> None
         coordinator=g["coordinator"],
     )
     assert status == "resolved"
-    assert gz.resolved == [
-        ("Siempre ofrecer 10% si piden 3 unidades", "Siempre ofrecer 10% si piden 3 unidades", None)
-    ]
+    # The rule reached the gray zone as a live policy, scoped globally.
+    assert len(gz.policies) == 1
+    _, rule, vip_id, scope = gz.policies[0]
+    assert rule == "Siempre ofrecer 10% si piden 3 unidades"
+    assert vip_id is None
+    assert scope == "all"
     # Session consumed after capture.
     assert sessions.resolve(OWNER) == ("none", None)
-    # The turn moved to pending approval with the owner text as draft.
+    # The turn moved to pending approval with the regenerated draft.
     stored = await g["turns"].get(turn_id)
     assert stored is not None
     assert stored.status == "pending_approval"
@@ -375,39 +411,9 @@ async def test_doctrine_free_text_router_forwards_coordinator(
     )
     sessions = DoctrineSessionStore()
     sessions.start(OWNER, turn_id)
+    g["admin"].set_director(_doctrine_director())
+    gz = _DoctrineGrayZone(turn_id)
 
-    class _FakeGrayZone:
-        def __init__(self) -> None:
-            self.resolved: list[tuple[str, str]] = []
-
-        async def get_open_query_by_turn_id(self, tid: UUID) -> object:
-            assert tid == turn_id
-            return SimpleNamespace(
-                id=uuid4(),
-                turn_id=turn_id,
-                draft="draft",
-                question="q",
-                business_connection_id="bc-gray",
-            )
-
-        async def resolve_with_doctrine(
-            self,
-            query_id: UUID,
-            generalization: str,
-            rule: str,
-            *,
-            vip_id=None,
-        ) -> object:
-            self.resolved.append((generalization, rule, vip_id))
-            return SimpleNamespace(id=uuid4())
-
-        async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
-            return SimpleNamespace(id=query_id)
-
-        async def reopen_query(self, query_id: UUID) -> bool:
-            return True
-
-    gz = _FakeGrayZone()
     router = build_admin_router(
         owner_telegram_id=OWNER,
         vips=g["vips"],
@@ -422,12 +428,12 @@ async def test_doctrine_free_text_router_forwards_coordinator(
     await on_owner_text(msg)
     msg.answer.assert_awaited()
     body = msg.answer.await_args.args[0]
-    assert "Doctrina guardada" in body
-    assert gz.resolved == [(
-        "Siempre ofrecer 10% si piden 3 unidades",
-        "Siempre ofrecer 10% si piden 3 unidades",
-        None,
-    )]
+    assert "Regla guardada" in body
+    assert len(gz.policies) == 1
+    _, rule, vip_id, scope = gz.policies[0]
+    assert rule == "Siempre ofrecer 10% si piden 3 unidades"
+    assert vip_id is None
+    assert scope == "all"
 
 
 @pytest.mark.asyncio

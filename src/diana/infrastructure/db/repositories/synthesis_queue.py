@@ -97,7 +97,8 @@ class SqlProfileSynthesisQueueRepo:
             result = await session.execute(stmt)
             await session.commit()
             return [
-                profile_synthesis_queue_orm_to_record(row) for row in result.all()
+                profile_synthesis_queue_orm_to_record(row)
+                for row in result.scalars().all()
             ]
 
     async def complete(self, vip_id: UUID) -> bool:
