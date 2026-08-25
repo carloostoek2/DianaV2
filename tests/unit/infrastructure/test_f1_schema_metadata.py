@@ -251,3 +251,27 @@ def test_migration_011_pipeline_traces_chat_index() -> None:
     assert "ix_pipeline_traces_chat_id_created_at" in text
     assert "created_at DESC" in text
 
+
+
+def test_migration_033_adds_gray_zone_proposal_columns() -> None:
+    """Migration 033 adds audit-only proposal columns to gray_zone_queries.
+
+    FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: proposed_rule/proposed_reply/
+    proposal_source persist on the query so the dp: callback and freeze
+    reminders can recover the system proposal. Columns, NOT tables.
+    """
+    migration = (
+        Path(__file__).resolve().parents[3]
+        / "alembic"
+        / "versions"
+        / "033_gray_zone_proposal.py"
+    )
+    text = migration.read_text(encoding="utf-8")
+    assert 'revision: str = "033_gray_zone_proposal"' in text
+    assert 'down_revision' in text and "032_escalation_events_business_connection" in text
+    assert "proposed_rule" in text
+    assert "proposed_reply" in text
+    assert "proposal_source" in text
+    # Audit-only columns: nullable Text, no table creation.
+    assert "op.add_column" in text and "gray_zone_queries" in text
+    assert 'sa.Column("proposed_rule", sa.Text(), nullable=True)' in text

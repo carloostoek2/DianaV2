@@ -96,7 +96,7 @@ Principios rectores (no negociables):
 6. Toda decisión es reconstruible a partir de objetos persistidos.
 7. El Turn Coordinator garantiza la serialización por chat (REQ-NFR-02).
 
-Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
+Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
 ---
 
@@ -164,9 +164,25 @@ Decisor emite action = "consult_doctrine"
   → GrayZoneService.create_query()
       → gray_zone_queries status = 'open'
       → VIP/Atención congelado (VIP: frozen_until; Atención: query open|awaiting_send)
-      → DM a la dueña: pregunta + borrador sugerido (contexto); pide REGLA / norma
-      → Teclado: 📝 Escribir regla | ⚠️ Escalar  (NO hay "✅ Usar borrador")
-  → Dueña escribe la REGLA (nunca el texto que recibirá el VIP) + alcance Solo este VIP / A todos
+      → [Opcional FEATURE_GRAY_ZONE_PROPOSAL_ENABLED] GrayZoneProposalService genera
+        una PROPUESTA (regla propuesta + respuesta sugerida + alcance sugerido) usando
+        contexto general restringido (policies scope=all + examples gold + catálogo de
+        persona) como PRÉSTAMO TEMPORAL: solo lectura, nada se persiste en
+        memorias/ejemplos/perfil ni en el contexto base del pipeline. Fail-open: si la
+        generación falla o excede timeout (5–10s), se sigue con el DM sin propuesta.
+      → DM a la dueña: mensaje ORIGINAL del turno (texto del VIP/Atención + borrador
+        sugerido) claramente identificado como CONTEXTO; después, si hay propuesta,
+        bloque "Propuesta del sistema" (regla propuesta + respuesta sugerida, rotulado
+        como sugerencia, no instrucción)
+      → Teclado (con propuesta): 💡 Usar regla propuesta | 📝 Escribir regla | ⚠️ Escalar
+      → Teclado (sin propuesta / flag OFF): 📝 Escribir regla | ⚠️ Escalar
+        (NO hay "✅ Usar borrador")
+  → Dueña elige:
+      a) 💡 Usar regla propuesta → la regla propuesta entra como rule_text del MISMO
+         camino regla→regen→aprobación (nunca directo; el botón adopta la REGLA, no el
+         mensaje) + alcance Solo este VIP / A todos
+      b) 📝 Escribir regla → sesión de texto libre (flujo actual)
+      c) ⚠️ Escalar → cierra sin regla
   → AdminService.resolve_doctrine_rule_and_enqueue(...):
       1. Persistencia VIVA en policies (is_active=true; scope vip|all + vip_id)
          — SIN staging_candidates en este happy path
@@ -178,7 +194,11 @@ Decisor emite action = "consult_doctrine"
          → GRAY_ZONE → PENDING_APPROVAL
          → query status = 'awaiting_send'  (NO descongela)
       4. Si regen falla / vuelve consult_doctrine / borrador vacío:
-         → desactivar la policy recién insertada; query sigue 'open'; freeze retenido; avisar a la dueña
+         → desactivar la policy recién insertada; query sigue 'open'; freeze retenido;
+           avisar a la dueña → el caso VUELVE a resolución de zona gris (query 'open' +
+           freeze + DM de doctrina vigente: la dueña puede reintentar con otra regla,
+           con la propuesta, o escalar). NUNCA se auto-aplica una regla que el regen
+           no pudo aplicar, ni se descongela, ni se envía el borrador fallido.
       5. Si falla crear aprobación / ChatLockTimeout:
          → reopen a 'open' si hace falta; freeze retenido; policy puede quedar viva; error reintentable
   → Cola normal de la dueña: Aprobar / Corregir / Escalar sobre el BORRADOR regenerado
@@ -191,7 +211,7 @@ Decisor emite action = "consult_doctrine"
       → usa query.draft original → supervisión o escalate (legado; no es el narrative regla→regen)
 ```
 
-Invariantes: la dueña escribe norma de negocio, no el mensaje al VIP; Learning no participa en el resolve; Cognitive no importa telegram/behavior; Staging sigue siendo el camino de correcciones (FEATURE_STAGING_ENABLED), no del resolve de zona gris.
+Invariantes: la dueña escribe norma de negocio, no el mensaje al VIP; la propuesta del sistema es **solo sugerencia** (nunca se aplica sola, nunca salta la regeneración ni la cola de aprobación); el contexto general de la propuesta es un préstamo temporal sin escrituras ni contaminación (memorias/ejemplos/perfil/pipeline base intactos); si el regen no logra aplicar la regla, el caso permanece en resolución de zona gris (fail-closed, reintentable); Learning no participa en el resolve; Cognitive no importa telegram/behavior; Staging sigue siendo el camino de correcciones (FEATURE_STAGING_ENABLED), no del resolve de zona gris; la propuesta no toca umbrales ni gates (incidente de calibración).
 
 🟠 [FASE 3 — Producto Completo] Flujos ACTIVOS (con flags)
 
@@ -320,7 +340,9 @@ Dueña crea/edita/pausa un evento con ventana [start_at, end_at)
 4.16 Paracaídas de zona gris (VIP y Atención)
 
 ```
-consult_doctrine → freeze → send_doctrine_query a la dueña
+consult_doctrine → freeze → [propuesta opcional] → send_doctrine_query a la dueña
+  → Si la generación de propuesta falla (excepción/timeout): fail-open, se sigue
+    con el DM sin propuesta (nunca se pierde la consulta ni el freeze).
   → Si el DM falla: discard_and_close (descongela) + demote a approve
     reason=vip_doctrine_notify_failed | atencion_doctrine_notify_failed
   → Si el DM ok: el VIP/chat permanece congelado a través de

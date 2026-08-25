@@ -578,12 +578,20 @@ class AdminService:
         decision: Decision,
         turn_id: UUID,
         query: GrayZoneQueryView,
+        *,
+        proposed_rule: str | None = None,
+        proposed_reply: str | None = None,
+        proposal_source: str | None = None,
     ) -> None:
         """Notify owner of a gray zone doctrine query (VIP frozen).
 
         Sends DM with the VIP's question, the draft, and reply markup
         for the owner to respond with doctrine guidance.
         Does NOT deliver to the VIP (VIP is frozen).
+
+        FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: optional system RULE proposal
+        included in the DM (suggestion only). ``proposal_source`` records the
+        origin (e.g. "gray_zone_proposal") for audit.
 
         Note: owner_mid is NOT persisted in F2 because the
         GrayZoneQuery model lacks an owner_message_id column. For F3/Item 4
@@ -603,6 +611,12 @@ class AdminService:
         }
         if query_id is not None:
             reply_spec["query_id"] = str(query_id)
+        if proposed_rule:
+            reply_spec["actions"] = [
+                "use_proposal_doctrine",
+                "respond_doctrine",
+                "escalate_doctrine",
+            ]
 
         try:
             owner_mid = await self._notifier.notify_doctrine(
@@ -615,6 +629,9 @@ class AdminService:
                     evaluation_summary=_eval_summary(decision),
                     business_connection_id=bc,
                     reply_markup_spec=reply_spec,
+                    proposed_rule=proposed_rule,
+                    proposed_reply=proposed_reply,
+                    proposal_source=proposal_source,
                 )
             )
         except Exception:

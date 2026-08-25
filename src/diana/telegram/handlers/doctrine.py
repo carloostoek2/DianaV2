@@ -1,6 +1,8 @@
-"""Doctrine callback handlers: write rule + escalate (no Usar borrador).
+"""Doctrine callback handlers: write rule + use proposal + escalate (no Usar borrador).
 
 Flow (AGENTS §4.5):
+- dp: (Usar regla propuesta) adopts the system-suggested RULE into the same
+      rule→regen→approval path; asks scope (ds:) before resolve.
 - dr: (Escribir regla) opens a free-text session; owner writes a RULE.
 - ds: Solo este VIP / A todos scopes the rule, then AdminService regenerates.
 - de: (Escalar) discards the query and escalates the turn.
@@ -25,6 +27,7 @@ from diana.cognitive.models import is_turn_status_terminal
 from diana.telegram.keyboards import (
     doctrine_scope_keyboard,
     parse_doctrine_callback,
+    parse_doctrine_proposal_callback,
     parse_doctrine_scope,
 )
 
@@ -232,6 +235,38 @@ async def handle_doctrine_respond(
         },
     )
     return "prompted"
+
+
+async def handle_doctrine_use_proposal(
+    *,
+    gray_zone: GrayZoneServicePort,
+    turn_id: UUID,
+) -> str:
+    """Fetch the system-generated RULE proposal persisted on the open query.
+
+    Returns the proposed rule text when available, or a status token:
+    ``not_found`` (no open query), ``rejected`` (no proposal on the query).
+    The caller starts the scope session with the returned rule; the resolve
+    path is the SAME rule→regen→approval as a hand-written rule (AGENTS §4.5:
+    the button adopts the RULE, never the VIP-facing reply).
+    """
+    try:
+        query = await gray_zone.get_open_query_by_turn_id(turn_id)
+    except Exception:
+        logger.exception(
+            "doctrine_proposal_lookup_error", extra={"turn_id": str(turn_id)}
+        )
+        return "error"
+    if query is None:
+        return "not_found"
+    rule = (getattr(query, "proposed_rule", None) or "").strip()
+    if not rule:
+        logger.info(
+            "doctrine_proposal_missing_rule",
+            extra={"turn_id": str(turn_id), "query_id": str(getattr(query, "id", ""))},
+        )
+        return "rejected"
+    return rule
 
 
 async def handle_doctrine_free_text(
@@ -482,6 +517,46 @@ def build_doctrine_router(
             show_alert=True,
         )
 
+    @router.callback_query(lambda c: c.data and c.data.startswith("dp:"))
+    async def on_doctrine_use_proposal(callback: CallbackQuery, **_: Any) -> None:
+        """Usar regla propuesta: adopt the system-suggested RULE (scope first)."""
+        if not _is_owner(callback):
+            await callback.answer("No autorizado", show_alert=True)
+            return
+        turn_id = parse_doctrine_proposal_callback(callback.data or "")
+        if turn_id is None:
+            await callback.answer("Dato de consulta inválido", show_alert=True)
+            return
+
+        rule = await handle_doctrine_use_proposal(
+            gray_zone=gray_zone,
+            turn_id=turn_id,
+        )
+        if rule in {"error", "not_found", "rejected"}:
+            message = {
+                "error": "Error al recuperar la propuesta",
+                "not_found": "Consulta no encontrada — ya fue resuelta",
+                "rejected": "Este caso no tiene propuesta — usa Escribir regla",
+            }[rule]
+            await callback.answer(message, show_alert=True)
+            return
+
+        actor_id = callback.from_user.id if callback.from_user else None
+        if actor_id is not None:
+            sessions.start(actor_id, turn_id, mode="free_text", text=rule)
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    f"{DOCTRINE_SCOPE_PROMPT}\n\n"
+                    f"Regla propuesta por el sistema:\n{rule}",
+                    reply_markup=doctrine_scope_keyboard(turn_id),
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_proposal_scope_ux_failed",
+                    extra={"turn_id": str(turn_id)},
+                )
+
     @router.callback_query(lambda c: c.data and c.data.startswith("dr:"))
     async def on_doctrine_respond(callback: CallbackQuery, **_: Any) -> None:
         # Answer immediately (<1s UX) before any further work.
@@ -624,4 +699,5 @@ __all__ = [
     "handle_doctrine_respond",
     "handle_doctrine_resolve_with_draft",
     "handle_doctrine_scope_choice",
+    "handle_doctrine_use_proposal",
 ]

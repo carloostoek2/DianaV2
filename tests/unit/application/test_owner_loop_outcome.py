@@ -79,6 +79,9 @@ class _MemQueries:
         freeze_until=None,
         chat_id=None,
         business_connection_id=None,
+        proposed_rule=None,
+        proposed_reply=None,
+        proposal_source=None,
     ):
         row = SimpleNamespace(
             id=uuid4(),
@@ -90,6 +93,9 @@ class _MemQueries:
             freeze_until=freeze_until,
             chat_id=chat_id,
             business_connection_id=business_connection_id,
+            proposed_rule=proposed_rule,
+            proposed_reply=proposed_reply,
+            proposal_source=proposal_source,
         )
         self._by_id[row.id] = row
         return row

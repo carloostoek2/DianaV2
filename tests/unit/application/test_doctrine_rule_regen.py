@@ -446,6 +446,82 @@ async def test_regen_fail_deactivates_policy_and_keeps_freeze() -> None:
     gray_zone.deactivate_policy.assert_awaited()
     admin.create_supervised_delivery_from_gray_zone.assert_not_awaited()
     gray_zone.mark_awaiting_send.assert_not_awaited()
+    # The case RETURNS to gray-zone resolution: the query stays 'open'
+    # (never closed/awaited/unfrozen), so the owner can retry or escalate.
+    gray_zone.close_awaiting_send.assert_not_awaited()
+    gray_zone.discard_and_close.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regen_fail_with_proposal_rule_returns_to_resolution() -> None:
+    """A rule adopted from the system proposal ('Usar regla propuesta') follows
+    the SAME rule→regen→approval path; if regen still cannot apply it
+    (consult_doctrine again), the case returns to gray-zone resolution: query
+    stays 'open', freeze held, no approval, no auto-apply (AGENTS §4.5)."""
+    from diana.application.admin_service import AdminService
+
+    gray_zone = AsyncMock()
+    query = _fake_query(question="¿Descuento por volumen?")
+    query.proposed_rule = "Ofrecer 10% si piden 3 o más"  # system proposal
+    query.proposed_reply = "Sí, con 3 o más te hago 10%"
+    query.proposal_source = "gray_zone_proposal"
+    gray_zone.get_open_query_by_turn_id.return_value = query
+    policy = SimpleNamespace(
+        id=uuid4(),
+        rule=query.proposed_rule,
+        is_active=True,
+        trigger_description="q",
+        scope="vip",
+    )
+    gray_zone.persist_live_policy.return_value = policy
+    gray_zone.deactivate_policy = AsyncMock()
+    gray_zone.policy_override_payload = lambda p: {
+        "rule": p.rule,
+        "trigger_description": "q",
+        "scope": "vip",
+        "is_active": True,
+    }
+
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="consult_doctrine",
+        reason="still_needs_policy",
+        evaluation=_profile(doctrine=0.2),
+        draft_text="aún no sé",
+    )
+
+    admin = object.__new__(AdminService)
+    admin._director = director  # type: ignore[attr-defined]
+    admin._gray_zone = gray_zone  # type: ignore[attr-defined]
+    admin._notifier = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns.get.return_value = SimpleNamespace(
+        id=query.turn_id,
+        chat_id=42,
+        vip_id=None,
+        trigger_message_id=7,
+        channel_type="vip",
+        status="gray_zone",
+    )
+    admin.create_supervised_delivery_from_gray_zone = AsyncMock()
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text=query.proposed_rule,  # adopted from the proposal
+        scope="vip",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=999001,
+    )
+
+    assert status in {"error", "regen_failed", "failed"}
+    gray_zone.deactivate_policy.assert_awaited()
+    admin.create_supervised_delivery_from_gray_zone.assert_not_awaited()
+    gray_zone.mark_awaiting_send.assert_not_awaited()
+    # The case remains in gray-zone resolution (reintentable), never auto-applied.
+    gray_zone.close_awaiting_send.assert_not_awaited()
+    gray_zone.discard_and_close.assert_not_awaited()
 
 
 @pytest.mark.asyncio

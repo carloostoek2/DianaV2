@@ -194,6 +194,8 @@ class TurnOrchestrator:
         history: MessageHistoryWriter,
         gray_zone: GrayZoneService | None = None,
         feature_gray_zone_enabled: bool = False,
+        feature_gray_zone_proposal_enabled: bool = False,
+        gray_zone_proposal: object | None = None,
         feature_general_mode_enabled: bool = False,
         behavior: BehaviorDeliverer | None = None,
         autonomous_mode: AutonomousModeService | None = None,
@@ -239,6 +241,8 @@ class TurnOrchestrator:
         self._history = history
         self._gray_zone = gray_zone
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
+        self._feature_gray_zone_proposal_enabled = feature_gray_zone_proposal_enabled
+        self._gray_zone_proposal = gray_zone_proposal
         self._feature_general_mode_enabled = feature_general_mode_enabled
         self._behavior = behavior
         self._autonomous_mode = autonomous_mode
@@ -292,6 +296,48 @@ class TurnOrchestrator:
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
+
+    async def _maybe_generate_gray_zone_proposal(
+        self,
+        *,
+        question: str,
+        draft: str,
+        channel_type: str,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Generate a system RULE proposal for a gray-zone consult (fail-open).
+
+        FEATURE_GRAY_ZONE_PROPOSAL_ENABLED only. Returns
+        ``(proposed_rule, proposed_reply, proposal_source)`` or all-None on
+        any failure/timeout — the caller then sends the DM without a proposal
+        (current behavior). Never writes to knowledge banks (AGENTS §4.5).
+        """
+        if (
+            not self._feature_gray_zone_proposal_enabled
+            or self._gray_zone_proposal is None
+        ):
+            return (None, None, None)
+        try:
+            proposal = await self._gray_zone_proposal.generate(  # type: ignore[union-attr]
+                question=question,
+                draft=draft,
+                channel_type=channel_type,
+            )
+        except Exception:
+            logger.exception(
+                "gray_zone_proposal_generate_error",
+                extra={"channel_type": channel_type},
+            )
+            return (None, None, None)
+        if proposal is None:
+            return (None, None, None)
+        rule = (getattr(proposal, "proposed_rule", "") or "").strip()
+        if not rule:
+            return (None, None, None)
+        return (
+            rule,
+            (getattr(proposal, "proposed_reply", "") or "").strip() or None,
+            "gray_zone_proposal",
+        )
 
     def _effective_delivery_mode(self, _chat_id: int) -> DeliveryMode:
         # Sandbox must not force fake_delivery; product isolation is should_persist.
@@ -2335,6 +2381,15 @@ class TurnOrchestrator:
                                     },
                                 )
                                 return turn_id, None
+                    (
+                        prop_rule,
+                        prop_reply,
+                        prop_source,
+                    ) = await self._maybe_generate_gray_zone_proposal(
+                        question=turn_ctx.text,
+                        draft=decision.draft_text or "",
+                        channel_type="atencion",
+                    )
                     query = await self._gray_zone.create_query(
                         vip_id=None,
                         chat_id=turn_ctx.chat_id,
@@ -2342,10 +2397,16 @@ class TurnOrchestrator:
                         question=turn_ctx.text,
                         draft=decision.draft_text or "",
                         business_connection_id=turn_ctx.business_connection_id,
+                        proposed_rule=prop_rule,
+                        proposed_reply=prop_reply,
+                        proposal_source=prop_source,
                     )
                     try:
                         await self._admin.send_doctrine_query(
-                            turn_ctx, decision, turn_id, query
+                            turn_ctx, decision, turn_id, query,
+                            proposed_rule=prop_rule,
+                            proposed_reply=prop_reply,
+                            proposal_source=prop_source,
                         )
                     except Exception:
                         # F6: a notify failure must not orphan the query and
@@ -2433,6 +2494,15 @@ class TurnOrchestrator:
             else:
                 # Create query + notify BEFORE transitioning to GRAY_ZONE so
                 # a failure does not leave the turn stuck in gray_zone (BUG-3).
+                (
+                    prop_rule,
+                    prop_reply,
+                    prop_source,
+                ) = await self._maybe_generate_gray_zone_proposal(
+                    question=turn_ctx.text,
+                    draft=decision.draft_text or "",
+                    channel_type=turn_ctx.channel_type,
+                )
                 query = await self._gray_zone.create_query(
                     vip_id=turn_ctx.vip_id,
                     turn_id=turn_id,
@@ -2440,10 +2510,16 @@ class TurnOrchestrator:
                     draft=decision.draft_text or "",
                     chat_id=turn_ctx.chat_id,
                     business_connection_id=turn_ctx.business_connection_id,
+                    proposed_rule=prop_rule,
+                    proposed_reply=prop_reply,
+                    proposal_source=prop_source,
                 )
                 try:
                     await self._admin.send_doctrine_query(
-                        turn_ctx, decision, turn_id, query
+                        turn_ctx, decision, turn_id, query,
+                        proposed_rule=prop_rule,
+                        proposed_reply=prop_reply,
+                        proposal_source=prop_source,
                     )
                 except Exception:
                     # F6 VIP: notify failure must not leave a 24h orphan freeze

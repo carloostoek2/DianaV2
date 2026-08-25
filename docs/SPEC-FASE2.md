@@ -259,15 +259,21 @@ Decisor emite action = "consult_doctrine"
   → GrayZoneService.create_query()
       → gray_zone_queries status = 'open'
       → VIP/Atención congelado
-      → DM a la dueña: pregunta + borrador sugerido (contexto); pide REGLA
-      → Teclado: 📝 Escribir regla | ⚠️ Escalar  (sin "✅ Usar borrador")
-  → Dueña escribe la REGLA + alcance Solo este VIP / A todos
+      → [Opcional FEATURE_GRAY_ZONE_PROPOSAL_ENABLED] GrayZoneProposalService genera
+        una PROPUESTA (regla propuesta + respuesta sugerida + alcance sugerido) con
+        contexto general restringido como préstamo temporal (solo lectura; nada se
+        persiste en memorias/ejemplos/perfil; fail-open si falla)
+      → DM a la dueña: mensaje original del turno (contexto) + [Propuesta del sistema] + teclado
+      → Teclado (con propuesta): 💡 Usar regla propuesta | 📝 Escribir regla | ⚠️ Escalar
+      → Teclado (sin propuesta): 📝 Escribir regla | ⚠️ Escalar
+  → Dueña elige: Usar regla propuesta (rule_text = regla propuesta) | Escribir regla | Escalar
   → AdminService (orquestación):
       → persist_live_policy → fila activa en policies (sin staging_candidates)
       → Director.handle_turn(..., knowledge_overrides) force-inject de la regla
       → Si regen ok: supervised approval con borrador REGENERADO;
          query → 'awaiting_send' (NO descongela)
-      → Si regen falla / consult_doctrine de nuevo: desactivar policy; freeze retenido; avisar
+      → Si regen falla / consult_doctrine de nuevo: desactivar policy; query sigue 'open';
+         freeze retenido; avisar → el caso VUELVE a resolución de zona gris (reintentable)
   → Dueña aprueba/corrige/escala el borrador regenerado (cola normal)
   → Send exitoso → close_awaiting_send(unfreeze=True)
   → Escalate/discard → liberar freeze; conservar policy viva (salvo fallo de regen)

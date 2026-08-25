@@ -201,3 +201,72 @@ async def test_notify_link_without_username_shows_display_name_only() -> None:
     assert "Ana" in body
     assert "@" not in body
 
+
+
+@pytest.mark.asyncio
+async def test_notify_doctrine_shows_original_message_then_proposal() -> None:
+    """AGENTS §4.5: DM shows the ORIGINAL message as context first, then the
+    system proposal (rule + reply), then the action buttons."""
+    from diana.application.ports import DoctrineNotification
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=11))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    turn_id = uuid4()
+    await notifier.notify_doctrine(
+        DoctrineNotification(
+            turn_id=turn_id,
+            chat_id=42,
+            vip_text="¿Hay descuento por volumen?",
+            draft_text="borrador original del bot",
+            evaluation_summary="",
+            reason="doctrine_not_found",
+            business_connection_id="bc",
+            proposed_rule="Ofrecer 10% si piden 3 o más",
+            proposed_reply="Sí, con 3 o más te hago 10%",
+            proposal_source="gray_zone_proposal",
+        )
+    )
+    text = bot.send_message.await_args.kwargs["text"]
+    # Context first, clearly labeled.
+    assert "Mensaje original" in text
+    assert "¿Hay descuento por volumen?" in text
+    # Then the proposal, labeled as suggestion.
+    assert "Propuesta del sistema" in text
+    assert "Ofrecer 10% si piden 3 o más" in text
+    assert "Sí, con 3 o más te hago 10%" in text
+    assert "sugerencia" in text.lower()
+    # The button adopts the RULE, not the reply.
+    assert "Usar regla propuesta" in text
+    markup = bot.send_message.await_args.kwargs["reply_markup"]
+    flat = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+    assert any(d.startswith("dp:") for d in flat)
+
+
+@pytest.mark.asyncio
+async def test_notify_doctrine_without_proposal_has_classic_keyboard() -> None:
+    """No proposal ⇒ classic keyboard (dr:/de:), no dp: button."""
+    from diana.application.ports import DoctrineNotification
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=12))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    turn_id = uuid4()
+    await notifier.notify_doctrine(
+        DoctrineNotification(
+            turn_id=turn_id,
+            chat_id=42,
+            vip_text="hola",
+            draft_text="draft",
+            evaluation_summary="",
+            reason="doctrine_not_found",
+            business_connection_id="bc",
+        )
+    )
+    text = bot.send_message.await_args.kwargs["text"]
+    assert "Propuesta del sistema" not in text
+    markup = bot.send_message.await_args.kwargs["reply_markup"]
+    flat = [btn.callback_data for row in markup.inline_keyboard for btn in row]
+    assert not any(d.startswith("dp:") for d in flat)
+    assert any(d.startswith("dr:") for d in flat)
+    assert any(d.startswith("de:") for d in flat)

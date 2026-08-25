@@ -2,6 +2,21 @@
 
 Highlights of what's new and fixed in Diana, from her early releases through the latest work.
 
+## Gray-zone solution proposals — 2026-08-25
+
+### ✨ New Features
+- **System-generated rule proposals for gray zones**: when Diana cannot resolve a gray-zone question (consult_doctrine), the system now prepares a **proposal** (suggested business rule + suggested reply + suggested scope) using a restricted "general context" loan (global policies, global gold examples, persona catalog) — read-only, nothing persists into memories/examples/profile or the base pipeline context. The owner DM shows the **original message clearly labeled as context** first, then the proposal block marked as a suggestion. New `GrayZoneProposalService` (application layer) + `FEATURE_GRAY_ZONE_PROPOSAL_ENABLED` (default OFF; now ON in `.env`).
+- **"💡 Usar regla propuesta" button**: an explicit, unambiguous action that adopts the **system-suggested RULE** (never the reply) through the exact same rule → regenerate → approval path as a hand-written rule. Scope choice (🔒 Solo este VIP / 🌍 A todos) still applies before resolve; the classic 📝 Escribir regla and ⚠️ Escalar buttons remain.
+- **Proposal persisted on the open query** (migration **033**, columns `proposed_rule` / `proposed_reply` / `proposal_source` on `gray_zone_queries`): the `dp:` callback and freeze reminders can recover and re-send the proposal; audit-only, never a knowledge-bank write.
+- **Fail-open by design**: if proposal generation fails or times out, the DM is sent without a proposal (current behavior) — the consult, the freeze and the parachute paths never degrade.
+- **Confirmed guarantee**: if regenerating with the accepted rule still returns `consult_doctrine` (the rule could not be applied), the case **returns to gray-zone resolution**: the query stays `open`, the freeze is held, and the owner can retry with another rule, with the proposal, or escalate. The rule is never auto-applied and no failed draft is sent.
+
+### 🔧 Improvements
+- `ExamplesRepo.list_gold_global` (read-only global gold source for proposals); neutral Mexican Spanish across all new proposal copy (AGENTS §0.6).
+
+### ✅ Tests
+- 3078 unit tests passing (+ new `test_gray_zone_proposal_service.py`, dp: callback + keyboard + notifier + orchestrator + migration 033 + regen-returns-to-resolution coverage); gray-zone e2e green.
+
 ## Vector stores: contexts implemented, memory aligned, profiles real embeddings — 2026-08-21
 
 ### ✨ New Features

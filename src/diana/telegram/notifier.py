@@ -113,19 +113,43 @@ class AiogramOwnerNotifier:
         )
 
     async def notify_doctrine(self, payload: DoctrineNotification) -> int | None:
-        """Send a gray zone doctrine query to the owner DM (asks for a RULE)."""
+        """Send a gray zone doctrine query to the owner DM (asks for a RULE).
+
+        Layout (AGENTS §4.5): the ORIGINAL message of the turn is shown first,
+        clearly labeled as CONTEXT; then, when a system proposal exists, the
+        "Propuesta del sistema" block (rule + suggested reply) as a SUGGESTION
+        only — the owner decides; then the action buttons.
+        """
         text = (
             f"🧭 Consulta de doctrina — turno {payload.turn_id}\n"
             f"Chat: {payload.chat_id}\n"
-            f"Mensaje VIP: {payload.vip_text}\n"
-            f"Borrador sugerido (solo contexto): {payload.draft_text or '(sin borrador)'}\n"
             f"Motivo: {payload.reason}\n\n"
-            "Escribe una REGLA / norma de negocio (no el texto que recibirá el VIP). "
-            "Diana regenerará el borrador con esa regla y te lo mandará a aprobar."
+            "📩 Mensaje original (contexto):\n"
+            f"{payload.vip_text or '(sin texto)'}"
         )
+        if payload.draft_text:
+            text += f"\n\n🤖 Borrador generado por Diana (solo contexto):\n{payload.draft_text}"
+        if payload.proposed_rule:
+            text += (
+                "\n\n💡 Propuesta del sistema (sugerencia, revise antes de usar):\n"
+                f"Regla propuesta: {payload.proposed_rule}"
+            )
+            if payload.proposed_reply:
+                text += f"\nRespuesta sugerida: {payload.proposed_reply}"
+            text += (
+                "\n\n'Usar regla propuesta' adopta la REGLA sugerida (no el mensaje); "
+                "Diana regenerará el borrador y lo enviará a tu aprobación."
+            )
+        else:
+            text += (
+                "\n\nEscribe una REGLA / norma de negocio (no el texto que recibirá el "
+                "VIP). Diana regenerará el borrador con esa regla y te lo mandará a aprobar."
+            )
         if payload.evaluation_summary:
             text += f"\nEval: {payload.evaluation_summary}"
-        markup = doctrine_keyboard(turn_id=payload.turn_id)
+        markup = doctrine_keyboard(
+            turn_id=payload.turn_id, has_proposal=bool(payload.proposed_rule)
+        )
         msg = await self._bot.send_message(
             chat_id=self._owner_id,
             text=text,

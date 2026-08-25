@@ -350,6 +350,7 @@ def test_settings_trust_budget_defaults_conservative(
         ("FEATURE_RECONTACT_ENABLED", "feature_recontact_enabled"),
         ("FEATURE_PERSONA_ADMIN_ENABLED", "feature_persona_admin_enabled"),
         ("FEATURE_GENERAL_MODE_ENABLED", "feature_general_mode_enabled"),
+        ("FEATURE_GRAY_ZONE_PROPOSAL_ENABLED", "feature_gray_zone_proposal_enabled"),
     ],
 )
 def test_settings_f3_flag_env_override_true(

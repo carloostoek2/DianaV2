@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # TTL (hours) for interpreted context snapshots (REQ-MEM-06 contexts table).
     context_ttl_hours: int = 24
     feature_gray_zone_enabled: bool = False
+    # Gray-zone proposal: system-generated RULE proposal (with restricted
+    # general-context loan) shown to the owner before she writes one from
+    # scratch. OFF ⇒ current behavior byte-for-byte (regla de oro AGENTS §1).
+    feature_gray_zone_proposal_enabled: bool = False
     feature_staging_enabled: bool = False
     feature_sandbox_enabled: bool = False
     # Sandbox test window auto-send: when ON, chats with an active sandbox

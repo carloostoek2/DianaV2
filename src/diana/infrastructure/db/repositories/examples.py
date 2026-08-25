@@ -113,6 +113,26 @@ class ExamplesRepo:
             )
             return [example_to_dict(row) for row in result.scalars().all()]
 
+    async def list_gold_global(self, limit: int = 3) -> list[dict]:
+        """List global (vip_id IS NULL) gold examples, newest first.
+
+        Read-only general-context source for the gray-zone proposal service:
+        curated style references that apply to every VIP. Never touches a VIP's
+        own examples (anti-contamination: globals only).
+        """
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Example)
+                .where(
+                    Example.quality == "gold",
+                    Example.is_counter_example.is_(False),
+                    Example.vip_id.is_(None),
+                )
+                .order_by(Example.created_at.desc())
+                .limit(limit)
+            )
+            return [example_to_dict(row) for row in result.scalars().all()]
+
 
 __all__ = [
     "ExamplesRepo",

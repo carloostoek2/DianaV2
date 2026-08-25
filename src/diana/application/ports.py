@@ -174,6 +174,11 @@ class DoctrineNotification(BaseModel):
     reason: str
     business_connection_id: str | None = None
     reply_markup_spec: dict | None = None
+    # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: system-generated RULE proposal shown
+    # in the DM (suggestion only, never applied on its own).
+    proposed_rule: str | None = None
+    proposed_reply: str | None = None
+    proposal_source: str | None = None
 
 
 @runtime_checkable
@@ -191,6 +196,11 @@ class GrayZoneQueryView(Protocol):
     # F4: source business connection used to reconstruct IncomingTurn for
     # supervised-delivery approval synthesis (nullable for legacy rows).
     business_connection_id: str | None = None
+    # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED (migración 033): audit-only proposal
+    # persisted on the query; recovered by the dp: callback / freeze reminders.
+    proposed_rule: str | None = None
+    proposed_reply: str | None = None
+    proposal_source: str | None = None
 
 
 @runtime_checkable

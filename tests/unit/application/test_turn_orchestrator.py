@@ -191,6 +191,9 @@ class FakeGrayZone:
             "draft": draft,
             "chat_id": kwargs.get("chat_id"),
             "business_connection_id": kwargs.get("business_connection_id"),
+            "proposed_rule": kwargs.get("proposed_rule"),
+            "proposed_reply": kwargs.get("proposed_reply"),
+            "proposal_source": kwargs.get("proposal_source"),
         })
         if vip_id is not None and self._vip_store is not None:
             await self._vip_store.freeze_vip(
@@ -231,6 +234,8 @@ def _build(
     learning: RecordingLearning | None = None,
     gray_zone: FakeGrayZone | None = None,
     feature_gray_zone_enabled: bool = False,
+    feature_gray_zone_proposal_enabled: bool = False,
+    gray_zone_proposal: object | None = None,
     feature_general_mode_enabled: bool = False,
     wire_autonomous: bool = False,
     feature_autonomous_mode: bool = False,
@@ -315,6 +320,8 @@ def _build(
         history=history,
         gray_zone=gray_zone,
         feature_gray_zone_enabled=feature_gray_zone_enabled,
+        feature_gray_zone_proposal_enabled=feature_gray_zone_proposal_enabled,
+        gray_zone_proposal=gray_zone_proposal,
         feature_general_mode_enabled=feature_general_mode_enabled,
         behavior=behavior if wire_deliver else None,  # type: ignore[arg-type]
         autonomous_mode=ams,
@@ -6467,3 +6474,129 @@ async def test_turn_classifier_returns_record() -> None:
         uuid4(), 100, _vip(vip_id=vip_id), None
     )
     assert skipped is None
+
+
+# ── FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: consult_doctrine proposal ─────────
+
+
+class _FakeProposalService:
+    """Fake GrayZoneProposalService: queued proposals or failures (fail-open)."""
+
+    def __init__(self, proposals: list | None = None, exc: Exception | None = None) -> None:
+        self._proposals = list(proposals or [])
+        self._exc = exc
+        self.calls: list[dict] = []
+
+    async def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._exc is not None:
+            raise self._exc
+        if not self._proposals:
+            return None
+        return self._proposals.pop(0)
+
+
+def _proposal(**overrides):
+    from types import SimpleNamespace as _SN
+    data = dict(
+        proposed_rule="Ofrecer 10% si piden 3 o más",
+        proposed_reply="Sí, con 3 o más te hago 10%",
+        suggested_scope="vip",
+        confidence=0.8,
+    )
+    data.update(overrides)
+    return _SN(**data)
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_with_proposal_persists_and_notifies() -> None:
+    """Flag ON + proposal: query persists the RULE proposal and the owner DM
+    carries it (rule, not the reply, as the adoptable value)."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="need policy",
+    )
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    gz = FakeGrayZone(vip_store=vip_store)
+    proposal_svc = _FakeProposalService(proposals=[_proposal()])
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=gz,
+        feature_gray_zone_enabled=True,
+        feature_gray_zone_proposal_enabled=True,
+        gray_zone_proposal=proposal_svc,
+        vip_store=vip_store,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
+    assert len(gz.queries) == 1
+    q = gz.queries[0]
+    assert q["proposed_rule"] == "Ofrecer 10% si piden 3 o más"
+    assert q["proposed_reply"] == "Sí, con 3 o más te hago 10%"
+    assert q["proposal_source"] == "gray_zone_proposal"
+    assert len(g["notifier"].doctrines) == 1
+    payload = g["notifier"].doctrines[0]
+    assert payload.proposed_rule == "Ofrecer 10% si piden 3 o más"
+    assert payload.proposed_reply == "Sí, con 3 o más te hago 10%"
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "gray_zone"
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_proposal_fail_open_falls_back_to_classic_dm() -> None:
+    """Proposal generation error → fail-open: DM without proposal, same flow."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="need policy",
+    )
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    gz = FakeGrayZone(vip_store=vip_store)
+    proposal_svc = _FakeProposalService(exc=ValueError("model down"))
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=gz,
+        feature_gray_zone_enabled=True,
+        feature_gray_zone_proposal_enabled=True,
+        gray_zone_proposal=proposal_svc,
+        vip_store=vip_store,
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
+    assert len(gz.queries) == 1
+    q = gz.queries[0]
+    assert q["proposed_rule"] is None
+    assert len(g["notifier"].doctrines) == 1
+    assert g["notifier"].doctrines[0].proposed_rule is None
+    # Freeze still held, no delivery, gray_zone state.
+    stored_vip = await vip_store.get_by_id(rec.id)
+    assert stored_vip is not None and stored_vip.frozen_until is not None
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_proposal_flag_off_is_classic() -> None:
+    """Flag OFF ⇒ byte-identical behavior: no proposal generated, no dp payload."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="need policy",
+    )
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    gz = FakeGrayZone(vip_store=vip_store)
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=gz,
+        feature_gray_zone_enabled=True,
+        feature_gray_zone_proposal_enabled=False,
+        vip_store=vip_store,
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
+    assert len(gz.queries) == 1
+    assert gz.queries[0]["proposed_rule"] is None
+    assert len(g["notifier"].doctrines) == 1
+    assert g["notifier"].doctrines[0].proposed_rule is None

@@ -494,6 +494,12 @@ class GrayZoneQuery(Base):
     )
     question: Mapped[str] = mapped_column(Text, nullable=False)
     draft: Mapped[str] = mapped_column(Text, nullable=False)
+    # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED (migración 033): system-generated RULE
+    # proposal persisted on the open query for audit + dp: callback recovery.
+    # Audit-only — never a knowledge-bank write.
+    proposed_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proposed_reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proposal_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'open'"),
     )

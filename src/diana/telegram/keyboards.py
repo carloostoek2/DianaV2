@@ -20,6 +20,8 @@ _ACTION_DOCTRINE_RESPOND = "dr"
 _ACTION_DOCTRINE_RESOLVE = "dx"
 _ACTION_DOCTRINE_ESCALATE = "de"
 _ACTION_DOCTRINE_SCOPE = "ds"
+# Usar regla propuesta (system-generated RULE proposal adoption) — ≤64 bytes.
+_ACTION_DOCTRINE_PROPOSAL = "dp"
 _ACTION_VIEW_TRACE = "vt"
 _ACTION_TRACE_DETAIL = "td"
 _ACTION_TRACE_PAGE = "tp"
@@ -105,6 +107,11 @@ def parse_callback(data: str) -> tuple[str, UUID] | None:
             return "respond_doctrine", UUID(raw_id)
         except ValueError:
             return None
+    if code == _ACTION_DOCTRINE_PROPOSAL:
+        try:
+            return "use_proposal_doctrine", UUID(raw_id)
+        except ValueError:
+            return None
 
     action = {
         _ACTION_APPROVE: "approve",
@@ -130,6 +137,19 @@ def encode_doctrine_callback(turn_id: UUID) -> str:
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
     return data
+
+
+def encode_doctrine_proposal_callback(turn_id: UUID) -> str:
+    """Build callback_data for "Usar regla propuesta" button: dp:<uuid>."""
+    data = f"{_ACTION_DOCTRINE_PROPOSAL}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_doctrine_proposal_callback(data: str) -> UUID | None:
+    """Parse dp:<uuid> → turn_id; None on malformed data."""
+    return parse_doctrine_callback(data, prefix=_ACTION_DOCTRINE_PROPOSAL)
 
 
 def parse_doctrine_callback(data: str, prefix: str | None = None) -> UUID | None:
@@ -366,29 +386,42 @@ def doctrine_scope_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
     )
 
 
-def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
-    """Reply markup for gray zone doctrine queries (rule + escalate).
+def doctrine_keyboard(turn_id: UUID, *, has_proposal: bool = False) -> InlineKeyboardMarkup:
+    """Reply markup for gray zone doctrine queries (proposal + rule + escalate).
 
+    - Usar regla propuesta (only when ``has_proposal``): adopts the system
+      SUGGESTED RULE (not the VIP-facing reply) into the rule→regen→approval path.
     - Write rule: owner writes a business RULE (not the VIP reply)
     - Escalate: discard query, escalate turn
     No "✅ Usar borrador" (removed from doctrine happy path).
     """
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = []
+    if has_proposal:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="📝 Escribir regla",
-                    callback_data=encode_doctrine_callback(turn_id),
+                    text="💡 Usar regla propuesta",
+                    callback_data=encode_doctrine_proposal_callback(turn_id),
                 ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⚠️ Escalar",
-                    callback_data=encode_doctrine_escalate_callback(turn_id),
-                ),
-            ],
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="📝 Escribir regla",
+                callback_data=encode_doctrine_callback(turn_id),
+            ),
         ]
     )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⚠️ Escalar",
+                callback_data=encode_doctrine_escalate_callback(turn_id),
+            ),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def encode_escalation_callback(action: str, turn_id: UUID) -> str:
@@ -1912,6 +1945,7 @@ __all__ = [
     "encode_add_note",
     "encode_callback",
     "encode_doctrine_callback",
+    "encode_doctrine_proposal_callback",
     "encode_doctrine_resolve_callback",
     "encode_doctrine_escalate_callback",
     "encode_escalation_callback",
@@ -1964,6 +1998,7 @@ __all__ = [
     "metrics_keyboard",
     "parse_callback",
     "parse_doctrine_callback",
+    "parse_doctrine_proposal_callback",
     "parse_escalation_callback",
     "parse_link_callback",
     "parse_menu_callback",

@@ -23,6 +23,7 @@ def clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         # F2 feature flags
         "FEATURE_MEMORY_ENABLED",
         "FEATURE_GRAY_ZONE_ENABLED",
+        "FEATURE_GRAY_ZONE_PROPOSAL_ENABLED",
         "FEATURE_STAGING_ENABLED",
         "FEATURE_SANDBOX_ENABLED",
         "FEATURE_SANDBOX_AUTO_SEND",

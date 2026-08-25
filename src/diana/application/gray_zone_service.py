@@ -79,6 +79,9 @@ class GrayZoneService:
         freeze_duration_hours: int | None = None,
         chat_id: int | None = None,
         business_connection_id: str | None = None,
+        proposed_rule: str | None = None,
+        proposed_reply: str | None = None,
+        proposal_source: str | None = None,
     ) -> object:
         """Create an open gray zone query; freeze the VIP when present.
 
@@ -86,6 +89,10 @@ class GrayZoneService:
         inserted but the VIP is unfrozen. If freeze_vip raises, no insert
         occurs. For atencion (``vip_id is None``) there is no VIP to freeze —
         the atencion chat freeze is the open/awaiting_send query row itself.
+
+        FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: the optional system RULE proposal
+        (GrayZoneProposalService) is persisted on the query for audit + dp:
+        callback recovery. It never enters memories/examples/policies.
         """
         duration = freeze_duration_hours or self._default_timeout
         frozen_until = datetime.now(UTC) + timedelta(hours=duration)
@@ -101,6 +108,9 @@ class GrayZoneService:
             freeze_until=frozen_until,
             chat_id=chat_id,
             business_connection_id=business_connection_id,
+            proposed_rule=proposed_rule,
+            proposed_reply=proposed_reply,
+            proposal_source=proposal_source,
         )
 
         logger.info(

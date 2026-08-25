@@ -689,3 +689,37 @@ async def test_deactivate_policy_sets_inactive(
     policy_id = uuid4()
     await service.deactivate_policy(policy_id)
     policies_repo.deactivate.assert_awaited_once_with(policy_id)
+
+
+@pytest.mark.asyncio
+async def test_create_query_persists_proposal_fields(
+    service: GrayZoneService,
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    vip_record: SimpleNamespace,
+) -> None:
+    """FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: proposal persists on the query.
+
+    Audit-only (never a knowledge-bank write): rule + reply + source travel
+    with the open query so the dp: callback can recover them by turn_id.
+    """
+    turn_id = uuid4()
+    fake_row = _fake_query_row(vip_id=vip_record.id, turn_id=turn_id)
+    query_repo.insert.return_value = fake_row
+
+    result = await service.create_query(
+        vip_id=vip_record.id,
+        turn_id=turn_id,
+        question="¿Descuento por volumen?",
+        draft="borrador original",
+        proposed_rule="Ofrecer 10% si piden 3 o más",
+        proposed_reply="Sí, con 3 o más te hago 10%",
+        proposal_source="gray_zone_proposal",
+    )
+
+    query_repo.insert.assert_awaited_once()
+    kwargs = query_repo.insert.call_args[1]
+    assert kwargs["proposed_rule"] == "Ofrecer 10% si piden 3 o más"
+    assert kwargs["proposed_reply"] == "Sí, con 3 o más te hago 10%"
+    assert kwargs["proposal_source"] == "gray_zone_proposal"
+    assert result is fake_row

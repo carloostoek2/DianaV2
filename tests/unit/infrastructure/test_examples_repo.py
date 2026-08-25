@@ -87,3 +87,21 @@ def test_example_to_dict_includes_quality_and_vip_id() -> None:
     out = examples_mod.example_to_dict(row)  # type: ignore[arg-type]
     assert out["quality"] == "standard"
     assert out["vip_id"] is None
+
+
+def test_list_gold_global_clause_globals_only() -> None:
+    """list_gold_global builds a SELECT restricted to global gold rows.
+
+    Read-only general-context source for gray-zone proposals: quality=gold,
+    NOT counter-example, vip_id IS NULL (never a VIP's own examples).
+    """
+    import inspect
+
+    src = inspect.getsource(examples_mod.ExamplesRepo.list_gold_global)
+    assert "quality" in src.lower()
+    assert "gold" in src
+    assert "vip_id.is_(None)" in src or "vip_id == None" in src or "is_(None)" in src
+    assert "is_counter_example.is_(False)" in src
+    # No insert/update/delete allowed in a read-only general-context source.
+    for banned in ("session.add", "session.execute(update", "session.execute(delete"):
+        assert banned not in src

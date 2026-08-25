@@ -161,6 +161,11 @@ class FreezeCheckMiddleware(BaseMiddleware):
             evaluation_summary="",
             reason="recordatorio_zona_gris",
             business_connection_id=getattr(event, "business_connection_id", None),
+            # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: re-send the persisted proposal
+            # so the owner can still adopt it from the reminder (dp: callback).
+            proposed_rule=getattr(query, "proposed_rule", None),
+            proposed_reply=getattr(query, "proposed_reply", None),
+            proposal_source=getattr(query, "proposal_source", None),
         )
         try:
             await self._notifier.notify_doctrine(payload)

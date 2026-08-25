@@ -26,6 +26,7 @@ from diana.telegram.keyboards import (
     doctrine_keyboard,
     encode_doctrine_callback,
     encode_doctrine_escalate_callback,
+    encode_doctrine_proposal_callback,
     encode_doctrine_resolve_callback,
 )
 
@@ -44,6 +45,9 @@ class FakeQuery:
     draft: str = "test draft"
     frozen_until: object = None
     business_connection_id: str | None = "bc-test"
+    proposed_rule: str | None = None
+    proposed_reply: str | None = None
+    proposal_source: str | None = None
 
 
 class FakeAdmin:
@@ -99,6 +103,22 @@ class FakeGrayZone:
 
     def add_query(self, turn_id: UUID, *, draft: str = "test draft") -> FakeQuery:
         q = FakeQuery(turn_id=turn_id, draft=draft)
+        self.queries[turn_id] = q
+        return q
+
+    def add_query_with_proposal(
+        self,
+        turn_id: UUID,
+        *,
+        rule: str = "Ofrecer 10% si piden 3 o más",
+        reply: str = "Sí, con 3 o más te hago 10%",
+    ) -> FakeQuery:
+        q = FakeQuery(
+            turn_id=turn_id,
+            proposed_rule=rule,
+            proposed_reply=reply,
+            proposal_source="gray_zone_proposal",
+        )
         self.queries[turn_id] = q
         return q
 
@@ -327,12 +347,13 @@ def _callback_with_message(data: str, *, user_id: int) -> CallbackQuery:
 
 
 def _handler_for_prefix(router, prefix: str):
-    # Registration order: dx (inert), dr, ds, de
+    # Registration order: dx (inert), dp (proposal), dr, ds, de
     by_prefix = {
         "dx:": router.callback_query.handlers[0].callback,
-        "dr:": router.callback_query.handlers[1].callback,
-        "ds:": router.callback_query.handlers[2].callback,
-        "de:": router.callback_query.handlers[3].callback,
+        "dp:": router.callback_query.handlers[1].callback,
+        "dr:": router.callback_query.handlers[2].callback,
+        "ds:": router.callback_query.handlers[3].callback,
+        "de:": router.callback_query.handlers[4].callback,
     }
     return by_prefix[prefix]
 
@@ -642,7 +663,7 @@ async def test_doctrine_router_dx_is_inert() -> None:
         coordinator=FakeCoordinator(),
         owner_telegram_id=OWNER,
     )
-    assert len(router.callback_query.handlers) == 4
+    assert len(router.callback_query.handlers) == 5
     turn_id = uuid4()
     gray_zone.add_query(turn_id)
     handler = _handler_for_prefix(router, "dx:")
@@ -652,3 +673,157 @@ async def test_doctrine_router_dx_is_inert() -> None:
     assert kwargs.get("show_alert") is True
     assert "Ya no disponible" in (args[0] if args else "")
     assert gray_zone.resolve_calls == []
+
+
+# --- FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: Usar regla propuesta (dp:) --------
+
+
+def test_doctrine_keyboard_with_proposal_shows_use_proposal_button() -> None:
+    """With a proposal, the keyboard adds '💡 Usar regla propuesta' (dp:)."""
+    markup = doctrine_keyboard(uuid4(), has_proposal=True)
+    labels = [btn.text or "" for row in markup.inline_keyboard for btn in row]
+    callbacks = [btn.callback_data or "" for row in markup.inline_keyboard for btn in row]
+    assert any("Usar regla propuesta" in label for label in labels)
+    assert any("Escribir regla" in label for label in labels)
+    assert any("Escalar" in label for label in labels)
+    assert any(cb.startswith("dp:") for cb in callbacks)
+    assert any(cb.startswith("dr:") for cb in callbacks)
+    assert any(cb.startswith("de:") for cb in callbacks)
+    assert not any(cb.startswith("dx:") for cb in callbacks)
+
+
+def test_doctrine_keyboard_without_proposal_has_no_dp_button() -> None:
+    """Flag OFF / no proposal ⇒ byte-identical keyboard (no dp:)."""
+    markup = doctrine_keyboard(uuid4())
+    callbacks = [btn.callback_data or "" for row in markup.inline_keyboard for btn in row]
+    labels = [btn.text or "" for row in markup.inline_keyboard for btn in row]
+    assert not any(cb.startswith("dp:") for cb in callbacks)
+    assert not any("Usar regla propuesta" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_dp_use_proposal_starts_scope_session_with_proposed_rule() -> None:
+    """dp: adopts the system RULE: starts the scope session with that rule."""
+    gray_zone = FakeGrayZone()
+    turn_id = uuid4()
+    query = gray_zone.add_query_with_proposal(turn_id, rule="Ofrecer 10% si piden 3+")
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+    )
+    handler = _handler_for_prefix(router, "dp:")
+    query_obj = _callback_with_message(
+        encode_doctrine_proposal_callback(turn_id), user_id=OWNER
+    )
+    await handler(query_obj)
+
+    # Scope prompt shown with the proposed rule (rule, not the VIP reply).
+    edit_args = query_obj.message.edit_text.await_args.args[0]
+    assert "Regla propuesta por el sistema" in edit_args
+    assert "Ofrecer 10% si piden 3+" in edit_args
+    assert query.proposed_rule == "Ofrecer 10% si piden 3+"
+
+
+@pytest.mark.asyncio
+async def test_dp_missing_proposal_alerts_rejected() -> None:
+    """dp: on a query without a proposal ⇒ alert, no scope session."""
+    gray_zone = FakeGrayZone()
+    turn_id = uuid4()
+    gray_zone.add_query(turn_id)  # no proposal
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+    )
+    handler = _handler_for_prefix(router, "dp:")
+    query_obj = _callback(encode_doctrine_proposal_callback(turn_id), user_id=OWNER)
+    await handler(query_obj)
+    args, kwargs = query_obj.answer.await_args
+    assert kwargs.get("show_alert") is True
+    assert "no tiene propuesta" in (args[0] if args else "")
+
+
+@pytest.mark.asyncio
+async def test_dp_missing_query_alerts_not_found() -> None:
+    """dp: with no open query ⇒ alert, no scope session."""
+    gray_zone = FakeGrayZone()
+    turn_id = uuid4()
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+    )
+    handler = _handler_for_prefix(router, "dp:")
+    query_obj = _callback(encode_doctrine_proposal_callback(turn_id), user_id=OWNER)
+    await handler(query_obj)
+    args, kwargs = query_obj.answer.await_args
+    assert kwargs.get("show_alert") is True
+    assert "no encontrada" in (args[0] if args else "")
+
+
+@pytest.mark.asyncio
+async def test_dp_non_owner_forbidden() -> None:
+    gray_zone = FakeGrayZone()
+    turn_id = uuid4()
+    gray_zone.add_query_with_proposal(turn_id)
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=FakeCoordinator(),
+        owner_telegram_id=OWNER,
+    )
+    handler = _handler_for_prefix(router, "dp:")
+    query_obj = _callback(encode_doctrine_proposal_callback(turn_id), user_id=OTHER)
+    await handler(query_obj)
+    args, kwargs = query_obj.answer.await_args
+    assert kwargs.get("show_alert") is True
+    assert "No autorizado" in (args[0] if args else "")
+
+
+@pytest.mark.asyncio
+async def test_dp_then_ds_scope_resolves_with_proposed_rule() -> None:
+    """Full flow: 💡 Usar regla propuesta → scope → resolve with the RULE.
+
+    The dp: button adopts the system-suggested RULE (not the reply); the
+    scope choice resolves through the same rule→regen→approval path as a
+    hand-written rule (AGENTS §4.5).
+    """
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    admin = FakeAdmin()
+    turn_id = uuid4()
+    vip_id = uuid4()
+    q = gray_zone.add_query_with_proposal(
+        turn_id, rule="Ofrecer 10% si piden 3 o más", reply="Sí, te hago 10%"
+    )
+    q.vip_id = vip_id
+    sessions = DoctrineSessionStore()
+    router = build_doctrine_router(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        owner_telegram_id=OWNER,
+        doctrine_sessions=sessions,
+        admin=admin,
+    )
+
+    # Step 1: dp: (Usar regla propuesta) → scope prompt with the rule.
+    dp_handler = _handler_for_prefix(router, "dp:")
+    dp_query = _callback_with_message(
+        encode_doctrine_proposal_callback(turn_id), user_id=OWNER
+    )
+    await dp_handler(dp_query)
+    edit_args = dp_query.message.edit_text.await_args.args[0]
+    assert "Ofrecer 10% si piden 3 o más" in edit_args
+    assert sessions.peek_turn_id(OWNER) == turn_id
+
+    # Step 2: ds: scope choice → resolve with the PROPOSED RULE (not the reply).
+    ds_handler = _handler_for_prefix(router, "ds:")
+    ds_query = _callback_with_message(encode_doctrine_scope(turn_id, "vip"), user_id=OWNER)
+    ds_query.message.edit_text = AsyncMock(return_value=True)
+    await ds_handler(ds_query)
+    assert len(admin.resolve_rule_calls) == 1
+    call = admin.resolve_rule_calls[0]
+    assert call["rule_text"] == "Ofrecer 10% si piden 3 o más"  # RULE adopted
+    assert call["rule_text"] != "Sí, te hago 10%"  # never the VIP reply
+    assert call["vip_id"] == vip_id
+    assert call["scope"] == "vip"
