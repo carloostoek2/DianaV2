@@ -152,10 +152,46 @@ Prohibido:
 🟢 [FASE 2 — MVP+] Flujos ACTIVOS (con flags)
 
 · 4.4 Turno VIP con recuperación de memoria (FEATURE_MEMORY_ENABLED)
-· 4.5 Zona Gris (FEATURE_GRAY_ZONE_ENABLED)
+· 4.5 Zona Gris (FEATURE_GRAY_ZONE_ENABLED) — ver flujo canónico abajo
 · 4.6 Corrección → Staging (FEATURE_STAGING_ENABLED)
 · 4.7 Sandbox (FEATURE_SANDBOX_ENABLED)
 · 4.20 Sandbox test window — envío directo e instantáneo (FEATURE_SANDBOX_AUTO_SEND)
+
+4.5 Zona Gris — regla viva → regen del mismo turno → aprobación (FEATURE_GRAY_ZONE_ENABLED)
+
+```
+Decisor emite action = "consult_doctrine"
+  → GrayZoneService.create_query()
+      → gray_zone_queries status = 'open'
+      → VIP/Atención congelado (VIP: frozen_until; Atención: query open|awaiting_send)
+      → DM a la dueña: pregunta + borrador sugerido (contexto); pide REGLA / norma
+      → Teclado: 📝 Escribir regla | ⚠️ Escalar  (NO hay "✅ Usar borrador")
+  → Dueña escribe la REGLA (nunca el texto que recibirá el VIP) + alcance Solo este VIP / A todos
+  → AdminService.resolve_doctrine_rule_and_enqueue(...):
+      1. Persistencia VIVA en policies (is_active=true; scope vip|all + vip_id)
+         — SIN staging_candidates en este happy path
+      2. Regen del MISMO turno vía Director.handle_turn(..., knowledge_overrides)
+         — force-inject de la regla en knowledge.policy (no depender solo del PolicyRetriever)
+         — Decisor sigue decidiendo la acción tras el inject
+      3. Si regen ok (borrador no vacío, acción ≠ consult_doctrine):
+         → create_supervised_delivery_from_gray_zone(draft_override=borrador_regenerado)
+         → GRAY_ZONE → PENDING_APPROVAL
+         → query status = 'awaiting_send'  (NO descongela)
+      4. Si regen falla / vuelve consult_doctrine / borrador vacío:
+         → desactivar la policy recién insertada; query sigue 'open'; freeze retenido; avisar a la dueña
+      5. Si falla crear aprobación / ChatLockTimeout:
+         → reopen a 'open' si hace falta; freeze retenido; policy puede quedar viva; error reintentable
+  → Cola normal de la dueña: Aprobar / Corregir / Escalar sobre el BORRADOR regenerado
+  → Si Aprobar + BehaviorEngine.deliver() exitoso:
+      → close_awaiting_send(unfreeze=True) → query 'resolved' + descongelar
+  → Si Escalar/descartar desde doctrina o desde la cola de aprobación:
+      → liberar freeze + cerrar query; la policy viva SE CONSERVA (salvo fallo de regen que ya la desactivó)
+  → SI la dueña no responde en GRAY_ZONE_TIMEOUT_HOURS (default 24h):
+      → expire solo queries status='open' (NO expire awaiting_send)
+      → usa query.draft original → supervisión o escalate (legado; no es el narrative regla→regen)
+```
+
+Invariantes: la dueña escribe norma de negocio, no el mensaje al VIP; Learning no participa en el resolve; Cognitive no importa telegram/behavior; Staging sigue siendo el camino de correcciones (FEATURE_STAGING_ENABLED), no del resolve de zona gris.
 
 🟠 [FASE 3 — Producto Completo] Flujos ACTIVOS (con flags)
 
@@ -287,7 +323,11 @@ Dueña crea/edita/pausa un evento con ventana [start_at, end_at)
 consult_doctrine → freeze → send_doctrine_query a la dueña
   → Si el DM falla: discard_and_close (descongela) + demote a approve
     reason=vip_doctrine_notify_failed | atencion_doctrine_notify_failed
-  → Si el DM ok: el VIP/chat sigue congelado hasta que la dueña responda
+  → Si el DM ok: el VIP/chat permanece congelado a través de
+    resolve (regla viva + regen) → cola de aprobación → hasta un
+    envío real exitoso (o escalate/discard que libere el hold).
+    Query status open | awaiting_send cuenta como freeze (Atención
+    incluido). No descongelar en confirm/resolve previo al send.
 ```
 
 4.17 Saludo puro VIP (FEATURE_PHATIC_AUTO_SEND)
@@ -509,6 +549,8 @@ Antes de aceptar un cambio en Fase 3, verificar:
 · ¿El Behavior Engine sigue fuera de la cognición?
 · ¿El aprendizaje ocurre solo post-turno?
 · ¿El Decisor respeta el orden de prioridades (seguridad → zona gris → risk alto → ...)?
+· ¿La zona gris resuelve con regla viva + regen del mismo turno (sin staging en el happy path)?
+· ¿El VIP/Atención permanece congelado hasta un envío real exitoso (o escalate/discard), no al resolver la consulta?
 · ¿Los nuevos flujos (autónomo, recontacto, promo, calibración, behavior avanzado) están envueltos en feature flags?
 · ¿Recontacto y promo usan BehaviorEngine, no generan texto con LLM?
 · ¿La calibración solo se ejecuta en jobs programados, nunca en el pipeline?

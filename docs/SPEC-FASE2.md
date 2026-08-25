@@ -49,7 +49,7 @@ Objetivos concretos:
 
 ID Área
 F2-01 Implementación real de los Retrievers memory, policy y examples con pgvector.
-F2-02 Mecanismo de Zona Gris: congelación del VIP, consulta a la dueña, destilación de políticas estructuradas con confirmación de generalización y paso por Staging.
+F2-02 Mecanismo de Zona Gris: congelación del VIP/Atención, consulta a la dueña por una REGLA, persistencia viva en policies, regen del mismo turno con force-inject, cola de aprobación; freeze hasta envío real. Staging queda para correcciones (no para el resolve de zona gris).
 F2-03 Staging Area: captura de correcciones como candidatos, promoción explícita a examples o policies.
 F2-04 Evaluación con registro de perfiles para calibración futura (REQ-EVAL).
 F2-05 Feature flags para activar/desactivar cada capacidad sin redeploy (REQ-ADM-03).
@@ -200,22 +200,25 @@ class StagingService:
     async def discard(candidate_id)
 ```
 
-Regla clave: Toda nueva política (de zona gris o manual) debe pasar por promote_to_policy(), que escribe en staging_candidates y espera confirmación explícita. No se crean políticas directamente desde GrayZoneService.
+Regla clave (actualizada): Las políticas que nacen del **resolve de zona gris** se insertan **vivas** en `policies` (GrayZoneService.persist_live_policy) sin `staging_candidates`. Las políticas/ejemplos que nacen de **correcciones** o de la UI `/staging` siguen pasando por `promote_to_policy()` / Staging. No mezclar ambos caminos.
 
 GrayZoneService
 
 ```python
 class GrayZoneService:
     async def create_query(vip_id, turn_id, question, draft) -> GrayZoneQuery
-    async def resolve_with_doctrine(query_id, generalization, rule) -> None
-        # Crea un StagingCandidate de tipo 'policy' con el payload
-        # La dueña debe confirmar la promoción para que la política sea activa
-        # Solo entonces se cierra la gray_zone_query y se descongela al VIP
+    async def persist_live_policy(query_id, rule_text, *, vip_id, scope) -> Policy
+        # Inserta policies activa; NO escribe staging_candidates; NO descongela
+    async def mark_awaiting_send(query_id) -> None
+        # status='awaiting_send'; freeze retenido
+    async def close_awaiting_send(query_id, *, unfreeze: bool) -> None
+        # status='resolved' + unfreeze opcional (tras send exitoso)
+    async def discard_and_close(...)  # escalate/paracaídas: libera freeze
     async def freeze_vip(vip_id, duration)
     async def unfreeze_vip(vip_id)
     async def expire_old_queries(timeout_hours=24) -> None
-        # Marca como expired las queries con freeze_until < now() - timeout
-        # Ejecuta acción configurable: 'use_draft' o 'escalate'
+        # Solo expira status='open' (NO awaiting_send)
+        # Ejecuta acción configurable: 'use_draft' o 'escalate' con query.draft original
 ```
 
 PolicyDistiller
@@ -223,8 +226,8 @@ PolicyDistiller
 ```python
 class PolicyDistiller:
     async def distill_from_text(question: str, answer: str, generalization: str) -> Policy
-    # Crea un objeto Policy estructurado: trigger_description, rule, scope, ejemplo_aplicado
-    # Se usa como helper dentro del flujo de staging
+    # Helper opcional para armar trigger_description + rule desde texto de la dueña
+    # En resolve de zona gris puede usarse con answer="" / rule-as-generalization
 ```
 
 ---
@@ -249,38 +252,33 @@ business_message
   → Learning → registra traza (y si hubo corrección, Staging si flag activo)
 ```
 
-6.2 Zona Gris (consult_doctrine) — Flujo completo
+6.2 Zona Gris (consult_doctrine) — Flujo completo (supersede: resolve ya no pasa por Staging)
 
 ```
 Decisor emite action = "consult_doctrine"
   → GrayZoneService.create_query()
       → gray_zone_queries status = 'open'
-      → VIP marcado como frozen
-      → Notificación a la dueña con pregunta y borrador sugerido
-      → Behavior Engine rechaza cualquier I/O hacia ese chat
-  → Dueña responde con texto libre y confirma generalización
-      → Ejemplo: "Siempre ofrecer descuento del 10% si pide 3 unidades"
-      → Generalización: "Siempre que pregunten por cantidad >= 3"
-  → PolicyDistiller crea objeto Policy estructurado (en memoria)
-  → Se guarda en staging_candidates con tipo 'policy', status='pending'
-  → La dueña recibe notificación: "¿Promover esta política a vigente?"
-  → SI confirma:
-      → StagingService.promote_to_policy() → se activa la política (is_active=true)
-      → Se cierra gray_zone_query (status='resolved')
-      → Se descongela VIP
-      → Se retoma el turno (re-ejecución o re-generación con nueva política)
-  → SI NO confirma:
-      → Se descarta el candidato (staging_candidates status='discarded')
-      → Se cierra gray_zone_query (status='resolved') pero sin política
-      → Se descongela VIP
-      → El turno se maneja según decisión de la dueña (aprueba el borrador original)
+      → VIP/Atención congelado
+      → DM a la dueña: pregunta + borrador sugerido (contexto); pide REGLA
+      → Teclado: 📝 Escribir regla | ⚠️ Escalar  (sin "✅ Usar borrador")
+  → Dueña escribe la REGLA + alcance Solo este VIP / A todos
+  → AdminService (orquestación):
+      → persist_live_policy → fila activa en policies (sin staging_candidates)
+      → Director.handle_turn(..., knowledge_overrides) force-inject de la regla
+      → Si regen ok: supervised approval con borrador REGENERADO;
+         query → 'awaiting_send' (NO descongela)
+      → Si regen falla / consult_doctrine de nuevo: desactivar policy; freeze retenido; avisar
+  → Dueña aprueba/corrige/escala el borrador regenerado (cola normal)
+  → Send exitoso → close_awaiting_send(unfreeze=True)
+  → Escalate/discard → liberar freeze; conservar policy viva (salvo fallo de regen)
   → SI la dueña no responde en GRAY_ZONE_TIMEOUT_HOURS (default 24h):
-      → GrayZoneService.expire_old_queries() marca como 'expired'
-      → Ejecuta acción configurable: si la consulta expirada tiene borrador, se promueve a aprobación supervisada ('use_draft'); si no, 'escalate'
-      → Se notifica a la dueña la expiración
+      → expire solo status='open' (no awaiting_send)
+      → usa query.draft original → supervisión o escalate (legado)
 ```
 
-Congelación: dura hasta que la política sea confirmada, descartada o expire. El tiempo máximo de congelación es GRAY_ZONE_TIMEOUT_HOURS (configurable).
+Congelación: desde `consult_doctrine` hasta envío real exitoso (o escalate/discard). Status `open` y `awaiting_send` cuentan como freeze. El timeout máximo de consultas `open` es GRAY_ZONE_TIMEOUT_HOURS (configurable).
+
+Nota: el camino Staging (`resolve_with_doctrine` + `confirm_and_apply` / `promote_to_policy`) queda **superseded para el resolve de zona gris**; Staging permanece para correcciones (FEATURE_STAGING_ENABLED) y UI `/staging`.
 
 6.3 Corrección → Staging
 
@@ -335,12 +333,12 @@ H2.5 Extender Decisor con regla de consult_doctrine (envuelta en flag). Implemen
 H2.6 Modificar Director para manejar la nueva acción. Implementado
 H2.7 Implementar sandbox con FakeDelivery. Behavior Engine ya tiene interfaz. Implementado
 H2.8 Implementar job de expiración de gray_zone_queries (configurable). Implementado
-H2.9 Unificar flujo de promoción de políticas vía Staging (zona gris + manual). Implementado
+H2.9 (histórico) Unificar promoción de políticas vía Staging. **Superseded para resolve de zona gris:** live persist + regen; Staging permanece para correcciones/UI.
 H2.10 Actualizar AGENTS.md para marcar flujos como activos. Implementado
 H2.11 Pruebas de integración y activación gradual de flags. Implementado
 
 Criterio de salida de Fase 2 (cumplido):
-El sistema recuerda hechos de conversaciones anteriores, resuelve dudas de doctrina sin repetir preguntas (con políticas que pasan por Staging), captura correcciones para mejorar futuras respuestas, y maneja la expiración de consultas de zona gris.
+El sistema recuerda hechos de conversaciones anteriores, resuelve dudas de doctrina sin repetir preguntas (políticas vivas desde zona gris + Staging para correcciones), captura correcciones para mejorar futuras respuestas, y maneja la expiración de consultas de zona gris `open`.
 
 ---
 
@@ -361,7 +359,7 @@ REQ-NFR-16 StagingArea (confirmación explícita)
 
 1. Umbral de similitud para MemoryRetriever: fijado en 0.75 (distancia coseno), constante `DEFAULT_MEMORY_THRESHOLD` en `src/diana/cognitive/retrievers/memory.py`. El PolicyRetriever usa 0.8 (`DEFAULT_POLICY_THRESHOLD`) y el ExamplesRetriever 0.7. Los umbrales se mantienen fijos; la calibración automática sigue desactivada (`FEATURE_CALIBRATION_ENABLED=false`).
 2. Frecuencia de inclusión de contraejemplos: se abandonó el 10% probabilístico. El ExamplesRetriever anexa un contraejemplo siempre que exista uno que coincida (límite 1), ver `src/diana/cognitive/retrievers/examples.py`.
-3. Duración de congelación en zona gris (GRAY_ZONE_TIMEOUT_HOURS): confirmada en 24h configurable (`default_timeout_hours=24` en `src/diana/application/gray_zone_service.py`). El VIP permanece congelado hasta confirmar, descartar o expirar la consulta.
+3. Duración de congelación en zona gris (GRAY_ZONE_TIMEOUT_HOURS): confirmada en 24h configurable (`default_timeout_hours=24` en `src/diana/application/gray_zone_service.py`). El VIP/Atención permanece congelado desde la consulta hasta un envío real exitoso (o escalate/discard); el timeout aplica a queries `open` (no a `awaiting_send`).
 4. Acción por defecto ante expiración de zona gris: híbrida. Si la consulta expirada tiene borrador, se convierte en aprobación pendiente supervisada (no deja al VIP sin respuesta); si no hay borrador o no hay servicio administrativo, se escala (`escalate`), ver `src/diana/jobs/gray_zone_expiration.py`.
 5. Modelo de embeddings: se mantuvo `paraphrase-multilingual-MiniLM-L12-v2` (384 dims), local con sentence-transformers y carga lazy, ver `src/diana/cognitive/embedding.py` (ADR-005).
 
@@ -382,8 +380,8 @@ Anexo H (Registry/Retrievers) Se añaden contratos para MemoryRetriever, PolicyR
 
 · Compatibilidad: Esta Fase 2 es totalmente compatible con la Fase 1. El Director, el Generador y el Behavior Engine no cambian; solo se añaden implementaciones reales detrás de las mismas interfaces.
 · Rendimiento: Las búsquedas vectoriales deben ser rápidas gracias a los índices HNSW. El modelo de embeddings es ligero y se ejecuta localmente.
-· Seguridad: La anti-contaminación (BR-15) se garantiza a nivel de consultas SQL (WHERE vip_id = :current). El Staging asegura que ningún ejemplo o política entre en producción sin revisión humana.
-· Zona Gris: El flujo de zona gris ahora pasa por Staging, lo que añade un paso de confirmación explícita antes de que una política sea activa. Esto cumple con REQ-GAP-10/11 y BR-13, pero extiende el tiempo de congelación hasta que la dueña confirme la política (o expire). Esto es intencional y está alineado con la filosofía de control humano.
+· Seguridad: La anti-contaminación (BR-15) se garantiza a nivel de consultas SQL (WHERE vip_id = :current). El Staging asegura que ningún ejemplo (y políticas promocionadas desde correcciones/UI) entre en producción sin revisión humana.
+· Zona Gris (actualizado): el resolve pide una REGLA, la persiste viva en `policies`, regenera el mismo turno con force-inject y pone el borrador regenerado en cola de aprobación. El freeze se mantiene hasta el envío real. Staging ya no es el happy path del resolve (sí de correcciones). El control humano se ejerce al escribir la regla y al aprobar el borrador regenerado.
 
 ---
 

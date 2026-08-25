@@ -116,7 +116,7 @@ Los flujos que siguen son los definidos en `AGENTS.md` §3, descritos como opera
 | **Escalación determinística** | Short-circuit por palabra/tema prohibido antes del Analista; `Turn.status = escalated`; notifica a la dueña. |
 | **Cancelación por mensaje nuevo** | Al llegar un mensaje del mismo chat, el Turn en vuelo se marca `superseded` y se cancela su delivery pendiente. |
 | **Turno con memoria** | Retrievers reales (memoria pgvector + perfil + política + ejemplos) según `needs_*`; contexto mínimo dinámico. |
-| **Zona gris** | Decisor con `doctrine` baja y `needs_policy` sin política → `consult_doctrine`, congela al VIP y pregunta a la dueña; la respuesta se destila a política (via Staging) y se descongela. |
+| **Zona gris** | Decisor con `needs_policy` sin política → `consult_doctrine`, congela al VIP/Atención y pide a la dueña una **REGLA** (no el texto al VIP). Persistencia **viva** en `policies` (sin `staging_candidates` en el resolve), force-inject + regen del mismo turno, borrador regenerado a cola de aprobación; freeze retenido (`open` \| `awaiting_send`) hasta envío real exitoso (o escalate/discard). Staging sigue solo para correcciones. |
 | **Corrección → Staging** | La corrección de la dueña guarda el par (original, final) en `staging_candidates`; solo pasa a `examples` tras promoción explícita. |
 | **Sandbox** | Conversaciones contra perfiles ficticios con `FakeDelivery`; aislado de memoria, aprendizaje y datos reales. |
 | **Modo autónomo** | Decisor puede emitir `send` si flag + umbrales; la entrega automática exige la doble puerta (`autonomous_mode_service`), si no se demota a `approve`. **Ruta cableada pero deshabilitada** (`FEATURE_AUTONOMOUS_MODE=false`). |
@@ -127,7 +127,7 @@ Los flujos que siguen son los definidos en `AGENTS.md` §3, descritos como opera
 | **Feedback Destacar / Reprender** | En borradores VIP: Destacar → ejemplo `quality=gold` (este VIP o global); Reprender → entrega la corrección ya y promueve contraejemplo. Invariante: Atención no destaca ni reprende. |
 | **Vínculo Lucien → Diana** | El chat de coordinación recibe `[LINK] vip_kicked` → `LinkCoordinatorMiddleware` → dedup por `event_id` → verifica VIP activo → DM a la dueña (Expulsar / Desactivar / Mantener). Sin LLM, fuera del pipeline. |
 | **Eventos temporales** | La dueña crea un evento con ventana `[start_at, end_at)` → `ephemeral_events` → `KnowledgeAugmenter` inyecta `knowledge.ephemeral` (global). Sin flag: siempre cableado. |
-| **Paracaídas de zona gris** | Si el DM de consulta de doctrina falla, descongela y demota a `approve` (reason `vip_doctrine_notify_failed` / `atencion_doctrine_notify_failed`). |
+| **Paracaídas de zona gris** | Si el DM de consulta de doctrina falla, descongela y demota a `approve` (reason `vip_doctrine_notify_failed` / `atencion_doctrine_notify_failed`). Si el DM ok, el freeze se mantiene hasta send real (ver AGENTS §4.5 / §4.16). |
 | **Saludo puro VIP** | El Analista siempre analiza; solo usa plantilla fija si `intent == saludar`, texto corto (≤4 palabras) y clasificador fático confiable. Flag ON: send directo; OFF: approve. |
 
 **Decisor — orden de prioridades (contrato intocable):** seguridad baja → escalar; `needs_policy` sin política → `consult_doctrine`; `risk == "alto"` → escalar (`risk_high`); `emotion == "molesta"` → escalar (`frustracion_directa`); modo autónomo + umbrales → send; resto → approve. Con riesgo alto y emoción molesta aplicando a la vez, gana `risk_high`. La redraft por naturalidad es secuenciación del Director (pre-Decisor), no acción del Decisor.
