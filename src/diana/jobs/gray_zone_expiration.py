@@ -25,7 +25,9 @@ class GrayZoneExpirationJob:
     With ``admin`` injected, an expired query that still has a non-empty
     draft is converted into a supervised PendingApproval (via
     ``AdminService.create_supervised_delivery_from_gray_zone``) instead of
-    being silently escalated. If the supervised delivery cannot be created
+    being silently escalated. Only status=``open`` rows are expired —
+    ``awaiting_send`` (rule already applied, approval pending) is never
+    expired here. If the supervised delivery cannot be created
     (missing ``business_connection_id``, missing turn, terminal turn, or an
     unexpected error), the job falls back to the legacy ``escalated``
     transition so no turn is ever left stuck in ``gray_zone``. Queries

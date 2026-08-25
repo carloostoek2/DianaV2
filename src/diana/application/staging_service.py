@@ -1,7 +1,9 @@
 """StagingService — capture corrections and promote them to examples or policies.
 
-Every new policy (gray zone or manual) must go through promote_to_policy().
-Staging requires explicit owner confirmation — never auto-promote.
+Correction / UI ``/staging`` policies go through promote_to_policy().
+Exception: gray-zone resolve happy path persists live via
+GrayZoneService.persist_live_policy (no staging). Staging requires
+explicit owner confirmation — never auto-promote from corrections.
 """
 
 from __future__ import annotations

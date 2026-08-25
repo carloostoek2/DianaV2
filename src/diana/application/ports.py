@@ -207,6 +207,31 @@ class GrayZoneServicePort(Protocol):
 
     async def get_open_query_by_chat_id(self, chat_id: int) -> GrayZoneQueryView | None: ...
 
+    async def get_awaiting_send_by_turn_id(
+        self, turn_id: UUID
+    ) -> GrayZoneQueryView | None: ...
+
+    async def get_hold_query_by_turn_id(
+        self, turn_id: UUID
+    ) -> GrayZoneQueryView | None: ...
+
+    async def persist_live_policy(
+        self,
+        query_id: UUID,
+        rule_text: str,
+        *,
+        vip_id: UUID | None = None,
+        scope: str = "all",
+    ) -> object: ...
+
+    async def mark_awaiting_send(self, query_id: UUID) -> None: ...
+
+    async def close_awaiting_send(
+        self, query_id: UUID, *, unfreeze: bool = False
+    ) -> object: ...
+
+    async def deactivate_policy(self, policy_id: UUID) -> bool: ...
+
     async def resolve_with_doctrine(
         self,
         query_id: UUID,

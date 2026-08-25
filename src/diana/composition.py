@@ -536,6 +536,8 @@ def build_app(
             vip_store=vips,
             staging_repo=staging_repo,
             distiller=policy_distiller,
+            policies_repo=policies_repo,
+            embedder=embedding_svc,
         )
     else:
         gray_zone = None
@@ -707,6 +709,7 @@ def build_app(
             outcome_log if settings.feature_autonomy_quality_enabled else None
         ),
         feature_autonomy_readiness_enabled=settings.feature_autonomy_readiness_enabled,
+        gray_zone=gray_zone,
     )
 
     catalog = get_persona_catalog()
@@ -1000,6 +1003,7 @@ def build_app(
     # no-ops the memory extraction when the flag is OFF (memory_extraction=None,
     # A8), matching the autonomous-path behaviour byte-for-byte.
     admin.set_post_turn_hook(orchestrator._maybe_post_turn)
+    admin.set_director(director)
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper;
     # the list object was created above so the H1 scorer sees live updates).

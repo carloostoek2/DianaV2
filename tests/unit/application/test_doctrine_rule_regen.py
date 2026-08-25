@@ -306,7 +306,24 @@ async def test_resolve_doctrine_rule_passes_knowledge_overrides_and_regen_draft(
 
     admin = object.__new__(AdminService)
     admin._director = director  # type: ignore[attr-defined]
+    admin._gray_zone = gray_zone  # type: ignore[attr-defined]
+    admin._notifier = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns.get.return_value = SimpleNamespace(
+        id=query.turn_id,
+        chat_id=42,
+        vip_id=None,
+        trigger_message_id=7,
+        channel_type="vip",
+        status="gray_zone",
+    )
     admin.create_supervised_delivery_from_gray_zone = AsyncMock(return_value=True)
+    gray_zone.policy_override_payload = lambda p: {
+        "trigger_description": query.question,
+        "rule": rule_text,
+        "scope": "all",
+        "is_active": True,
+    }
 
     status = await AdminService.resolve_doctrine_rule_and_enqueue(
         admin,
@@ -341,9 +358,21 @@ async def test_regen_fail_deactivates_policy_and_keeps_freeze() -> None:
     gray_zone = AsyncMock()
     query = _fake_query()
     gray_zone.get_open_query_by_turn_id.return_value = query
-    policy = SimpleNamespace(id=uuid4(), rule="regla", is_active=True)
+    policy = SimpleNamespace(
+        id=uuid4(),
+        rule="regla",
+        is_active=True,
+        trigger_description="q",
+        scope="all",
+    )
     gray_zone.persist_live_policy.return_value = policy
     gray_zone.deactivate_policy = AsyncMock()
+    gray_zone.policy_override_payload = lambda p: {
+        "rule": "regla",
+        "trigger_description": "q",
+        "scope": "all",
+        "is_active": True,
+    }
 
     director = AsyncMock()
     director.handle_turn.return_value = Decision(
@@ -355,6 +384,17 @@ async def test_regen_fail_deactivates_policy_and_keeps_freeze() -> None:
 
     admin = object.__new__(AdminService)
     admin._director = director  # type: ignore[attr-defined]
+    admin._gray_zone = gray_zone  # type: ignore[attr-defined]
+    admin._notifier = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns.get.return_value = SimpleNamespace(
+        id=query.turn_id,
+        chat_id=42,
+        vip_id=None,
+        trigger_message_id=7,
+        channel_type="vip",
+        status="gray_zone",
+    )
     admin.create_supervised_delivery_from_gray_zone = AsyncMock()
 
     status = await AdminService.resolve_doctrine_rule_and_enqueue(

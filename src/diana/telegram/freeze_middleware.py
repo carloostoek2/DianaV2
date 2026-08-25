@@ -189,12 +189,12 @@ class FreezeCheckMiddleware(BaseMiddleware):
         event: Message,
         data: dict[str, Any],
     ) -> Any:
-        """Drop atencion-chat messages while an open gray zone query freezes them.
+        """Drop atencion-chat messages while a doctrine hold freezes them.
 
-        A1: for non-VIP atencion the freeze is the open ``gray_zone_queries``
-        row with a future ``freeze_until``, resolved by ``chat_id``. Fail-soft:
-        any lookup/notify failure passes the message through; with
-        ``gray_zone is None`` no freeze is possible.
+        A1: for non-VIP atencion the freeze is a ``gray_zone_queries`` row in
+        status ``open`` or ``awaiting_send`` with a future ``freeze_until``,
+        resolved by ``chat_id``. Fail-soft: any lookup/notify failure passes
+        the message through; with ``gray_zone is None`` no freeze is possible.
         """
         if self._gray_zone is None:
             return await handler(event, data)

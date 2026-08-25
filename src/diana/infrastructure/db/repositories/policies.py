@@ -119,5 +119,18 @@ class PoliciesRepo:
             result = await session.execute(stmt)
             return [policy_to_dict(row) for row in result.scalars().all()]
 
+    async def deactivate(self, policy_id: UUID) -> bool:
+        """Set ``is_active=False`` for a policy. Returns False if not found."""
+        from sqlalchemy import update
+
+        async with self._sf() as session:
+            result = await session.execute(
+                update(Policy)
+                .where(Policy.id == policy_id)
+                .values(is_active=False)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
 
 __all__ = ["PoliciesRepo", "policy_to_dict", "vip_id_visibility_clause"]

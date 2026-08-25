@@ -23,6 +23,7 @@ from diana.application.ports import (
     EscalationNotification,
     EscalationStore,
     GrayZoneQueryView,
+    GrayZoneServicePort,
     MessageHistoryWriter,
     OwnerNotifierPort,
     PendingApprovalStore,
@@ -148,6 +149,8 @@ class AdminService:
         # event from record_outcome is the single trust decrement).
         outcome: object | None = None,
         feature_autonomy_readiness_enabled: bool = False,
+        director: Any | None = None,
+        gray_zone: GrayZoneServicePort | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -173,6 +176,17 @@ class AdminService:
         # record_correction (readiness ON → outcome-driven trust only).
         self._outcome = outcome
         self._autonomy_readiness = bool(feature_autonomy_readiness_enabled)
+        # Doctrine rule→regen: Director + GrayZone (wired post-construct when needed).
+        self._director = director
+        self._gray_zone = gray_zone
+
+    def set_director(self, director: Any) -> None:
+        """Wire CognitiveDirector after composition builds it (draft regen / doctrine)."""
+        self._director = director
+
+    def set_gray_zone(self, gray_zone: GrayZoneServicePort | None) -> None:
+        """Wire GrayZoneService for doctrine hold lookups on owner deliver."""
+        self._gray_zone = gray_zone
 
     @property
     def quality_feedback_enabled(self) -> bool:
@@ -1014,6 +1028,8 @@ class AdminService:
                 # turn is actually extractable).
                 escalated_here = True
                 await self._coordinator.transition(turn_id, TurnStatus.ESCALATED)
+                # Doctrine hold: release freeze + close awaiting_send; keep live policy.
+                await self._release_doctrine_hold_on_escalate(turn_id)
                 # Fila 4 (C1): owner escalated → outcome row owner_outcome =
                 # escalated (no sent text → no scores). Best-effort.
                 if self._outcome is not None:
@@ -1113,9 +1129,11 @@ class AdminService:
             )
 
         # SEC-F1: freeze gate before VIP write (mirror orch autonomous re-check).
-        # Fail closed: no deliver when frozen; mark turn failed + cancel claim.
+        # Fail closed: no deliver when frozen — EXCEPT doctrine awaiting_send hold
+        # (VIP stays frozen until successful send on this path).
         is_frozen = await self._is_vip_frozen(claimed.vip_id)
-        if is_frozen:
+        doctrine_hold = await self._has_doctrine_awaiting_send(turn_id)
+        if is_frozen and not doctrine_hold:
             failed_here = False
             try:
                 async with self._coordinator.chat_scope(chat_id):
@@ -1230,6 +1248,8 @@ class AdminService:
                     # R3: mark eligible BEFORE the transition (see above).
                     post_turn_eligible = True
                     await self._coordinator.transition(turn_id, TurnStatus.DELIVERED)
+                    # Doctrine hold: close awaiting_send + unfreeze after real send.
+                    await self._close_doctrine_hold_after_send(turn_id)
                     # Fila 4 (C1/C2): owner-resolution half of the outcome log —
                     # approved_as_is / corrected + the sent score + quality
                     # delta + the trust label event. Best-effort (a failure must
@@ -1418,3 +1438,268 @@ class AdminService:
         if frozen.tzinfo is None:
             frozen = frozen.replace(tzinfo=UTC)
         return frozen > now
+
+    async def _has_doctrine_awaiting_send(self, turn_id: UUID) -> bool:
+        """True when a gray-zone query for this turn is in awaiting_send."""
+        gz = self._gray_zone
+        if gz is None:
+            return False
+        try:
+            row = await gz.get_awaiting_send_by_turn_id(turn_id)
+        except Exception:
+            logger.exception(
+                "doctrine_awaiting_send_lookup_error",
+                extra={"turn_id": str(turn_id)},
+            )
+            return False
+        return row is not None
+
+    async def _close_doctrine_hold_after_send(self, turn_id: UUID) -> None:
+        """Best-effort: resolve awaiting_send + unfreeze after successful deliver."""
+        gz = self._gray_zone
+        if gz is None:
+            return
+        try:
+            row = await gz.get_awaiting_send_by_turn_id(turn_id)
+            if row is None:
+                return
+            await gz.close_awaiting_send(row.id, unfreeze=True)
+        except Exception:
+            logger.exception(
+                "doctrine_hold_close_after_send_failed",
+                extra={"turn_id": str(turn_id)},
+            )
+
+    async def _release_doctrine_hold_on_escalate(self, turn_id: UUID) -> None:
+        """Best-effort: close awaiting_send/open hold + unfreeze; keep live policy."""
+        gz = self._gray_zone
+        if gz is None:
+            return
+        try:
+            row = None
+            if hasattr(gz, "get_hold_query_by_turn_id"):
+                row = await gz.get_hold_query_by_turn_id(turn_id)
+            if row is None:
+                row = await gz.get_awaiting_send_by_turn_id(turn_id)
+            if row is None:
+                return
+            status = getattr(row, "status", None)
+            if status == "awaiting_send":
+                await gz.close_awaiting_send(row.id, unfreeze=True)
+            elif status == "open":
+                await gz.discard_and_close(row.id)
+        except Exception:
+            logger.exception(
+                "doctrine_hold_release_on_escalate_failed",
+                extra={"turn_id": str(turn_id)},
+            )
+
+    async def resolve_doctrine_rule_and_enqueue(
+        self,
+        *,
+        turn_id: UUID,
+        rule_text: str,
+        scope: str = "all",
+        vip_id: UUID | None = None,
+        gray_zone: GrayZoneServicePort | None = None,
+        actor_id: int | None = None,
+    ) -> str:
+        """Persist live RULE → force-regen → supervised approval; freeze until send.
+
+        Returns status token: ``resolved``, ``regen_failed``, ``error``,
+        ``not_found``, or ``escalated``.
+        """
+        gz = gray_zone if gray_zone is not None else self._gray_zone
+        if gz is None:
+            logger.error(
+                "doctrine_resolve_missing_gray_zone",
+                extra={"turn_id": str(turn_id)},
+            )
+            return "error"
+        if self._director is None:
+            logger.error(
+                "doctrine_resolve_missing_director",
+                extra={"turn_id": str(turn_id)},
+            )
+            return "error"
+
+        rule = (rule_text or "").strip()
+        if not rule:
+            return "error"
+
+        try:
+            query = await gz.get_open_query_by_turn_id(turn_id)
+        except Exception:
+            logger.exception(
+                "doctrine_resolve_lookup_error",
+                extra={"turn_id": str(turn_id)},
+            )
+            return "error"
+        if query is None:
+            return "not_found"
+
+        policy = None
+        try:
+            policy = await gz.persist_live_policy(
+                query.id,
+                rule,
+                vip_id=vip_id,
+                scope=scope if scope in {"vip", "all"} else ("vip" if vip_id else "all"),
+            )
+        except Exception:
+            logger.exception(
+                "doctrine_live_policy_persist_failed",
+                extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+            )
+            return "error"
+
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            await gz.deactivate_policy(policy.id)
+            return "error"
+
+        vip_text = (getattr(query, "question", "") or "").strip() or "(no text)"
+        incoming = IncomingTurn(
+            turn_id=turn_id,
+            chat_id=turn.chat_id,
+            vip_id=turn.vip_id,
+            text=vip_text,
+            telegram_message_id=turn.trigger_message_id,
+            business_connection_id=(
+                getattr(query, "business_connection_id", None)
+                or ""
+            ),
+            channel_type=turn.channel_type,
+        )
+        override_entry = (
+            gz.policy_override_payload(policy)
+            if hasattr(gz, "policy_override_payload")
+            else {
+                "trigger_description": getattr(policy, "trigger_description", ""),
+                "rule": getattr(policy, "rule", rule),
+                "scope": getattr(policy, "scope", scope),
+                "is_active": True,
+            }
+        )
+        knowledge_overrides = {"knowledge.policy": [override_entry]}
+
+        try:
+            decision = await self._director.handle_turn(
+                incoming,
+                knowledge_overrides=knowledge_overrides,
+            )
+        except Exception:
+            logger.exception(
+                "doctrine_regen_failed",
+                extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+            )
+            await gz.deactivate_policy(policy.id)
+            try:
+                await self._notifier.notify_info(
+                    "No pude regenerar el borrador con la regla. "
+                    "La regla se desactivó; el chat sigue congelado. Reintenta.",
+                    chat_id=turn.chat_id,
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_regen_fail_notify_error",
+                    extra={"turn_id": str(turn_id)},
+                )
+            return "regen_failed"
+
+        draft = (getattr(decision, "draft_text", None) or "").strip()
+        action = getattr(decision, "action", None)
+        if action == "consult_doctrine" or not draft:
+            await gz.deactivate_policy(policy.id)
+            try:
+                await self._notifier.notify_info(
+                    "La regeneración no produjo un borrador usable "
+                    "(o volvió a pedir doctrina). La regla se desactivó; "
+                    "el chat sigue congelado. Reintenta con otra regla.",
+                    chat_id=turn.chat_id,
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_regen_reject_notify_error",
+                    extra={"turn_id": str(turn_id)},
+                )
+            return "regen_failed"
+
+        from diana.application.turn_coordinator import ChatLockTimeoutError
+
+        try:
+            created = await self.create_supervised_delivery_from_gray_zone(
+                turn_id, query, draft_override=draft
+            )
+        except ChatLockTimeoutError:
+            try:
+                await gz.reopen_query(query.id)
+            except Exception:
+                logger.exception(
+                    "doctrine_resolve_lock_timeout_reopen_error",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+            logger.warning(
+                "doctrine_resolve_delivery_lock_timeout",
+                extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+            )
+            return "error"
+        except Exception:
+            logger.exception(
+                "doctrine_resolve_delivery_error",
+                extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+            )
+            created = False
+
+        if not created:
+            try:
+                if actor_id is not None:
+                    applied = await self.handle_owner_escalate(
+                        turn_id, actor_id=actor_id
+                    )
+                    if not applied:
+                        try:
+                            await gz.reopen_query(query.id)
+                        except Exception:
+                            logger.exception(
+                                "doctrine_resolve_reopen_error",
+                                extra={
+                                    "turn_id": str(turn_id),
+                                    "query_id": str(query.id),
+                                },
+                            )
+                        return "error"
+                    return "escalated"
+            except Exception:
+                logger.exception(
+                    "doctrine_resolve_escalate_fallback_error",
+                    extra={"turn_id": str(turn_id)},
+                )
+                try:
+                    await gz.reopen_query(query.id)
+                except Exception:
+                    logger.exception(
+                        "doctrine_resolve_reopen_error",
+                        extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                    )
+                return "error"
+            return "escalated"
+
+        try:
+            await gz.mark_awaiting_send(query.id)
+        except Exception:
+            logger.exception(
+                "doctrine_mark_awaiting_send_failed",
+                extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+            )
+            return "error"
+
+        logger.info(
+            "doctrine_rule_resolved_enqueued",
+            extra={
+                "turn_id": str(turn_id),
+                "query_id": str(query.id),
+                "policy_id": str(policy.id),
+            },
+        )
+        return "resolved"

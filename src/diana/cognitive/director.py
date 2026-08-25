@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -102,6 +102,32 @@ _DECISION_VERB: dict[str, str] = {
     "send": "enviar",
     "consult_doctrine": "consultar doctrina",
 }
+
+
+def _merge_knowledge_overrides(
+    retrieved: dict[str, Any | None],
+    overrides: Mapping[str, Any],
+) -> dict[str, Any | None]:
+    """Merge application force-injects into retrieved knowledge.
+
+    For ``knowledge.policy``: if existing value is a list, prepend override
+    entry/entries; otherwise replace with the override list/dict.
+    Other keys: replace when override is present and non-empty.
+    """
+    out: dict[str, Any | None] = dict(retrieved)
+    for key, value in overrides.items():
+        if value is None or value == [] or value == {}:
+            continue
+        if key == "knowledge.policy":
+            existing = out.get(key)
+            override_list = value if isinstance(value, list) else [value]
+            if isinstance(existing, list):
+                out[key] = list(override_list) + list(existing)
+            else:
+                out[key] = list(override_list)
+        else:
+            out[key] = value
+    return out
 
 
 def _clip(text: str, limit: int = 60) -> str:
@@ -249,12 +275,21 @@ class CognitiveDirector:
             style_rules = list(rules) if isinstance(rules, list) and rules else self._style_rules
         return persona, style_rules
 
-    async def handle_turn(self, turn_context: IncomingTurn) -> Decision:
+    async def handle_turn(
+        self,
+        turn_context: IncomingTurn,
+        *,
+        knowledge_overrides: Mapping[str, Any] | None = None,
+    ) -> Decision:
         """Run the F1 cognitive pipeline for one inbound turn.
 
         Args:
             turn_context: Fully formed ``IncomingTurn`` with ``turn_id`` already
                 assigned by the application layer (item 3+).
+            knowledge_overrides: Optional map merged into ``retrieved`` AFTER
+                retrievers + KnowledgeAugmenter (application-owned force-inject,
+                e.g. gray-zone live rule → ``knowledge.policy``). Decider still
+                owns the action after inject.
 
         Returns:
             ``Decision`` with ``action`` in {approve, escalate} and non-empty
@@ -281,7 +316,9 @@ class CognitiveDirector:
                 rule = gate.match(turn.text)
                 if rule is not None:
                     return await self._handle_template(turn, rule, gate)
-            return await self._run_pipeline(turn)
+            return await self._run_pipeline(
+                turn, knowledge_overrides=knowledge_overrides
+            )
         except TurnSupersededError:
             raise
         except Exception as exc:
@@ -317,7 +354,12 @@ class CognitiveDirector:
 
 
 
-    async def _run_pipeline(self, turn: IncomingTurn) -> Decision:
+    async def _run_pipeline(
+        self,
+        turn: IncomingTurn,
+        *,
+        knowledge_overrides: Mapping[str, Any] | None = None,
+    ) -> Decision:
         turn_id = turn.turn_id
         timings: dict[str, float] = {}
 
@@ -435,6 +477,10 @@ class CognitiveDirector:
             retrieved = await self._knowledge_augmenter.augment_retrieved(
                 turn, retrieved
             )
+            await self._store(turn_id, "retrieved", retrieved)
+
+        if knowledge_overrides:
+            retrieved = _merge_knowledge_overrides(retrieved, knowledge_overrides)
             await self._store(turn_id, "retrieved", retrieved)
 
         hit_caps = [cap for cap, value in retrieved.items() if value]

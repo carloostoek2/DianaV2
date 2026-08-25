@@ -114,13 +114,13 @@ class GrayZoneQueryRepo:
             return result.scalar_one_or_none()
 
     async def get_open_by_vip_id(self, vip_id: UUID) -> GrayZoneQuery | None:
-        """Return the most recent open query for a VIP, or None."""
+        """Return the most recent open|awaiting_send query for a VIP, or None."""
         async with self._sf() as session:
             result = await session.execute(
                 select(GrayZoneQuery)
                 .where(
                     GrayZoneQuery.vip_id == vip_id,
-                    GrayZoneQuery.status == "open",
+                    GrayZoneQuery.status.in_(("open", "awaiting_send")),
                 )
                 .order_by(GrayZoneQuery.created_at.desc())
                 .limit(1)
@@ -128,22 +128,35 @@ class GrayZoneQueryRepo:
             return result.scalars().first()
 
     async def get_open_by_chat_id(self, chat_id: int) -> GrayZoneQuery | None:
-        """Return the most recent open query for a chat (atencion), or None.
+        """Return the most recent open|awaiting_send query for a chat, or None.
 
         Used by the atencion freeze middleware: a non-VIP chat is "frozen"
-        while it has an open gray zone query (A1 — freeze is the query row).
+        while it has an open or awaiting_send gray zone query (freeze-until-send).
         """
         async with self._sf() as session:
             result = await session.execute(
                 select(GrayZoneQuery)
                 .where(
                     GrayZoneQuery.chat_id == chat_id,
-                    GrayZoneQuery.status == "open",
+                    GrayZoneQuery.status.in_(("open", "awaiting_send")),
                 )
                 .order_by(GrayZoneQuery.created_at.desc())
                 .limit(1)
             )
             return result.scalars().first()
+
+    async def get_awaiting_send_by_turn_id(
+        self, turn_id: UUID
+    ) -> GrayZoneQuery | None:
+        """Return the awaiting_send query for a turn, or None."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(GrayZoneQuery).where(
+                    GrayZoneQuery.turn_id == turn_id,
+                    GrayZoneQuery.status == "awaiting_send",
+                )
+            )
+            return result.scalar_one_or_none()
 
     async def list_open(self) -> list[GrayZoneQuery]:
         async with self._sf() as session:
