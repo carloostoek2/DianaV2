@@ -9,11 +9,13 @@ import pytest
 
 from diana.application.memory import (
     FakeOwnerNotifier,
+    InMemoryMessageHistoryWriter,
     InMemoryPendingApprovalStore,
     InMemoryPendingDeliveryStore,
     InMemoryRuntimeTimerStore,
     InMemoryTraceReaderWriter,
     InMemoryTurnStore,
+    InMemoryVipStore,
 )
 from diana.application.ports import (
     ApprovalRecord,
@@ -111,6 +113,114 @@ async def test_startup_renotifies_waiting_approvals() -> None:
         assert stored is not None and stored.status == "waiting"
         # New DM message id persisted so regen/edit targets the fresh message
         assert stored.owner_message_id is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_renotify_uses_vip_display_name() -> None:
+    """Re-notified drafts show the VIP name, not the numeric chat id."""
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    vips = InMemoryVipStore()
+    await vips.add(777, display_name="María García")
+    approval = _approval(chat_id=777)
+    await approvals.create_waiting(approval)
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+        vips=vips,
+    )
+    assert report.re_notified_approvals == 1
+    assert len(notifier.drafts) == 1
+    assert notifier.drafts[0].vip_display_name == "María García"
+    # No VIP in store → fall back to the legacy numeric id rendering.
+    vips2 = InMemoryVipStore()
+    notifier2 = FakeOwnerNotifier()
+    approvals2 = InMemoryPendingApprovalStore()
+    await approvals2.create_waiting(_approval(chat_id=888))
+    await run_startup_recovery(
+        deliveries=InMemoryPendingDeliveryStore(),
+        approvals=approvals2,
+        notifier=notifier2,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+        vips=vips2,
+    )
+    assert notifier2.drafts[0].vip_display_name is None
+
+
+@pytest.mark.asyncio
+async def test_startup_renotify_carries_vip_message_context() -> None:
+    """Re-notified drafts include the VIP message stored at approval time."""
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    approval = _approval(chat_id=42)
+    approval.evaluation = {
+        "naturalness": 0.9,
+        "_draft_versions": {
+            "items": [{"text": "draft", "reason": ""}],
+            "selected": 0,
+            "regenerating": False,
+            "vip_text": "¿Cuánto cuesta el plan premium?",
+        },
+    }
+    await approvals.create_waiting(approval)
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+    )
+    assert report.re_notified_approvals == 1
+    assert notifier.drafts[0].vip_text == "¿Cuánto cuesta el plan premium?"
+
+
+@pytest.mark.asyncio
+async def test_startup_renotify_recovers_context_from_history() -> None:
+    """Drafts re-materialized from traces (no evaluation) recover the VIP
+    burst from message history as context."""
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    history = InMemoryMessageHistoryWriter()
+    await history.append(42, role="vip", text="Hola")
+    await history.append(42, role="vip", text="¿Hay stock del producto X?")
+    await approvals.create_waiting(_approval(chat_id=42))
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+        history=history,
+    )
+    assert report.re_notified_approvals == 1
+    assert "(el VIP envió 2 mensajes seguidos)" in notifier.drafts[0].vip_text
+    assert "[1/2] Hola" in notifier.drafts[0].vip_text
+    assert "[2/2] ¿Hay stock del producto X?" in notifier.drafts[0].vip_text
+
+
+@pytest.mark.asyncio
+async def test_startup_renotify_fallback_placeholder_without_context() -> None:
+    """No stored text and no history → legacy placeholder (no fabricated context)."""
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    await approvals.create_waiting(_approval(chat_id=42))
+    report = await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(),
+        stale_after=timedelta(minutes=30),
+    )
+    assert report.re_notified_approvals == 1
+    assert notifier.drafts[0].vip_text == "(re-notify on startup)"
 
 
 @pytest.mark.asyncio

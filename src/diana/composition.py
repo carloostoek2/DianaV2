@@ -1525,6 +1525,7 @@ async def run_app_startup_recovery(app: AppContainer) -> Any:
         timers=app.runtime_timers,
         promo=app.promo,
         feature_quality_feedback_enabled=app.settings.feature_quality_feedback_enabled,
+        history=app.history,
     )
 
 

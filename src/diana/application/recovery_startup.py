@@ -29,6 +29,10 @@ from diana.application.cognitive_recovery import (
     recover_zombie_turns,
     rematerialize_drafts,
 )
+from diana.application.draft_variants import (
+    read_versions,
+    resolve_vip_display_name,
+)
 from diana.application.recovery import (
     RecoveryPlan,
     classify_pending_deliveries,
@@ -40,6 +44,10 @@ from diana.cognitive.models import is_turn_status_terminal
 logger = logging.getLogger("diana.application")
 
 DEFAULT_STALE_AFTER = timedelta(minutes=30)
+
+# Mirror of turn_orchestrator._BURST_HISTORY_LIMIT: window used to rebuild
+# the VIP message context for re-notified drafts from message history.
+_BURST_HISTORY_LIMIT = 40
 
 
 class ClockPort(Protocol):
@@ -105,6 +113,7 @@ async def run_startup_recovery(
     timers: RuntimeTimerStore | None = None,
     promo: PromoFinalizePort | None = None,
     feature_quality_feedback_enabled: bool = False,
+    history: object | None = None,
 ) -> RecoveryStartupReport:
     """Safe F1 recovery on process start.
 
@@ -114,7 +123,8 @@ async def run_startup_recovery(
     - Re-materialize drafts from pipeline_traces for turns with generated_text
     - Recover active runtime timers with adjusted remaining delays
     - Resume non-VIP promo mid-wait (decision.kind=promo) without auto-approve
-    - Re-notify waiting approvals only (no auto-approve, no cognitive pipeline)
+    - Re-notify waiting approvals only (no auto-approve, no cognitive pipeline);
+      re-notified drafts recover the VIP name and the message context they respond to
     - Send recovery summary DM to owner
     """
     now = clock.now()
@@ -210,6 +220,8 @@ async def run_startup_recovery(
         mid = await _renotify_approval(
             notifier,
             approval,
+            vips=vips,
+            history=history,
             feature_quality_feedback_enabled=feature_quality_feedback_enabled,
         )
         if mid is not None:
@@ -553,16 +565,26 @@ async def _renotify_approval(
     notifier: OwnerNotifierPort,
     approval: ApprovalRecord,
     *,
+    vips: object | None = None,
+    history: object | None = None,
     feature_quality_feedback_enabled: bool = False,
 ) -> int | None:
-    """Re-send draft keyboard; return new owner message id when available."""
+    """Re-send draft keyboard; return new owner message id when available.
+
+    Resolves the VIP display name so the re-notified draft shows the user's
+    name instead of the numeric chat id (same as the normal approval path),
+    and recovers the VIP message(s) the draft responds to as context.
+    """
+    vip_name = await resolve_vip_display_name(vips, approval.vip_id, approval.chat_id)
+    vip_text = await _recover_vip_context(approval, history=history)
     return await notifier.notify_draft(
         DraftNotification(
             turn_id=approval.turn_id,
             chat_id=approval.chat_id,
-            vip_text="(re-notify on startup)",
+            vip_text=vip_text,
             draft_text=approval.draft_text,
             reason="startup_re_notify",
+            vip_display_name=vip_name,
             evaluation_summary=approval.cognitive_summary,
             evaluation=approval.evaluation,
             business_connection_id=approval.business_connection_id,
@@ -575,6 +597,51 @@ async def _renotify_approval(
             ),
         )
     )
+
+
+async def _recover_vip_context(
+    approval: ApprovalRecord, *, history: object | None
+) -> str:
+    """Best-effort recovery of the VIP message(s) the draft responds to.
+
+    Priority:
+    1. ``versions.vip_text`` persisted at approval creation (normal path) —
+       exactly the text the owner saw in the original draft DM.
+    2. The trailing unanswered VIP burst from message history (covers
+       drafts re-materialized from traces, whose evaluation has no versions).
+    3. ``(re-notify on startup)`` placeholder when neither is available.
+    """
+    stored = read_versions(approval.evaluation).get("vip_text") or ""
+    if stored.strip():
+        return stored
+    if history is None:
+        return "(re-notify on startup)"
+    try:
+        recent = await history.get_recent(  # type: ignore[union-attr]
+            approval.chat_id, limit=_BURST_HISTORY_LIMIT
+        )
+    except Exception:
+        logger.exception(
+            "recovery_vip_context_history_failed",
+            extra={"turn_id": str(approval.turn_id)},
+        )
+        return "(re-notify on startup)"
+    texts_rev: list[str] = []
+    for row in reversed(recent):
+        if not isinstance(row, dict):
+            break
+        if row.get("role") != "vip":
+            break
+        texts_rev.append(str(row.get("text") or ""))
+    texts_rev.reverse()
+    cleaned = [t.strip() for t in texts_rev if isinstance(t, str) and t.strip()]
+    if not cleaned:
+        return "(re-notify on startup)"
+    if len(cleaned) == 1:
+        return cleaned[0]
+    header = f"(el VIP envió {len(cleaned)} mensajes seguidos)"
+    numbered = "\n".join(f"[{i + 1}/{len(cleaned)}] {t}" for i, t in enumerate(cleaned))
+    return f"{header}\n{numbered}"
 
 
 # Background pre_delay resumes — strong refs; sleep/pipeline must not block boot.
