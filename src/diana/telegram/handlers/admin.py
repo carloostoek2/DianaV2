@@ -381,7 +381,18 @@ async def handle_admin_text(
                 correct_sessions.cancel(actor_id)
                 return "deliver_failed"
             if candidate_id is None:
+                chat_id = getattr(sess, "chat_id", None)
+                in_sandbox = (
+                    sandbox is not None
+                    and chat_id is not None
+                    and sandbox.is_active(chat_id)
+                )
                 correct_sessions.cancel(actor_id)
+                if in_sandbox:
+                    # Aislamiento del sandbox: la memoria/lección es efímera
+                    # (criterio dueña 2026-08-25); la doctrina sí persiste.
+                    # Token distinto para que el mensaje no suene a error.
+                    return "reprimand_lesson_not_saved_sandbox"
                 return "reprimand_lesson_not_saved"
             correct_sessions.capture_reprimand(
                 actor_id,
@@ -954,6 +965,7 @@ def build_admin_router(
                     doctrine_sessions=doctrine_s,
                     gray_zone=gray_zone,
                     coordinator=coordinator,
+                    sandbox=sandbox,
                 )
                 if status == "doctrine_scope_prompted":
                     # GAP-11: the doctrine text is stored; ask the scope now.
@@ -992,6 +1004,7 @@ def build_admin_router(
             vips=vips,
             admin=admin,
             correct_sessions=sessions,
+            sandbox=sandbox,
         )
         if status == "corrected":
             await message.answer("Texto corregido enviado")
@@ -1019,6 +1032,11 @@ def build_admin_router(
         elif status == "reprimand_lesson_not_saved":
             await message.answer(
                 "No se guardó la lección. El texto ya se envió al VIP."
+            )
+        elif status == "reprimand_lesson_not_saved_sandbox":
+            await message.answer(
+                "Estás en sandbox: la lección no se guarda (aislamiento), "
+                "pero el texto ya se envió al VIP."
             )
 
     return router

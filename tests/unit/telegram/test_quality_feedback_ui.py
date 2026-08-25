@@ -864,3 +864,42 @@ async def test_quality_tokens_do_not_reanswer_callback() -> None:
     query.answer.assert_awaited_once_with()
     msg.answer.assert_awaited()
     assert msg.answer.await_args.args[0] == _QUALITY_ALERTS["reprimand_lesson_not_saved"]
+
+
+@pytest.mark.asyncio
+async def test_reprimand_sandbox_lesson_not_saved_clear_token() -> None:
+    """Sandbox: Reprender entrega el texto pero NO persiste la lección.
+
+    El criterio (dueña, 2026-08-25): en sandbox la memoria del usuario es
+    efímera; las decisiones de doctrina persisten. Por eso la lección no se
+    guarda — y el token debe distinguir el aislamiento del sandbox para que el
+    mensaje no suene a error.
+    """
+    from diana.application.memory import InMemoryVipStore
+    from diana.application.sandbox import SandboxService
+    from tests.unit.application.test_admin_quality_feedback import _MINIMAL_SIX
+
+    sandbox = SandboxService(profiles=_MINIMAL_SIX)
+    sandbox.activate(42, "nuevo")
+    staging, _ = _real_staging(sandbox=sandbox)
+    g, turn, _, _ = await _pending_vip_draft(staging=staging, vip_id=uuid4())
+    sessions = CorrectSessionStore()
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=sessions,
+        callback_data=encode_callback("reprimand", turn.id),
+        actor_id=OWNER,
+    )
+    token = await handle_admin_text(
+        text="texto corregido en sandbox",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=sessions,
+        sandbox=sandbox,
+    )
+    # Aislamiento sandbox: no hay candidato → token distinto, no genérico.
+    assert token == "reprimand_lesson_not_saved_sandbox"
+    assert sessions.get(OWNER) is None
+    assert g["actuator"].send_count() >= 1

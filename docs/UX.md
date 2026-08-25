@@ -48,6 +48,7 @@ Fila 4: **🔍 Traza** (vuelve al borrador con `tb:`) · **📝 Agregar nota**.
 
 4. Si el VIP escribe de nuevo, el combo se cancela (`cancel_combo_for_chat`). El texto ya enviado no se revierte.
 5. Si el combo expira o llega un `rpc:` huérfano: “No se guardó la lección. El texto ya se envió al VIP.” Fail-closed: no se vuelve a entregar.
+6. **En sandbox**, Reprender entrega el texto corregido pero **no guarda la lección** (aislamiento: la memoria es efímera en sandbox; solo las decisiones de doctrina persisten). El mensaje lo aclara: “Estás en sandbox: la lección no se guarda (aislamiento), pero el texto ya se envió al VIP.” — no es un error, es el criterio de persistencia (AGENTS §4.20).
 
 Detalle de bancos y flag: ver el concepto de calidad-feedback en la wiki.
 

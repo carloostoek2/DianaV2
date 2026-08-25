@@ -438,6 +438,17 @@ del sandbox no depende de FEATURE_AUTONOMOUS_MODE ni de auto_send por VIP
 (es una superficie de prueba explícita de la dueña). El motor no conoce
 "sandbox": solo actúa con ctx.instant cuando la capa de aplicación lo pide.
 
+**Criterio de persistencia en sandbox (decisión de la dueña, 2026-08-25):**
+la **memoria del usuario es efímera** en sandbox (`should_persist=false` →
+sin memorias, ejemplos, gold, lecciones de Reprender, mood, trust, historial
+durable), pero las **decisiones de doctrina persisten** en la DB real: la
+consulta de zona gris (`gray_zone_queries`), la regla viva
+(`persist_live_policy` → `policies`) y lo que se decida sobre borradores
+regenerados (incluso en sandbox), porque de ellas se derivan doctrinas
+aplicables/faltantes en situaciones reales. El Reprender en sandbox entrega el
+texto corregido pero NO guarda la lección (aislamiento); el mensaje a la dueña
+lo aclara (`reprimand_lesson_not_saved_sandbox`).
+
 4.21 Escalaciones — manejo desde el DM de la dueña (sin flag)
 
 ```
