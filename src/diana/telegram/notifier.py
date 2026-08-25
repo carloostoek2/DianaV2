@@ -113,13 +113,15 @@ class AiogramOwnerNotifier:
         )
 
     async def notify_doctrine(self, payload: DoctrineNotification) -> int | None:
-        """Send a gray zone doctrine query to the owner DM."""
+        """Send a gray zone doctrine query to the owner DM (asks for a RULE)."""
         text = (
-            f"[DOCTRINE QUERY] turn={payload.turn_id}\n"
-            f"chat={payload.chat_id}\n"
-            f"VIP: {payload.vip_text}\n"
-            f"Draft: {payload.draft_text or '(no draft)'}\n"
-            f"Reason: {payload.reason}"
+            f"🧭 Consulta de doctrina — turno {payload.turn_id}\n"
+            f"Chat: {payload.chat_id}\n"
+            f"Mensaje VIP: {payload.vip_text}\n"
+            f"Borrador sugerido (solo contexto): {payload.draft_text or '(sin borrador)'}\n"
+            f"Motivo: {payload.reason}\n\n"
+            "Escribe una REGLA / norma de negocio (no el texto que recibirá el VIP). "
+            "Diana regenerará el borrador con esa regla y te lo mandará a aprobar."
         )
         if payload.evaluation_summary:
             text += f"\nEval: {payload.evaluation_summary}"

@@ -103,6 +103,12 @@ class _MemQueries:
                 return row
         return None
 
+    async def get_awaiting_send_by_turn_id(self, turn_id):
+        for row in self._by_id.values():
+            if row.turn_id == turn_id and row.status == "awaiting_send":
+                return row
+        return None
+
     async def update_status(self, query_id, status, resolved_at=None):
         row = self._by_id.get(query_id)
         if row is None:
@@ -128,12 +134,42 @@ class _MemStaging:
         return row
 
 
+class _MemPolicies:
+    def __init__(self) -> None:
+        self.rows: dict = {}
+        self.inserts: list = []
+
+    async def insert(self, **kwargs):
+        from types import SimpleNamespace
+        from uuid import uuid4
+        row = SimpleNamespace(
+            id=uuid4(),
+            trigger_description=kwargs.get("trigger_description", ""),
+            rule=kwargs.get("rule", ""),
+            scope=kwargs.get("scope", "all"),
+            is_active=kwargs.get("is_active", True),
+            vip_id=kwargs.get("vip_id"),
+            source_query_id=kwargs.get("source_query_id"),
+        )
+        self.rows[row.id] = row
+        self.inserts.append(row)
+        return row
+
+    async def deactivate(self, policy_id):
+        row = self.rows.get(policy_id)
+        if row is None:
+            return False
+        row.is_active = False
+        return True
+
+
 def _memory_gray_zone(vip_store) -> GrayZoneService:
     return GrayZoneService(
         query_repo=_MemQueries(),
         vip_store=vip_store,
         staging_repo=_MemStaging(),
         distiller=PolicyDistiller(),
+        policies_repo=_MemPolicies(),
     )
 
 
@@ -161,6 +197,8 @@ def _admin_graph(*, outcome, staging=None, quality: bool = False) -> dict:
         behavior,  # type: ignore[arg-type]
         approval_ui=ApprovalDraftVoider(notifier),
     )
+    director = AsyncMock()
+    director.handle_turn.return_value = _decision(draft="borrador regenerado")
     admin = AdminService(
         notifier=notifier,
         approvals=approvals,
@@ -176,6 +214,7 @@ def _admin_graph(*, outcome, staging=None, quality: bool = False) -> dict:
         outcome=outcome,
         feature_quality_feedback_enabled=quality,
         feature_autonomy_readiness_enabled=True,
+        director=director,
     )
     return {
         "admin": admin,
@@ -384,6 +423,7 @@ async def test_gray_zone_resolve_then_approve_is_conservadora() -> None:
     gz = _memory_gray_zone(g["vips"])
     turn = await _seed_gray_zone(g, gz, store, shadow="doctrine")
 
+    g["admin"].set_gray_zone(gz)
     status = await g["admin"].resolve_doctrine_rule_and_enqueue(
         turn_id=turn.id,
         rule_text="Ofrecer descuento 10% en 3+",
@@ -395,7 +435,9 @@ async def test_gray_zone_resolve_then_approve_is_conservadora() -> None:
     assert status == "resolved"
     # Query moves to awaiting_send (still held), not closed/open.
     open_q = await gz.get_open_query_by_turn_id(turn.id)
-    assert open_q is None or getattr(open_q, "status", None) != "open"
+    assert open_q is None
+    hold = await gz.get_awaiting_send_by_turn_id(turn.id)
+    assert hold is not None
 
     result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
 

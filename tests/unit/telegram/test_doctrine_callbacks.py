@@ -46,10 +46,11 @@ class FakeQuery:
 
 
 class FakeAdmin:
-    """Fake AdminService recording supervised-delivery synthesis calls."""
+    """Fake AdminService recording doctrine resolve + supervised-delivery calls."""
 
     def __init__(self) -> None:
         self.create_supervised_calls: list[tuple[UUID, object, str | None]] = []
+        self.resolve_rule_calls: list[dict] = []
         self._denials: set[UUID] = set()
 
     def deny_on(self, turn_id: UUID) -> None:
@@ -65,6 +66,10 @@ class FakeAdmin:
     ) -> bool:
         self.create_supervised_calls.append((turn_id, query, draft_override))
         return turn_id not in self._denials
+
+    async def resolve_doctrine_rule_and_enqueue(self, **kwargs):
+        self.resolve_rule_calls.append(kwargs)
+        return "resolved"
 
 
 @dataclass
@@ -110,6 +115,15 @@ class FakeGrayZone:
             msg = "simulated lookup error"
             raise RuntimeError(msg)
         return self.queries.get(turn_id)
+
+    async def get_hold_query_by_turn_id(self, turn_id: UUID) -> FakeQuery | None:
+        return await self.get_open_query_by_turn_id(turn_id)
+
+    async def get_awaiting_send_by_turn_id(self, turn_id: UUID) -> FakeQuery | None:
+        q = self.queries.get(turn_id)
+        if q is not None and getattr(q, "status", None) == "awaiting_send":
+            return q
+        return None
 
     async def resolve_with_doctrine(
         self,
@@ -169,375 +183,14 @@ async def test_respond_returns_prompted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_with_draft_resolves_query() -> None:
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()
-    query = gray_zone.add_query(turn_id, draft="use-this-draft")
-
+async def test_resolve_with_draft_is_rejected() -> None:
+    """Usar borrador path is inert — always rejected."""
     status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
+        gray_zone=FakeGrayZone(),
+        coordinator=FakeCoordinator(),
+        turn_id=uuid4(),
     )
-    assert status == "resolved"
-
-    # Verify resolve_with_doctrine was called with the draft
-    assert len(gray_zone.resolve_calls) == 1
-    qid, gen, rule, scoped_vip = gray_zone.resolve_calls[0]
-    assert qid == query.id
-    assert gen == "use-this-draft"
-    assert rule == "use-this-draft"
-    # Default scope (all) → vip_id None.
-    assert scoped_vip is None
-
-    # Verify confirm_and_apply was called
-    assert len(gray_zone.confirm_calls) == 1
-    confirm_qid, confirm_cid = gray_zone.confirm_calls[0]
-    assert confirm_qid == query.id
-    assert confirm_cid == gray_zone.candidates[0].id
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_no_query() -> None:
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()  # No query added
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-    )
-    assert status == "not_found"
-    assert len(gray_zone.resolve_calls) == 0
-    assert len(gray_zone.confirm_calls) == 0
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_lookup_error() -> None:
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()
-    gray_zone.error_on_lookup(turn_id)
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-    )
-    assert status == "error"
-
-
-@pytest.mark.asyncio
-async def test_escalate_discards_and_transitions() -> None:
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()
-    query = gray_zone.add_query(turn_id)
-
-    status = await handle_doctrine_escalate(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-    )
-    assert status == "escalated"
-
-    assert len(gray_zone.discard_calls) == 1
-    assert gray_zone.discard_calls[0] == query.id
-
-    assert len(coordinator.transitions) == 1
-    assert coordinator.transitions[0] == (turn_id, "escalated")
-
-
-@pytest.mark.asyncio
-async def test_escalate_no_query() -> None:
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()
-
-    status = await handle_doctrine_escalate(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-    )
-    assert status == "not_found"
-    assert len(gray_zone.discard_calls) == 0
-    assert len(coordinator.transitions) == 0
-
-
-@pytest.mark.asyncio
-async def test_escalate_lookup_error() -> None:
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()
-    gray_zone.error_on_lookup(turn_id)
-
-    status = await handle_doctrine_escalate(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-    )
-    assert status == "error"
-    assert len(gray_zone.discard_calls) == 0
-    assert len(coordinator.transitions) == 0
-
-
-# --- Error-on-resolve / error-on-discard tests (TEST-2) ---
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_resolve_error() -> None:
-    """resolve_with_doctrine raises -> handler returns 'error'."""
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()
-    query = gray_zone.add_query(turn_id)
-    gray_zone.error_on_resolve(turn_id)  # => resolves to query.id
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-    )
-    assert status == "error"
-    # The call was made but raised -- confirm_and_apply should NOT be called.
-    assert len(gray_zone.resolve_calls) == 1
-    assert len(gray_zone.confirm_calls) == 0
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_confirm_error() -> None:
-    """confirm_and_apply raises -> handler returns 'error'."""
-    gray_zone = _FakeGrayZoneWithConfirmError()
-    coordinator = FakeCoordinator()
-    turn_id = uuid4()
-    gray_zone.add_query(turn_id)
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-    )
-    assert status == "error"
-    assert len(gray_zone.resolve_calls) == 1
-    assert len(gray_zone.confirm_calls) == 1
-
-
-class _FakeGrayZoneWithConfirmError(FakeGrayZone):
-    """FakeGrayZone variant that raises on confirm_and_apply."""
-
-    async def confirm_and_apply(self, query_id: UUID, candidate_id: UUID) -> object:
-        self.confirm_calls.append((query_id, candidate_id))
-        msg = f"simulated confirm error for {query_id}"
-        raise RuntimeError(msg)
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_with_admin_creates_supervised_delivery() -> None:
-    """dx: with admin injected → confirm_and_apply + exactly ONE supervised call."""
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    admin = FakeAdmin()
-    turn_id = uuid4()
-    query = gray_zone.add_query(turn_id, draft="use-this-draft")
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        admin=admin,
-    )
-    assert status == "resolved"
-
-    assert len(gray_zone.confirm_calls) == 1
-    assert len(admin.create_supervised_calls) == 1
-    called_turn_id, called_query, draft_override = admin.create_supervised_calls[0]
-    assert called_turn_id == turn_id
-    assert called_query is query
-    # Draft path passes the persisted draft as the override.
-    assert draft_override == "use-this-draft"
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_no_admin_skips_supervised() -> None:
-    """dx: without admin → legacy behavior (confirm_and_apply, no supervised call)."""
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    admin = FakeAdmin()
-    turn_id = uuid4()
-    gray_zone.add_query(turn_id, draft="use-this-draft")
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        admin=None,
-    )
-    assert status == "resolved"
-    assert len(gray_zone.confirm_calls) == 1
-    assert len(admin.create_supervised_calls) == 0
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_confirm_before_supervised_delivery() -> None:
-    """dx: ordering — confirm_and_apply (closes query + unfreezes) runs first.
-
-    The VIP must be unfrozen before the owner approves; the supervised
-    delivery synthesis must never run before the query is confirmed.
-    """
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    admin = FakeAdmin()
-    turn_id = uuid4()
-    gray_zone.add_query(turn_id, draft="use-this-draft")
-
-    events: list[str] = []
-
-    async def _confirm_and_apply(query_id: UUID, candidate_id: UUID) -> object:
-        events.append("confirm")
-        return object()
-
-    async def _create_supervised(
-        turn_id_: UUID,
-        query: object,
-        *,
-        draft_override: str | None = None,
-    ) -> bool:
-        events.append("supervised")
-        return True
-
-    gray_zone.confirm_and_apply = _confirm_and_apply  # type: ignore[method-assign]
-    admin.create_supervised_delivery_from_gray_zone = _create_supervised  # type: ignore[method-assign]
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        admin=admin,
-    )
-    assert status == "resolved"
-    assert events == ["confirm", "supervised"]
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_delivery_denied_falls_back_to_escalate() -> None:
-    """dx: supervised delivery unavailable → turn escalated, never stuck.
-
-    Legacy query without business_connection_id: the query is already closed
-    by confirm_and_apply, so the handler escalates the turn and reports
-    'escalated' instead of claiming a resolution that never scheduled a draft.
-    """
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    admin = FakeAdmin()
-    turn_id = uuid4()
-    gray_zone.add_query(turn_id, draft="use-this-draft")
-    admin.deny_on(turn_id)
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        admin=admin,
-    )
-    assert status == "escalated"
-    assert len(gray_zone.confirm_calls) == 1
-    assert len(admin.create_supervised_calls) == 1
-    assert coordinator.transitions == [(turn_id, "escalated")]
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_delivery_error_falls_back_to_escalate() -> None:
-    """dx: supervised delivery raises → turn escalated, still no zombie."""
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    admin = FakeAdmin()
-    turn_id = uuid4()
-    gray_zone.add_query(turn_id, draft="use-this-draft")
-
-    async def _boom(
-        turn_id_: UUID,
-        query: object,
-        *,
-        draft_override: str | None = None,
-    ) -> bool:
-        msg = "simulated delivery failure"
-        raise RuntimeError(msg)
-
-    admin.create_supervised_delivery_from_gray_zone = _boom  # type: ignore[method-assign]
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        admin=admin,
-    )
-    assert status == "escalated"
-    assert coordinator.transitions == [(turn_id, "escalated")]
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_lock_timeout_is_error_not_escalated() -> None:
-    """dx: ChatLockTimeoutError → 'error' (retryable), no escalate, query reopened.
-
-    The lock holder (expiry job / owner callback) may be creating the
-    approval for this very turn; escalating would terminalize it mid-flight.
-    The query is already closed by confirm_and_apply, so it is reopened to
-    keep the turn retryable.
-    """
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    admin = FakeAdmin()
-    turn_id = uuid4()
-    query = gray_zone.add_query(turn_id, draft="use-this-draft")
-
-    async def _lock_timeout(
-        turn_id_: UUID,
-        query: object,
-        *,
-        draft_override: str | None = None,
-    ) -> bool:
-        msg = "simulated lock contention"
-        raise ChatLockTimeoutError(msg)
-
-    admin.create_supervised_delivery_from_gray_zone = _lock_timeout  # type: ignore[method-assign]
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        admin=admin,
-    )
-    assert status == "error"
-    assert coordinator.transitions == []
-    assert gray_zone.reopen_calls == [query.id]
-
-
-@pytest.mark.asyncio
-async def test_resolve_with_draft_double_failure_reopens_query() -> None:
-    """dx: delivery denied AND fallback escalate fails → query reopened, 'error'.
-
-    The turn stays gray_zone and the query is reopened so the expiry job
-    retries later — never silently stranded with a closed query.
-    """
-    gray_zone = FakeGrayZone()
-    coordinator = FakeCoordinator()
-    admin = FakeAdmin()
-    turn_id = uuid4()
-    query = gray_zone.add_query(turn_id, draft="use-this-draft")
-    admin.deny_on(turn_id)
-    coordinator.fail_on(turn_id)
-
-    status = await handle_doctrine_resolve_with_draft(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        admin=admin,
-    )
-    assert status == "error"
-    assert coordinator.transitions == [(turn_id, "escalated")]  # attempted
-    assert gray_zone.reopen_calls == [query.id]
+    assert status == "rejected"
 
 
 @pytest.mark.asyncio
@@ -603,13 +256,14 @@ def _callback_with_message(data: str, *, user_id: int) -> CallbackQuery:
 
 
 def _handler_for_prefix(router, prefix: str):
-    # Registration order in build_doctrine_router: dr, dx, de, ds
+    # Registration order in build_doctrine_router: dr, ds, de (no dx)
     by_prefix = {
         "dr:": router.callback_query.handlers[0].callback,
-        "dx:": router.callback_query.handlers[1].callback,
-        "ds:": router.callback_query.handlers[2].callback,
-        "de:": router.callback_query.handlers[3].callback,
+        "ds:": router.callback_query.handlers[1].callback,
+        "de:": router.callback_query.handlers[2].callback,
     }
+    if prefix == "dx:":
+        raise AssertionError("dx: Usar borrador handler removed from doctrine router")
     return by_prefix[prefix]
 
 
@@ -627,8 +281,8 @@ async def test_doctrine_router_non_owner_forbidden_all_actions() -> None:
     )
     cases = [
         ("dr:", encode_doctrine_callback(turn_id)),
-        ("dx:", encode_doctrine_resolve_callback(turn_id)),
         ("de:", encode_doctrine_escalate_callback(turn_id)),
+        ("ds:", __import__('diana.telegram.keyboards', fromlist=['encode_doctrine_scope']).encode_doctrine_scope(turn_id, 'vip')),
     ]
     for prefix, data in cases:
         handler = _handler_for_prefix(router, prefix)
@@ -657,16 +311,16 @@ async def test_doctrine_router_missing_owner_id_fail_closed() -> None:
         coordinator=coordinator,
         owner_telegram_id=None,
     )
-    handler = _handler_for_prefix(router, "dx:")
-    query = _callback(encode_doctrine_resolve_callback(turn_id), user_id=OWNER)
+    handler = _handler_for_prefix(router, "de:")
+    query = _callback(encode_doctrine_escalate_callback(turn_id), user_id=OWNER)
     await handler(query)
     args, kwargs = query.answer.await_args
     assert "No autorizado" in (args[0] if args else kwargs.get("text", ""))
-    assert gray_zone.resolve_calls == []
+    assert gray_zone.discard_calls == []
 
 
 @pytest.mark.asyncio
-async def test_doctrine_router_owner_resolve_allowed() -> None:
+async def test_doctrine_router_owner_escalate_allowed() -> None:
     gray_zone = FakeGrayZone()
     coordinator = FakeCoordinator()
     turn_id = uuid4()
@@ -676,13 +330,13 @@ async def test_doctrine_router_owner_resolve_allowed() -> None:
         coordinator=coordinator,
         owner_telegram_id=OWNER,
     )
-    handler = _handler_for_prefix(router, "dx:")
-    query = _callback(encode_doctrine_resolve_callback(turn_id), user_id=OWNER)
+    handler = _handler_for_prefix(router, "de:")
+    query = _callback_with_message(
+        encode_doctrine_escalate_callback(turn_id), user_id=OWNER
+    )
     await handler(query)
-    assert len(gray_zone.resolve_calls) == 1
-    args, kwargs = query.answer.await_args
-    text = args[0] if args else kwargs.get("text", "")
-    assert "Resuelto" in text
+    assert len(gray_zone.discard_calls) == 1
+    assert coordinator.transitions == [(turn_id, "escalated")]
 
 
 # --- parse_doctrine_callback tests (TEST-1) ---
@@ -753,8 +407,8 @@ def test_doctrine_scope_keyboard_under_64_bytes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dx_prompts_scope_for_vip_query() -> None:
-    """GAP-11: 'usar borrador' with a VIP query asks the scope first."""
+async def test_dr_prompts_rule_for_owner() -> None:
+    """dr: opens free-text session with rule-only prompt (no Usar borrador)."""
     gray_zone = FakeGrayZone()
     coordinator = FakeCoordinator()
     turn_id = uuid4()
@@ -767,24 +421,25 @@ async def test_dx_prompts_scope_for_vip_query() -> None:
         owner_telegram_id=OWNER,
         doctrine_sessions=sessions,
     )
-    handler = _handler_for_prefix(router, "dx:")
+    handler = _handler_for_prefix(router, "dr:")
     query = _callback_with_message(
-        encode_doctrine_resolve_callback(turn_id), user_id=OWNER
+        encode_doctrine_callback(turn_id), user_id=OWNER
     )
+    query.message.edit_reply_markup = AsyncMock(return_value=True)
     await handler(query)
-    # Not resolved yet — scope question sent instead.
-    assert len(gray_zone.resolve_calls) == 0
-    query.message.answer.assert_awaited_once()
+    query.message.answer.assert_awaited()
     body = query.message.answer.await_args.args[0]
-    assert "¿Esta regla aplica solo a este VIP" in body
+    assert "REGLA" in body or "regla" in body.lower()
+    assert "texto que recibirá el VIP" not in body.lower() or "No escribas el texto" in body
     assert sessions.peek_turn_id(OWNER) == turn_id
 
 
 @pytest.mark.asyncio
 async def test_ds_scope_vip_resolves_with_vip_scope() -> None:
-    """ds:<turn>:vip resolves a pending free-text doctrine scoped to the VIP."""
+    """ds:<turn>:vip resolves a pending free-text RULE scoped to the VIP."""
     gray_zone = FakeGrayZone()
     coordinator = FakeCoordinator()
+    admin = FakeAdmin()
     turn_id = uuid4()
     vip_id = uuid4()
     q = gray_zone.add_query(turn_id, draft="draft")
@@ -796,15 +451,17 @@ async def test_ds_scope_vip_resolves_with_vip_scope() -> None:
         coordinator=coordinator,
         owner_telegram_id=OWNER,
         doctrine_sessions=sessions,
+        admin=admin,
     )
     handler = _handler_for_prefix(router, "ds:")
-    query = _callback(encode_doctrine_scope(turn_id, "vip"), user_id=OWNER)
+    query = _callback_with_message(encode_doctrine_scope(turn_id, "vip"), user_id=OWNER)
+    query.message.edit_text = AsyncMock(return_value=True)
     await handler(query)
-    assert len(gray_zone.resolve_calls) == 1
-    _, gen, rule, scoped_vip = gray_zone.resolve_calls[0]
-    assert gen == "regla para este VIP"
-    assert scoped_vip == vip_id
-    # Session consumed.
+    assert len(admin.resolve_rule_calls) == 1
+    call = admin.resolve_rule_calls[0]
+    assert call["rule_text"] == "regla para este VIP"
+    assert call["vip_id"] == vip_id
+    assert call["scope"] == "vip"
     assert sessions.resolve(OWNER) == ("none", None)
 
 
@@ -813,6 +470,7 @@ async def test_ds_scope_all_resolves_global() -> None:
     """ds:<turn>:all resolves with vip_id None (global rule)."""
     gray_zone = FakeGrayZone()
     coordinator = FakeCoordinator()
+    admin = FakeAdmin()
     turn_id = uuid4()
     q = gray_zone.add_query(turn_id, draft="draft")
     q.vip_id = uuid4()
@@ -823,12 +481,15 @@ async def test_ds_scope_all_resolves_global() -> None:
         coordinator=coordinator,
         owner_telegram_id=OWNER,
         doctrine_sessions=sessions,
+        admin=admin,
     )
     handler = _handler_for_prefix(router, "ds:")
-    query = _callback(encode_doctrine_scope(turn_id, "all"), user_id=OWNER)
+    query = _callback_with_message(encode_doctrine_scope(turn_id, "all"), user_id=OWNER)
+    query.message.edit_text = AsyncMock(return_value=True)
     await handler(query)
-    _, _, _, scoped_vip = gray_zone.resolve_calls[0]
-    assert scoped_vip is None
+    call = admin.resolve_rule_calls[0]
+    assert call["vip_id"] is None
+    assert call["scope"] == "all"
 
 
 @pytest.mark.asyncio

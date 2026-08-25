@@ -367,25 +367,21 @@ def doctrine_scope_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
 
 
 def doctrine_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
-    """Reply markup for gray zone doctrine queries (three actions).
+    """Reply markup for gray zone doctrine queries (rule + escalate).
 
-    - Respond: owner writes free-text doctrine
-    - Use draft: auto-resolve with the existing draft
+    - Write rule: owner writes a business RULE (not the VIP reply)
     - Escalate: discard query, escalate turn
+    No "✅ Usar borrador" (removed from doctrine happy path).
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📝 Responder consulta",
+                    text="📝 Escribir regla",
                     callback_data=encode_doctrine_callback(turn_id),
                 ),
             ],
             [
-                InlineKeyboardButton(
-                    text="✅ Usar borrador",
-                    callback_data=encode_doctrine_resolve_callback(turn_id),
-                ),
                 InlineKeyboardButton(
                     text="⚠️ Escalar",
                     callback_data=encode_doctrine_escalate_callback(turn_id),

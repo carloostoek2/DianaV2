@@ -40,16 +40,20 @@ from diana.telegram.handlers.callbacks import (
 from diana.telegram.keyboards import doctrine_scope_keyboard, reprimand_combo_keyboard
 
 DOCTRINE_SESSION_EXPIRED_UX = (
-    "Sesión de doctrina expirada — presiona Responder consulta de nuevo"
+    "Sesión de doctrina expirada — toca Escribir regla de nuevo"
 )
 
 _DOCTRINE_STATUS_UX: dict[str, str] = {
     "doctrine_session_expired": DOCTRINE_SESSION_EXPIRED_UX,
     "doctrine_unavailable": "Módulo de zona gris no disponible",
-    "resolved": "Doctrina guardada y envío en borrador para tu aprobación",
+    "resolved": "Regla guardada — borrador regenerado para tu aprobación",
     "escalated": "Consulta escalada",
     "not_found": "Consulta no encontrada — ya fue resuelta",
-    "error": "Error del sistema al guardar la doctrina",
+    "error": "Error del sistema al guardar la regla",
+    "regen_failed": (
+        "No se pudo regenerar el borrador; la regla se desactivó. Reintenta."
+    ),
+    "rejected": "Acción no disponible",
 }
 
 

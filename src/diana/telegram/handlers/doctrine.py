@@ -1,10 +1,10 @@
-"""Doctrine callback handlers: respond, resolve-with-draft, escalate.
+"""Doctrine callback handlers: write rule + escalate (no Usar borrador).
 
-Flow (SPEC-FASE2 6.2):
-- dr: (Responder consulta) opens a free-text doctrine session; the owner's
-  next DM text is captured as doctrine (generalization + rule) and resolved.
-- dx: (Usar borrador) resolves with the persisted draft as doctrine.
+Flow (AGENTS §4.5):
+- dr: (Escribir regla) opens a free-text session; owner writes a RULE.
+- ds: Solo este VIP / A todos scopes the rule, then AdminService regenerates.
 - de: (Escalar) discards the query and escalates the turn.
+- dx: removed from the happy path (legacy callbacks answered as expired).
 """
 
 from __future__ import annotations
@@ -20,10 +20,7 @@ from aiogram.types import CallbackQuery
 
 from diana.application.admin_service import AdminService
 from diana.application.ports import GrayZoneServicePort
-from diana.application.turn_coordinator import (
-    ChatLockTimeoutError,
-    TurnCoordinator,
-)
+from diana.application.turn_coordinator import TurnCoordinator
 from diana.telegram.keyboards import (
     doctrine_scope_keyboard,
     parse_doctrine_callback,
@@ -33,15 +30,27 @@ from diana.telegram.keyboards import (
 logger = logging.getLogger("diana.telegram")
 
 _RESULT_MESSAGES: dict[str, tuple[str, bool]] = {
-    "resolved": ("Resuelto y aplicado", False),
+    "resolved": ("Regla guardada — borrador regenerado para tu aprobación", False),
     "escalated": ("Escalado", False),
     "not_found": ("Consulta no encontrada — ya fue resuelta", True),
     "error": ("Error al procesar la solicitud", True),
+    "regen_failed": (
+        "No se pudo regenerar el borrador; la regla se desactivó. Reintenta.",
+        True,
+    ),
+    "rejected": ("Acción no disponible", True),
 }
 
 DOCTRINE_SCOPE_PROMPT = (
     "¿Esta regla aplica solo a este VIP o a todos?\n\n"
-    "Es la lección que Diana guardará para casos futuros."
+    "Es la norma que Diana usará para regenerar el borrador de este turno."
+)
+
+DOCTRINE_RULE_PROMPT = (
+    "Escribe la REGLA / norma de negocio para este caso.\n"
+    "No escribas el texto que recibirá el VIP: Diana regenerará el borrador "
+    "con tu regla y te lo mandará a aprobar.\n"
+    "Usa /cancelar para abortar."
 )
 
 DEFAULT_DOCTRINE_TTL = timedelta(minutes=15)
@@ -53,11 +62,10 @@ DoctrineScope = Literal["vip", "all"]
 
 @dataclass
 class DoctrinePending:
-    """Pending doctrine response awaiting a scope choice (GAP-11).
+    """Pending RULE awaiting a scope choice (GAP-11).
 
-    ``mode`` tells the scope callback how to resolve:
-    - "free_text": the owner typed the doctrine (``text`` is the rule/draft).
-    - "draft": the owner chose "Usar borrador" (the query draft is the rule).
+    Only ``free_text`` mode is used on the happy path (``text`` = rule).
+    ``draft`` mode is rejected by ``handle_doctrine_scope_choice``.
     """
 
     turn_id: UUID
@@ -205,130 +213,9 @@ async def _resolve_query_with_doctrine(
     scope: DoctrineScope = "all",
     actor_id: int | None = None,
 ) -> str:
-    """Shared resolution core: doctrine text → candidate → confirm → deliver.
-
-    Used by both the draft path (generalization=rule=draft=query.draft) and
-    the free-text path (all three = the owner's text). ``scope`` decides
-    whether the new rule applies to this VIP only (``vip``) or to everyone
-    (``all``); the candidate payload carries the chosen ``vip_id`` so the
-    eventual promotion honors it (GAP-11). Returns status token:
-    'resolved', 'escalated', 'not_found', or 'error'.
-    """
-    try:
-        query = await gray_zone.get_open_query_by_turn_id(turn_id)
-    except Exception:
-        logger.exception(
-            "doctrine_resolve_lookup_error", extra={"turn_id": str(turn_id)}
-        )
-        return "error"
-
-    if query is None:
-        logger.info("doctrine_resolve_no_query", extra={"turn_id": str(turn_id)})
-        return "not_found"
-
-    try:
-        vip_id = getattr(query, "vip_id", None)
-        scoped_vip_id = vip_id if scope == "vip" else None
-        candidate = await gray_zone.resolve_with_doctrine(
-            query.id,
-            generalization,
-            rule,
-            vip_id=scoped_vip_id,
-        )
-        # If confirm_and_apply fails below, resolve_with_doctrine already
-        # created an orphan staging candidate. The query stays open so it
-        # can be retried or expired later — safe but should be monitored.
-        await gray_zone.confirm_and_apply(query.id, candidate.id)
-        if admin is not None:
-            try:
-                created = await admin.create_supervised_delivery_from_gray_zone(
-                    turn_id, query, draft_override=draft
-                )
-            except ChatLockTimeoutError:
-                # Lock contention with the expiry job or an owner callback:
-                # the other holder may be creating the approval for this very
-                # turn. Escalating would terminalize it mid-flight — report a
-                # retryable error. The query is already closed by
-                # confirm_and_apply, so reopen it: otherwise the turn would be
-                # stranded in gray_zone with a query nothing ever revisits.
-                try:
-                    await gray_zone.reopen_query(query.id)
-                except Exception:
-                    logger.exception(
-                        "doctrine_resolve_lock_timeout_reopen_error",
-                        extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-                    )
-                logger.warning(
-                    "doctrine_resolve_delivery_lock_timeout",
-                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-                )
-                return "error"
-            except Exception:
-                logger.exception(
-                    "doctrine_resolve_delivery_error",
-                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-                )
-                created = False
-            if not created:
-                # Supervised delivery unavailable (e.g. legacy query without
-                # business_connection_id). The query is already closed, so
-                # escalate the turn — never leave it stuck in gray_zone.
-                try:
-                    if admin is not None and actor_id is not None:
-                        applied = await admin.handle_owner_escalate(
-                            turn_id, actor_id=actor_id
-                        )
-                        if not applied:
-                            try:
-                                await gray_zone.reopen_query(query.id)
-                            except Exception:
-                                logger.exception(
-                                    "doctrine_resolve_reopen_error",
-                                    extra={
-                                        "turn_id": str(turn_id),
-                                        "query_id": str(query.id),
-                                    },
-                                )
-                            return "error"
-                    else:
-                        await coordinator.transition(turn_id, "escalated")
-                except Exception:
-                    logger.exception(
-                        "doctrine_resolve_fallback_escalate_error",
-                        extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-                    )
-                    # Double failure: reopen the query so a later run (expiry)
-                    # retries instead of stranding the turn in gray_zone.
-                    try:
-                        await gray_zone.reopen_query(query.id)
-                    except Exception:
-                        logger.exception(
-                            "doctrine_resolve_reopen_error",
-                            extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-                        )
-                    return "error"
-                logger.warning(
-                    "doctrine_resolve_delivery_fallback_escalated",
-                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-                )
-                return "escalated"
-        logger.info(
-            "doctrine_resolved_with_text",
-            extra={
-                "turn_id": str(turn_id),
-                "query_id": str(query.id),
-                "candidate_id": str(candidate.id),
-                "supervised": admin is not None,
-                "source": "draft" if generalization == draft else "free_text",
-            },
-        )
-        return "resolved"
-    except Exception:
-        logger.exception(
-            "doctrine_resolve_error",
-            extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-        )
-        return "error"
+    """Deprecated staging resolve path — not used by doctrine happy path."""
+    del gray_zone, coordinator, turn_id, generalization, rule, draft, admin, scope, actor_id
+    return "rejected"
 
 
 async def handle_doctrine_respond(
@@ -355,25 +242,37 @@ async def handle_doctrine_free_text(
     scope: DoctrineScope = "all",
     actor_id: int | None = None,
 ) -> str:
-    """Resolve a gray zone query with the owner's free-text doctrine.
+    """Resolve a gray zone query with the owner's RULE (live persist + regen).
 
-    The owner's text plays both roles (SPEC-FASE2 6.2): it is the answer
-    delivered to the VIP (via supervised approval) and the generalization
-    stored as doctrine. ``text`` must be non-empty (callers gate this).
-    ``scope`` sets whether the new rule applies to this VIP or to everyone
-    (GAP-11).
+    ``text`` is the business rule only — never used as the VIP draft.
+    ``scope`` sets whether the new rule applies to this VIP or to everyone.
 
-    Returns status token: 'resolved', 'escalated', 'not_found', or 'error'.
+    Returns status token: 'resolved', 'escalated', 'not_found', 'regen_failed',
+    or 'error'.
     """
-    return await _resolve_query_with_doctrine(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
+    del coordinator  # orchestration lives in AdminService
+    if admin is None:
+        return "error"
+    rule = (text or "").strip()
+    if not rule:
+        return "error"
+    try:
+        query = await gray_zone.get_open_query_by_turn_id(turn_id)
+    except Exception:
+        logger.exception(
+            "doctrine_resolve_lookup_error", extra={"turn_id": str(turn_id)}
+        )
+        return "error"
+    if query is None:
+        return "not_found"
+    query_vip = getattr(query, "vip_id", None)
+    scoped_vip = query_vip if scope == "vip" else None
+    return await admin.resolve_doctrine_rule_and_enqueue(
         turn_id=turn_id,
-        generalization=text,
-        rule=text,
-        draft=text,
-        admin=admin,
+        rule_text=rule,
         scope=scope,
+        vip_id=scoped_vip,
+        gray_zone=gray_zone,
         actor_id=actor_id,
     )
 
@@ -387,41 +286,9 @@ async def handle_doctrine_resolve_with_draft(
     scope: DoctrineScope = "all",
     actor_id: int | None = None,
 ) -> str:
-    """Resolve using the existing query draft as doctrine, then confirm.
-
-    After ``confirm_and_apply`` closes the query (and unfreezes the VIP),
-    ``admin.create_supervised_delivery_from_gray_zone`` creates a supervised
-    PendingApproval with the query draft and transitions the turn to
-    ``PENDING_APPROVAL``. With ``admin=None`` the behavior is legacy:
-    only ``confirm_and_apply`` (no approval creation, no transition). If the
-    supervised delivery cannot be created, the turn is escalated as a
-    fallback so it never stays stuck in ``gray_zone``.
-
-    Returns status token: 'resolved', 'escalated', 'not_found', or 'error'.
-    """
-    try:
-        query = await gray_zone.get_open_query_by_turn_id(turn_id)
-    except Exception:
-        logger.exception(
-            "doctrine_resolve_lookup_error", extra={"turn_id": str(turn_id)}
-        )
-        return "error"
-
-    if query is None:
-        logger.info("doctrine_resolve_no_query", extra={"turn_id": str(turn_id)})
-        return "not_found"
-
-    return await _resolve_query_with_doctrine(
-        gray_zone=gray_zone,
-        coordinator=coordinator,
-        turn_id=turn_id,
-        generalization=query.draft,
-        rule=query.draft,
-        draft=query.draft,
-        admin=admin,
-        scope=scope,
-        actor_id=actor_id,
-    )
+    """Deprecated: Usar borrador removed from doctrine happy path."""
+    del gray_zone, coordinator, turn_id, admin, scope, actor_id
+    return "rejected"
 
 
 async def handle_doctrine_escalate(
@@ -442,7 +309,10 @@ async def handle_doctrine_escalate(
     Returns status token: 'escalated', 'not_found', or 'error'.
     """
     try:
-        query = await gray_zone.get_open_query_by_turn_id(turn_id)
+        if hasattr(gray_zone, "get_hold_query_by_turn_id"):
+            query = await gray_zone.get_hold_query_by_turn_id(turn_id)
+        else:
+            query = await gray_zone.get_open_query_by_turn_id(turn_id)
     except Exception:
         logger.exception(
             "doctrine_escalate_lookup_error", extra={"turn_id": str(turn_id)}
@@ -460,9 +330,15 @@ async def handle_doctrine_escalate(
             )
             if not applied:
                 return "error"
+            # handle_owner_escalate already releases awaiting_send holds.
+            if getattr(query, "status", "open") == "open":
+                try:
+                    await gray_zone.discard_and_close(query.id)
+                except ValueError:
+                    pass
         else:
             await coordinator.transition(turn_id, "escalated")
-        await gray_zone.discard_and_close(query.id)
+            await gray_zone.discard_and_close(query.id)
         logger.info(
             "doctrine_escalated",
             extra={
@@ -489,30 +365,20 @@ async def handle_doctrine_scope_choice(
     pending: DoctrinePending | None = None,
     actor_id: int | None = None,
 ) -> str:
-    """Resolve a pending doctrine response with the chosen scope (GAP-11).
+    """Resolve a pending RULE with the chosen scope (GAP-11).
 
-    ``pending`` carries the owner's free-text doctrine when it came from the
-    "Responder consulta" flow (mode ``free_text``); for the "Usar borrador"
-    flow (mode ``draft``) the query draft is used. Returns the usual status
-    token.
+    Only ``free_text`` mode is supported. ``draft`` (Usar borrador) is rejected.
     """
-    if pending is not None and pending.mode == "free_text":
-        text = (pending.text or "").strip()
-        if not text:
-            return "error"
-        return await handle_doctrine_free_text(
-            gray_zone=gray_zone,
-            coordinator=coordinator,
-            turn_id=turn_id,
-            text=text,
-            admin=admin,
-            scope=scope,
-            actor_id=actor_id,
-        )
-    return await handle_doctrine_resolve_with_draft(
+    if pending is None or pending.mode != "free_text":
+        return "rejected"
+    text = (pending.text or "").strip()
+    if not text:
+        return "error"
+    return await handle_doctrine_free_text(
         gray_zone=gray_zone,
         coordinator=coordinator,
         turn_id=turn_id,
+        text=text,
         admin=admin,
         scope=scope,
         actor_id=actor_id,
@@ -529,9 +395,8 @@ def build_doctrine_router(
 ) -> Router:
     """Build a Router with doctrine callback handlers.
 
-    The router is included BEFORE the catch-all callback router so that
-    doctrine-specific callbacks (dr:*, dx:*, de:*) are handled first.
-    Owner auth mirrors metrics/trace: non-owner answers ``Not authorized``.
+    Handlers: ``dr:`` (write rule), ``ds:`` (scope), ``de:`` (escalate).
+    Legacy ``dx:`` answers as expired / unavailable (no Usar borrador).
     """
     router = Router(name="doctrine")
     sessions = doctrine_sessions or DoctrineSessionStore()
@@ -544,6 +409,7 @@ def build_doctrine_router(
 
     @router.callback_query(lambda c: c.data and c.data.startswith("dr:"))
     async def on_doctrine_respond(callback: CallbackQuery, **_: Any) -> None:
+        # Answer immediately (<1s UX) before any further work.
         if not _is_owner(callback):
             await callback.answer("No autorizado", show_alert=True)
             return
@@ -552,77 +418,23 @@ def build_doctrine_router(
             await callback.answer("Dato de consulta inválido", show_alert=True)
             return
 
+        await callback.answer("Escribe la regla…")
         status = await handle_doctrine_respond(turn_id=turn_id)
-        await callback.answer("Abriendo respuesta de doctrina...")
         if status == "prompted":
-            # Open a free-text session so the owner's next DM is captured.
             actor_id = callback.from_user.id if callback.from_user else None
             if actor_id is not None:
                 sessions.start(actor_id, turn_id)
             if callback.message:
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    logger.exception(
+                        "doctrine_respond_clear_keyboard_failed",
+                        extra={"turn_id": str(turn_id)},
+                    )
                 await callback.message.answer(
-                    f"Envía tu respuesta de doctrina para el turno {turn_id}.\n"
-                    "Escribe el texto que quieres que el VIP reciba; quedará "
-                    "también como regla para casos futuros."
+                    f"{DOCTRINE_RULE_PROMPT}\n\nTurno: {turn_id}"
                 )
-
-    @router.callback_query(lambda c: c.data and c.data.startswith("dx:"))
-    async def on_doctrine_resolve_with_draft(
-        callback: CallbackQuery, **_: Any
-    ) -> None:
-        if not _is_owner(callback):
-            await callback.answer("No autorizado", show_alert=True)
-            return
-        turn_id = parse_doctrine_callback(callback.data or "")
-        if turn_id is None:
-            await callback.answer("Dato de consulta inválido", show_alert=True)
-            return
-        actor_id = callback.from_user.id if callback.from_user else None
-
-        # GAP-11: ask the scope before resolving. Atencion queries have no VIP
-        # (vip_id None) — nothing to choose, resolve global immediately.
-        try:
-            query = await gray_zone.get_open_query_by_turn_id(turn_id)
-        except Exception:
-            logger.exception(
-                "doctrine_scope_lookup_error", extra={"turn_id": str(turn_id)}
-            )
-            await callback.answer(
-                _RESULT_MESSAGES["error"][0], show_alert=True
-            )
-            return
-        if query is None:
-            await callback.answer(
-                _RESULT_MESSAGES["not_found"][0], show_alert=True
-            )
-            return
-        if getattr(query, "vip_id", None) is None:
-            status = await handle_doctrine_resolve_with_draft(
-                gray_zone=gray_zone,
-                coordinator=coordinator,
-                turn_id=turn_id,
-                admin=admin,
-                scope="all",
-                actor_id=actor_id,
-            )
-            text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
-            await callback.answer(text, show_alert=alert)
-            return
-
-        if actor_id is not None:
-            sessions.start(actor_id, turn_id, mode="draft")
-        if callback.message:
-            try:
-                await callback.message.answer(
-                    DOCTRINE_SCOPE_PROMPT,
-                    reply_markup=doctrine_scope_keyboard(turn_id),
-                )
-            except Exception:
-                logger.exception(
-                    "doctrine_scope_prompt_failed",
-                    extra={"turn_id": str(turn_id)},
-                )
-        await callback.answer()
 
     @router.callback_query(lambda c: c.data and c.data.startswith("ds:"))
     async def on_doctrine_scope(callback: CallbackQuery, **_: Any) -> None:
@@ -645,11 +457,27 @@ def build_doctrine_router(
         pending = sessions.pop_pending(actor_id) if actor_id is not None else None
         if pending is None or pending.turn_id != turn_id:
             await callback.answer(
-                "La respuesta de doctrina expiró — presiona Responder consulta "
-                "de nuevo",
+                "La sesión de doctrina expiró — toca Escribir regla de nuevo",
                 show_alert=True,
             )
             return
+
+        # Immediate answer + disable buttons while regen may take >5s.
+        await callback.answer("Regenerando borrador…")
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    "⏳ Regenerando borrador con tu regla…",
+                    reply_markup=None,
+                )
+            except Exception:
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    logger.exception(
+                        "doctrine_scope_progress_ux_failed",
+                        extra={"turn_id": str(turn_id)},
+                    )
 
         status = await handle_doctrine_scope_choice(
             gray_zone=gray_zone,
@@ -660,8 +488,15 @@ def build_doctrine_router(
             pending=pending,
             actor_id=actor_id,
         )
-        text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
-        await callback.answer(text, show_alert=alert)
+        text, _alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
+        if callback.message:
+            try:
+                await callback.message.edit_text(text)
+            except Exception:
+                logger.exception(
+                    "doctrine_scope_result_edit_failed",
+                    extra={"turn_id": str(turn_id), "status": status},
+                )
 
     @router.callback_query(lambda c: c.data and c.data.startswith("de:"))
     async def on_doctrine_escalate(callback: CallbackQuery, **_: Any) -> None:
@@ -673,6 +508,7 @@ def build_doctrine_router(
             await callback.answer("Dato de consulta inválido", show_alert=True)
             return
 
+        await callback.answer()
         actor_id = callback.from_user.id if callback.from_user else None
         status = await handle_doctrine_escalate(
             gray_zone=gray_zone,
@@ -682,7 +518,23 @@ def build_doctrine_router(
             actor_id=actor_id,
         )
         text, alert = _RESULT_MESSAGES.get(status, ("Procesado", False))
-        await callback.answer(text, show_alert=alert)
+        if alert:
+            try:
+                await callback.answer(text, show_alert=True)
+            except Exception:
+                pass
+        elif callback.message:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            try:
+                await callback.message.answer(text)
+            except Exception:
+                logger.exception(
+                    "doctrine_escalate_result_notify_failed",
+                    extra={"turn_id": str(turn_id)},
+                )
 
     return router
 

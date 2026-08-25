@@ -188,24 +188,29 @@ class GrayZoneService:
 
     def policy_override_payload(self, policy: Any) -> dict[str, Any]:
         """Build Director knowledge_overrides entry from a live policy row."""
-        if hasattr(policy, "trigger_description"):
-            return policy_to_dict(policy) if hasattr(policy, "is_active") else {
-                "id": str(getattr(policy, "id", "")),
-                "trigger_description": getattr(policy, "trigger_description", ""),
-                "rule": getattr(policy, "rule", ""),
-                "scope": getattr(policy, "scope", "all"),
-                "is_active": bool(getattr(policy, "is_active", True)),
-                "vip_id": (
-                    str(policy.vip_id) if getattr(policy, "vip_id", None) else None
-                ),
-                "source_query_id": (
-                    str(policy.source_query_id)
-                    if getattr(policy, "source_query_id", None)
-                    else None
-                ),
-            }
-        return dict(policy)
-
+        if isinstance(policy, dict):
+            return dict(policy)
+        # Prefer ORM helper only when the row looks like a real Policy model.
+        if hasattr(policy, "created_at") and hasattr(policy, "valid_until"):
+            try:
+                return policy_to_dict(policy)
+            except Exception:
+                pass
+        return {
+            "id": str(getattr(policy, "id", "") or ""),
+            "trigger_description": getattr(policy, "trigger_description", "") or "",
+            "rule": getattr(policy, "rule", "") or "",
+            "scope": getattr(policy, "scope", "all") or "all",
+            "is_active": bool(getattr(policy, "is_active", True)),
+            "vip_id": (
+                str(policy.vip_id) if getattr(policy, "vip_id", None) else None
+            ),
+            "source_query_id": (
+                str(policy.source_query_id)
+                if getattr(policy, "source_query_id", None)
+                else None
+            ),
+        }
     async def mark_awaiting_send(self, query_id: UUID) -> None:
         """Move open query to awaiting_send. Does NOT unfreeze."""
         if query_id is None:
