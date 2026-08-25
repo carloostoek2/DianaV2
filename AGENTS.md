@@ -193,7 +193,13 @@ Decisor emite action = "consult_doctrine"
          → create_supervised_delivery_from_gray_zone(draft_override=borrador_regenerado)
          → GRAY_ZONE → PENDING_APPROVAL
          → query status = 'awaiting_send'  (NO descongela)
-      4. Si regen falla / vuelve consult_doctrine / borrador vacío:
+         Nota: acción = escalate por riesgo/frustración del mensaje ORIGINAL
+         (risk_high / frustracion_directa) CON borrador válido NO es fallo:
+         la regla se aplicó y el borrador regenerado va a la cola de la dueña
+         (ella aprueba/corrige/escala). Solo escalate por SAFETY del borrador
+         regenerado (safety_below_threshold) es fail-closed.
+      4. Si regen falla / vuelve consult_doctrine / borrador vacío / escalate
+         por safety del borrador regenerado:
          → desactivar la policy recién insertada; query sigue 'open'; freeze retenido;
            avisar a la dueña → el caso VUELVE a resolución de zona gris (query 'open' +
            freeze + DM de doctrina vigente: la dueña puede reintentar con otra regla,

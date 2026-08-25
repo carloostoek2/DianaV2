@@ -270,10 +270,13 @@ Decisor emite action = "consult_doctrine"
   → AdminService (orquestación):
       → persist_live_policy → fila activa en policies (sin staging_candidates)
       → Director.handle_turn(..., knowledge_overrides) force-inject de la regla
-      → Si regen ok: supervised approval con borrador REGENERADO;
-         query → 'awaiting_send' (NO descongela)
-      → Si regen falla / consult_doctrine de nuevo: desactivar policy; query sigue 'open';
-         freeze retenido; avisar → el caso VUELVE a resolución de zona gris (reintentable)
+      → Si regen ok (borrador no vacío, acción ≠ consult_doctrine): supervised
+        approval con borrador REGENERADO; query → 'awaiting_send' (NO descongela).
+        escalate por risk/frustración del mensaje ORIGINAL con borrador válido
+        NO es fallo: la regla se aplicó y el borrador va a la cola de la dueña.
+      → Si regen falla / consult_doctrine de nuevo / borrador vacío / escalate
+        por SAFETY del borrador regenerado: desactivar policy; query sigue 'open';
+        freeze retenido; avisar → el caso VUELVE a resolución de zona gris (reintentable)
   → Dueña aprueba/corrige/escala el borrador regenerado (cola normal)
   → Send exitoso → close_awaiting_send(unfreeze=True)
   → Escalate/discard → liberar freeze; conservar policy viva (salvo fallo de regen)

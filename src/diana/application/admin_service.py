@@ -1719,14 +1719,33 @@ class AdminService:
 
         draft = (getattr(decision, "draft_text", None) or "").strip()
         action = getattr(decision, "action", None)
-        # Fail-closed: consult again OR unexpected escalate OR empty draft.
-        if action in {"consult_doctrine", "escalate"} or not draft:
+        reason = getattr(decision, "reason", "") or ""
+        # Fail-closed ONLY when the rule was NOT applied or the regenerated
+        # draft is itself unsafe:
+        # - consult_doctrine again (the injected rule did not satisfy the Decider)
+        # - empty draft (regeneration produced nothing usable)
+        # - escalate by SAFETY (the regenerated draft itself is unsafe — never
+        #   enqueue a draft that failed the safety gate)
+        #
+        # Decision.action=escalate by risk/frustration of the ORIGINAL message
+        # (reason risk_high / frustracion_directa) WITH a valid draft is NOT a
+        # regen failure: the rule WAS applied and the regenerated draft goes to
+        # the owner approval queue, where the owner decides approve/correct/
+        # escalate (AGENTS §4.5 — "regen ok (borrador no vacío, acción ≠
+        # consult_doctrine)").
+        if (
+            action == "consult_doctrine"
+            or not draft
+            or (action == "escalate" and reason == "safety_below_threshold")
+        ):
             await gz.deactivate_policy(policy.id)
             try:
                 await self._notifier.notify_info(
                     "La regeneración no produjo un borrador usable "
-                    "(volvió a pedir doctrina o escaló). La regla se desactivó; "
-                    "el chat sigue congelado. Reintenta con otra regla.",
+                    "(el sistema volvió a pedir doctrina, no generó texto, "
+                    "o el borrador no pasó el control de seguridad). "
+                    "La regla se desactivó; el chat sigue congelado. "
+                    "Reintenta con otra regla.",
                     chat_id=turn.chat_id,
                 )
             except Exception:
@@ -1735,6 +1754,17 @@ class AdminService:
                     extra={"turn_id": str(turn_id)},
                 )
             return "regen_failed"
+
+        if action == "escalate":
+            logger.info(
+                "doctrine_regen_escalate_queued",
+                extra={
+                    "turn_id": str(turn_id),
+                    "query_id": str(query.id),
+                    "reason": reason,
+                    "draft_chars": len(draft),
+                },
+            )
 
         from diana.application.turn_coordinator import ChatLockTimeoutError
 

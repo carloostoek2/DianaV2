@@ -11,11 +11,14 @@ Highlights of what's new and fixed in Diana, from her early releases through the
 - **Fail-open by design**: if proposal generation fails or times out, the DM is sent without a proposal (current behavior) — the consult, the freeze and the parachute paths never degrade.
 - **Confirmed guarantee**: if regenerating with the accepted rule still returns `consult_doctrine` (the rule could not be applied), the case **returns to gray-zone resolution**: the query stays `open`, the freeze is held, and the owner can retry with another rule, with the proposal, or escalate. The rule is never auto-applied and no failed draft is sent.
 
+### 🐛 Fixes
+- **Regen no longer blocks when the Decider escalates by risk/frustration of the original message**: if the rule was applied and a valid draft was generated (action `escalate` with reason `risk_high` / `frustracion_directa`), the regenerated draft now goes to the owner approval queue instead of failing with "La regeneración no produjo un borrador usable". The safety gate remains absolute: a regenerated draft that fails the safety check (`safety_below_threshold`) is still fail-closed (rule deactivated, case returns to gray-zone resolution).
+
 ### 🔧 Improvements
 - `ExamplesRepo.list_gold_global` (read-only global gold source for proposals); neutral Mexican Spanish across all new proposal copy (AGENTS §0.6).
 
 ### ✅ Tests
-- 3078 unit tests passing (+ new `test_gray_zone_proposal_service.py`, dp: callback + keyboard + notifier + orchestrator + migration 033 + regen-returns-to-resolution coverage); gray-zone e2e green.
+- 3079 unit tests passing (+ new `test_gray_zone_proposal_service.py`, dp: callback + keyboard + notifier + orchestrator + migration 033 + regen-returns-to-resolution coverage; escalate-by-risk enqueues / escalate-by-safety fail-closed); gray-zone e2e green.
 
 ## Vector stores: contexts implemented, memory aligned, profiles real embeddings — 2026-08-21
 
