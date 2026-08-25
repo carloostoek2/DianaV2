@@ -572,6 +572,7 @@ async def test_persist_live_policy_writes_active_row_no_staging(
         draft="borrador",
     )
     policies_repo = AsyncMock()
+    policies_repo.find_active_by_source_query_id = AsyncMock(return_value=None)
     policy = SimpleNamespace(
         id=uuid4(),
         rule="Ofrecer 10% en 3+",

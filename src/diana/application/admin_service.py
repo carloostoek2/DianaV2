@@ -334,13 +334,12 @@ class AdminService:
         query does not belong to the turn, the query lacks a non-empty
         ``business_connection_id``, the draft is empty, or the turn is already
         terminal. Returns True when a supervised approval is in place — created
-        now, or already ``waiting`` (idempotent, no second approval/DM). If
-        ``send_draft_for_approval`` fails after persisting the approval, the
-        just-created approval is cancelled before the exception re-raises, so
-        callers' fallback-escalate never leaves a waiting orphan behind. If
-        the transition fails (``TurnSupersededError`` or any other error), the
-        approval just created is cancelled (only while still ``waiting``) so
-        no orphan approval is left behind.
+        now, or already ``waiting`` (idempotent, no second approval/DM). A
+        ``cancelled`` leftover is deleted so retry can recreate (unique
+        ``turn_id``). If ``send_draft_for_approval`` fails after persisting,
+        the just-created approval is cancelled before the exception re-raises.
+        If the transition fails (``TurnSupersededError`` or any other error),
+        the approval just created is cancelled (only while still ``waiting``).
         """
         turn = await self._turns.get(turn_id)
         if turn is None:
@@ -400,17 +399,36 @@ class AdminService:
                         },
                     )
                     return True
-                # Non-waiting leftover (e.g. cancelled) on a non-terminal turn:
-                # do not re-create over it (unique turn_id); let the caller
-                # escalate so the turn is never stranded in gray_zone.
-                logger.warning(
-                    "gray_zone_delivery_existing_non_waiting",
-                    extra={
-                        "turn_id": str(turn_id),
-                        "approval_status": existing.status,
-                    },
-                )
-                return False
+                if existing.status == "cancelled":
+                    # Clear unique(turn_id) so doctrine mark-fail compensate
+                    # can re-enqueue on owner retry.
+                    deleted = False
+                    if hasattr(self._approvals, "delete_for_turn"):
+                        try:
+                            deleted = await self._approvals.delete_for_turn(turn_id)
+                        except Exception:
+                            logger.exception(
+                                "gray_zone_delivery_delete_cancelled_error",
+                                extra={"turn_id": str(turn_id)},
+                            )
+                            return False
+                    if not deleted:
+                        logger.warning(
+                            "gray_zone_delivery_cancelled_not_deleted",
+                            extra={"turn_id": str(turn_id)},
+                        )
+                        return False
+                else:
+                    # Non-waiting leftover (approved/corrected/…) on a live turn:
+                    # do not re-create over it (unique turn_id).
+                    logger.warning(
+                        "gray_zone_delivery_existing_non_waiting",
+                        extra={
+                            "turn_id": str(turn_id),
+                            "approval_status": existing.status,
+                        },
+                    )
+                    return False
 
             incoming = IncomingTurn(
                 turn_id=turn_id,
@@ -435,8 +453,8 @@ class AdminService:
             except Exception:
                 # send_draft_for_approval persists the approval (waiting)
                 # BEFORE the owner DM; if the DM (or anything after persist)
-                # fails, cancel the just-created approval so the caller's
-                # fallback-escalate never leaves a waiting orphan behind.
+                # fails, cancel the just-created approval so callers never
+                # leave a waiting orphan behind.
                 await self._cancel_waiting_approval(turn_id)
                 raise
             try:
@@ -452,8 +470,7 @@ class AdminService:
                 return False
             except Exception:
                 # Any other transition failure (e.g. transient DB error) must
-                # not leave a live waiting approval that callers would then
-                # escalate over — cancel and re-raise.
+                # not leave a live waiting approval — cancel and re-raise.
                 await self._cancel_waiting_approval(turn_id)
                 raise
         logger.info(
@@ -1707,12 +1724,37 @@ class AdminService:
                 "doctrine_mark_awaiting_send_failed",
                 extra={"turn_id": str(turn_id), "query_id": str(query.id)},
             )
-            # Compensate: do not strand PENDING_APPROVAL + open query.
+            # Full compensate: cancel+delete approval, restore GRAY_ZONE, reopen
+            # query (freeze held, policy live) so owner "Reintenta" can re-enqueue.
             try:
-                await self._cancel_waiting_approval(turn_id)
+                async with self._coordinator.chat_scope(turn.chat_id):
+                    try:
+                        await self._cancel_waiting_approval(turn_id)
+                    except Exception:
+                        logger.exception(
+                            "doctrine_mark_fail_cancel_approval_error",
+                            extra={"turn_id": str(turn_id)},
+                        )
+                    if hasattr(self._approvals, "delete_for_turn"):
+                        try:
+                            await self._approvals.delete_for_turn(turn_id)
+                        except Exception:
+                            logger.exception(
+                                "doctrine_mark_fail_delete_approval_error",
+                                extra={"turn_id": str(turn_id)},
+                            )
+                    try:
+                        await self._coordinator.transition(
+                            turn_id, TurnStatus.GRAY_ZONE
+                        )
+                    except Exception:
+                        logger.exception(
+                            "doctrine_mark_fail_restore_gray_zone_error",
+                            extra={"turn_id": str(turn_id)},
+                        )
             except Exception:
                 logger.exception(
-                    "doctrine_mark_fail_cancel_approval_error",
+                    "doctrine_mark_fail_compensate_scope_error",
                     extra={"turn_id": str(turn_id)},
                 )
             try:

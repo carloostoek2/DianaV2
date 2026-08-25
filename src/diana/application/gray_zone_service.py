@@ -144,6 +144,19 @@ class GrayZoneService:
                 f"expected 'open'"
             )
 
+        # Idempotent retry: reuse active policy already written for this query.
+        if hasattr(self._policies, "find_active_by_source_query_id"):
+            existing = await self._policies.find_active_by_source_query_id(query_id)
+            if existing is not None:
+                logger.info(
+                    "gray_zone_live_policy_reused",
+                    extra={
+                        "query_id": str(query_id),
+                        "policy_id": str(existing.id),
+                    },
+                )
+                return existing
+
         trigger = _trigger_from_rule(rule, getattr(query, "question", "") or "")
         embedding: list[float] | None = None
         if self._embedder is not None:

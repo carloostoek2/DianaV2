@@ -162,6 +162,12 @@ class _MemPolicies:
         row.is_active = False
         return True
 
+    async def find_active_by_source_query_id(self, source_query_id):
+        for row in reversed(self.inserts):
+            if row.source_query_id == source_query_id and row.is_active:
+                return row
+        return None
+
 
 def _memory_gray_zone(vip_store) -> GrayZoneService:
     return GrayZoneService(

@@ -507,6 +507,14 @@ class PendingApprovalStore(Protocol):
         """Approvals still in flight: status in {waiting, claimed}."""
         ...
 
+    async def delete_for_turn(self, turn_id: UUID) -> bool:
+        """Remove the approval row for ``turn_id`` (e.g. cancelled leftover).
+
+        Returns True when a row was deleted. Needed so doctrine mark-fail
+        compensate can re-enqueue on retry despite unique(turn_id).
+        """
+        ...
+
 
 @runtime_checkable
 class PendingDeliveryStore(Protocol):

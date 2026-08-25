@@ -117,6 +117,7 @@ async def test_persist_live_policy_inserts_active_policy_without_staging() -> No
         source_query_id=query.id,
     )
     policies_repo.insert.return_value = policy_row
+    policies_repo.find_active_by_source_query_id = AsyncMock(return_value=None)
 
     service = GrayZoneService(
         query_repo=query_repo,
@@ -758,8 +759,9 @@ async def test_chat_lock_timeout_reopens_notifies_keeps_policy() -> None:
 
 @pytest.mark.asyncio
 async def test_mark_awaiting_send_fail_cancels_approval_keeps_open() -> None:
-    """mark_awaiting_send fail after create → cancel waiting approval; query open; policy live."""
+    """mark_awaiting_send fail after create → cancel approval; restore GRAY_ZONE; policy live."""
     from diana.application.admin_service import AdminService
+    from diana.cognitive.models import TurnStatus
 
     query = _fake_query()
     gray_zone, _policy = _policy_and_gz(query)
@@ -774,6 +776,15 @@ async def test_mark_awaiting_send_fail_cancels_approval_keeps_open() -> None:
     admin = _stub_admin_for_resolve(
         director=director, gray_zone=gray_zone, query=query, create_return=True
     )
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _scope(*_a, **_k):
+        yield
+
+    admin._coordinator = AsyncMock()
+    admin._coordinator.chat_scope = _scope
+    admin._approvals.delete_for_turn = AsyncMock()
 
     status = await AdminService.resolve_doctrine_rule_and_enqueue(
         admin,
@@ -787,9 +798,168 @@ async def test_mark_awaiting_send_fail_cancels_approval_keeps_open() -> None:
 
     assert status == "error"
     admin._cancel_waiting_approval.assert_awaited_once_with(query.turn_id)
+    admin._approvals.delete_for_turn.assert_awaited_once_with(query.turn_id)
+    admin._coordinator.transition.assert_awaited()
+    transition_args = admin._coordinator.transition.await_args
+    assert transition_args.args[0] == query.turn_id
+    assert transition_args.args[1] in {
+        TurnStatus.GRAY_ZONE,
+        "gray_zone",
+        TurnStatus.GRAY_ZONE.value,
+    }
+    gray_zone.reopen_query.assert_awaited()
     gray_zone.deactivate_policy.assert_not_awaited()
     admin.handle_owner_escalate.assert_not_awaited()
     admin._notifier.notify_info.assert_awaited()
+
+
+
+@pytest.mark.asyncio
+async def test_retry_after_mark_awaiting_send_fail_reenqueues() -> None:
+    """After mark-fail compensate, owner retry must create a new waiting approval.
+
+    Turn returns to gray_zone, cancelled approval row is cleared, query stays
+    open / freeze held, and a second resolve does not leave a stranded
+    PENDING_APPROVAL with a non-recreatable cancelled unique row. Policy count
+    stays at one (idempotent live persist by source_query_id).
+    """
+    from diana.application.admin_service import AdminService
+    from diana.application.approval_ui import ApprovalDraftVoider
+    from diana.application.memory import (
+        FakeOwnerNotifier,
+        InMemoryEscalationStore,
+        InMemoryPendingApprovalStore,
+        InMemoryPendingDeliveryStore,
+        InMemoryTraceReaderWriter,
+        InMemoryTurnStore,
+    )
+    from diana.application.turn_coordinator import TurnCoordinator
+    from diana.behavior.engine import BehaviorEngine
+    from diana.behavior.fake import (
+        AlwaysLiveTurnStatusReader,
+        FakeTelegramActuator,
+        FixedDelayPolicy,
+        ImmediateClock,
+    )
+    from tests.unit.application.test_owner_loop_outcome import _memory_gray_zone
+
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    vips = InMemoryVipStore()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
+    )
+    coordinator = TurnCoordinator(
+        turns,
+        approvals,
+        behavior,  # type: ignore[arg-type]
+        approval_ui=ApprovalDraftVoider(notifier),
+    )
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="Borrador regenerado v1",
+    )
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,  # type: ignore[arg-type]
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=999001,
+        delivery_mode="supervised",
+        vip_store=vips,  # type: ignore[arg-type]
+        director=director,
+    )
+    gz = _memory_gray_zone(vips)
+    admin.set_gray_zone(gz)
+
+    vip = await vips.add(42101, display_name="MarkFailRetryVIP")
+    turn = await coordinator.begin_turn(
+        chat_id=42, trigger_message_id=7, vip_id=vip.id
+    )
+    await coordinator.transition(turn.id, "gray_zone")
+    await gz.create_query(
+        vip_id=vip.id,
+        turn_id=turn.id,
+        question="hay descuento?",
+        draft="borrador original",
+        chat_id=42,
+        business_connection_id="bc-1",
+    )
+
+    # First resolve: create succeeds, mark_awaiting_send fails once.
+    real_mark = gz.mark_awaiting_send
+    calls = {"n": 0}
+
+    async def mark_once_then_ok(query_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("db down on mark")
+        return await real_mark(query_id)
+
+    gz.mark_awaiting_send = mark_once_then_ok  # type: ignore[method-assign]
+
+    status1 = await admin.resolve_doctrine_rule_and_enqueue(
+        turn_id=turn.id,
+        rule_text="Ofrecer 10% en 3+",
+        scope="vip",
+        vip_id=vip.id,
+        gray_zone=gz,
+        actor_id=999001,
+    )
+    assert status1 == "error"
+    persisted = await turns.get(turn.id)
+    assert persisted is not None
+    assert persisted.status == "gray_zone"
+    assert await approvals.get_by_turn(turn.id) is None
+    assert await gz.get_open_query_by_turn_id(turn.id) is not None
+    frozen = await vips.get_by_id(vip.id)
+    assert frozen is not None and frozen.frozen_until is not None
+    assert len(gz._policies.inserts) == 1
+    policy_id = gz._policies.inserts[0].id
+    assert gz._policies.rows[policy_id].is_active is True
+
+    # Retry: must enqueue waiting approval and mark awaiting_send.
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="Borrador regenerado v2",
+    )
+    status2 = await admin.resolve_doctrine_rule_and_enqueue(
+        turn_id=turn.id,
+        rule_text="Ofrecer 10% en 3+",
+        scope="vip",
+        vip_id=vip.id,
+        gray_zone=gz,
+        actor_id=999001,
+    )
+    assert status2 == "resolved"
+    approval = await approvals.get_by_turn(turn.id)
+    assert approval is not None
+    assert approval.status == "waiting"
+    assert approval.draft_text == "Borrador regenerado v2"
+    hold = await gz.get_awaiting_send_by_turn_id(turn.id)
+    assert hold is not None
+    # Idempotent policy: still one active live row for this query.
+    assert len(gz._policies.inserts) == 1
+    assert gz._policies.rows[policy_id].is_active is True
+    after = await turns.get(turn.id)
+    assert after is not None and after.status == "pending_approval"
 
 
 @pytest.mark.asyncio

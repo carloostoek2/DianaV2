@@ -265,6 +265,12 @@ class InMemoryPendingApprovalStore:
             if r.status in _OPEN_APPROVAL_STATUSES
         ]
 
+    async def delete_for_turn(self, turn_id: UUID) -> bool:
+        if turn_id not in self._by_turn:
+            return False
+        del self._by_turn[turn_id]
+        return True
+
 
 class InMemoryPendingDeliveryStore:
     """Dict-backed PendingDeliveryStore with monotonic status transitions."""

@@ -132,5 +132,22 @@ class PoliciesRepo:
             await session.commit()
             return result.rowcount > 0
 
+    async def find_active_by_source_query_id(
+        self, source_query_id: UUID
+    ) -> Policy | None:
+        """Return the newest active policy for a gray-zone query, if any."""
+        async with self._sf() as session:
+            stmt = (
+                select(Policy)
+                .where(
+                    Policy.source_query_id == source_query_id,
+                    Policy.is_active.is_(True),
+                )
+                .order_by(Policy.created_at.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            return result.scalars().first()
+
 
 __all__ = ["PoliciesRepo", "policy_to_dict", "vip_id_visibility_clause"]

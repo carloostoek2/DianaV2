@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.memory import OPEN_APPROVAL_STATUSES
@@ -190,6 +190,15 @@ class SqlPendingApprovalStore:
                 trigger = await self._trigger_for(session, row.turn_id)
                 out.append(approval_orm_to_record(row, trigger_message_id=trigger))
             return out
+
+    async def delete_for_turn(self, turn_id: UUID) -> bool:
+        """Delete the approval row for ``turn_id`` (clears unique slot for retry)."""
+        async with self._sf() as session:
+            result = await session.execute(
+                delete(PendingApproval).where(PendingApproval.turn_id == turn_id)
+            )
+            await session.commit()
+            return (result.rowcount or 0) > 0
 
 
 __all__ = ["SqlPendingApprovalStore", "approval_orm_to_record"]

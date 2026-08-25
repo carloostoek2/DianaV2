@@ -1545,10 +1545,10 @@ async def test_gray_zone_supervised_delivery_notify_failure_cancels_approval(
 async def test_gray_zone_supervised_delivery_existing_non_waiting_approval(
     admin_graph: dict,
 ) -> None:
-    """Existing approval not 'waiting' (e.g. cancelled) → False, no re-create.
+    """Cancelled leftover is deleted and recreated; other non-waiting stays blocked.
 
-    A unique constraint on pending_approvals.turn_id forbids a second row, so
-    the method declines and the caller escalates instead of stranding the turn.
+    Doctrine mark-fail compensate needs retry to re-enqueue despite unique(turn_id).
+    Approved/corrected leftovers still decline recreate.
     """
     g = admin_graph
     turn_id = uuid4()
@@ -1562,14 +1562,25 @@ async def test_gray_zone_supervised_delivery_existing_non_waiting_approval(
     )
     assert first is True
     await g["approvals"].mark_status(turn_id, "cancelled")
+    # Turn may already be pending_approval from first create — reset for recreate.
+    await g["turns"].transition(turn_id, "gray_zone")
 
     second = await g["admin"].create_supervised_delivery_from_gray_zone(
         turn_id, query
     )
-    assert second is False
+    assert second is True
     approval = await g["approvals"].get_by_turn(turn_id)
     assert approval is not None
-    assert approval.status == "cancelled"  # untouched
+    assert approval.status == "waiting"
+
+    await g["approvals"].mark_status(turn_id, "approved")
+    await g["turns"].transition(turn_id, "gray_zone")
+    third = await g["admin"].create_supervised_delivery_from_gray_zone(
+        turn_id, query
+    )
+    assert third is False
+    leftover = await g["approvals"].get_by_turn(turn_id)
+    assert leftover is not None and leftover.status == "approved"
 
 
 @pytest.mark.asyncio
