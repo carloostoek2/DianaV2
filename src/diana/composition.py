@@ -557,6 +557,7 @@ def build_app(
             examples_repo=examples_repo,
             policies_repo=policies_repo,
             sandbox=sandbox,
+            embedder=embedding_svc,
         )
     else:
         staging = None

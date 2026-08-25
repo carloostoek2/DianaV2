@@ -30,7 +30,9 @@ class AtencionPromoteBlocked(ValueError):
 class StagingService:
     """Captures corrections and promotes them to examples or policies.
 
-    Injectable deps: StagingCandidateRepo, ExamplesRepo, PoliciesRepo.
+    Injectable deps: StagingCandidateRepo, ExamplesRepo, PoliciesRepo,
+    optional embedder (computes the retrieval fingerprint of promoted rows;
+    same pattern as GrayZoneService.persist_live_policy).
     """
 
     def __init__(
@@ -40,11 +42,41 @@ class StagingService:
         examples_repo: ExamplesRepo,
         policies_repo: PoliciesRepo,
         sandbox: object | None = None,
+        embedder: object | None = None,
     ) -> None:
         self._staging = staging_repo
         self._examples = examples_repo
         self._policies = policies_repo
         self._sandbox = sandbox
+        self._embedder = embedder
+
+    async def _embed(self, text: str) -> list[float] | None:
+        """Compute the retrieval fingerprint for ``text``, or None.
+
+        None when no embedder is configured or the embed call fails: the row
+        is still persisted (fail-open, mirroring GrayZoneService) but logged
+        so a silent zero-embedding write stays observable.
+        """
+        if self._embedder is None or not text:
+            return None
+        try:
+            return await self._embedder.embed(text)
+        except Exception:
+            logger.exception(
+                "staging_embed_failed",
+                extra={"text_len": len(text)},
+            )
+            return None
+
+    def _anchor_text(self, payload: dict) -> str:
+        """Pick the text that best represents the example for retrieval."""
+        context = payload.get("context") or {}
+        return (
+            context.get("turn_text")
+            or payload.get("corrected_text")
+            or payload.get("original_draft")
+            or ""
+        )
 
     async def save_correction(
         self,
@@ -133,6 +165,7 @@ class StagingService:
             corrected_text=payload.get("corrected_text", ""),
             context=payload.get("context", {}),
             is_counter_example=False,
+            embedding=await self._embed(self._anchor_text(payload)),
         )
         await self._staging.update_status(candidate_id, "promoted")
         logger.info(
@@ -185,6 +218,7 @@ class StagingService:
             context=payload.get("context", {}),
             is_counter_example=True,
             vip_id=vip_id,
+            embedding=await self._embed(self._anchor_text(payload)),
         )
         await self._staging.update_status(candidate_id, "promoted")
         logger.info(
@@ -231,6 +265,9 @@ class StagingService:
             is_counter_example=False,
             quality="gold",
             vip_id=vip_id,
+            embedding=await self._embed(
+                turn_text or corrected_text or draft_text
+            ),
         )
 
     async def promote_to_policy(
@@ -261,6 +298,7 @@ class StagingService:
             "scope": scope,
             "is_active": True,
             "source_query_id": candidate.payload.get("query_id"),
+            "embedding": await self._embed(f"{trigger}\n{rule}"),
         }
         if vip_id is not None:
             insert_kwargs["vip_id"] = vip_id

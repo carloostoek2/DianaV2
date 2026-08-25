@@ -68,11 +68,21 @@ def repos() -> dict[str, AsyncMock]:
 
 
 @pytest.fixture
-def service(repos: dict[str, AsyncMock]) -> StagingService:
+def embedder() -> AsyncMock:
+    emb = AsyncMock()
+    emb.embed.return_value = [0.1] * 384
+    return emb
+
+
+@pytest.fixture
+def service(
+    repos: dict[str, AsyncMock], embedder: AsyncMock
+) -> StagingService:
     return StagingService(
         staging_repo=repos["staging"],
         examples_repo=repos["examples"],
         policies_repo=repos["policies"],
+        embedder=embedder,
     )
 
 
@@ -155,9 +165,89 @@ async def test_promote_to_example_happy_path(
         corrected_text="new text",
         context=payload["context"],
         is_counter_example=False,
+        embedding=[0.1] * 384,
     )
     repos["staging"].update_status.assert_awaited_once_with(candidate_id, "promoted")
     assert result is fake_example
+
+
+@pytest.mark.asyncio
+async def test_promote_to_example_embeds_anchor_text(
+    service: StagingService,
+    repos: dict[str, AsyncMock],
+    embedder: AsyncMock,
+) -> None:
+    """Promoted examples carry the retrieval fingerprint of the VIP turn."""
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id,
+        payload={
+            "original_draft": "old draft",
+            "corrected_text": "new text",
+            "context": {"turn_text": "VIP says hi"},
+        },
+    )
+    repos["examples"].insert.return_value = _fake_example_row()
+
+    await service.promote_to_example(candidate_id=candidate_id)
+
+    embedder.embed.assert_awaited_once_with("VIP says hi")
+
+
+@pytest.mark.asyncio
+async def test_promote_embed_failure_is_fail_open(
+    service: StagingService,
+    repos: dict[str, AsyncMock],
+    embedder: AsyncMock,
+) -> None:
+    """Embedding hiccup must not block the promotion (mirrors gray zone)."""
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id,
+        payload={
+            "original_draft": "old draft",
+            "corrected_text": "new text",
+            "context": {"turn_text": "VIP says hi"},
+        },
+    )
+    fake_example = _fake_example_row()
+    repos["examples"].insert.return_value = fake_example
+    embedder.embed.side_effect = RuntimeError("model hiccup")
+
+    result = await service.promote_to_example(candidate_id=candidate_id)
+
+    assert result is fake_example
+    kwargs = repos["examples"].insert.await_args.kwargs
+    assert kwargs["embedding"] is None
+    repos["staging"].update_status.assert_awaited_once_with(candidate_id, "promoted")
+
+
+@pytest.mark.asyncio
+async def test_promote_without_embedder_skips_embedding(
+    repos: dict[str, AsyncMock],
+) -> None:
+    """No embedder configured → insert proceeds with embedding=None (zeros)."""
+    service = StagingService(
+        staging_repo=repos["staging"],
+        examples_repo=repos["examples"],
+        policies_repo=repos["policies"],
+    )
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id,
+        payload={
+            "original_draft": "old draft",
+            "corrected_text": "new text",
+            "context": {"turn_text": "VIP says hi"},
+        },
+    )
+    repos["examples"].insert.return_value = _fake_example_row()
+
+    result = await service.promote_to_example(candidate_id=candidate_id)
+
+    assert result is not None
+    kwargs = repos["examples"].insert.await_args.kwargs
+    assert kwargs["embedding"] is None
 
 
 @pytest.mark.asyncio
@@ -264,6 +354,7 @@ async def test_promote_to_policy_happy_path(
         scope="wholesale",
         is_active=True,
         source_query_id=str(query_id),
+        embedding=[0.1] * 384,
     )
     repos["staging"].update_status.assert_awaited_once_with(candidate_id, "promoted")
 
@@ -275,6 +366,28 @@ async def test_promote_to_policy_happy_path(
     assert result.rule == "test rule"
     assert result.scope == "wholesale"
     assert result.source_query_id == query_id
+
+
+@pytest.mark.asyncio
+async def test_promote_to_policy_embeds_trigger_and_rule(
+    service: StagingService,
+    repos: dict[str, AsyncMock],
+    embedder: AsyncMock,
+) -> None:
+    """Promoted policies carry the fingerprint of trigger+rule (like gray zone)."""
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload={}
+    )
+    repos["policies"].insert.return_value = _fake_orm_policy()
+
+    await service.promote_to_policy(
+        candidate_id=candidate_id,
+        trigger="test trigger",
+        rule="test rule",
+    )
+
+    embedder.embed.assert_awaited_once_with("test trigger\ntest rule")
 
 
 @pytest.mark.asyncio
@@ -350,6 +463,7 @@ async def test_promote_to_counter_example_happy_path(
         context=payload["context"],
         is_counter_example=True,
         vip_id=vip_id,
+        embedding=[0.1] * 384,
     )
     repos["staging"].update_status.assert_awaited_once_with(candidate_id, "promoted")
     assert result is fake_example
@@ -452,6 +566,7 @@ async def test_insert_gold_example_happy_path(
         is_counter_example=False,
         quality="gold",
         vip_id=vip_id,
+        embedding=[0.1] * 384,
     )
     assert result is fake_example
 
