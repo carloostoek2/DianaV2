@@ -317,15 +317,17 @@ class AdminService:
     ) -> bool:
         """Create a supervised PendingApproval from a resolved/expired gray zone draft.
 
-        ``draft_override`` replaces the persisted query draft when the owner
-        provided free-text doctrine (dr: flow) that must be the delivered text.
+        ``draft_override`` is the **regenerated** draft after doctrine
+        rule→regen (force-inject). Never pass the raw owner rule as the VIP
+        draft. When omitted, the persisted query draft is used (expiration /
+        legacy timeout path).
 
         Synthesizes an ``IncomingTurn`` + minimal ``Decision`` from the turn
         record and the persisted gray zone query, reuses
         ``send_draft_for_approval`` to create the approval record and notify
         the owner, then transitions the turn ``GRAY_ZONE`` → ``PENDING_APPROVAL``.
         The approval creation + transition run under the per-chat lock
-        (``coordinator.chat_scope``) so they serialize with the dx: handler,
+        (``coordinator.chat_scope``) so they serialize with doctrine resolve,
         the expiry job and owner callbacks.
 
         Fail-soft: returns False (with a log) when the turn is missing, the
@@ -549,7 +551,7 @@ class AdminService:
         reason = self._sandbox_reason(turn.chat_id, decision.reason)
 
         reply_spec: dict = {
-            "actions": ["respond_doctrine", "resolve_with_draft", "escalate_doctrine"],
+            "actions": ["respond_doctrine", "escalate_doctrine"],
             "turn_id": str(turn_id),
         }
         if query_id is not None:
@@ -1440,12 +1442,19 @@ class AdminService:
         return frozen > now
 
     async def _has_doctrine_awaiting_send(self, turn_id: UUID) -> bool:
-        """True when a gray-zone query for this turn is in awaiting_send."""
+        """True when a doctrine hold (open|awaiting_send) exists for this turn.
+
+        Name kept for call sites; lookup uses hold (open|awaiting_send) so a
+        mark_awaiting_send race cannot strand approve behind vip_frozen.
+        """
         gz = self._gray_zone
         if gz is None:
             return False
         try:
-            row = await gz.get_awaiting_send_by_turn_id(turn_id)
+            if hasattr(gz, "get_hold_query_by_turn_id"):
+                row = await gz.get_hold_query_by_turn_id(turn_id)
+            else:
+                row = await gz.get_awaiting_send_by_turn_id(turn_id)
         except Exception:
             logger.exception(
                 "doctrine_awaiting_send_lookup_error",
@@ -1455,12 +1464,15 @@ class AdminService:
         return row is not None
 
     async def _close_doctrine_hold_after_send(self, turn_id: UUID) -> None:
-        """Best-effort: resolve awaiting_send + unfreeze after successful deliver."""
+        """Best-effort: close open|awaiting_send hold + unfreeze after successful deliver."""
         gz = self._gray_zone
         if gz is None:
             return
         try:
-            row = await gz.get_awaiting_send_by_turn_id(turn_id)
+            if hasattr(gz, "get_hold_query_by_turn_id"):
+                row = await gz.get_hold_query_by_turn_id(turn_id)
+            else:
+                row = await gz.get_awaiting_send_by_turn_id(turn_id)
             if row is None:
                 return
             await gz.close_awaiting_send(row.id, unfreeze=True)
@@ -1507,8 +1519,10 @@ class AdminService:
         """Persist live RULE → force-regen → supervised approval; freeze until send.
 
         Returns status token: ``resolved``, ``regen_failed``, ``error``,
-        ``not_found``, or ``escalated``.
+        or ``not_found``. Approval-create / lock / mark failures return
+        ``error`` (freeze held, policy live, retryable) — never auto-escalate.
         """
+        del actor_id  # reserved for auth/audit; resolve no longer auto-escalates
         gz = gray_zone if gray_zone is not None else self._gray_zone
         if gz is None:
             logger.error(
@@ -1609,12 +1623,13 @@ class AdminService:
 
         draft = (getattr(decision, "draft_text", None) or "").strip()
         action = getattr(decision, "action", None)
-        if action == "consult_doctrine" or not draft:
+        # Fail-closed: consult again OR unexpected escalate OR empty draft.
+        if action in {"consult_doctrine", "escalate"} or not draft:
             await gz.deactivate_policy(policy.id)
             try:
                 await self._notifier.notify_info(
                     "La regeneración no produjo un borrador usable "
-                    "(o volvió a pedir doctrina). La regla se desactivó; "
+                    "(volvió a pedir doctrina o escaló). La regla se desactivó; "
                     "el chat sigue congelado. Reintenta con otra regla.",
                     chat_id=turn.chat_id,
                 )
@@ -1643,6 +1658,17 @@ class AdminService:
                 "doctrine_resolve_delivery_lock_timeout",
                 extra={"turn_id": str(turn_id), "query_id": str(query.id)},
             )
+            try:
+                await self._notifier.notify_info(
+                    "No pude encolar el borrador regenerado (el chat está ocupado). "
+                    "El chat sigue congelado; la regla quedó activa. Reintenta.",
+                    chat_id=turn.chat_id,
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_resolve_lock_timeout_notify_error",
+                    extra={"turn_id": str(turn_id)},
+                )
             return "error"
         except Exception:
             logger.exception(
@@ -1652,38 +1678,27 @@ class AdminService:
             created = False
 
         if not created:
+            # Approval-create fail: keep freeze, keep live policy, reopen if
+            # needed, notify — never auto-escalate / unfreeze (AGENTS §4.5).
             try:
-                if actor_id is not None:
-                    applied = await self.handle_owner_escalate(
-                        turn_id, actor_id=actor_id
-                    )
-                    if not applied:
-                        try:
-                            await gz.reopen_query(query.id)
-                        except Exception:
-                            logger.exception(
-                                "doctrine_resolve_reopen_error",
-                                extra={
-                                    "turn_id": str(turn_id),
-                                    "query_id": str(query.id),
-                                },
-                            )
-                        return "error"
-                    return "escalated"
+                await gz.reopen_query(query.id)
             except Exception:
                 logger.exception(
-                    "doctrine_resolve_escalate_fallback_error",
+                    "doctrine_resolve_reopen_error",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+            try:
+                await self._notifier.notify_info(
+                    "No pude encolar el borrador regenerado. "
+                    "El chat sigue congelado; la regla quedó activa. Reintenta.",
+                    chat_id=turn.chat_id,
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_resolve_create_fail_notify_error",
                     extra={"turn_id": str(turn_id)},
                 )
-                try:
-                    await gz.reopen_query(query.id)
-                except Exception:
-                    logger.exception(
-                        "doctrine_resolve_reopen_error",
-                        extra={"turn_id": str(turn_id), "query_id": str(query.id)},
-                    )
-                return "error"
-            return "escalated"
+            return "error"
 
         try:
             await gz.mark_awaiting_send(query.id)
@@ -1692,6 +1707,33 @@ class AdminService:
                 "doctrine_mark_awaiting_send_failed",
                 extra={"turn_id": str(turn_id), "query_id": str(query.id)},
             )
+            # Compensate: do not strand PENDING_APPROVAL + open query.
+            try:
+                await self._cancel_waiting_approval(turn_id)
+            except Exception:
+                logger.exception(
+                    "doctrine_mark_fail_cancel_approval_error",
+                    extra={"turn_id": str(turn_id)},
+                )
+            try:
+                await gz.reopen_query(query.id)
+            except Exception:
+                logger.exception(
+                    "doctrine_mark_fail_reopen_error",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+            try:
+                await self._notifier.notify_info(
+                    "Encolé el borrador pero no pude retener el congelamiento. "
+                    "Cancelé la aprobación; el chat sigue congelado y la regla "
+                    "sigue activa. Reintenta.",
+                    chat_id=turn.chat_id,
+                )
+            except Exception:
+                logger.exception(
+                    "doctrine_mark_fail_notify_error",
+                    extra={"turn_id": str(turn_id)},
+                )
             return "error"
 
         logger.info(

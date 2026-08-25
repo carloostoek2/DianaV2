@@ -24,13 +24,20 @@ class _FakeGrayZoneView:
     """Minimal structural match for GrayZoneQueryView used in tests."""
 
     def __init__(
-        self, *, turn_id, question="hola", draft="borrador", freeze_until=None
+        self,
+        *,
+        turn_id,
+        question="hola",
+        draft="borrador",
+        freeze_until=None,
+        status: str = "open",
     ):
         self.id = uuid4()
         self.turn_id = turn_id
         self.question = question
         self.draft = draft
         self.freeze_until = freeze_until
+        self.status = status
 
 
 class _FakeGrayZone:
@@ -442,6 +449,34 @@ async def test_atencion_frozen_chat_drops_with_general_mode() -> None:
     assert payload.turn_id == query.turn_id
     assert payload.chat_id == 42
     assert payload.reason == "recordatorio_zona_gris"
+
+
+@pytest.mark.asyncio
+async def test_atencion_awaiting_send_hold_still_freezes() -> None:
+    """Doctrine awaiting_send (post rule+regen) still freezes Atención until send."""
+    vips = InMemoryVipStore()
+    query = _FakeGrayZoneView(
+        turn_id=uuid4(),
+        freeze_until=_future_freeze(),
+        status="awaiting_send",
+    )
+    gray_zone = _FakeGrayZone(chat_query=query)
+    notifier = AsyncMock()
+    notifier.notify_doctrine = AsyncMock(return_value=42)
+
+    mw = FreezeCheckMiddleware(
+        vips=vips,
+        gray_zone=gray_zone,
+        notifier=notifier,
+        general_mode_enabled=True,
+    )
+    handler = AsyncMock(return_value="next")
+    result = await mw(handler, _atencion_msg(1415), {})
+
+    assert result is None
+    handler.assert_not_awaited()
+    assert query.status == "awaiting_send"
+    notifier.notify_doctrine.assert_awaited_once()
 
 
 @pytest.mark.asyncio

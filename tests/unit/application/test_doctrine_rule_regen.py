@@ -210,13 +210,8 @@ async def test_deactivate_policy_helper_sets_inactive() -> None:
         policies_repo=policies_repo,
     )
     policy_id = uuid4()
-    # Prefer service helper if present; else PoliciesRepo.deactivate directly.
-    if hasattr(service, "deactivate_policy"):
-        await service.deactivate_policy(policy_id)
-        policies_repo.deactivate.assert_awaited_once_with(policy_id)
-    else:
-        await policies_repo.deactivate(policy_id)
-        policies_repo.deactivate.assert_awaited_once_with(policy_id)
+    await service.deactivate_policy(policy_id)
+    policies_repo.deactivate.assert_awaited_once_with(policy_id)
 
 
 # --- Director force-inject -------------------------------------------------
@@ -335,7 +330,7 @@ async def test_resolve_doctrine_rule_passes_knowledge_overrides_and_regen_draft(
         actor_id=999001,
     )
 
-    assert status in {"resolved", "enqueued", "awaiting_send", "ok"}
+    assert status == "resolved"
     gray_zone.persist_live_policy.assert_awaited()
     director.handle_turn.assert_awaited()
     call_kwargs = director.handle_turn.await_args.kwargs
@@ -414,12 +409,522 @@ async def test_regen_fail_deactivates_policy_and_keeps_freeze() -> None:
 
 
 @pytest.mark.asyncio
-async def test_owner_approve_skips_vip_frozen_when_awaiting_send() -> None:
-    """Approve deliver must not abort with vip_frozen while doctrine hold is awaiting_send."""
+async def test_regen_empty_draft_deactivates_policy() -> None:
+    """Empty regenerated draft is fail-closed: deactivate policy, no approval."""
     from diana.application.admin_service import AdminService
 
-    assert hasattr(AdminService, "resolve_doctrine_rule_and_enqueue")
-    # Helper used by the deliver gate (name flexible but must exist).
-    assert hasattr(AdminService, "_has_doctrine_awaiting_send") or hasattr(
-        AdminService, "_doctrine_hold_allows_deliver"
+    gray_zone = AsyncMock()
+    query = _fake_query()
+    gray_zone.get_open_query_by_turn_id.return_value = query
+    policy = SimpleNamespace(
+        id=uuid4(),
+        rule="regla",
+        is_active=True,
+        trigger_description="q",
+        scope="all",
     )
+    gray_zone.persist_live_policy.return_value = policy
+    gray_zone.deactivate_policy = AsyncMock()
+    gray_zone.policy_override_payload = lambda p: {
+        "rule": "regla",
+        "trigger_description": "q",
+        "scope": "all",
+        "is_active": True,
+    }
+
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="   ",
+    )
+
+    admin = object.__new__(AdminService)
+    admin._director = director  # type: ignore[attr-defined]
+    admin._gray_zone = gray_zone  # type: ignore[attr-defined]
+    admin._notifier = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns.get.return_value = SimpleNamespace(
+        id=query.turn_id,
+        chat_id=42,
+        vip_id=None,
+        trigger_message_id=7,
+        channel_type="vip",
+        status="gray_zone",
+    )
+    admin.create_supervised_delivery_from_gray_zone = AsyncMock()
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text="regla",
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=999001,
+    )
+
+    assert status == "regen_failed"
+    gray_zone.deactivate_policy.assert_awaited()
+    admin.create_supervised_delivery_from_gray_zone.assert_not_awaited()
+    gray_zone.mark_awaiting_send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_approve_skips_vip_frozen_when_awaiting_send() -> None:
+    """Frozen VIP + awaiting_send hold → approve delivers and unfreezes (not vip_frozen)."""
+    from diana.application.admin_service import AdminService
+    from diana.application.approval_ui import ApprovalDraftVoider
+    from diana.application.memory import (
+        FakeOwnerNotifier,
+        InMemoryEscalationStore,
+        InMemoryPendingApprovalStore,
+        InMemoryPendingDeliveryStore,
+        InMemoryTraceReaderWriter,
+        InMemoryTurnStore,
+    )
+    from diana.application.turn_coordinator import TurnCoordinator
+    from diana.behavior.engine import BehaviorEngine
+    from diana.behavior.fake import (
+        AlwaysLiveTurnStatusReader,
+        FakeTelegramActuator,
+        FixedDelayPolicy,
+        ImmediateClock,
+    )
+    from tests.unit.application.test_owner_loop_outcome import _memory_gray_zone
+
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    vips = InMemoryVipStore()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
+    )
+    coordinator = TurnCoordinator(
+        turns,
+        approvals,
+        behavior,  # type: ignore[arg-type]
+        approval_ui=ApprovalDraftVoider(notifier),
+    )
+    regen_draft = "Claro, con 3 piezas te hago el 10%"
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text=regen_draft,
+    )
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,  # type: ignore[arg-type]
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=999001,
+        delivery_mode="supervised",
+        vip_store=vips,  # type: ignore[arg-type]
+        director=director,
+    )
+    gz = _memory_gray_zone(vips)
+    admin.set_gray_zone(gz)
+
+    vip = await vips.add(42099, display_name="FrozenDoctrineVIP")
+    turn = await coordinator.begin_turn(
+        chat_id=42, trigger_message_id=7, vip_id=vip.id
+    )
+    await coordinator.transition(turn.id, "gray_zone")
+    await gz.create_query(
+        vip_id=vip.id,
+        turn_id=turn.id,
+        question="hay descuento por volumen?",
+        draft="borrador original",
+        chat_id=42,
+        business_connection_id="bc-1",
+    )
+    frozen_before = await vips.get_by_id(vip.id)
+    assert frozen_before is not None and frozen_before.frozen_until is not None
+
+    status = await admin.resolve_doctrine_rule_and_enqueue(
+        turn_id=turn.id,
+        rule_text="Ofrecer 10% si piden 3 o más",
+        scope="vip",
+        vip_id=vip.id,
+        gray_zone=gz,
+        actor_id=999001,
+    )
+    assert status == "resolved"
+    hold = await gz.get_awaiting_send_by_turn_id(turn.id)
+    assert hold is not None
+    still_frozen = await vips.get_by_id(vip.id)
+    assert still_frozen is not None and still_frozen.frozen_until is not None
+
+    result = await admin.handle_approve(turn.id, actor_id=999001)
+
+    assert result is not None
+    assert result.success is True
+    assert result.error != "vip_frozen"
+    assert actuator.send_count() >= 1
+    after = await vips.get_by_id(vip.id)
+    assert after is not None and after.frozen_until is None
+    assert await gz.get_awaiting_send_by_turn_id(turn.id) is None
+    persisted = await turns.get(turn.id)
+    assert persisted is not None and persisted.status == "delivered"
+
+
+
+def _stub_admin_for_resolve(*, director, gray_zone, query, create_side_effect=None, create_return=True):
+    """Minimal AdminService shell for resolve_doctrine_rule_and_enqueue unit tests."""
+    from diana.application.admin_service import AdminService
+
+    admin = object.__new__(AdminService)
+    admin._director = director
+    admin._gray_zone = gray_zone
+    admin._notifier = AsyncMock()
+    admin._turns = AsyncMock()
+    admin._turns.get.return_value = SimpleNamespace(
+        id=query.turn_id,
+        chat_id=42,
+        vip_id=None,
+        trigger_message_id=7,
+        channel_type="vip",
+        status="gray_zone",
+    )
+    admin._approvals = AsyncMock()
+    admin._cancel_waiting_approval = AsyncMock()
+    admin.handle_owner_escalate = AsyncMock(return_value=True)
+    if create_side_effect is not None:
+        admin.create_supervised_delivery_from_gray_zone = AsyncMock(
+            side_effect=create_side_effect
+        )
+    else:
+        admin.create_supervised_delivery_from_gray_zone = AsyncMock(
+            return_value=create_return
+        )
+    gray_zone.policy_override_payload = lambda p: {
+        "trigger_description": getattr(query, "question", "q"),
+        "rule": getattr(p, "rule", "regla"),
+        "scope": "all",
+        "is_active": True,
+    }
+    return admin
+
+
+def _policy_and_gz(query):
+    gray_zone = AsyncMock()
+    gray_zone.get_open_query_by_turn_id.return_value = query
+    policy = SimpleNamespace(
+        id=uuid4(),
+        rule="regla viva",
+        is_active=True,
+        trigger_description=query.question,
+        scope="all",
+        vip_id=None,
+        source_query_id=query.id,
+    )
+    gray_zone.persist_live_policy.return_value = policy
+    gray_zone.deactivate_policy = AsyncMock()
+    gray_zone.reopen_query = AsyncMock(return_value=True)
+    gray_zone.mark_awaiting_send = AsyncMock()
+    return gray_zone, policy
+
+
+# --- Failure matrix (approval create / lock / mark / unexpected escalate) ---
+
+
+@pytest.mark.asyncio
+async def test_approval_create_fail_keeps_freeze_and_live_policy() -> None:
+    """create_supervised False → error retryable; no escalate; policy stays live."""
+    from diana.application.admin_service import AdminService
+
+    query = _fake_query()
+    gray_zone, policy = _policy_and_gz(query)
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="Borrador regenerado usable",
+    )
+    admin = _stub_admin_for_resolve(
+        director=director, gray_zone=gray_zone, query=query, create_return=False
+    )
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text="regla viva",
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=999001,
+    )
+
+    assert status == "error"
+    admin.handle_owner_escalate.assert_not_awaited()
+    gray_zone.deactivate_policy.assert_not_awaited()
+    gray_zone.mark_awaiting_send.assert_not_awaited()
+    gray_zone.reopen_query.assert_awaited()
+    admin._notifier.notify_info.assert_awaited()
+    notify_text = admin._notifier.notify_info.await_args.args[0]
+    assert "congelado" in notify_text.lower() or "reintenta" in notify_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_approval_create_fail_without_actor_id_is_error_not_escalated() -> None:
+    """actor_id=None must not return 'escalated' without escalating."""
+    from diana.application.admin_service import AdminService
+
+    query = _fake_query()
+    gray_zone, _policy = _policy_and_gz(query)
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="Borrador regenerado usable",
+    )
+    admin = _stub_admin_for_resolve(
+        director=director, gray_zone=gray_zone, query=query, create_return=False
+    )
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text="regla viva",
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=None,
+    )
+
+    assert status == "error"
+    assert status != "escalated"
+    admin.handle_owner_escalate.assert_not_awaited()
+    gray_zone.deactivate_policy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_lock_timeout_reopens_notifies_keeps_policy() -> None:
+    """ChatLockTimeoutError → retryable error, reopen, notify, policy live."""
+    from diana.application.admin_service import AdminService
+    from diana.application.turn_coordinator import ChatLockTimeoutError
+
+    query = _fake_query()
+    gray_zone, _policy = _policy_and_gz(query)
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="Borrador regenerado usable",
+    )
+    admin = _stub_admin_for_resolve(
+        director=director,
+        gray_zone=gray_zone,
+        query=query,
+        create_side_effect=ChatLockTimeoutError("busy"),
+    )
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text="regla viva",
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=999001,
+    )
+
+    assert status == "error"
+    gray_zone.reopen_query.assert_awaited()
+    gray_zone.deactivate_policy.assert_not_awaited()
+    gray_zone.mark_awaiting_send.assert_not_awaited()
+    admin.handle_owner_escalate.assert_not_awaited()
+    admin._notifier.notify_info.assert_awaited()
+    notify_text = admin._notifier.notify_info.await_args.args[0]
+    assert "reintenta" in notify_text.lower() or "congelado" in notify_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_mark_awaiting_send_fail_cancels_approval_keeps_open() -> None:
+    """mark_awaiting_send fail after create → cancel waiting approval; query open; policy live."""
+    from diana.application.admin_service import AdminService
+
+    query = _fake_query()
+    gray_zone, _policy = _policy_and_gz(query)
+    gray_zone.mark_awaiting_send.side_effect = RuntimeError("db down")
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="Borrador regenerado usable",
+    )
+    admin = _stub_admin_for_resolve(
+        director=director, gray_zone=gray_zone, query=query, create_return=True
+    )
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text="regla viva",
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=999001,
+    )
+
+    assert status == "error"
+    admin._cancel_waiting_approval.assert_awaited_once_with(query.turn_id)
+    gray_zone.deactivate_policy.assert_not_awaited()
+    admin.handle_owner_escalate.assert_not_awaited()
+    admin._notifier.notify_info.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regen_action_escalate_is_fail_closed() -> None:
+    """Unexpected Decision.action=escalate after inject → deactivate + regen_failed."""
+    from diana.application.admin_service import AdminService
+
+    query = _fake_query()
+    gray_zone, _policy = _policy_and_gz(query)
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="escalate",
+        reason="risk_high",
+        evaluation=_profile(safety=0.2),
+        draft_text="texto que no debe encolarse",
+    )
+    admin = _stub_admin_for_resolve(
+        director=director, gray_zone=gray_zone, query=query
+    )
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text="regla",
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=999001,
+    )
+
+    assert status == "regen_failed"
+    gray_zone.deactivate_policy.assert_awaited()
+    admin.create_supervised_delivery_from_gray_zone.assert_not_awaited()
+    gray_zone.mark_awaiting_send.assert_not_awaited()
+    admin._notifier.notify_info.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_escalate_from_awaiting_send_keeps_live_policy() -> None:
+    """Escalate from approval after awaiting_send: release freeze, keep policy."""
+    from diana.application.admin_service import AdminService
+    from diana.application.approval_ui import ApprovalDraftVoider
+    from diana.application.memory import (
+        FakeOwnerNotifier,
+        InMemoryEscalationStore,
+        InMemoryPendingApprovalStore,
+        InMemoryPendingDeliveryStore,
+        InMemoryTraceReaderWriter,
+        InMemoryTurnStore,
+    )
+    from diana.application.turn_coordinator import TurnCoordinator
+    from diana.behavior.engine import BehaviorEngine
+    from diana.behavior.fake import (
+        AlwaysLiveTurnStatusReader,
+        FakeTelegramActuator,
+        FixedDelayPolicy,
+        ImmediateClock,
+    )
+    from tests.unit.application.test_owner_loop_outcome import _memory_gray_zone
+
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    deliveries = InMemoryPendingDeliveryStore()
+    escalations = InMemoryEscalationStore()
+    traces = InMemoryTraceReaderWriter()
+    notifier = FakeOwnerNotifier()
+    actuator = FakeTelegramActuator()
+    vips = InMemoryVipStore()
+    behavior = BehaviorEngine(
+        actuator,
+        deliveries,
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
+    )
+    coordinator = TurnCoordinator(
+        turns,
+        approvals,
+        behavior,  # type: ignore[arg-type]
+        approval_ui=ApprovalDraftVoider(notifier),
+    )
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="approve",
+        reason="ok",
+        evaluation=_profile(),
+        draft_text="Borrador regenerado",
+    )
+    admin = AdminService(
+        notifier=notifier,
+        approvals=approvals,
+        escalations=escalations,
+        coordinator=coordinator,
+        behavior=behavior,  # type: ignore[arg-type]
+        traces=traces,
+        turns=turns,
+        owner_telegram_id=999001,
+        delivery_mode="supervised",
+        vip_store=vips,  # type: ignore[arg-type]
+        director=director,
+    )
+    gz = _memory_gray_zone(vips)
+    admin.set_gray_zone(gz)
+
+    vip = await vips.add(42100, display_name="EscalateHoldVIP")
+    turn = await coordinator.begin_turn(
+        chat_id=42, trigger_message_id=7, vip_id=vip.id
+    )
+    await coordinator.transition(turn.id, "gray_zone")
+    await gz.create_query(
+        vip_id=vip.id,
+        turn_id=turn.id,
+        question="pregunta",
+        draft="borrador",
+        chat_id=42,
+        business_connection_id="bc-1",
+    )
+    status = await admin.resolve_doctrine_rule_and_enqueue(
+        turn_id=turn.id,
+        rule_text="Norma viva que debe conservarse",
+        scope="vip",
+        vip_id=vip.id,
+        gray_zone=gz,
+        actor_id=999001,
+    )
+    assert status == "resolved"
+    assert await gz.get_awaiting_send_by_turn_id(turn.id) is not None
+    policies = gz._policies
+    assert len(policies.inserts) == 1
+    policy_id = policies.inserts[0].id
+    assert policies.rows[policy_id].is_active is True
+
+    applied = await admin.handle_owner_escalate(turn.id, actor_id=999001)
+    assert applied is True
+    assert await gz.get_awaiting_send_by_turn_id(turn.id) is None
+    after = await vips.get_by_id(vip.id)
+    assert after is not None and after.frozen_until is None
+    assert policies.rows[policy_id].is_active is True
