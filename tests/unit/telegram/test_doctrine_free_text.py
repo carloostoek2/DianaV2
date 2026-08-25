@@ -319,3 +319,30 @@ async def test_scope_choice_rejects_draft_mode() -> None:
     assert status in {"error", "not_found", "rejected"}
     admin.resolve_doctrine_rule_and_enqueue.assert_not_awaited()
     gz.resolve_with_doctrine.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_free_text_terminal_turn_returns_stale() -> None:
+    """Free-text on a superseded turn -> 'stale' + residual hold discarded."""
+    gz = AsyncMock()
+    query = _query_row()
+    gz.get_open_query_by_turn_id.return_value = query
+    gz.discard_and_close = AsyncMock()
+
+    coordinator = AsyncMock()
+    coordinator.get_turn.return_value = SimpleNamespace(status="superseded")
+
+    admin = AsyncMock()
+    admin.resolve_doctrine_rule_and_enqueue.return_value = "resolved"
+
+    status = await handle_doctrine_free_text(
+        gray_zone=gz,
+        coordinator=coordinator,
+        turn_id=query.turn_id,
+        text="regla",
+        admin=admin,
+        scope="all",
+    )
+    assert status == "stale"
+    admin.resolve_doctrine_rule_and_enqueue.assert_not_awaited()
+    gz.discard_and_close.assert_awaited_once()

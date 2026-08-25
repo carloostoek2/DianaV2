@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -83,6 +84,94 @@ async def test_supersede_chat_cascades_cancel(
     assert appr is not None
     assert appr.status == "cancelled"
     assert canceller.calls == [(50, "owner_message")]
+
+
+class FakeGrayZone:
+    """Stub GrayZoneServicePort tracking hold lookups + discards."""
+
+    def __init__(self) -> None:
+        self.holds: dict[UUID, SimpleNamespace] = {}
+        self.discarded: list[UUID] = []
+
+    def add_hold(self, turn_id: UUID) -> SimpleNamespace:
+        query = SimpleNamespace(id=uuid4(), turn_id=turn_id)
+        self.holds[turn_id] = query
+        return query
+
+    async def get_hold_query_by_turn_id(self, turn_id: UUID):
+        return self.holds.get(turn_id)
+
+    async def discard_and_close(self, query_id: UUID) -> object:
+        self.discarded.append(query_id)
+        return object()
+
+
+@pytest.mark.asyncio
+async def test_supersede_chat_discards_doctrine_hold() -> None:
+    """Superseding a turn with an open doctrine hold closes it (zombie fix)."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    canceller = FakeCanceller()
+    gz = FakeGrayZone()
+    coord = TurnCoordinator(turns, approvals, canceller, gray_zone=gz)
+
+    turn = await coord.begin_turn(chat_id=100, trigger_message_id=1)
+    await coord.transition(turn.id, "gray_zone")
+    query = gz.add_hold(turn.id)
+
+    async with coord.chat_scope(100):
+        prior = await coord.supersede_chat(100, reason="owner_message")
+
+    assert len(prior) == 1
+    assert gz.discarded == [query.id]
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == TurnStatus.SUPERSEDED.value
+
+
+@pytest.mark.asyncio
+async def test_supersede_chat_without_gray_zone_skips_holds() -> None:
+    """No gray_zone injected -> supersede never touches doctrine holds."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    canceller = FakeCanceller()
+    coord = TurnCoordinator(turns, approvals, canceller)
+
+    turn = await coord.begin_turn(chat_id=100, trigger_message_id=1)
+    await coord.transition(turn.id, "gray_zone")
+
+    async with coord.chat_scope(100):
+        prior = await coord.supersede_chat(100, reason="owner_message")
+
+    assert len(prior) == 1
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == TurnStatus.SUPERSEDED.value
+
+
+@pytest.mark.asyncio
+async def test_supersede_hold_discard_error_is_swallowed() -> None:
+    """A failing hold discard must not break the supersede transition."""
+    turns = InMemoryTurnStore()
+    approvals = InMemoryPendingApprovalStore()
+    canceller = FakeCanceller()
+
+    class BoomGrayZone(FakeGrayZone):
+        async def discard_and_close(self, query_id: UUID) -> object:
+            self.discarded.append(query_id)
+            raise RuntimeError("db down")
+
+    gz = BoomGrayZone()
+    coord = TurnCoordinator(turns, approvals, canceller, gray_zone=gz)
+
+    turn = await coord.begin_turn(chat_id=100, trigger_message_id=1)
+    await coord.transition(turn.id, "gray_zone")
+    gz.add_hold(turn.id)
+
+    async with coord.chat_scope(100):
+        prior = await coord.supersede_chat(100, reason="owner_message")
+
+    assert len(prior) == 1
+    stored = await turns.get(turn.id)
+    assert stored is not None and stored.status == TurnStatus.SUPERSEDED.value
 
 
 @pytest.mark.asyncio

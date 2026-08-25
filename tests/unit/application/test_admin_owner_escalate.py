@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from uuid import uuid4
+
 import pytest
 
 from diana.application.admin_service import AdminService, OwnerAuthError
@@ -82,7 +85,9 @@ class _PersistThenRaiseStore(InMemoryTurnStore):
         return result
 
 
-def _build_admin_graph(*, turns: InMemoryTurnStore | None = None) -> dict:
+def _build_admin_graph(
+    *, turns: InMemoryTurnStore | None = None, gray_zone: object | None = None
+) -> dict:
     turns = turns or InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
     deliveries = InMemoryPendingDeliveryStore()
@@ -106,6 +111,7 @@ def _build_admin_graph(*, turns: InMemoryTurnStore | None = None) -> dict:
         traces=traces,
         turns=turns,
         owner_telegram_id=OWNER_ID,
+        gray_zone=gray_zone,
     )
     return {
         "admin": admin,
@@ -223,6 +229,41 @@ async def test_owner_escalate_terminal_noop_skips_hook(admin_graph: dict) -> Non
     applied = await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
     assert applied is False
     assert hook.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_owner_escalate_terminal_noop_discards_doctrine_hold() -> None:
+    """Terminal no-op on a superseded turn closes a residual doctrine hold."""
+    from unittest.mock import AsyncMock
+
+    class GZ:
+        def __init__(self) -> None:
+            self.discarded: list = []
+            self._holds: dict = {}
+
+        def add_hold(self, turn_id) -> SimpleNamespace:
+            query = SimpleNamespace(id=uuid4())
+            self._holds[turn_id] = query
+            return query
+
+        async def get_hold_query_by_turn_id(self, turn_id):
+            return self._holds.get(turn_id)
+
+        async def discard_and_close(self, query_id):
+            self.discarded.append(query_id)
+
+    gz = GZ()
+    g = _build_admin_graph(gray_zone=gz)
+    hook = AsyncMock()
+    g["admin"].set_post_turn_hook(hook)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, "superseded")
+    query = gz.add_hold(turn.id)
+
+    applied = await g["admin"].handle_owner_escalate(turn.id, actor_id=OWNER_ID)
+    assert applied is False
+    assert hook.await_count == 0
+    assert gz.discarded == [query.id]
 
 
 @pytest.mark.asyncio

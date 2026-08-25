@@ -21,6 +21,7 @@ from aiogram.types import CallbackQuery
 from diana.application.admin_service import AdminService
 from diana.application.ports import GrayZoneServicePort
 from diana.application.turn_coordinator import TurnCoordinator
+from diana.cognitive.models import is_turn_status_terminal
 from diana.telegram.keyboards import (
     doctrine_scope_keyboard,
     parse_doctrine_callback,
@@ -39,6 +40,7 @@ _RESULT_MESSAGES: dict[str, tuple[str, bool]] = {
         True,
     ),
     "rejected": ("Acción no disponible", True),
+    "stale": ("Este turno ya fue superado; la consulta quedó cerrada", True),
 }
 
 DOCTRINE_SCOPE_PROMPT = (
@@ -247,15 +249,47 @@ async def handle_doctrine_free_text(
     ``text`` is the business rule only — never used as the VIP draft.
     ``scope`` sets whether the new rule applies to this VIP or to everyone.
 
-    Returns status token: 'resolved', 'escalated', 'not_found', 'regen_failed',
-    or 'error'.
+    Returns status token: 'resolved', 'escalated', 'not_found', 'stale',
+    'regen_failed', or 'error'.
     """
-    del coordinator  # orchestration lives in AdminService
     if admin is None:
         return "error"
     rule = (text or "").strip()
     if not rule:
         return "error"
+    try:
+        turn = await coordinator.get_turn(turn_id)
+    except Exception:
+        logger.exception(
+            "doctrine_free_text_turn_lookup_error",
+            extra={"turn_id": str(turn_id)},
+        )
+        return "error"
+    if turn is None:
+        return "not_found"
+    if is_turn_status_terminal(turn.status):
+        # Superseded/finished turn: never persist a live policy for it; close
+        # any residual hold so the VIP is not left frozen behind a dead turn.
+        try:
+            query = await gray_zone.get_open_query_by_turn_id(turn_id)
+        except Exception:
+            logger.exception(
+                "doctrine_resolve_lookup_error", extra={"turn_id": str(turn_id)}
+            )
+            return "error"
+        if query is not None:
+            try:
+                await gray_zone.discard_and_close(query.id)
+            except Exception:
+                logger.exception(
+                    "doctrine_free_text_stale_discard_error",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+        logger.info(
+            "doctrine_free_text_stale",
+            extra={"turn_id": str(turn_id), "status": turn.status},
+        )
+        return "stale"
     try:
         query = await gray_zone.get_open_query_by_turn_id(turn_id)
     except Exception:
@@ -306,8 +340,21 @@ async def handle_doctrine_escalate(
     ``coordinator.transition`` + discard. Order: mutate turn first
     (fails fast), then discard_and_close.
 
-    Returns status token: 'escalated', 'not_found', or 'error'.
+    Returns status token: 'escalated', 'not_found', 'stale', or 'error'.
     """
+    try:
+        turn = await coordinator.get_turn(turn_id)
+    except Exception:
+        logger.exception(
+            "doctrine_escalate_turn_lookup_error", extra={"turn_id": str(turn_id)}
+        )
+        return "error"
+    if turn is None:
+        logger.info(
+            "doctrine_escalate_missing_turn", extra={"turn_id": str(turn_id)}
+        )
+        return "not_found"
+
     try:
         if hasattr(gray_zone, "get_hold_query_by_turn_id"):
             query = await gray_zone.get_hold_query_by_turn_id(turn_id)
@@ -318,6 +365,23 @@ async def handle_doctrine_escalate(
             "doctrine_escalate_lookup_error", extra={"turn_id": str(turn_id)}
         )
         return "error"
+
+    if is_turn_status_terminal(turn.status):
+        # Superseded/delivered/failed/escalated turn: discard any residual hold
+        # (defense) and tell the owner the turn is gone instead of a silent no-op.
+        if query is not None:
+            try:
+                await gray_zone.discard_and_close(query.id)
+            except Exception:
+                logger.exception(
+                    "doctrine_escalate_stale_discard_error",
+                    extra={"turn_id": str(turn_id), "query_id": str(query.id)},
+                )
+        logger.info(
+            "doctrine_escalate_stale",
+            extra={"turn_id": str(turn_id), "status": turn.status},
+        )
+        return "stale"
 
     if query is None:
         logger.info("doctrine_escalate_no_query", extra={"turn_id": str(turn_id)})

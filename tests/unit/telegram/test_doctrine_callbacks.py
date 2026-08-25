@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -158,14 +159,28 @@ class FakeGrayZone:
 
 
 class FakeCoordinator:
-    """Fake TurnCoordinator that records transitions."""
+    """Fake TurnCoordinator that records transitions + exposes turn status."""
 
     def __init__(self) -> None:
         self.transitions: list[tuple[UUID, str]] = []
         self._failures: set[UUID] = set()
+        self._status: dict[UUID, str] = {}
+        self._missing: set[UUID] = set()
 
     def fail_on(self, turn_id: UUID) -> None:
         self._failures.add(turn_id)
+
+    def set_status(self, turn_id: UUID, status: str) -> None:
+        self._status[turn_id] = status
+
+    def set_missing(self, turn_id: UUID) -> None:
+        self._missing.add(turn_id)
+
+    async def get_turn(self, turn_id: UUID) -> SimpleNamespace | None:
+        if turn_id in self._missing:
+            return None
+        # Non-terminal by default so existing escalate tests keep their flow.
+        return SimpleNamespace(status=self._status.get(turn_id, "gray_zone"))
 
     async def transition(self, turn_id: UUID, status: str) -> None:
         self.transitions.append((turn_id, status))
@@ -231,6 +246,62 @@ async def test_escalate_discard_error() -> None:
     assert len(gray_zone.discard_calls) == 1
     # Transition was called first (MED-6 order), so it should be recorded.
     assert len(coordinator.transitions) == 1
+
+
+@pytest.mark.asyncio
+async def test_escalate_terminal_turn_returns_stale() -> None:
+    """de: on a superseded turn -> 'stale' + residual hold discarded (no-op fix)."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    coordinator.set_status(turn_id, "superseded")
+    query = gray_zone.add_query(turn_id)
+
+    status = await handle_doctrine_escalate(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+    )
+    assert status == "stale"
+    assert gray_zone.discard_calls == [query.id]
+    assert coordinator.transitions == []
+
+
+@pytest.mark.asyncio
+async def test_escalate_terminal_no_query_returns_stale() -> None:
+    """de: on a superseded turn whose query was already closed -> 'stale'."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    coordinator.set_status(turn_id, "superseded")
+
+    status = await handle_doctrine_escalate(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+    )
+    assert status == "stale"
+    assert gray_zone.discard_calls == []
+    assert coordinator.transitions == []
+
+
+@pytest.mark.asyncio
+async def test_escalate_missing_turn_returns_not_found() -> None:
+    """de: on an unknown turn -> 'not_found' (no transition, no discard)."""
+    gray_zone = FakeGrayZone()
+    coordinator = FakeCoordinator()
+    turn_id = uuid4()
+    coordinator.set_missing(turn_id)
+    gray_zone.add_query(turn_id)
+
+    status = await handle_doctrine_escalate(
+        gray_zone=gray_zone,
+        coordinator=coordinator,
+        turn_id=turn_id,
+    )
+    assert status == "not_found"
+    assert gray_zone.discard_calls == []
+    assert coordinator.transitions == []
 
 
 # --- Router owner auth (SEC-AUTH-01) ---

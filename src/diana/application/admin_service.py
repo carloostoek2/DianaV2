@@ -498,6 +498,36 @@ class AdminService:
                     extra={"turn_id": str(turn_id)},
                 )
 
+    async def _discard_doctrine_hold_if_any(self, turn_id: UUID) -> None:
+        """Best-effort close of a residual gray-zone hold for a terminal turn.
+
+        Used on no-op paths (turn already superseded/delivered/...) so a dead
+        turn never leaves the VIP frozen behind an open doctrine query. Never
+        raises; a cleanup failure only logs.
+        """
+        if self._gray_zone is None:
+            return
+        try:
+            query = await self._gray_zone.get_hold_query_by_turn_id(turn_id)
+        except Exception:
+            log_swallowed(
+                logger,
+                "doctrine_hold_lookup_failed",
+                turn_id=str(turn_id),
+            )
+            return
+        if query is None:
+            return
+        try:
+            await self._gray_zone.discard_and_close(query.id)
+        except Exception:
+            log_swallowed(
+                logger,
+                "doctrine_hold_discard_failed",
+                turn_id=str(turn_id),
+                query_id=str(query.id),
+            )
+
     async def notify_info(self, text: str, *, chat_id: int | None = None) -> None:
         """Thin wrapper for operator/info notifications (e.g. Analyst schema fail)."""
         await self._notifier.notify_info(text, chat_id=chat_id)
@@ -1028,6 +1058,11 @@ class AdminService:
             async with self._coordinator.chat_scope(chat_id):
                 turn = await self._turns.get(turn_id)
                 if turn is None or is_turn_status_terminal(turn.status):
+                    if turn is not None:
+                        # Terminal turn with a residual doctrine hold (e.g. a
+                        # superseded GRAY_ZONE): close it so the VIP is not left
+                        # frozen behind a dead turn. Best-effort, never raises.
+                        await self._discard_doctrine_hold_if_any(turn_id)
                     logger.info(
                         "owner_escalate_terminal_noop",
                         extra={
@@ -1569,6 +1604,38 @@ class AdminService:
         if query is None:
             return "not_found"
 
+        # Terminal turn guard: never persist a live policy or regen for a
+        # superseded/finished turn; close any residual hold so the VIP is not
+        # left frozen behind a dead turn. Defense in depth — the supersede path
+        # already closes the hold, so this is the no-op/race backstop.
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            try:
+                await gz.discard_and_close(query.id)
+            except Exception:
+                log_swallowed(
+                    logger,
+                    "doctrine_resolve_missing_turn_discard_failed",
+                    turn_id=str(turn_id),
+                    query_id=str(query.id),
+                )
+            return "not_found"
+        if is_turn_status_terminal(turn.status):
+            try:
+                await gz.discard_and_close(query.id)
+            except Exception:
+                log_swallowed(
+                    logger,
+                    "doctrine_resolve_stale_discard_failed",
+                    turn_id=str(turn_id),
+                    query_id=str(query.id),
+                )
+            logger.info(
+                "doctrine_resolve_stale_turn",
+                extra={"turn_id": str(turn_id), "status": turn.status},
+            )
+            return "stale"
+
         policy = None
         try:
             policy = await gz.persist_live_policy(
@@ -1582,11 +1649,6 @@ class AdminService:
                 "doctrine_live_policy_persist_failed",
                 extra={"turn_id": str(turn_id), "query_id": str(query.id)},
             )
-            return "error"
-
-        turn = await self._turns.get(turn_id)
-        if turn is None:
-            await gz.deactivate_policy(policy.id)
             return "error"
 
         vip_text = (getattr(query, "question", "") or "").strip() or "(no text)"

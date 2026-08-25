@@ -34,6 +34,7 @@ from diana.application.observability import log_swallowed
 from diana.application.ports import (
     ApprovalRecord,
     BehaviorCanceller,
+    GrayZoneServicePort,
     PendingApprovalStore,
     RuntimeTimerStore,
     TurnRecord,
@@ -121,6 +122,7 @@ class TurnCoordinator:
         feature_recontact_enabled: bool = False,
         approval_ui: ApprovalUiInvalidator | None = None,
         runtime_timers: RuntimeTimerStore | None = None,
+        gray_zone: GrayZoneServicePort | None = None,
     ) -> None:
         self._turns = turns
         self._approvals = approvals
@@ -132,6 +134,7 @@ class TurnCoordinator:
         self._feature_recontact_enabled = feature_recontact_enabled
         self._approval_ui = approval_ui
         self._runtime_timers = runtime_timers
+        self._gray_zone = gray_zone
         self._owner_interventions: dict[int, float] = {}
         self._turn_chat_ids: dict[UUID, int] = {}
         # Per-chat VIP inbound epoch: newer message aborts older in-flight work.
@@ -467,6 +470,38 @@ class TurnCoordinator:
                     "reason": cancel_reason,
                 },
             )
+            # Doctrine hold cleanup: a superseded turn must not leave an open
+            # gray_zone_query (zombie keyboard + 24h VIP freeze). Keyed by
+            # turn_id, never chat_id (F20 atencion keys queries by chat). Runs
+            # after the approval cascade so the VIP stays frozen until every
+            # pending approval is cancelled. Best-effort: a cleanup failure must
+            # never break the supersede itself.
+            if self._gray_zone is not None:
+                for old in prior:
+                    try:
+                        query = await self._gray_zone.get_hold_query_by_turn_id(
+                            old.id
+                        )
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "supersede_gray_zone_lookup_failed",
+                            turn_id=str(old.id),
+                            chat_id=chat_id,
+                        )
+                        continue
+                    if query is None:
+                        continue
+                    try:
+                        await self._gray_zone.discard_and_close(query.id)
+                    except Exception:
+                        log_swallowed(
+                            logger,
+                            "supersede_gray_zone_discard_failed",
+                            turn_id=str(old.id),
+                            query_id=str(query.id),
+                            chat_id=chat_id,
+                        )
         return prior
 
     async def begin_turn(

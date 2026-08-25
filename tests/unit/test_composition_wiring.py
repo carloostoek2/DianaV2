@@ -325,6 +325,18 @@ def test_composition_turn_coordinator_receives_recontact(_comp_src: str) -> None
     assert "feature_recontact_enabled=feature_recontact_enabled" in coord_block
 
 
+def test_composition_turn_coordinator_receives_gray_zone(_comp_src: str) -> None:
+    """GrayZoneService wired into TurnCoordinator for doctrine-hold cleanup."""
+    coord_pos = _comp_src.find("coordinator = TurnCoordinator(")
+    gz_pos = _comp_src.find("gray_zone = GrayZoneService(")
+    assert coord_pos != -1
+    assert gz_pos != -1
+    assert gz_pos < coord_pos
+    # Within TurnCoordinator(...) block the gray_zone kwarg appears.
+    coord_block = _comp_src[coord_pos : coord_pos + 400]
+    assert "gray_zone=gray_zone" in coord_block
+
+
 def test_composition_calibration_service_wired(_comp_src: str) -> None:
     """CalibrationService + SQL data source; flag from settings."""
     assert "from diana.application.calibration_service import CalibrationService" in _comp_src

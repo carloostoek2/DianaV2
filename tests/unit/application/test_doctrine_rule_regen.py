@@ -346,6 +346,45 @@ async def test_resolve_doctrine_rule_passes_knowledge_overrides_and_regen_draft(
 
 
 @pytest.mark.asyncio
+async def test_resolve_doctrine_terminal_turn_returns_stale() -> None:
+    """Terminal turn guard: never persist a live policy / regen for a dead turn."""
+    from diana.application.admin_service import AdminService
+
+    gray_zone = AsyncMock()
+    query = _fake_query()
+    gray_zone.get_open_query_by_turn_id.return_value = query
+    gray_zone.discard_and_close = AsyncMock(return_value=object())
+
+    admin = object.__new__(AdminService)
+    admin._director = AsyncMock()  # type: ignore[attr-defined]
+    admin._gray_zone = gray_zone  # type: ignore[attr-defined]
+    admin._notifier = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns.get.return_value = SimpleNamespace(
+        id=query.turn_id,
+        chat_id=42,
+        vip_id=None,
+        trigger_message_id=7,
+        channel_type="vip",
+        status="superseded",
+    )
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text="regla",
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+    )
+
+    assert status == "stale"
+    gray_zone.persist_live_policy.assert_not_awaited()
+    admin._director.handle_turn.assert_not_awaited()
+    gray_zone.discard_and_close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_regen_fail_deactivates_policy_and_keeps_freeze() -> None:
     from diana.application.admin_service import AdminService
 

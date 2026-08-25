@@ -49,6 +49,7 @@ _DOCTRINE_STATUS_UX: dict[str, str] = {
     "resolved": "Regla guardada — borrador regenerado para tu aprobación",
     "escalated": "Consulta escalada",
     "not_found": "Consulta no encontrada — ya fue resuelta",
+    "stale": "Este turno ya fue superado; la consulta quedó cerrada",
     "error": "Error del sistema al guardar la regla",
     "regen_failed": (
         "No se pudo regenerar el borrador; la regla se desactivó. Reintenta."
