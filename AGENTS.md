@@ -96,7 +96,7 @@ Principios rectores (no negociables):
 6. Toda decisión es reconstruible a partir de objetos persistidos.
 7. El Turn Coordinator garantiza la serialización por chat (REQ-NFR-02).
 
-Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
+Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, FEATURE_IMAGE_VISION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
 ---
 
@@ -467,6 +467,48 @@ el turno no lo guarda; sin ese dato el reply falla cerrado (nunca envía a ciega
 La marca de falso positivo es un flag de métrica (owner_marks), NO un ejemplo:
 no entra a memories/examples/policies ni enseña nada al sistema. En sandbox,
 `mark_false_positive` NO persiste (aislamiento igual que el aprendizaje).
+
+4.22 Visión de imágenes con filtro local de privacidad (FEATURE_IMAGE_VISION_ENABLED)
+
+```
+business_message con photo + flag ON:
+  → Telegram Layer: detecta photo → descarga bytes del file_id más grande
+    (photo_downloader inyectado; NUNCA persiste la imagen)
+  → ImageVisionService (application): 
+      1. OCR local (infrastructure/vision/ocr.py; tesseract) — la imagen NO
+         sale del servidor en esta etapa. Si el OCR falla o la imagen no es
+         legible → SENSIBLE (fail-closed: nunca enviar a Google lo no verificado)
+      2. classify_sensitive(texto_OCR + caption) — reglas aprobadas por la
+         dueña: tarjetas (13–19 dígitos con Luhn / grupos de 4 / Amex),
+         facturas y recibos, documentos de identidad, claves y accesos,
+         cuentas bancarias. Match → SENSIBLE (revisión manual de la dueña)
+      3. NO sensible → ImageDescriber (cognitive/image_vision.py) →
+         GeminiVisionProvider (llm/gemini_vision.py) → descripción corta
+         (español neutro, máx. 40 palabras). Fallo del proveedor → fail-open:
+         se mantiene el tag plano [imagen] (nunca se rompe el turno)
+  → Texto del turno:
+      - sensible:      "[imagen] ⚠️ contiene información sensible (no analizada)"
+      - descripción:   "[imagen: <descripción>]" (+ caption si existe)
+      - fallo/flag off: tag clásico "[imagen]" (+ caption) — byte a byte igual
+  → VipInboundMessage.photo_file_id (file_id de Telegram) viaja con el turno
+  → send_draft_for_approval persiste photo_file_id en pending_approvals
+    (migración 035) y el DM de la dueña adjunta la foto (send_photo) + el
+    borrador con botones (send_message). Adjuntar la foto es best-effort: si
+    el file_id falla, la aprobación de texto sigue intacta.
+  → La descripción (o la marca de sensible) entra al pipeline como TEXTO del
+    turno: Analyst/Generator/Evaluator/Decisor NO se tocan. La imagen nunca se
+    persiste; solo texto.
+```
+
+Invariantes: flag OFF = comportamiento previo byte a byte (media tag sin
+contenido, sin descarga, sin foto en el DM); la imagen sensible NUNCA sale a
+Google (fail-closed ante OCR no disponible, texto no legible o match de reglas);
+la imagen NO se guarda en DB ni en disco (solo los bytes en memoria durante el
+análisis y el file_id de Telegram para el DM); el caption del VIP también se
+evalúa con las reglas (no solo el OCR); la descripción es texto efímero del
+turno — no alimenta memorias/ejemplos/perfil (anti-contaminación); el prompt de
+descripción vive en cognitive/ (no en llm/); el Decisor no interviene en esta
+decisión (el filtro es pre-pipeline, capa de aplicación + Telegram I/O).
 
 ---
 

@@ -209,6 +209,9 @@ class PendingApproval(Base):
     draft_text: Mapped[str] = mapped_column(Text, nullable=False)
     cognitive_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     evaluation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Image vision (migration 035): Telegram file_id to attach the photo to the
+    # owner approval DM. NULL = plain text approval (pre-vision behavior).
+    photo_file_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'waiting'"))
     owner_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

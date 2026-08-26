@@ -2173,3 +2173,19 @@ async def test_handle_correct_trust_failure_still_delivers() -> None:
 
     assert result is not None and result.success
     assert g["actuator"].calls[-1]["text"] == "fixed text"
+
+
+@pytest.mark.asyncio
+async def test_send_draft_for_approval_propagates_photo_file_id(admin_graph: dict) -> None:
+    """Image vision: the turn's photo file_id reaches the approval + owner DM."""
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    decision = _decision(draft="draft text")
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, photo_file_id="big"), decision, turn.id
+    )
+    assert len(g["notifier"].drafts) == 1
+    assert g["notifier"].drafts[0].photo_file_id == "big"
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None
+    assert appr.photo_file_id == "big"

@@ -8,6 +8,11 @@
 venv/
 .python-version
 
+# Local OCR language data (tesseract spa/eng traineddata) — machine-specific,
+# installed at runtime; the code auto-detects this dir (runtime/tessdata).
+runtime/
+runtime/tessdata/
+
 .planning
 .grok
 .claude

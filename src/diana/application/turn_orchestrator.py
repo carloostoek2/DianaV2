@@ -2054,6 +2054,7 @@ class TurnOrchestrator:
             telegram_message_id=incoming.telegram_message_id,
             business_connection_id=str(bc).strip(),
             channel_type=incoming.channel_type,
+            photo_file_id=incoming.photo_file_id,
         )
 
         try:

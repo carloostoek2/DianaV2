@@ -102,6 +102,9 @@ class IncomingTurn(BaseModel):
     telegram_message_id: int | None = None
     business_connection_id: str | None = None
     channel_type: Literal["vip", "atencion"] = "vip"
+    # Image vision: Telegram file_id of the inbound photo, propagated to the
+    # owner approval DM. Not used by any cognitive stage.
+    photo_file_id: str | None = None
 
 
 # Closed emotion enum (contrato_analista.md A.3). Free strings are forbidden.

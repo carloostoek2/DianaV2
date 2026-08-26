@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     # reply is unmasked before it reaches the VIP or is persisted. Disable only
     # for debugging — this is the one flag that defaults to safe.
     feature_pii_masking_enabled: bool = True
+    # Image vision (FEATURE_IMAGE_VISION_ENABLED): local OCR privacy filter
+    # first; only non-sensitive images are sent to Gemini for a short caption.
+    # OFF (default) = today's behavior byte-for-byte (media tag without content).
+    feature_image_vision_enabled: bool = False
+    gemini_api_key: SecretStr = SecretStr("")
+    # Gemini vision model used to caption non-sensitive inbound photos.
+    gemini_vision_model: str = "gemini-2.5-flash"
+    gemini_vision_timeout_s: Annotated[float, Field(gt=0)] = 15.0
     global_mode: Literal["supervised", "autonomous", "fake_delivery"] = "supervised"
     delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3
     delivery_retry_backoff_seconds: Annotated[float, Field(gt=0)] = 0.05

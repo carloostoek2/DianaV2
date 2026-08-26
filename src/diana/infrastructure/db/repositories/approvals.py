@@ -26,6 +26,7 @@ def approval_orm_to_record(
         cognitive_summary=row.cognitive_summary,
         evaluation=row.evaluation,
         owner_message_id=row.owner_message_id,
+        photo_file_id=row.photo_file_id,
         # Schema gap: join turns.trigger_message_id when loading if not on row.
         trigger_message_id=trigger_message_id,
     )
@@ -52,6 +53,7 @@ class SqlPendingApprovalStore:
                 draft_text=record.draft_text,
                 cognitive_summary=record.cognitive_summary,
                 evaluation=record.evaluation,
+                photo_file_id=record.photo_file_id,
                 status="waiting",
                 owner_message_id=record.owner_message_id,
             )

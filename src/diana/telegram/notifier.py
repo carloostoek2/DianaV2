@@ -53,6 +53,21 @@ class AiogramOwnerNotifier:
             version_index=selected if items else 0,
             version_count=count,
         )
+        # Image vision: attach the VIP's photo above the draft so the owner
+        # judges what Diana saw. Best-effort — a stale/invalid file_id must
+        # never break the approval flow (the text DM always goes through).
+        if payload.photo_file_id:
+            try:
+                await self._bot.send_photo(
+                    chat_id=self._owner_id,
+                    photo=payload.photo_file_id,
+                    caption="📸 Foto del mensaje del VIP",
+                )
+            except Exception:
+                logger.warning(
+                    "draft_photo_attach_failed",
+                    extra={"turn_id": str(turn_id), "chat_id": payload.chat_id},
+                )
         msg = await self._bot.send_message(
             chat_id=self._owner_id,
             text=text,

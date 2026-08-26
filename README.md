@@ -116,6 +116,23 @@ Los ejemplos destacados tienen prioridad en la recuperación de ejemplos. Esto p
 
 ---
 
+## Visión de imágenes con filtro de privacidad
+
+Diana puede **ver las fotos que le envían los VIP**: entiende de qué trata la imagen y responde con base en eso. Pero antes de que cualquier imagen salga del servidor, un **filtro local de privacidad** decide si es seguro analizarla.
+
+El flujo es:
+
+1. **Lectura local** — Un lector de texto (OCR) corre en el propio servidor y extrae los textos y números visibles en la imagen. En esta etapa la imagen **no sale a ningún lado**.
+2. **Revisión de sensibilidad** — Si la imagen contiene información sensible (tarjetas de crédito/débito, facturas y recibos, documentos de identidad, claves y accesos), la foto **nunca se envía a un proveedor externo**. Ante la duda (imagen ilegible, lector no disponible), también se trata como sensible: la privacidad siempre gana.
+3. **Dos caminos**:
+   - **Imagen segura** → se envía a un modelo de visión (Gemini) que la describe en una frase corta, y Diana responde sabiendo qué contiene. La descripción entra al turno como texto; el resto del flujo (comprensión, decisión, aprobación) no cambia.
+   - **Imagen sensible** → la foto va directamente a la **revisión de la dueña**, marcada como "no analizada por privacidad", acompañada de un borrador prudente a ciegas de Diana. La dueña aprueba, corrige o descarta como siempre.
+4. **La foto llega al DM de la dueña** — En cualquier aprobación originada en una foto, la imagen se adjunta junto al borrador para que la dueña juzgue con sus propios ojos.
+
+La imagen en sí **nunca se guarda** (ni en base de datos ni en disco): solo queda texto. La descripción es parte efímera del turno y no alimenta la memoria ni los ejemplos de Diana. Toda la característica funciona detrás de un interruptor (`FEATURE_IMAGE_VISION_ENABLED`): apagada, Diana se comporta exactamente como antes.
+
+---
+
 ## Memoria ≠ historial
 
 Diana mantiene una separación deliberada entre el historial de conversación y la memoria procesada. La memoria puede organizar información en categorías como identidad, preferencias, comercial, límites, sensible y perfil.

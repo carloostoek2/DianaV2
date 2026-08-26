@@ -110,6 +110,24 @@ class LLMProvider(Protocol):
 
 
 @runtime_checkable
+class VisionProvider(Protocol):
+    """Multimodal image captioning port (Gemini provider).
+
+    Used by the cognitive ``ImageDescriber`` — the prompt is passed by the
+    caller (cognitive owns business prompts); this port only performs the
+    image+prompt call. Concrete implementation: ``llm.gemini_vision``.
+    """
+
+    async def describe_image(
+        self,
+        image_bytes: bytes,
+        *,
+        mime_type: str,
+        prompt: str,
+    ) -> str: ...
+
+
+@runtime_checkable
 class ClockPort(Protocol):
     """Timezone-aware wall clock for cognitive retrievers (H9).
 

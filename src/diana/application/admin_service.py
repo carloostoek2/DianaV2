@@ -266,6 +266,7 @@ class AdminService:
             cognitive_summary=decision.reason,
             evaluation=eval_dict,
             trigger_message_id=turn.telegram_message_id,
+            photo_file_id=turn.photo_file_id,
         )
         await self._approvals.create_waiting(record)
         reason = self._sandbox_reason(turn.chat_id, decision.reason)
@@ -299,6 +300,7 @@ class AdminService:
                     self._feature_quality_feedback_enabled
                     and turn.vip_id is not None
                 ),
+                photo_file_id=turn.photo_file_id,
             )
         )
         if owner_mid is not None:

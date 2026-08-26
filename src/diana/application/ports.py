@@ -84,6 +84,8 @@ class ApprovalRecord(BaseModel):
     evaluation: dict[str, Any] | None = None
     owner_message_id: int | None = None
     trigger_message_id: int | None = None
+    # Image vision: Telegram file_id attached to the owner approval DM.
+    photo_file_id: str | None = None
 
 
 class DeliveryRecord(BaseModel):
@@ -118,6 +120,8 @@ class DraftNotification(BaseModel):
     business_connection_id: str
     reply_markup_spec: dict[str, Any] = Field(default_factory=dict)
     show_quality_feedback: bool = False
+    # Image vision: Telegram file_id to attach to the owner DM (None = text only).
+    photo_file_id: str | None = None
 
 
 class LinkNotification(BaseModel):
@@ -323,6 +327,9 @@ class VipInboundMessage(BaseModel):
     vip_id: UUID | None = None
     # True for edited_business_message: replace history row, cancel prior turn.
     is_edit: bool = False
+    # Image vision: Telegram file_id of the inbound photo (largest size) so the
+    # owner DM can attach the same photo to the approval. None = no photo.
+    photo_file_id: str | None = None
     # F4: channel type ("vip" | "atencion"). Set by AuthMiddleware for the
     # general-mode path; default keeps the VIP pipeline unchanged.
     channel_type: Literal["vip", "atencion"] = "vip"

@@ -270,3 +270,78 @@ async def test_notify_doctrine_without_proposal_has_classic_keyboard() -> None:
     assert not any(d.startswith("dp:") for d in flat)
     assert any(d.startswith("dr:") for d in flat)
     assert any(d.startswith("de:") for d in flat)
+
+
+# --- Image vision: photo attached to the draft DM ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_notify_draft_with_photo_sends_photo_then_text_with_markup() -> None:
+    """Vision: the VIP photo goes above the draft; the text keeps the buttons."""
+    bot = MagicMock()
+    bot.send_photo = AsyncMock(return_value=SimpleNamespace(message_id=1))
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=2))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    turn_id = uuid4()
+    mid = await notifier.notify_draft(
+        DraftNotification(
+            turn_id=turn_id,
+            chat_id=42,
+            vip_text="[imagen: una foto del plato]",
+            draft_text="draft",
+            reason="ok",
+            business_connection_id="bc",
+            photo_file_id="big",
+        )
+    )
+    # The returned id is the TEXT message (the one with the action buttons),
+    # because edit_draft/void_draft target it.
+    assert mid == 2
+    bot.send_photo.assert_awaited_once_with(
+        chat_id=999, photo="big", caption="📸 Foto del mensaje del VIP"
+    )
+    kwargs = bot.send_message.await_args.kwargs
+    assert kwargs["chat_id"] == 999
+    assert "draft" in kwargs["text"]
+    assert kwargs["reply_markup"] is not None
+
+
+@pytest.mark.asyncio
+async def test_notify_draft_photo_failure_does_not_break_approval() -> None:
+    """A stale/invalid file_id must never break the approval flow."""
+    bot = MagicMock()
+    bot.send_photo = AsyncMock(side_effect=RuntimeError("file expired"))
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=5))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    turn_id = uuid4()
+    mid = await notifier.notify_draft(
+        DraftNotification(
+            turn_id=turn_id,
+            chat_id=42,
+            vip_text="x",
+            draft_text="draft",
+            reason="ok",
+            business_connection_id="bc",
+            photo_file_id="stale",
+        )
+    )
+    assert mid == 5
+    bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_notify_draft_without_photo_never_sends_photo() -> None:
+    bot = MagicMock()
+    bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=9))
+    notifier = AiogramOwnerNotifier(bot, owner_telegram_id=999)
+    await notifier.notify_draft(
+        DraftNotification(
+            turn_id=uuid4(),
+            chat_id=42,
+            vip_text="hi",
+            draft_text="draft",
+            reason="ok",
+            business_connection_id="bc",
+        )
+    )
+    bot.send_photo.assert_not_called()

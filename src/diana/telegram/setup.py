@@ -137,6 +137,10 @@ def build_dispatcher(
     link: LinkCoordinator | None = None,
     link_chat_id: int | None = None,
     feature_link_enabled: bool = False,
+    # Image vision (FEATURE_IMAGE_VISION_ENABLED): service + photo downloader.
+    # Both None ⇒ today's behavior byte-for-byte (media tag without content).
+    image_vision: Any | None = None,
+    photo_downloader: Any | None = None,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -293,6 +297,8 @@ def build_dispatcher(
         build_business_router(
             orchestrator=orchestrator,
             on_vip_inbound=sessions.cancel_combo_for_chat,
+            image_vision=image_vision,
+            photo_downloader=photo_downloader,
         )
     )
     if bc_store is not None:
