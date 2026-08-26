@@ -39,6 +39,38 @@ Para cada VIP, Diana trabaja con diferentes capas de información: el historial 
 
 ---
 
+## ¿Cuánto tarda Diana en pensar?
+
+Cada turno recorre el mismo proceso: Diana **analiza** el mensaje, **planifica** qué conocimiento necesita, **recupera** memoria y ejemplos, **construye el contexto**, **genera** un borrador, lo **evalúa** y, al final, **decide** qué hacer con él. Cada etapa mide su propio tiempo de ejecución y el resultado queda guardado en la trazabilidad del turno.
+
+Esta es una muestra real de un turno completo procesado por el sistema actual:
+
+| Etapa | Qué hace | Tiempo |
+| --- | --- | --- |
+| Analista | Entiende el mensaje: intención, emoción, urgencia y riesgo | ~1,39 s |
+| Planificador | Decide qué conocimiento se necesita | ~0,03 ms |
+| Recuperación de memoria | Busca lo que Diana recuerda de ese VIP | ~145 ms |
+| Recuperación de políticas | Busca reglas de negocio aplicables | 0 ms |
+| Recuperación de ejemplos | Busca respuestas de referencia | ~419 ms |
+| Hechos de persona | Busca rasgos de la personalidad activa | 0 ms |
+| Patrones de voz | Busca patrones de estilo del canal | 0 ms |
+| Construcción de contexto | Arma el contexto final para generar la respuesta | ~0,17 ms |
+| Generador | Escribe el borrador de la respuesta | ~3,20 s |
+| Evaluador | Evalúa el borrador (naturalidad, seguridad, cobertura, empatía) | ~1,00 s |
+| Decisor | Decide la acción: enviar, aprobar, escalar o consultar una regla | ~0,04 ms |
+| **Total** | | **~6,16 s** |
+
+Lo que esta muestra revela:
+
+- **Casi todo el tiempo es el modelo de lenguaje** (~91 %): analizar el mensaje, escribir el borrador y evaluarlo son las tres etapas que consultan al modelo; todo lo demás es prácticamente instantáneo.
+- **La recuperación de conocimiento es el resto del tiempo**: la búsqueda de memoria y de ejemplos explica casi todo lo que no es el modelo.
+- **Las etapas deterministas no se notan**: planificar, construir el contexto y decidir son reglas puras, sin consultas a un modelo; el Decisor decide en menos de un milisegundo.
+- **En este turno el borrador no se envió directamente** (`delivery_result: null`): quedó esperando la decisión de la dueña, como corresponde al modo supervisado.
+
+Los tiempos varían de turno a turno (dependen del modelo, del largo de la conversación y del conocimiento recuperado), pero el reparto es estable: el cuello de botella es generar y evaluar el borrador. La dueña puede ver estos números por turno desde la trazabilidad.
+
+---
+
 ## Supervisión antes que autonomía
 
 Diana está diseñada para evolucionar hacia una mayor autonomía, pero la autonomía no es un interruptor de "enciéndelo y crucemos los dedos".
