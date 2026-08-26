@@ -22,6 +22,7 @@ Diana gestiona conversaciones privadas de clientes VIP y acompaña todo el ciclo
 - **Comportamiento humanizado** — La entrega de mensajes incorpora lectura, escritura, pausas, ritmo y división natural de mensajes.
 - **Decisiones antes de responder** — Diana no genera una respuesta y luego decide qué hacer con ella. Primero analiza el turno y determina cuál debería ser la acción.
 - **Supervisión humana** — Las conversaciones pueden pasar por aprobación, corrección o escalación de la dueña antes de llegar al VIP.
+- **Zona gris y reglas propuestas** — Cuando a Diana le falta una regla de negocio, no adivina: congela la conversación y le pide a la dueña que defina la regla, con la opción de usar una regla sugerida por el sistema.
 - **Sandbox** — Permite probar el comportamiento de Diana con perfiles ficticios sin contaminar los datos reales.
 - **Métricas y trazabilidad** — La dueña puede revisar cómo se procesó un turno y observar la evolución del sistema.
 - **Aprendizaje mediante feedback** — Las respuestas pueden marcarse como buenas o corregirse para construir conocimiento reutilizable.
@@ -48,7 +49,7 @@ El sistema puede medir el tipo de conversación, las señales emocionales, la ca
 
 > Las conversaciones sensibles nunca entran en autonomía.
 
-La autonomía completa permanece desactivada hasta que las condiciones del sistema y de operación sean suficientemente seguras.
+La autonomía se habilita de forma gradual y conservadora: cada VIP debe demostrar que cumple condiciones seguras de confianza y consistencia antes de que Diana pueda actuar sola, y las conversaciones sensibles quedan siempre fuera de ese camino.
 
 ---
 
@@ -91,11 +92,41 @@ La memoria se mantiene asociada al VIP correspondiente y cuenta con mecanismos d
 
 ---
 
+## Zona gris: cuando Diana no sabe qué regla aplicar
+
+Hay casos que ninguna regla escrita cubre todavía: Diana reconoce que le falta una regla de negocio para responder con criterio. En lugar de adivinar, lo convierte en una **zona gris**: congela la conversación y le pide a la dueña que defina la regla.
+
+Para facilitar esa decisión, el sistema puede **proponer una regla** (una regla de negocio sugerida y una respuesta sugerida) construida a partir del conocimiento general de referencia — políticas globales, ejemplos destacados y el catálogo de persona — como una sugerencia temporal, sin tocar la memoria del VIP ni el banco de ejemplos. Si la generación falla o tarda demasiado, se sigue sin propuesta y la consulta no se pierde.
+
+La dueña puede:
+
+- **Usar la regla propuesta** — adoptarla como regla (nunca como mensaje directo) y seguir el flujo normal.
+- **Escribir su propia regla**.
+- **Escalar** — cerrar el caso sin definir regla.
+
+Cuando la dueña define una regla, Diana **regenera el turno con esa regla** y el resultado vuelve a la cola de aprobación; la dueña sigue teniendo la última palabra antes de que llegue al VIP. La propuesta del sistema es solo una sugerencia: nunca se aplica sola, y si Diana no logra aplicar la regla correctamente, el caso permanece en resolución de zona gris en lugar de enviar algo a ciegas.
+
+---
+
 ## Evolución del agente
 
-Además de la memoria, Diana incorpora una capa experimental de evolución del agente que actualmente funciona en **shadow mode**: observa, mide y registra, pero no modifica las decisiones que afectan a las conversaciones reales.
+Además de la memoria, Diana incorpora una capa de **evolución del agente** que funciona en **modo sombra**: observa, mide y registra cómo decidiría, sin modificar las decisiones que afectan a las conversaciones reales. Todo lo que produce es medición y recomendación, no acción automática.
 
-Esta capa estudia señales emocionales, categorías de turno, tendencias del VIP, evolución del perfil, estado de ánimo, presupuesto de confianza, correcciones y comportamiento potencialmente autónomo. El objetivo es construir la información necesaria para que futuras versiones tomen mejores decisiones sin convertir cada nueva capacidad en un experimento sobre usuarios reales.
+Esta capa estudia señales emocionales, categorías de turno, tendencias del VIP, evolución del perfil, estado de ánimo, presupuesto de confianza, correcciones y el comportamiento potencialmente autónomo. El objetivo es construir la información necesaria para que futuras versiones tomen mejores decisiones, sin convertir cada nueva capacidad en un experimento sobre usuarios reales.
+
+### Ver el modo sombra
+
+La dueña puede consultar el modo sombra desde su menú:
+
+- **Resumen** — cuántos turnos se han medido, la tendencia y las correcciones de la dueña.
+- **Confianza por VIP** — qué tan cerca está cada VIP de cumplir el umbral de confianza para poder actuar sola.
+- **Borradores y decisiones** — para cada turno real, Diana re-evalúa con el criterio de autonomía encendido y muestra qué habría hecho ella frente a lo que decidió la dueña, junto con el borrador real generado.
+
+### Camino a la autonomía
+
+Sobre esa medición, Diana **aprende**: después de cada turno real, compara lo que ella habría hecho con lo que la dueña hizo de verdad y evalúa si su decisión habría sido la correcta. Es un círculo continuo — la confianza por VIP crece con los aciertos y las señales positivas del VIP, y baja con las correcciones o las señales negativas.
+
+El panel **Camino a la autonomía** reúne esa información: la preparación global, las comparativas (aciertos, desacuerdos, decisiones conservadoras) y quién está listo o a quién le falta qué. Cuando un VIP cumple los criterios de preparación, el panel lo **recomienda** y ofrece la opción de activarlo — pero la activación es siempre una decisión de la dueña. Diana nunca se activa por su cuenta.
 
 ---
 
@@ -103,15 +134,7 @@ Esta capa estudia señales emocionales, categorías de turno, tendencias del VIP
 
 Diana no tiene por qué vivir aislada. Existe una integración con Lucien, otro componente del ecosistema de Telegram.
 
-Cuando Lucien expulsa a un suscriptor del canal VIP, Diana puede recibir el evento y comprobar si esa persona también pertenece a su propia base VIP. Si existe una coincidencia, Diana no toma una acción destructiva automáticamente: la dueña recibe las opciones Expulsar, Inhabilitar o Mantener.
-
-| Acción | Efecto |
-| --- | --- |
-| Expulsar | Saca al VIP de la base activa |
-| Inhabilitar | Lo deja fuera de circulación sin borrarlo |
-| Mantener | No cambia nada |
-
-La integración está activa en el despliegue actual <!-- VERIFY: estado real del despliegue (Fase 6) — ver docs/ESTADO-PROYECTO.md -->.
+Cuando Lucien expulsa a un suscriptor del canal VIP, Diana puede recibir el evento y comprobar si esa persona también pertenece a su propia base VIP. Si existe una coincidencia, Diana no toma una acción destructiva automáticamente: la dueña recibe las opciones Expulsar, Inhabilitar o Mantener, y decide cómo proceder.
 
 ---
 
@@ -166,7 +189,7 @@ Diana está construida alrededor de algunos principios simples:
 ---
 
 > [!NOTE]
-> DianaV2 es un proyecto en evolución. Algunas capacidades descritas aquí existen en el código pero permanecen deliberadamente desactivadas mediante feature flags mientras se validan en condiciones reales.
+> DianaV2 es un proyecto en evolución. Las capacidades de mayor impacto se protegen mediante interruptores de configuración (feature flags): así pueden validarse en condiciones reales antes de volverse comportamiento habitual, y pueden desactivarse si no demuestran ser seguras.
 >
 > La documentación técnica vive en `docs/ARCHITECTURE.md` y `docs/ESTADO-PROYECTO.md`; la wiki (`wiki/`) contiene los contratos y detalles operativos.
 
