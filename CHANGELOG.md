@@ -92,7 +92,7 @@ Highlights of what's new and fixed in Diana, from her early releases through the
 ### ✨ New Features
 - **Paragraph-bubble delivery**: drafts are split into paragraph bubbles (blank-line blocks) before the character-length split, so multi-paragraph replies arrive as natural separate messages instead of one wall of text.
 - **Sending progress**: multi-segment deliveries show the owner a live "sending X/Y" progress indicator.
-- **Weighted delivery quirks**: quirk selection is weighted toward typo + self-correction, and the overall quirk rate is raised to 20%.
+- **Adjust delivery quirks**: typos + autocorrect (*) are now calibrated based on context (emotion, urgency, etc.).
 
 ### 🐛 Fixes
 - Fixed a startup hang in the memory backfill queue: the has-history check now uses a single cheap count query instead of walking the entire chat history page by page (which stalled the bot at boot against remote databases).
