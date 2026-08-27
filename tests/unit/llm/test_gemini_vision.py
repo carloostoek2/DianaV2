@@ -39,7 +39,7 @@ async def test_describe_image_sends_inline_data_and_returns_text() -> None:
     client = _transport(responder)
     provider = GeminiVisionProvider(
         api_key=SecretStr("k-123"),
-        model="gemini-2.5-flash",
+        model="gemini-3.6-flash",
         client=client,
     )
     text = await provider.describe_image(

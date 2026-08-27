@@ -58,7 +58,9 @@ class Settings(BaseSettings):
     feature_image_vision_enabled: bool = False
     gemini_api_key: SecretStr = SecretStr("")
     # Gemini vision model used to caption non-sensitive inbound photos.
-    gemini_vision_model: str = "gemini-2.5-flash"
+    # gemini-2.5-flash is no longer available to new accounts (404 since
+    # 2026-08); gemini-3.6-flash is Google's current flash vision model.
+    gemini_vision_model: str = "gemini-3.6-flash"
     gemini_vision_timeout_s: Annotated[float, Field(gt=0)] = 15.0
     global_mode: Literal["supervised", "autonomous", "fake_delivery"] = "supervised"
     delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3

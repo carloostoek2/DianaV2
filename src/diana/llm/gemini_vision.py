@@ -36,7 +36,7 @@ class GeminiVisionProvider:
         self,
         *,
         api_key: SecretStr,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.6-flash",
         timeout: float = 15.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
