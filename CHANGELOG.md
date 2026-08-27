@@ -6,6 +6,26 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
+Enmascarado local de datos sensibles en imágenes — 2026-08-27
+
+Cuando añadimos la visión, resolvimos la privacidad bloqueando: si una foto contenía un dato sensible, no salía del servidor y la revisaba la dueña. Es seguro, pero desperdicia fotos útiles que solo tienen un dato puntual, como una tarjeta sobre un ticket. Quería aplicar a las imágenes el mismo criterio que ya usamos con el texto: enmascarar lo sensible antes de externalizar, en lugar de descartar todo.
+
+Técnicamente, esto representa: llevar la frontera de privacidad que ya existe en las llamadas al LLM —donde enmascaramos emails, teléfonos y tarjetas en el texto— hasta los píxeles de la imagen, con la misma regla: los datos sensibles nunca salen del servidor en forma legible.
+
+- El OCR local ahora extrae las cajas reales de cada línea de texto, no solo el texto.
+- Si la imagen contiene un dato fuerte (tarjeta, cuenta bancaria o clave), se pintan de negro las líneas completas que lo contienen, con un margen de seguridad para que el antialiasing no deje píxeles legibles.
+- La imagen tapada se vuelve a analizar antes de salir: si todavía se lee algún dato fuerte, no sale y pasa a revisión manual de la dueña. Solo viaja cuando la verificación confirma que está limpia.
+- Los documentos de identidad nunca salen del servidor, ni siquiera tapados.
+- Las facturas y los recibos viajan tal cual: el importe queda visible porque es el comprobante de pago, decisión de la dueña.
+- El prompt de descripción indica ignorar por completo las zonas tapadas: no mencionarlas ni intentar adivinar qué hay debajo.
+- La copia enmascarada es efímera: no se guarda en disco ni en la base de datos.
+- El caption del VIP ya no participa en la decisión de la imagen: es texto y lo procesa el control de seguridad de texto del pipeline, igual que cualquier mensaje.
+- Todo sigue protegido por el mismo interruptor "FEATURE_IMAGE_VISION_ENABLED": apagado = comportamiento anterior completo.
+
+Verificación: 3349 tests unitarios pasando.
+
+---
+
 Visión de imágenes con privacidad local — 2026-08-26
 
 Quería que Diana pudiera entender las fotos que recibe un VIP, pero no estaba dispuesto a resolverlo enviando imágenes directamente a un proveedor externo. La nueva capacidad tenía que respetar la misma filosofía de privacidad y supervisión que el resto del sistema.

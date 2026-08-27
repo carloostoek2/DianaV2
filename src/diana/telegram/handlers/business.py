@@ -88,7 +88,7 @@ async def _vision_text_and_photo(
         image_bytes = await downloader(file_id)
         mime_type = detect_image_mime(image_bytes)
         result = await vision.analyze(
-            image_bytes, mime_type=mime_type, caption=caption
+            image_bytes, mime_type=mime_type
         )
     except Exception as exc:
         # Download / decode / analysis failure → fail-open to the plain tag;

@@ -30,6 +30,15 @@ async def test_describe_returns_caption() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_tells_vision_to_ignore_redacted_zones() -> None:
+    vision = _FakeVision(text="una taza de café")
+    describer = ImageDescriber(vision=vision)
+    await describer.describe(b"img", mime_type="image/jpeg")
+    assert vision.last_prompt and "zonas tapadas" in vision.last_prompt
+    assert "no las menciones" in vision.last_prompt
+
+
+@pytest.mark.asyncio
 async def test_provider_error_returns_none_fail_open() -> None:
     vision = _FakeVision(error=True)
     describer = ImageDescriber(vision=vision)

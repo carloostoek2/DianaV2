@@ -218,9 +218,11 @@ Preferimos bloquear una imagen segura antes que enviar accidentalmente una image
 
 La privacidad gana cuando hay duda.
 
-3. Tenemos dos caminos
+3. Tenemos tres caminos
 
 Si la imagen es segura, la enviamos al modelo de visión y obtenemos una descripción breve en español.
+
+Si contiene un dato fuerte —una tarjeta, una cuenta bancaria o una clave—, aplicamos el mismo criterio que ya usamos con el texto: enmascarar antes de externalizar. El OCR local ubica las líneas exactas que contienen el dato, las pinta de negro con un margen de seguridad y vuelve a analizar la imagen tapada. Solo viaja la imagen tapada cuando la verificación confirma que ya no se lee nada sensible; si todavía se lee algo, no sale y pasa a revisión de la dueña. Los documentos de identidad nunca salen, ni siquiera tapados. Las facturas y los recibos viajan tal cual: el importe queda visible porque es el comprobante de pago.
 
 Esa descripción entra al turno como texto.
 
@@ -228,7 +230,7 @@ Esto fue una decisión deliberada: no quise modificar el núcleo cognitivo de Di
 
 Imagen → descripción → turno de texto → comprensión → generación → evaluación → decisión.
 
-Si la imagen resulta sensible, no la enviamos al proveedor externo.
+Y si la imagen resulta sensible sin remedio, no la enviamos al proveedor externo.
 
 La conversación pasa directamente a revisión de la dueña y Diana genera un borrador prudente a ciegas. La dueña recibe la foto junto con el borrador y decide qué hacer.
 
@@ -244,7 +246,7 @@ Lo que queda en el turno es texto: la descripción de una imagen segura o la mar
 
 La funcionalidad está protegida además por "FEATURE_IMAGE_VISION_ENABLED". Si se desactiva, Diana vuelve al comportamiento anterior.
 
-La implementación actual de visión pasó la suite completa con 3130 tests unitarios.
+La implementación actual de visión pasó la suite completa con 3349 tests unitarios.
 
 ---
 

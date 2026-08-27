@@ -474,22 +474,42 @@ no entra a memories/examples/policies ni enseña nada al sistema. En sandbox,
 business_message con photo + flag ON:
   → Telegram Layer: detecta photo → descarga bytes del file_id más grande
     (photo_downloader inyectado; NUNCA persiste la imagen)
-  → ImageVisionService (application): 
+  → ImageVisionService (application):
       1. OCR local (infrastructure/vision/ocr.py; tesseract) — la imagen NO
          sale del servidor en esta etapa. Si el OCR falla o la imagen no es
          legible → SENSIBLE (fail-closed: nunca enviar a Google lo no verificado)
-      2. classify_sensitive(texto_OCR + caption) — reglas aprobadas por la
-         dueña: tarjetas (13–19 dígitos con Luhn / grupos de 4 / Amex),
+      2. Clasificación sobre el TEXTO DEL OCR (el caption NO participa en la
+         decisión de la imagen — decisión de la dueña). Reglas aprobadas por
+         la dueña: tarjetas (13–19 dígitos con Luhn / grupos de 4 / Amex),
          facturas y recibos, documentos de identidad, claves y accesos,
-         cuentas bancarias. Match → SENSIBLE (revisión manual de la dueña)
-      3. NO sensible → ImageDescriber (cognitive/image_vision.py) →
-         GeminiVisionProvider (llm/gemini_vision.py) → descripción corta
-         (español neutro, máx. 40 palabras). Fallo del proveedor → fail-open:
-         se mantiene el tag plano [imagen] (nunca se rompe el turno)
+         cuentas bancarias. Tres caminos:
+         a) Documento de identidad → SENSIBLE (revisión manual de la dueña;
+            la imagen NUNCA sale, ni tapada)
+         b) Dato fuerte (tarjeta / cuenta / clave) → ENMASCARADO local:
+            - ocr.py extrae las cajas de texto reales (image_to_data)
+            - se pintan de negro las LÍNEAS COMPLETAS que contienen el dato
+              (nunca se estima el rectángulo por longitud: la caja exacta la
+              da el OCR; margen de seguridad anti-antialiasing)
+            - verificación fail-closed: OCR de la imagen tapada → si aún se
+              lee algún dato fuerte → SENSIBLE (revisión manual, no sale);
+              si limpio → la imagen TAPADA viaja a Gemini
+         c) Factura / recibo → viaja; el IMPORTE queda visible (comprobante de
+            pago, decisión de la dueña); solo se tapan las líneas con datos
+            fuertes si aparecen. Sin datos fuertes → viaja tal cual
+         d) Sin datos → viaja tal cual (como hoy)
+      3. La imagen (tapada o limpia) → ImageDescriber (cognitive/image_vision.py)
+         → GeminiVisionProvider (llm/gemini_vision.py) → descripción corta
+         (español neutro, máx. 40 palabras; el prompt indica IGNORAR las zonas
+         tapadas: no mencionarlas ni adivinar qué hay debajo). Fallo del
+         proveedor → fail-open: se mantiene el tag plano [imagen] (nunca se
+         rompe el turno)
   → Texto del turno:
       - sensible:      "[imagen] ⚠️ contiene información sensible (no analizada)"
       - descripción:   "[imagen: <descripción>]" (+ caption si existe)
       - fallo/flag off: tag clásico "[imagen]" (+ caption) — byte a byte igual
+  → El caption no viaja al proveedor de visión: entra con la descripción al
+    pipeline como TEXTO normal de un mensaje y lo procesa el control de
+    seguridad de texto existente, igual que cualquier mensaje del VIP
   → VipInboundMessage.photo_file_id (file_id de Telegram) viaja con el turno
   → send_draft_for_approval persiste photo_file_id en pending_approvals
     (migración 035) y el DM de la dueña adjunta la foto (send_photo) + el
@@ -501,14 +521,20 @@ business_message con photo + flag ON:
 ```
 
 Invariantes: flag OFF = comportamiento previo byte a byte (media tag sin
-contenido, sin descarga, sin foto en el DM); la imagen sensible NUNCA sale a
-Google (fail-closed ante OCR no disponible, texto no legible o match de reglas);
-la imagen NO se guarda en DB ni en disco (solo los bytes en memoria durante el
-análisis y el file_id de Telegram para el DM); el caption del VIP también se
-evalúa con las reglas (no solo el OCR); la descripción es texto efímero del
-turno — no alimenta memorias/ejemplos/perfil (anti-contaminación); el prompt de
-descripción vive en cognitive/ (no en llm/); el Decisor no interviene en esta
-decisión (el filtro es pre-pipeline, capa de aplicación + Telegram I/O).
+contenido, sin descarga, sin foto en el DM); la imagen con documento de
+identidad NUNCA sale a Google (ni tapada); fail-closed ante OCR no disponible,
+texto no legible, cajas no disponibles o verificación post-tapado con datos
+fuertes aún legibles; los datos sensibles NUNCA salen del servidor en forma
+legible (solo viaja la imagen tapada o limpia); el caption NO se evalúa en el
+filtro de imagen (lo maneja el control de seguridad de texto del pipeline, como
+cualquier mensaje); la imagen NO se guarda en DB ni en disco (solo los bytes en
+memoria durante el análisis — incluida la copia enmascarada — y el file_id de
+Telegram para el DM); la descripción es texto efímero del turno — no alimenta
+memorias/ejemplos/perfil (anti-contaminación); el prompt de descripción vive en
+cognitive/ (no en llm/); el enmascarado vive bajo el MISMO flag
+FEATURE_IMAGE_VISION_ENABLED (flag OFF = comportamiento previo completo); el
+Decisor no interviene en esta decisión (el filtro es pre-pipeline, capa de
+aplicación + Telegram I/O).
 
 ---
 
