@@ -23,11 +23,15 @@ from diana.telegram.handlers.doctrine import (
 )
 from diana.application.turn_coordinator import ChatLockTimeoutError
 from diana.telegram.keyboards import (
+    SEVERITY_LABELS,
     doctrine_keyboard,
     encode_doctrine_callback,
     encode_doctrine_escalate_callback,
     encode_doctrine_proposal_callback,
     encode_doctrine_resolve_callback,
+    encode_severity,
+    parse_severity,
+    severity_keyboard,
 )
 
 OWNER = 999001
@@ -827,3 +831,44 @@ async def test_dp_then_ds_scope_resolves_with_proposed_rule() -> None:
     assert call["rule_text"] != "Sí, te hago 10%"  # never the VIP reply
     assert call["vip_id"] == vip_id
     assert call["scope"] == "vip"
+
+
+# --- SPEC-EA-07: severity picker encode/parse + keyboard ----------------------
+
+
+class TestSeverityKeyboard:
+    def test_encode_parse_round_trip(self) -> None:
+        turn_id = uuid4()
+        for severity in ("minor", "moderate", "major"):
+            data = encode_severity(turn_id, severity)
+            assert data.startswith("sv:")
+            parsed = parse_severity(data)
+            assert parsed is not None
+            assert parsed[0] == turn_id
+            assert parsed[1] == severity
+
+    def test_encode_stays_within_64_bytes(self) -> None:
+        data = encode_severity(uuid4(), "major")
+        assert len(data.encode("utf-8")) <= 64
+
+    def test_parse_malformed_returns_none(self) -> None:
+        assert parse_severity("") is None
+        assert parse_severity("sv:") is None
+        assert parse_severity("sv:not-a-uuid:moderate") is None
+        assert parse_severity("sv:uuid:critical") is None
+        assert parse_severity("other:uuid") is None
+
+    def test_keyboard_has_three_buttons_with_labels(self) -> None:
+        kb = severity_keyboard(uuid4())
+        buttons = kb.inline_keyboard[0]
+        assert len(buttons) == 3
+        labels = [b.text for b in buttons]
+        assert labels == [
+            SEVERITY_LABELS["minor"],
+            SEVERITY_LABELS["moderate"],
+            SEVERITY_LABELS["major"],
+        ]
+        # Neutral Mexican Spanish labels.
+        assert "Tono" in labels[0]
+        assert "Contenido" in labels[1]
+        assert "Doctrina/Seguridad" in labels[2]

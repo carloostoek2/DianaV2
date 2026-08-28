@@ -173,11 +173,16 @@ async def test_awaiting_correct_followup_failure_does_not_reanswer() -> None:
     with patch("diana.telegram.handlers.callbacks.logger") as mock_logger:
         await on_callback(query)
 
-    # Spinner cleared once; no second error-alert answer.
+    # Spinner cleared once; no second error-alert answer. The follow-up text
+    # failure is logged (the SPEC-EA-07 severity-picker send is also best-effort
+    # and logs its own event, so assert the follow-up event was emitted at all).
     assert query.answer.await_count == 1
     query.answer.assert_awaited_with()
     mock_logger.exception.assert_called()
-    assert mock_logger.exception.call_args.args[0] == "owner_callback_followup_failed"
+    assert any(
+        call.args[0] == "owner_callback_followup_failed"
+        for call in mock_logger.exception.call_args_list
+    )
     assert sessions.get(OWNER) == turn_id
 
 

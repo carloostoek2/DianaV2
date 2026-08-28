@@ -274,6 +274,10 @@ def build_dispatcher(
             menu_sessions=menu_sessions,
             profile_admin=profile_admin,
             draft_variants=draft_variants,
+            # SPEC-EA-07: severity-prefill signals (Señal C gray zone, Señal B
+            # forbidden keywords). Optional — None just skips the signal.
+            gray_zone=gray_zone,
+            forbidden_keywords=forbidden_keywords,
         )
     )
     root.include_router(

@@ -32,6 +32,7 @@ __all__ = [
     "DEFAULT_COLLOQUIAL_LEXICON",
     "DEFAULT_FORMAL_LEXICON",
     "TextQualityScorer",
+    "hard_gate_hit",
     "score",
 ]
 
@@ -125,6 +126,29 @@ def _has_pii(text: str) -> bool:
         return bool(mask_pii(text).stats)
     except Exception:
         return False
+
+
+def hard_gate_hit(
+    text: str | None,
+    *,
+    forbidden_keywords: Iterable[str] | None = None,
+) -> bool:
+    """True when the text trips the SEGURIDAD hard gate (SPEC-EA-07 prefill).
+
+    A forbidden keyword (lower, stripped) or PII → True (the draft would score
+    0.0 under ``score()``). Empty/None text → False (a poor score is NOT a hard
+    gate — there is no keyword/PII to trip it). Reuses the gate logic of
+    ``score()`` WITHOUT touching it (``score()`` stays the single scorer).
+    """
+    if not text or not str(text).strip():
+        return False
+    text_lower = str(text).strip().lower()
+    if forbidden_keywords:
+        for keyword in forbidden_keywords:
+            kw = str(keyword or "").strip().lower()
+            if kw and kw in text_lower:
+                return True
+    return _has_pii(str(text))
 
 
 def score(

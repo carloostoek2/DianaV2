@@ -1173,6 +1173,12 @@ def build_app(
             if settings.feature_profile_synthesis_enabled
             else None
         ),
+        # SPEC-EA-07: severity distribution of the VIP's corrections — only
+        # wired with quality ON (the turn_outcome_log ledger exists then);
+        # flag OFF → None → no query, byte-identical ficha.
+        severity_counts=(
+            turn_outcome_repo if settings.feature_autonomy_quality_enabled else None
+        ),
     )
 
     # VIP DM history seed (Telethon personal session) — optional until env is set.

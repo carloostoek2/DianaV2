@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from diana.application.text_quality_heuristics import (
     TextQualityScorer,
+    hard_gate_hit,
     score,
 )
 
@@ -14,6 +15,24 @@ class TestScore:
         assert score("") == 0.0
         assert score(None) == 0.0
         assert score("   ") == 0.0
+
+
+class TestHardGateHit:
+    def test_keyword_is_true(self) -> None:
+        assert hard_gate_hit(
+            "Te mando tu contraseña", forbidden_keywords=["contraseña"]
+        ) is True
+
+    def test_pii_is_true(self) -> None:
+        assert hard_gate_hit("Escríbeme a ana@correo.com") is True
+
+    def test_clean_text_is_false(self) -> None:
+        assert hard_gate_hit("¡Claro que sí, María!") is False
+
+    def test_empty_is_false(self) -> None:
+        assert hard_gate_hit("") is False
+        assert hard_gate_hit(None) is False
+        assert hard_gate_hit("   ") is False
 
     def test_forbidden_keyword_is_hard_zero(self) -> None:
         assert score("Te mando tu contraseña", forbidden_keywords=["contraseña"]) == 0.0

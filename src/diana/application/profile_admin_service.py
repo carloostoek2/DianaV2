@@ -51,6 +51,10 @@ class ProfileAdminResult:
     # 📚 Historial de versiones section of the ficha (newest-first, capped).
     # Default None keeps every existing constructor/tests byte-identical (A7).
     profile_history: list[dict] | None = None
+    # SPEC-EA-07: severity distribution of the VIP's corrections
+    # (minor/moderate/major counts, additive to the trust section). Default None
+    # keeps every existing constructor/tests byte-identical (A7).
+    trust_severity_counts: dict[str, int] | None = None
 
 
 class ProfileAdminService:
@@ -66,6 +70,7 @@ class ProfileAdminService:
         memories: Any | None = None,
         trust_budget: Any | None = None,
         profile_history: Any | None = None,
+        severity_counts: Any | None = None,
     ) -> None:
         self._profiles = profiles
         self._vips = vips
@@ -81,6 +86,10 @@ class ProfileAdminService:
         # Evo-Agente Fase 5 (EA-06): optional vip_profile_history reader
         # (flag-gated; flag OFF → None → no query, byte-identical).
         self._profile_history = profile_history
+        # SPEC-EA-07: optional SeverityCountsReader (SqlTurnOutcomeLogRepo). None
+        # → no query, byte-identical ficha. Only wired when quality ON (the
+        # ledger exists).
+        self._severity_counts = severity_counts
 
     def _assert_owner(self, actor_id: int | None) -> None:
         if actor_id is None or actor_id != self._owner_telegram_id:
@@ -148,6 +157,21 @@ class ProfileAdminService:
                 )
                 rows = None
             trust_rows = rows or None
+        # SPEC-EA-07: severity distribution of the VIP's corrections (additive
+        # shadow in the ficha). Best-effort like the trust rows — a DB error
+        # must never break the owner ficha.
+        severity_counts: dict[str, int] | None = None
+        if self._severity_counts is not None:
+            try:
+                severity_counts = await self._severity_counts.count_corrections_by_severity(
+                    vip.id
+                )
+            except Exception:
+                logger.exception(
+                    "profile_severity_counts_failed",
+                    extra={"telegram_user_id": telegram_user_id},
+                )
+                severity_counts = None
         # Evo-Agente Fase 5 (EA-06): profile version history (newest-first,
         # capped for display). Best-effort like the trust rows — a DB error
         # must never break the owner ficha.
@@ -182,6 +206,7 @@ class ProfileAdminService:
                 memory=memory_rows,
                 trust_budget=trust_rows,
                 profile_history=history_rows,
+                trust_severity_counts=severity_counts,
             )
         # Prefer normalized schema for structured rows; keep legacy flat as-is.
         display: dict | None
@@ -201,6 +226,7 @@ class ProfileAdminService:
             memory=memory_rows,
             trust_budget=trust_rows,
             profile_history=history_rows,
+            trust_severity_counts=severity_counts,
         )
 
     async def set_fact(

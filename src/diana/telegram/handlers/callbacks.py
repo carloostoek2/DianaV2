@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterable, Literal
 from uuid import UUID
 
 from aiogram import Router
@@ -25,6 +25,8 @@ from diana.application.draft_variants import (
     build_owner_draft_text,
 )
 from diana.application.profile_admin_service import ProfileAdminService
+from diana.application.severity_prefill import preselect_severity
+from diana.application.text_quality_heuristics import hard_gate_hit
 from diana.telegram.keyboards import (
     MENU_ROOT_TEXT,
     draft_keyboard,
@@ -35,7 +37,9 @@ from diana.telegram.keyboards import (
     parse_gold_confirm,
     parse_metrics_callback,
     parse_reprimand_confirm,
+    parse_severity,
     parse_trace_callback,
+    severity_keyboard,
     step_detail_keyboard,
     trace_detail_keyboard,
     trace_list_keyboard,
@@ -278,6 +282,53 @@ _DRAFT_PROGRESS_LABELS: dict[str, str] = {
 _REGENERATING_LABEL = "♻️ Regenerando…"
 
 
+async def _preselect_severity_for_turn(
+    admin: AdminService,
+    admin_trace: AdminTraceService | None,
+    gray_zone: Any | None,
+    turn_id: UUID,
+    forbidden_keywords: Iterable[str] | None,
+) -> str:
+    """Deterministic severity prefill for the owner correction picker (Fase 4).
+
+    Gathers the three signals best-effort (each source is optional; a failure or
+    a None-wired reader is skipped, never raises) and delegates to the pure
+    ``preselect_severity``. NEVER uses the LLM.
+    """
+    gray_zone_open = False
+    if gray_zone is not None:
+        try:
+            gray_zone_open = (
+                await gray_zone.get_open_query_by_turn_id(turn_id) is not None
+            )
+        except Exception:
+            gray_zone_open = False
+    doctrine = safety = None
+    if admin_trace is not None:
+        try:
+            trace = await admin_trace.get_full_trace(turn_id)
+        except Exception:
+            trace = None
+        evaluation = getattr(trace, "evaluation", None)
+        if isinstance(evaluation, dict):
+            doctrine = evaluation.get("doctrine")
+            safety = evaluation.get("safety")
+    hard_gate = False
+    try:
+        approval = await admin.get_approval(turn_id)
+    except Exception:
+        approval = None
+    draft_text = getattr(approval, "draft_text", None)
+    if draft_text:
+        hard_gate = hard_gate_hit(draft_text, forbidden_keywords=forbidden_keywords)
+    return preselect_severity(
+        gray_zone_open=gray_zone_open,
+        doctrine=doctrine,
+        safety=safety,
+        hard_gate=hard_gate,
+    )
+
+
 async def dispatch_owner_callback(
     *,
     admin: AdminService,
@@ -288,6 +339,8 @@ async def dispatch_owner_callback(
     admin_metrics: AdminMetricsService | None = None,
     owner_telegram_id: int | None = None,
     draft_variants: Any | None = None,
+    gray_zone: Any | None = None,
+    forbidden_keywords: Iterable[str] | None = None,
     on_delivery_progress: DeliveryProgressCallback | None = None,
     on_regenerating: RegeneratingCallback | None = None,
 ) -> str:
@@ -449,6 +502,22 @@ async def dispatch_owner_callback(
         except OwnerAuthError:
             return "forbidden"
 
+    # Correction-severity picker (SPEC-EA-07): sets sess.severity in-place.
+    severity_parsed = parse_severity(callback_data)
+    if severity_parsed is not None:
+        try:
+            if actor_id is None:
+                raise OwnerAuthError("missing actor")
+            admin._assert_owner(actor_id)  # noqa: SLF001 — intentional thin gate
+            _sv_turn_id, severity = severity_parsed
+            sess = correct_sessions.get_session(actor_id)
+            if sess is None:
+                return "severity_session_expired"
+            sess.severity = severity
+            return "severity_set"
+        except OwnerAuthError:
+            return "forbidden"
+
     # Standard owner callbacks.
     parsed = parse_callback(callback_data)
     if parsed is None:
@@ -475,7 +544,12 @@ async def dispatch_owner_callback(
             if not await admin.is_pending_approval(turn_id):
                 correct_sessions.cancel_turn(turn_id)
                 return await admin.classify_approve_noop(turn_id)
-            correct_sessions.start(actor_id, turn_id)
+            # SPEC-EA-07: deterministic prefill (señales C/A/B, nunca LLM) seeds
+            # the session severity; the owner can override it via the sv: picker.
+            preselect = await _preselect_severity_for_turn(
+                admin, admin_trace, gray_zone, turn_id, forbidden_keywords
+            )
+            correct_sessions.start(actor_id, turn_id, severity=preselect)
             return "awaiting_correct"
         if action == "gold":
             if actor_id is None:
@@ -544,6 +618,8 @@ def build_callback_router(
     menu_sessions: Any | None = None,
     profile_admin: ProfileAdminService | None = None,
     draft_variants: Any | None = None,
+    gray_zone: Any | None = None,
+    forbidden_keywords: Iterable[str] | None = None,
 ) -> Router:
     """Callback router for owner drafts/traces/metrics.
 
@@ -551,6 +627,10 @@ def build_callback_router(
     an import cycle through menu.py). The add-note-from-draft flow (``an:``)
     reuses its TTL-bound "note" session so the pending note expires and is
     cancellable with /cancelar (A1), instead of a permanent in-memory dict.
+
+    SPEC-EA-07: ``gray_zone`` (Señal C) and ``forbidden_keywords`` (Señal B)
+    feed the deterministic correction-severity prefill; both optional (None →
+    the signal is skipped, prefill falls back to moderate).
     """
     router = Router(name="callbacks")
     sessions = correct_sessions or CorrectSessionStore()
@@ -862,6 +942,8 @@ def build_callback_router(
                 actor_id=actor_id,
                 admin_trace=admin_trace,
                 draft_variants=draft_variants,
+                gray_zone=gray_zone,
+                forbidden_keywords=forbidden_keywords,
                 on_delivery_progress=_progress,
                 on_regenerating=_regenerating,
             )
@@ -894,6 +976,13 @@ def build_callback_router(
             if status == "forbidden":
                 await query.answer("No autorizado", show_alert=True)
                 return
+            if status == "severity_set":
+                # Non-blocking ack; the corrected text still completes the flow.
+                await query.answer("Gravedad registrada ✅")
+                return
+            if status == "severity_session_expired":
+                await query.answer(SESSION_EXPIRED_UX, show_alert=True)
+                return
             if status == "awaiting_correct":
                 # Follow-up chat text is best-effort: never re-answer the callback.
                 if query.message:
@@ -904,6 +993,21 @@ def build_callback_router(
                     except Exception:
                         logger.exception(
                             "owner_callback_followup_failed",
+                            extra={"callback_data": data, "actor_id": actor_id},
+                        )
+                # SPEC-EA-07: non-blocking severity picker (the correction completes
+                # with the preselected/default severity even if the button is
+                # never tapped). Best-effort like the follow-up text.
+                parsed_correct = parse_callback(data)
+                if query.message and parsed_correct is not None:
+                    try:
+                        await query.message.answer(
+                            "Gravedad de la corrección:",
+                            reply_markup=severity_keyboard(parsed_correct[1]),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_callback_severity_picker_failed",
                             extra={"callback_data": data, "actor_id": actor_id},
                         )
                 return

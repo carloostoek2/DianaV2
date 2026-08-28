@@ -1198,6 +1198,59 @@ def test_format_vip_profile_renders_trust_section() -> None:
     assert "city: BA" in text
 
 
+def test_format_vip_profile_renders_severity_breakdown() -> None:
+    """SPEC-EA-07: trust_severity_counts adds ONE summary line without touching
+    the per-category render (aditiva)."""
+    result = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {"city": "BA"}, "notes": []},
+        trust_budget=[
+            {
+                "category": "fatico",
+                "trust_score": 0.42,
+                "autonomous_count": 3,
+                "correction_count": 1,
+                "last_correction_at": "2026-08-05T10:00:00+00:00",
+                "trend": "down",
+            }
+        ],
+        trust_severity_counts={"minor": 2, "moderate": 1, "major": 0},
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "🔎 Gravedad: menor 2 · moderada 1 · mayor 0" in text
+    assert "[fatico] 0.42 ▼" in text  # per-category line untouched
+
+
+def test_format_vip_profile_severity_absent_is_byte_identical() -> None:
+    """SPEC-EA-07: without trust_severity_counts the ficha renders exactly as
+    before (no 'Gravedad' line)."""
+    result = ProfileAdminResult(
+        status="profile_ok",
+        telegram_user_id=555,
+        display_name="Alice",
+        content={"facts": {"city": "BA"}, "notes": []},
+        trust_budget=[
+            {
+                "category": "fatico",
+                "trust_score": 0.42,
+                "autonomous_count": 3,
+                "correction_count": 1,
+                "last_correction_at": "2026-08-05T10:00:00+00:00",
+                "trend": "down",
+            }
+        ],
+    )
+
+    text = _format_vip_profile(result)
+
+    assert "Gravedad" not in text
+    assert "[fatico] 0.42 ▼" in text
+
+
 def test_format_vip_profile_empty_with_trust_shows_trust() -> None:
     """No manual ficha + no memory, but trust rows → the ficha shows the 🔐
     section, NOT the 'Sin datos' empty card."""

@@ -25,7 +25,11 @@ from diana.telegram.handlers.callbacks import (
     CorrectSessionStore,
     dispatch_owner_callback,
 )
-from diana.telegram.keyboards import encode_callback
+from diana.telegram.keyboards import (
+    encode_callback,
+    encode_severity,
+    parse_severity,
+)
 
 OWNER = 999001
 OTHER = 111
@@ -170,6 +174,85 @@ async def test_correct_callback_starts_session_no_deliver(graph: dict) -> None:
     # waiting approval still open until free-text correct
     appr = await g["approvals"].get_by_turn(turn.id)
     assert appr is not None and appr.status == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_correct_starts_session_with_moderate_prefill(graph: dict) -> None:
+    """SPEC-EA-07: with no signals wired the deterministic prefill is moderate."""
+    g = graph
+    turn = await _queue_draft(g)
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+    )
+    sess = g["sessions"].get_session(OWNER)
+    assert sess is not None
+    assert sess.severity == "moderate"
+
+
+@pytest.mark.asyncio
+async def test_correct_prefill_major_when_gray_zone_open(graph: dict) -> None:
+    """SPEC-EA-07 (Señal C): an open gray-zone query → prefill major."""
+    from types import SimpleNamespace
+
+    g = graph
+    turn = await _queue_draft(g)
+
+    async def _open_query(t):
+        return SimpleNamespace(id=t)
+
+    gray_zone = SimpleNamespace(get_open_query_by_turn_id=_open_query)
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+        gray_zone=gray_zone,
+    )
+    sess = g["sessions"].get_session(OWNER)
+    assert sess is not None
+    assert sess.severity == "major"
+
+
+@pytest.mark.asyncio
+async def test_severity_callback_sets_session_severity(graph: dict) -> None:
+    """SPEC-EA-07 (sv:): tapping a severity button mutates the session in-place."""
+    g = graph
+    turn = await _queue_draft(g)
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+    )
+    assert g["sessions"].get_session(OWNER).severity == "moderate"  # noqa: SLF001
+
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_severity(turn.id, "major"),
+        actor_id=OWNER,
+    )
+
+    assert status == "severity_set"
+    assert g["sessions"].get_session(OWNER).severity == "major"
+
+
+@pytest.mark.asyncio
+async def test_severity_callback_expired_session_is_noop(graph: dict) -> None:
+    """SPEC-EA-07: sv: without a live session → no-op (expired/never started)."""
+    g = graph
+    turn = await _queue_draft(g)
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_severity(turn.id, "minor"),
+        actor_id=OWNER,
+    )
+    assert status == "severity_session_expired"
+    assert g["sessions"].get_session(OWNER) is None
 
 
 @pytest.mark.asyncio

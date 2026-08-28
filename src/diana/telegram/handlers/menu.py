@@ -312,13 +312,21 @@ def _memory_section_lines(
     return lines, pending
 
 
-def _trust_section_lines(trust_rows: list[dict]) -> list[str]:
+def _trust_section_lines(
+    trust_rows: list[dict],
+    *,
+    severity_counts: dict[str, int] | None = None,
+) -> list[str]:
     """Render the 🔐 Confianza section (EA-06); empty rows → no lines.
 
     The "collapsible section" pattern of this codebase = a header + lines that
     never break the Telegram render (no orphan header when there are no rows).
     Each row: category, score (0.00-1.00), trend icon, counts and the date of
     the last correction. User-facing text is neutral Mexican Spanish.
+
+    SPEC-EA-07: when ``severity_counts`` is present and non-zero, an ADDITIVE
+    one-line severity summary is appended without touching the per-category
+    lines. Absent/all-zero counts → byte-identical render.
     """
     if not trust_rows:
         return []
@@ -334,6 +342,12 @@ def _trust_section_lines(trust_rows: list[dict]) -> list[str]:
         if last:
             parts.append(f"última {str(last)[:10]}")
         lines.append(" · ".join(parts))
+    if severity_counts and any(severity_counts.values()):
+        lines.append(
+            f"🔎 Gravedad: menor {severity_counts.get('minor', 0)}"
+            f" · moderada {severity_counts.get('moderate', 0)}"
+            f" · mayor {severity_counts.get('major', 0)}"
+        )
     return lines
 
 
@@ -413,7 +427,12 @@ def _format_vip_profile(result: Any) -> str:
 
     # Evo-Agente Fase 5 (EA-06): the 🔐 Confianza section — additive, follows
     # the memory section; empty rows render nothing (no orphan header).
-    lines.extend(_trust_section_lines(result.trust_budget or []))
+    lines.extend(
+        _trust_section_lines(
+            result.trust_budget or [],
+            severity_counts=result.trust_severity_counts,
+        )
+    )
     # Evo-Agente Fase 5 (EA-06): 📚 Historial de versiones — additive, follows
     # the trust section; empty rows render nothing (no orphan header).
     lines.extend(_profile_history_lines(result.profile_history or []))

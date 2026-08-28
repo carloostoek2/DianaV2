@@ -532,6 +532,60 @@ async def test_show_profile_trust_none_when_unwired(
     assert r.trust_budget is None
 
 
+class FakeSeverityCounts:
+    """SeverityCountsReader double (SPEC-EA-07)."""
+
+    def __init__(self, counts: dict[str, int] | None = None) -> None:
+        self.counts = dict(counts or {"minor": 0, "moderate": 0, "major": 0})
+        self.calls: list[UUID] = []
+
+    async def count_corrections_by_severity(self, vip_id: UUID) -> dict[str, int]:
+        self.calls.append(vip_id)
+        return dict(self.counts)
+
+
+@pytest.mark.asyncio
+async def test_show_profile_includes_severity_counts_when_wired(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """SPEC-EA-07: with a SeverityCountsReader wired, show_profile carries the
+    severity distribution in BOTH result paths."""
+    service, vips, profiles = svc
+    rec = await vips.add(555, display_name="Alice")
+    counts = FakeSeverityCounts({"minor": 2, "moderate": 1, "major": 0})
+    wired = ProfileAdminService(
+        profiles=profiles,
+        vips=vips,
+        owner_telegram_id=OWNER,
+        severity_counts=counts,
+        clock=lambda: datetime(2026, 8, 7, 12, 0, tzinfo=UTC),
+    )
+
+    r_empty = await wired.show_profile(OWNER, 555)
+    assert r_empty.status == "profile_empty"
+    assert r_empty.trust_severity_counts == {"minor": 2, "moderate": 1, "major": 0}
+    assert counts.calls == [rec.id]
+
+    profiles.rows[rec.id] = {"facts": {"city": "BA"}, "notes": []}
+    r_ok = await wired.show_profile(OWNER, 555)
+    assert r_ok.status == "profile_ok"
+    assert r_ok.trust_severity_counts == {"minor": 2, "moderate": 1, "major": 0}
+
+
+@pytest.mark.asyncio
+async def test_show_profile_severity_counts_none_when_unwired(
+    svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],
+) -> None:
+    """SPEC-EA-07: without a reader → trust_severity_counts=None (byte-identical)."""
+    service, vips, _ = svc
+    await vips.add(555, display_name="Alice")
+
+    r = await service.show_profile(OWNER, 555)
+
+    assert r.status == "profile_empty"
+    assert r.trust_severity_counts is None
+
+
 @pytest.mark.asyncio
 async def test_show_profile_empty_trust_rows_normalized_to_none(
     svc: tuple[ProfileAdminService, InMemoryVipStore, FakeProfilesRepo],

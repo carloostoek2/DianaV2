@@ -54,6 +54,8 @@ _ACTION_GOLD = "gd"
 _ACTION_REPRIMAND = "rp"
 _ACTION_GOLD_CONFIRM = "gdc"
 _ACTION_REPRIMAND_CONFIRM = "rpc"
+# Correction severity picker (sv:<uuid>:<minor|moderate|major>) — SPEC-EA-07.
+_ACTION_SEVERITY = "sv"
 
 _GOLD_SCOPE = {"g": "global", "v": "vip"}
 _REPRIMAND_MODE = {"pol": "policy", "ex": "counter_example"}
@@ -357,6 +359,67 @@ def parse_doctrine_scope(data: str) -> tuple[UUID, str] | None:
     if scope not in ("vip", "all", "cancel"):
         return None
     return (turn_id, scope)
+
+
+# SPEC-EA-07: correction-severity labels (neutral Mexican Spanish).
+SEVERITY_LABELS = {
+    "minor": "🎨 Tono",
+    "moderate": "📋 Contenido",
+    "major": "⚠️ Doctrina/Seguridad",
+}
+
+
+def encode_severity(turn_id: UUID, severity: str) -> str:
+    """Build callback_data for severity choice: sv:<uuid>:<minor|moderate|major>."""
+    data = f"{_ACTION_SEVERITY}:{turn_id}:{severity}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_severity(data: str) -> tuple[UUID, str] | None:
+    """Parse sv:<uuid>:<severity> → (turn_id, severity); None on malformed."""
+    if not data or not data.startswith(f"{_ACTION_SEVERITY}:"):
+        return None
+    rest = data[len(_ACTION_SEVERITY) + 1 :]
+    parts = rest.split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        turn_id = UUID(parts[0])
+    except ValueError:
+        return None
+    severity = parts[1]
+    if severity not in SEVERITY_LABELS:
+        return None
+    return (turn_id, severity)
+
+
+def severity_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
+    """Non-blocking correction-severity picker (SPEC-EA-07).
+
+    One row of three buttons; the owner may ignore it and type the corrected
+    text directly (the correction completes with the preselected/default
+    severity regardless of whether the button is tapped).
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=SEVERITY_LABELS["minor"],
+                    callback_data=encode_severity(turn_id, "minor"),
+                ),
+                InlineKeyboardButton(
+                    text=SEVERITY_LABELS["moderate"],
+                    callback_data=encode_severity(turn_id, "moderate"),
+                ),
+                InlineKeyboardButton(
+                    text=SEVERITY_LABELS["major"],
+                    callback_data=encode_severity(turn_id, "major"),
+                ),
+            ],
+        ]
+    )
 
 
 def doctrine_scope_keyboard(turn_id: UUID) -> InlineKeyboardMarkup:
