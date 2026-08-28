@@ -217,6 +217,65 @@ async def test_correct_prefill_major_when_gray_zone_open(graph: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_correct_router_sends_severity_picker_with_moderate_default(
+    graph: dict,
+) -> None:
+    """SPEC-EA-07 (Fase 4, happy-path): the router pre-selects moderate and
+    sends the severity picker message with the 3-button sv: keyboard (default
+    case — no gray-zone / doctrine / hard-gate signal wired)."""
+    from aiogram.types import CallbackQuery, Chat, Message, User
+    from unittest.mock import Mock
+
+    from diana.telegram.handlers.callbacks import build_callback_router
+
+    g = graph
+    turn = await _queue_draft(g)
+    sessions = Mock(spec=CorrectSessionStore)
+    router = build_callback_router(
+        admin=g["admin"],
+        correct_sessions=sessions,
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+
+    msg = Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="draft",
+    )
+    answer = AsyncMock(return_value=True)
+    object.__setattr__(msg, "answer", answer)
+    query = CallbackQuery(
+        id="cq-correct",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_callback("correct", turn.id),
+        message=msg,
+    )
+    object.__setattr__(query, "answer", AsyncMock(return_value=True))
+
+    await on_callback(query)
+
+    # Prefill path (default case): the session is started with moderate.
+    sessions.start.assert_called_once_with(OWNER, turn.id, severity="moderate")
+
+    # Picker send: exactly one message.answer carries the severity keyboard.
+    picker_calls = [
+        c for c in answer.call_args_list if c.kwargs.get("reply_markup") is not None
+    ]
+    assert len(picker_calls) == 1
+    args, kwargs = picker_calls[0]
+    assert args == ("Gravedad de la corrección:",)
+    kb = kwargs["reply_markup"]
+    assert len(kb.inline_keyboard) == 1
+    row = kb.inline_keyboard[0]
+    assert len(row) == 3
+    assert all(btn.callback_data.startswith("sv:") for btn in row)
+
+
+@pytest.mark.asyncio
 async def test_severity_callback_sets_session_severity(graph: dict) -> None:
     """SPEC-EA-07 (sv:): tapping a severity button mutates the session in-place."""
     g = graph
