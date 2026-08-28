@@ -35,7 +35,13 @@ async def _create_turn(session_factory, vip, chat_id: int = 9001):
     return turn_id
 
 
-def _record(turn_id, vip_id, verdict: str = "send", reason: str | None = None):
+def _record(
+    turn_id,
+    vip_id,
+    verdict: str = "send",
+    reason: str | None = None,
+    correction_severity: str | None = None,
+):
     return TurnOutcomeLogRecord(
         turn_id=turn_id,
         vip_id=vip_id,
@@ -43,6 +49,7 @@ def _record(turn_id, vip_id, verdict: str = "send", reason: str | None = None):
         shadow_reason=reason,
         draft_score=0.7,
         blocked_dims=["safety"] if verdict == "blocked" else [],
+        correction_severity=correction_severity,
     )
 
 
@@ -143,3 +150,143 @@ async def test_list_signal_pending_and_chat_resolution(session_factory) -> None:
     # A recent anchor is NOT old enough for the job's pending scan.
     pending = await repo.list_signal_pending(window_hours=6)
     assert all(item["turn_id"] != turn_id for item in pending)
+
+
+# --- SPEC-EA-07: correction_severity (migration 036) ---------------------------
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_insert_round_trips_correction_severity(session_factory) -> None:
+    repo = SqlTurnOutcomeLogRepo(session_factory)
+    vip = await _create_vip(session_factory, 9610)
+    turn_id = await _create_turn(session_factory, vip)
+
+    inserted = await repo.insert(
+        _record(turn_id, vip.id, correction_severity="major")
+    )
+    assert inserted.correction_severity == "major"
+
+    found = await repo.get_by_turn_id(turn_id)
+    assert found is not None
+    assert found.correction_severity == "major"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_insert_defaults_severity_to_null(session_factory) -> None:
+    repo = SqlTurnOutcomeLogRepo(session_factory)
+    vip = await _create_vip(session_factory, 9611)
+    turn_id = await _create_turn(session_factory, vip)
+
+    inserted = await repo.insert(_record(turn_id, vip.id))
+    assert inserted.correction_severity is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_update_outcome_persists_correction_severity(session_factory) -> None:
+    repo = SqlTurnOutcomeLogRepo(session_factory)
+    vip = await _create_vip(session_factory, 9612)
+    turn_id = await _create_turn(session_factory, vip)
+    await repo.insert(_record(turn_id, vip.id))
+
+    updated = await repo.update_outcome(
+        turn_id,
+        owner_outcome="corrected",
+        sent_score=0.9,
+        quality_delta=0.2,
+        correction_severity="moderate",
+    )
+    assert updated is not None
+    assert updated.correction_severity == "moderate"
+
+    # update_outcome persists the passed value (design: the caller decides; a
+    # correction always re-passes its severity — see outcome_log_service wiring).
+    updated2 = await repo.update_outcome(
+        turn_id, owner_outcome="corrected", sent_score=0.8, quality_delta=0.1,
+        correction_severity="major",
+    )
+    assert updated2 is not None
+    assert updated2.correction_severity == "major"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_severity_check_rejects_invalid_value(session_factory) -> None:
+    """CheckConstraint admits NULL + 3 valid severities, rejects anything else."""
+    from sqlalchemy.exc import IntegrityError
+
+    repo = SqlTurnOutcomeLogRepo(session_factory)
+    vip = await _create_vip(session_factory, 9613)
+
+    valid = []
+    for severity in ("minor", "moderate", "major"):
+        t = await _create_turn(session_factory, vip)
+        rec = await repo.insert(_record(t, vip.id, correction_severity=severity))
+        valid.append(rec.correction_severity)
+    assert sorted(valid) == ["major", "minor", "moderate"]
+
+    bad_turn = await _create_turn(session_factory, vip)
+    async with session_factory() as session:
+        from diana.infrastructure.db.models import TurnOutcomeLog
+
+        session.add(
+            TurnOutcomeLog(
+                turn_id=bad_turn,
+                vip_id=vip.id,
+                shadow_verdict="send",
+                correction_severity="critical",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_count_corrections_by_severity(session_factory) -> None:
+    repo = SqlTurnOutcomeLogRepo(session_factory)
+    vip = await _create_vip(session_factory, 9614)
+    other_vip = await _create_vip(session_factory, 9615)
+
+    # corrected + tagged: 2 minor, 1 major (this VIP).
+    for severity in ("minor", "minor", "major"):
+        t = await _create_turn(session_factory, vip)
+        await repo.insert(_record(t, vip.id))
+        await repo.update_outcome(
+            t, owner_outcome="corrected", sent_score=0.9, quality_delta=0.1,
+            correction_severity=severity,
+        )
+    # corrected + NULL severity (pre-tagging / flag off) → ignored.
+    null_t = await _create_turn(session_factory, vip)
+    await repo.insert(_record(null_t, vip.id))
+    await repo.update_outcome(
+        null_t, owner_outcome="corrected", sent_score=0.9, quality_delta=0.1,
+        correction_severity=None,
+    )
+    # approved_as_is (not a correction) → ignored even when tagged.
+    approved_t = await _create_turn(session_factory, vip)
+    await repo.insert(_record(approved_t, vip.id, correction_severity="major"))
+    await repo.update_outcome(
+        approved_t, owner_outcome="approved_as_is", sent_score=0.9,
+        quality_delta=0.0, correction_severity="major",
+    )
+    # Another VIP's corrections don't leak in.
+    other_t = await _create_turn(session_factory, other_vip)
+    await repo.insert(_record(other_t, other_vip.id))
+    await repo.update_outcome(
+        other_t, owner_outcome="corrected", sent_score=0.9, quality_delta=0.1,
+        correction_severity="major",
+    )
+
+    counts = await repo.count_corrections_by_severity(vip.id)
+    assert counts == {"minor": 2, "moderate": 0, "major": 1}
+
+    # Empty VIP → all zeros.
+    fresh_vip = await _create_vip(session_factory, 9616)
+    assert await repo.count_corrections_by_severity(fresh_vip.id) == {
+        "minor": 0,
+        "moderate": 0,
+        "major": 0,
+    }

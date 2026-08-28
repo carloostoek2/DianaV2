@@ -52,6 +52,7 @@ def turn_outcome_orm_to_record(row: TurnOutcomeLog) -> TurnOutcomeLogRecord:
         quality_delta=row.quality_delta,
         blocked_dims=row.blocked_dims or [],
         vip_signal=row.vip_signal,
+        correction_severity=row.correction_severity,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -162,6 +163,7 @@ class SqlTurnOutcomeLogRepo:
                 quality_delta=record.quality_delta,
                 blocked_dims=record.blocked_dims or None,
                 vip_signal=record.vip_signal,
+                correction_severity=record.correction_severity,
             )
             .on_conflict_do_update(
                 index_elements=[TurnOutcomeLog.turn_id],
@@ -174,6 +176,7 @@ class SqlTurnOutcomeLogRepo:
                     "quality_delta": record.quality_delta,
                     "blocked_dims": record.blocked_dims or None,
                     "vip_signal": record.vip_signal,
+                    "correction_severity": record.correction_severity,
                     "updated_at": func.now(),
                 },
             )
@@ -199,6 +202,7 @@ class SqlTurnOutcomeLogRepo:
         owner_outcome: str,
         sent_score: float | None,
         quality_delta: float | None,
+        correction_severity: str | None = None,
     ) -> TurnOutcomeLogRecord | None:
         """Owner-resolution update (approved_as_is / corrected / escalated)."""
         stmt = (
@@ -208,6 +212,7 @@ class SqlTurnOutcomeLogRepo:
                 owner_outcome=owner_outcome,
                 sent_score=sent_score,
                 quality_delta=quality_delta,
+                correction_severity=correction_severity,
                 updated_at=func.now(),
             )
             .returning(TurnOutcomeLog)
@@ -217,6 +222,37 @@ class SqlTurnOutcomeLogRepo:
             await session.commit()
             row = result.scalar_one_or_none()
             return turn_outcome_orm_to_record(row) if row is not None else None
+
+    async def count_corrections_by_severity(
+        self, vip_id: UUID
+    ) -> dict[str, int]:
+        """Severity distribution of this VIP's owner corrections (SPEC-EA-07).
+
+        Counts rows with ``owner_outcome == 'corrected'`` grouped by
+        ``correction_severity``; NULL severities (corrections resolved before
+        tagging shipped, or flag-off) are ignored. Returns the three keys always
+        (default 0) so the ficha never renders an orphan label.
+        """
+        stmt = (
+            select(
+                TurnOutcomeLog.correction_severity,
+                func.count().label("n"),
+            )
+            .where(
+                TurnOutcomeLog.vip_id == vip_id,
+                TurnOutcomeLog.owner_outcome == "corrected",
+                TurnOutcomeLog.correction_severity.is_not(None),
+            )
+            .group_by(TurnOutcomeLog.correction_severity)
+        )
+        async with self._sf() as session:
+            result = await session.execute(stmt)
+            counts = {"minor": 0, "moderate": 0, "major": 0}
+            for row in result.all():
+                key = str(row.correction_severity)
+                if key in counts:
+                    counts[key] = int(row.n)
+            return counts
 
     async def update_signal(
         self, turn_id: UUID, *, vip_signal: str

@@ -719,8 +719,25 @@ class TurnOutcomeLogRecord(BaseModel):
     quality_delta: float | None = None
     blocked_dims: list[str] = Field(default_factory=list)
     vip_signal: str | None = None  # positive | neutral | negative | silence
+    # SPEC-EA-07: severity tag of the owner's correction (minor/moderate/major).
+    # Pure calibration metadata shadow — never feeds memories/examples/vip_profile.
+    correction_severity: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+@runtime_checkable
+class SeverityCountsReader(Protocol):
+    """Severity distribution of owner corrections (SPEC-EA-07, ficha shadow).
+
+    Aggregated in Infrastructure (``SqlTurnOutcomeLogRepo``); consumed by
+    ``ProfileAdminService`` as an optional reader (None → byte-identical ficha).
+    Never feeds learning or gates — pure calibration metadata.
+    """
+
+    async def count_corrections_by_severity(
+        self, vip_id: UUID
+    ) -> dict[str, int]: ...
 
 
 @runtime_checkable
@@ -738,6 +755,7 @@ class TurnOutcomeLogStore(Protocol):
         owner_outcome: str,
         sent_score: float | None,
         quality_delta: float | None,
+        correction_severity: str | None = None,
     ) -> TurnOutcomeLogRecord | None: ...
 
     async def update_signal(

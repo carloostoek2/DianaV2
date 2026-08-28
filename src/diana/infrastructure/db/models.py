@@ -987,6 +987,11 @@ class TurnOutcomeLog(Base):
             "('positive','neutral','negative','silence')",
             name="ck_turn_outcome_log_vip_signal",
         ),
+        CheckConstraint(
+            "correction_severity IS NULL OR correction_severity "
+            "IN ('minor','moderate','major')",
+            name="ck_turn_outcome_log_correction_severity",
+        ),
         Index(
             "ix_turn_outcome_log_vip_id_created_at",
             "vip_id",
@@ -1014,6 +1019,10 @@ class TurnOutcomeLog(Base):
         JSONB, nullable=True, server_default=text("'[]'::jsonb")
     )
     vip_signal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SPEC-EA-07: severity tag of the owner's correction (minor/moderate/major).
+    # Pure calibration metadata shadow — never feeds memories/examples/vip_profile,
+    # and never touches the trust score while FEATURE_SEVERITY_TRUST_DECREMENT is OFF.
+    correction_severity: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
