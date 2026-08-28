@@ -6,6 +6,23 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
+Penalización proporcional por gravedad de corrección — 2026-08-28
+
+No me parecía justo que todas las correcciones de la dueña pesaran igual en la confianza de Diana. Un ajuste de tono para suavizar un borrador frío no es lo mismo que un incumplimiento doctrinal o un riesgo de seguridad, y quería que el sistema distinguiera esas situaciones sin volver a delegar el juicio en un LLM: la lección del incidente de calibración es que un número que gobierna la autonomía no debe moverse por un proceso automático sin supervisión.
+
+Técnicamente, esto representa: generalizar el decremento fijo del presupuesto de confianza a una escala de tres niveles, donde la gravedad la decide la dueña con un toque y el sistema solo sugiere, nunca juzga.
+
+- Al corregir, la dueña ahora indica la gravedad con un toque: 🎨 Tono, 📋 Contenido o ⚠️ Doctrina/Seguridad.
+- El sistema preselecciona la gravedad de forma determinista (sin LLM): si el turno tuvo una consulta de zona gris, si la evaluación marcó doctrina o seguridad por debajo del umbral, o si el borrador activó un gate de seguridad, preselecciona Doctrina/Seguridad. La dueña siempre puede cambiarla.
+- El botón de gravedad no bloquea la corrección: si la dueña no responde, se aplica la preselección y la corrección se entrega igual.
+- Con el flag activado, cada nivel tiene su propio castigo: Tono −0,08, Contenido −0,20 (idéntico a hoy) y Doctrina/Seguridad −0,35. El castigo mínimo sigue pesando más que el premio, así que la asimetría conservadora se mantiene.
+- Mientras el flag está apagado (valor por defecto), el comportamiento es byte a byte idéntico al anterior: toda corrección resta −0,20. Pero la gravedad ya se registra como metadato para medir la distribución real antes de activar la proporcionalidad.
+- La severidad queda registrada en el historial de resultados del turno y la ficha del VIP muestra el desglose de correcciones por nivel.
+
+Verificación: 3225 tests pasando (3209 unitarios + 16 e2e de base de datos).
+
+---
+
 Enmascarado local de datos sensibles en imágenes — 2026-08-27
 
 Cuando añadimos la visión, resolvimos la privacidad bloqueando: si una foto contenía un dato sensible, no salía del servidor y la revisaba la dueña. Es seguro, pero desperdicia fotos útiles que solo tienen un dato puntual, como una tarjeta sobre un ticket. Quería aplicar a las imágenes el mismo criterio que ya usamos con el texto: enmascarar lo sensible antes de externalizar, en lugar de descartar todo.

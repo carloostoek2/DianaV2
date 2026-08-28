@@ -114,6 +114,8 @@ Mi principio aquí es conservador y se traduce en números fijos, el presupuesto
 
 Cada VIP y categoría de conversación arranca con 0,20 de confianza, y el umbral para que Diana pueda actuar sola es 0,90. La asimetría es deliberada: un error resta cuatro veces más de lo que suma un acierto, es decir, un solo desacuerdo borra el equivalente a cuatro aciertos.
 
+Desde el 28 de agosto de 2026, además, la corrección puede distinguir su gravedad. No quería que un ajuste de tono pesara igual que un incumplimiento doctrinal. Al corregir, la dueña indica con un toque si fue 🎨 Tono, 📋 Contenido o ⚠️ Doctrina/Seguridad; el sistema preselecciona una opción según la evidencia del turno —zona gris, doctrina o seguridad por debajo del umbral, o un gate de seguridad—, pero la dueña siempre tiene la última palabra y el botón nunca bloquea la entrega de la corrección. Mientras el flag está apagado, el comportamiento es idéntico al anterior: toda corrección resta −0,20. Con el flag activado, Tono resta −0,08, Contenido −0,20 y Doctrina/Seguridad −0,35. El mínimo castigo sigue pesando más que el premio, y la gravedad queda registrada en el historial del turno y en la ficha del VIP para entender por qué cambia la confianza.
+
 «Las conversaciones sensibles nunca entran en autonomía.»
 
 No quiero que la autonomía sea simplemente una característica técnica. Quiero que sea el resultado de suficiente evidencia.
@@ -403,7 +405,7 @@ En agosto de 2026 empezamos a cerrar piezas más profundas de infraestructura: e
 
 También reforzamos la frontera de privacidad con el enmascaramiento de PII antes de las llamadas al LLM.
 
-Y el último paso, por ahora, ha sido la visión de imágenes.
+Y el último paso, por ahora, ha sido la visión de imágenes, junto con el refinamiento de la confianza: desde el 28 de agosto de 2026 las correcciones pueden distinguir su gravedad, para que el presupuesto de confianza castigue de forma proporcional y no trate igual un ajuste de tono que un incumplimiento de doctrina.
 
 No la añadimos como una excepción al sistema. La incorporamos respetando la misma arquitectura que venimos siguiendo: aislar la nueva capacidad, poner límites antes de externalizar datos, mantener la supervisión y evitar contaminar la memoria con información que no necesitamos conservar.
 
