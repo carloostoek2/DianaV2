@@ -796,7 +796,7 @@ class AdminService:
         corrected_text: str,
         *,
         actor_id: int | None = None,
-        severity: str = "moderate",
+        severity: str | None = "moderate",
     ) -> tuple[DeliveryResult | None, UUID | None]:
         return await self._correct_core(
             turn_id, corrected_text, actor_id=actor_id, severity=severity

@@ -529,6 +529,13 @@ async def dispatch_owner_callback(
             # trust delta. The session is left untouched.
             if sess.turn_id != _sv_turn_id:
                 return "severity_stale"
+            # Mode guard (review round 2): the sv: picker only exists in the
+            # correction flow (mode="correct"). A session opened by the REPRIMAND
+            # flow (mode="reprimand") never shows the picker, so a stale sv:
+            # button from the same turn must not label a reprimand session —
+            # that would fabricate a severity tag on a reprimand correction.
+            if sess.mode != "correct":
+                return "severity_stale"
             sess.severity = severity
             return "severity_set"
         except OwnerAuthError:

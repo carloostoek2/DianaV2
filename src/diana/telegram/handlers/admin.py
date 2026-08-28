@@ -369,7 +369,12 @@ async def handle_admin_text(
                     pending_turn,
                     stripped,
                     actor_id=actor_id,
-                    severity=sess.severity or "moderate",
+                    # Review round 2: the reprimand flow never shows the sv:
+                    # picker, so sess.severity is always None here. Do NOT
+                    # fabricate "moderate" — the shadow distribution stays honest
+                    # (ledger correction_severity=None; _decrement_for(None) falls
+                    # back to the plain decrement either way).
+                    severity=None,
                 )
             except OwnerAuthError:
                 correct_sessions.cancel(actor_id)

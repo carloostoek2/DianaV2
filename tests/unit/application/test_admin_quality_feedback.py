@@ -237,6 +237,30 @@ async def test_handle_reprimand_does_not_fabricate_moderate_severity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handle_correct_with_candidate_none_persists_null_severity() -> None:
+    """SPEC-EA-07 (review round 2): the REAL reprimand free-text path routes
+    through handle_correct_with_candidate (not handle_reprimand — the caller
+    rp_confirm always passes candidate_id, so the dead branch is unreachable).
+    severity=None must persist correction_severity=None, never a fabricated
+    "moderate" tag that would skew the shadow distribution."""
+    trust = _FakeTrustBudgetAdmin()
+    staging, _ = _real_staging()
+    g, turn, staging, _ = await _pending_vip_draft(
+        staging=staging, trust_budget=trust
+    )
+    result, candidate_id = await g["admin"].handle_correct_with_candidate(
+        turn.id,
+        "corrected final",
+        actor_id=OWNER_ID,
+        severity=None,
+    )
+    assert result is not None and result.success
+    assert candidate_id is not None
+    assert trust.correction_calls == [turn.id]
+    assert trust.correction_severities == [None]  # NOT ["moderate"]
+
+
+@pytest.mark.asyncio
 async def test_handle_reprimand_policy_forwards_vip_and_trigger() -> None:
     vid = uuid4()
     staging, _ = _real_staging()

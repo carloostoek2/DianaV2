@@ -385,6 +385,40 @@ async def test_severity_callback_stale_turn_does_not_mutate(graph: dict) -> None
 
 
 @pytest.mark.asyncio
+async def test_severity_callback_reprimand_session_is_stale(graph: dict) -> None:
+    """SPEC-EA-07 (review round 2): an sv: button tapped while the session is a
+    REPRIMAND (mode="reprimand") must not label it — the picker only exists in
+    the correction flow. Same turn but wrong mode → severity_stale, no mutation."""
+    g = graph
+    turn = await _queue_draft(g)
+    # Active session belongs to a reprimand flow (never shows the sv: picker).
+    g["sessions"].start(OWNER, turn.id, mode="reprimand")
+    sess = g["sessions"].get_session(OWNER)
+    assert sess is not None and sess.mode == "reprimand"
+
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_severity(turn.id, "major"),
+        actor_id=OWNER,
+    )
+
+    assert status == "severity_stale"
+    assert g["sessions"].get_session(OWNER).severity is None  # NOT mutated
+
+    # The same-turn correction-mode happy path still applies the severity.
+    g["sessions"].start(OWNER, turn.id, mode="correct")
+    status_ok = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_severity(turn.id, "major"),
+        actor_id=OWNER,
+    )
+    assert status_ok == "severity_set"
+    assert g["sessions"].get_session(OWNER).severity == "major"
+
+
+@pytest.mark.asyncio
 async def test_correct_callback_non_owner_forbidden(graph: dict) -> None:
     g = graph
     turn = await _queue_draft(g)
@@ -515,6 +549,40 @@ async def test_correct_free_text_defaults_severity_to_moderate(graph: dict) -> N
     spy.assert_awaited_once()
     kwargs = spy.await_args.kwargs
     assert kwargs.get("severity") == "moderate"
+
+
+@pytest.mark.asyncio
+async def test_reprimand_free_text_passes_severity_none(graph: dict) -> None:
+    """SPEC-EA-07 (review round 2): the reprimand free-text path calls
+    handle_correct_with_candidate with severity=None — a reprimand session never
+    shows the sv: picker, so the flow must NOT fabricate "moderate" (that would
+    skew the shadow distribution ledger with a made-up tag)."""
+    from types import SimpleNamespace
+
+    from unittest.mock import AsyncMock
+
+    from diana.application.memory import InMemoryVipStore
+    from diana.telegram.handlers.admin import handle_admin_text
+
+    g = graph
+    turn = await _queue_draft(g, draft="original")
+    g["sessions"].start(OWNER, turn.id, mode="reprimand")  # no severity set
+
+    spy = AsyncMock(
+        return_value=(SimpleNamespace(success=True, cancelled=False), uuid4())
+    )
+    g["admin"].handle_correct_with_candidate = spy  # type: ignore[method-assign]
+    await handle_admin_text(
+        text="corrected text",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+    )
+    spy.assert_awaited_once()
+    kwargs = spy.await_args.kwargs
+    assert kwargs.get("severity") is None  # NOT "moderate"
 
 
 @pytest.mark.asyncio
