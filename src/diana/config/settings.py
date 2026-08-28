@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # Structured JSON nodes (Analyst/Evaluator) always keep thinking off.
     # Default on: better draft quality; raise max_tokens budget via provider.
     llm_thinking_enabled: bool = True
+    # Reasoning effort for free-text thinking: "low" | "medium" | "high".
+    # More effort = deeper chain-of-thought before the draft (better quality,
+    # higher latency and token cost per draft).
+    llm_thinking_effort: str = "medium"
     # Privacy: personal identifiers (emails, phones, payment cards, @handles,
     # URLs) are masked before any outbound LLM call and restored on the reply.
     # Default ON (privacy-first): masking is behavior-transparent because the
@@ -215,7 +219,10 @@ class Settings(BaseSettings):
 
     # VIP history seed via Telethon (personal Diana account session).
     # When api_id + api_hash + session_path are set, adding a VIP imports
-    # recent DM history into message_history (skip if chat already has rows).
+    # recent DM history into message_history. The import is idempotent: rows
+    # whose telegram_message_id is already stored are skipped, so chats that
+    # already hold system messages (atencion turns, bot/owner replies) still
+    # receive the missing pre-existing history.
     telethon_api_id: int | None = None
     telethon_api_hash: SecretStr = SecretStr("")
     telethon_session_path: str = ""  # e.g. /path/to/diana_session (no .session)
@@ -259,6 +266,13 @@ class Settings(BaseSettings):
         url = value.get_secret_value()
         if not url.startswith("postgresql+asyncpg://"):
             raise ValueError("database_url must start with postgresql+asyncpg://")
+        return value
+
+    @field_validator("llm_thinking_effort", mode="after")
+    @classmethod
+    def require_valid_thinking_effort(cls, value: str) -> str:
+        if value not in ("low", "medium", "high"):
+            raise ValueError("llm_thinking_effort must be 'low', 'medium' or 'high'")
         return value
 
     @field_validator("llm_base_url", mode="after")

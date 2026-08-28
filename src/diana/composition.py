@@ -531,6 +531,7 @@ def build_app(
             base_url=settings.llm_base_url,
             model=settings.llm_model,
             thinking_enabled=settings.llm_thinking_enabled,
+            thinking_effort=settings.llm_thinking_effort,
             pii_masking=settings.feature_pii_masking_enabled,
         )
         # ADM-03: hot-swap the model/base_url at runtime via system_config
@@ -542,6 +543,7 @@ def build_app(
             base_url=settings.llm_base_url,
             model=settings.llm_model,
             thinking_enabled=settings.llm_thinking_enabled,
+            thinking_effort=settings.llm_thinking_effort,
             config_source=lambda: config_store.get(LLM_CONFIG_KEY),
         )
 

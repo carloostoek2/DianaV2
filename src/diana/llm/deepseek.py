@@ -28,9 +28,10 @@ _METADATA_HOSTS = frozenset(
         "169.254.169.254",
     }
 )
-# Free-text thinking: lowest effort; callers below the floor skip thinking/ladder.
-_REASONING_EFFORT = "low"
+# Valid reasoning efforts for free-text thinking; callers below the
+# max_tokens floor skip thinking/ladder regardless of the effort level.
 _THINKING_MAX_TOKENS_FLOOR = 512
+_REASONING_EFFORTS = frozenset({"low", "medium", "high"})
 
 
 def validate_llm_base_url(base_url: str) -> str:
@@ -119,6 +120,7 @@ class DeepSeekProvider:
         client: httpx.AsyncClient | None = None,
         timeout: float = 60.0,
         thinking_enabled: bool = True,
+        thinking_effort: str = "medium",
         pii_masking: bool = True,
     ) -> None:
         if not isinstance(api_key, SecretStr):
@@ -126,10 +128,16 @@ class DeepSeekProvider:
         secret = api_key.get_secret_value().strip()
         if not secret:
             raise ValueError("api_key must not be empty for DeepSeekProvider")
+        if thinking_effort not in _REASONING_EFFORTS:
+            raise ValueError(
+                f"thinking_effort must be one of {sorted(_REASONING_EFFORTS)}, "
+                f"got {thinking_effort!r}"
+            )
         self._api_key = secret  # kept only for Authorization header at I/O boundary
         self._base_url = validate_llm_base_url(base_url)
         self._model = model
         self._thinking_enabled = thinking_enabled
+        self._thinking_effort = thinking_effort
         # PII masking is a privacy default: personal identifiers are replaced
         # before the payload leaves the process and restored on the reply, so
         # masking is behavior-transparent. Disable only for debugging.
@@ -221,8 +229,8 @@ class DeepSeekProvider:
                 )
             return content
 
-        # Thinking on: attempt 1–2 with effort=low; attempt 3 thinking off.
-        # Never use reasoning_content as the draft (leak risk).
+        # Thinking on: attempt 1–2 with the configured effort; attempt 3
+        # thinking off. Never use reasoning_content as the draft (leak risk).
         content = ""
         for attempt in (1, 2, 3):
             thinking_on = attempt < 3
@@ -235,7 +243,7 @@ class DeepSeekProvider:
                 "thinking": {"type": thinking_type},
             }
             if thinking_on:
-                payload["reasoning_effort"] = _REASONING_EFFORT
+                payload["reasoning_effort"] = self._thinking_effort
             data = await self._chat_completions(payload)
             content = self._unmask(self._extract_content(data), mapping)
             if content.strip():
@@ -247,7 +255,9 @@ class DeepSeekProvider:
                     "model": self._model,
                     "attempt": attempt,
                     "thinking": thinking_type,
-                    "reasoning_effort": _REASONING_EFFORT if thinking_on else None,
+                    "reasoning_effort": (
+                        self._thinking_effort if thinking_on else None
+                    ),
                     "finish_reason": _finish_reason(data),
                     "had_reasoning": _has_reasoning_content(data),
                 },

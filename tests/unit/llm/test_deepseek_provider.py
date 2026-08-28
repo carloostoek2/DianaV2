@@ -63,6 +63,7 @@ def _provider_with_transport(
     api_key: str = "test-key",
     base_url: str = "https://api.deepseek.com",
     thinking_enabled: bool = True,
+    thinking_effort: str = "medium",
 ) -> DeepSeekProvider:
     transport = httpx.MockTransport(handler)
     client = httpx.AsyncClient(transport=transport, base_url=base_url)
@@ -72,6 +73,7 @@ def _provider_with_transport(
         client=client,
         model="deepseek-chat",
         thinking_enabled=thinking_enabled,
+        thinking_effort=thinking_effort,
     )
 
 
@@ -199,7 +201,7 @@ async def test_generate_enables_thinking_mode_by_default() -> None:
         await provider.aclose()
         await client.aclose()
     assert seen["payload"].get("thinking") == {"type": "enabled"}
-    assert seen["payload"].get("reasoning_effort") == "low"
+    assert seen["payload"].get("reasoning_effort") == "medium"
     assert seen["payload"].get("max_tokens") == 4096
 
 
@@ -276,7 +278,7 @@ async def test_generate_cap_empty_retries_once_same_config_then_succeeds() -> No
         assert seen["call_count"] == 2
         p0, p1 = seen["payloads"]
         assert p0.get("thinking") == {"type": "enabled"}
-        assert p0.get("reasoning_effort") == "low"
+        assert p0.get("reasoning_effort") == "medium"
         assert p1.get("thinking") == p0.get("thinking")
         assert p1.get("reasoning_effort") == p0.get("reasoning_effort")
         assert p1.get("max_tokens") == p0.get("max_tokens")
@@ -306,7 +308,7 @@ async def test_generate_double_cap_empty_falls_back_thinking_off() -> None:
         assert seen["call_count"] == 3
         p0, p1, p2 = seen["payloads"]
         assert p0.get("thinking") == {"type": "enabled"}
-        assert p0.get("reasoning_effort") == "low"
+        assert p0.get("reasoning_effort") == "medium"
         assert p1.get("thinking") == p0.get("thinking")
         assert p1.get("reasoning_effort") == p0.get("reasoning_effort")
         assert p2.get("thinking") == {"type": "disabled"}
@@ -476,7 +478,7 @@ async def test_generate_floor_boundary_511_forces_thinking_off() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_floor_boundary_512_enables_thinking() -> None:
-    """max_tokens=512 meets the floor → thinking on + effort low."""
+    """max_tokens=512 meets the floor → thinking on + effort medium."""
     seen: dict = {"payloads": [], "call_count": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -495,7 +497,7 @@ async def test_generate_floor_boundary_512_enables_thinking() -> None:
         assert seen["call_count"] == 1
         payload = seen["payloads"][0]
         assert payload.get("thinking") == {"type": "enabled"}
-        assert payload.get("reasoning_effort") == "low"
+        assert payload.get("reasoning_effort") == "medium"
         assert payload.get("max_tokens") == 512
     finally:
         await provider.aclose()
@@ -552,12 +554,41 @@ async def test_generate_cap_empty_then_non_cap_empty_stops_without_third() -> No
         assert seen["call_count"] == 2
         p0, p1 = seen["payloads"]
         assert p0.get("thinking") == {"type": "enabled"}
-        assert p0.get("reasoning_effort") == "low"
+        assert p0.get("reasoning_effort") == "medium"
         assert p1.get("thinking") == {"type": "enabled"}
-        assert p1.get("reasoning_effort") == "low"
+        assert p1.get("reasoning_effort") == "medium"
     finally:
         await provider.aclose()
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generate_uses_configured_thinking_effort() -> None:
+    """reasoning_effort follows the provider's thinking_effort (e.g. high)."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return _openai_chat_response("ok")
+
+    provider = _provider_with_transport(
+        handler, thinking_enabled=True, thinking_effort="high"
+    )
+    client = provider._client
+    try:
+        await provider.generate([{"role": "user", "content": "x"}])
+    finally:
+        await provider.aclose()
+        await client.aclose()
+    assert seen["payload"].get("thinking") == {"type": "enabled"}
+    assert seen["payload"].get("reasoning_effort") == "high"
+
+
+def test_deepseek_rejects_invalid_thinking_effort() -> None:
+    from pydantic import SecretStr
+
+    with pytest.raises(ValueError, match="thinking_effort"):
+        DeepSeekProvider(api_key=SecretStr("k"), thinking_effort="extreme")
 
 
 @pytest.mark.asyncio

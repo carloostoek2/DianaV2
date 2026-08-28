@@ -25,7 +25,7 @@ Feature flags (defaults **false** unless noted):
 | `FEATURE_PERSONA_ADMIN_ENABLED` | **false** | “Personalidad y reglas” in the owner menu |
 | `FEATURE_GRAY_ZONE_ENABLED` | **false** | Doctrine consult DM (`dr:` / `dx:` / `de:`) |
 | `FEATURE_STAGING_ENABLED` | **false** | Staging queue (promote / two-step discard) |
-| `LLM_THINKING_ENABLED` | **true** | DeepSeek thinking on free-text drafts only (`reasoning_effort=low`; cap-empty retry then thinking-off fallback; short budgets e.g. recontact skip thinking; not a menu button) |
+| `LLM_THINKING_ENABLED` | **true** | DeepSeek thinking on free-text drafts only (`reasoning_effort=medium` by default, configurable via `LLM_THINKING_EFFORT` = low/medium/high; cap-empty retry then thinking-off fallback; short budgets e.g. recontact skip thinking; not a menu button) |
 
 Owner VIP admin (list / add / rename / facts / notes) is always-on (owner + private DM). Slash commands remain as aliases; the **owner menu is the primary surface**.
 

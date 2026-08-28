@@ -51,6 +51,7 @@ class HotSwapLLMProvider:
         base_url: str,
         model: str,
         thinking_enabled: bool,
+        thinking_effort: str = "medium",
         config_source: LLMConfigSource,
         provider_factory: Callable[[str, str, str], Any] | None = None,
         ttl_seconds: float = 30.0,
@@ -63,6 +64,7 @@ class HotSwapLLMProvider:
         self._base_url = base_url
         self._base_model = model
         self._thinking_enabled = thinking_enabled
+        self._thinking_effort = thinking_effort
         self._config_source = config_source
         # Injectable factory so tests can swap in MockTransport-backed providers
         # (the production default builds a plain DeepSeekProvider).
@@ -86,6 +88,7 @@ class HotSwapLLMProvider:
             base_url=base_url,
             model=model,
             thinking_enabled=self._thinking_enabled,
+            thinking_effort=self._thinking_effort,
             pii_masking=True,
         )
 

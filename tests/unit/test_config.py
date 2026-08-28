@@ -70,6 +70,7 @@ def test_settings_defaults_supervised_and_ttl(
     assert settings.llm_base_url == "https://api.deepseek.com"
     assert settings.deepseek_api_key.get_secret_value() == ""
     assert settings.llm_thinking_enabled is True
+    assert settings.llm_thinking_effort == "medium"
 
 
 def test_settings_backfill_defaults(
