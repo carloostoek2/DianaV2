@@ -513,6 +513,13 @@ async def dispatch_owner_callback(
             sess = correct_sessions.get_session(actor_id)
             if sess is None:
                 return "severity_session_expired"
+            # Turn-ownership guard (review round 1): an sv: button is bound to the
+            # turn that opened the picker. Tapping a stale button (the owner is on
+            # a NEWER turn) must not label the active session of another turn —
+            # that would corrupt the shadow metadata and, with the flag ON, the
+            # trust delta. The session is left untouched.
+            if sess.turn_id != _sv_turn_id:
+                return "severity_stale"
             sess.severity = severity
             return "severity_set"
         except OwnerAuthError:

@@ -183,33 +183,38 @@ class TrustBudgetService:
                     continue
                 if 0.0 <= value <= 1.0:
                     severity_candidates[level] = value
+        # The severity table is validated against the EFFECTIVE increment ALWAYS
+        # (whether or not the config moves the table). An increment-only override
+        # that pushes increment >= minor must be rejected as a whole — otherwise
+        # the state would let the minimum punishment (minor) not outweigh the
+        # reward, silently inverting conservatism (review round 1, S7).
+        effective_severity = dict(self._decrement_by_severity)
         if severity_candidates:
-            effective = dict(self._decrement_by_severity)
-            effective.update(severity_candidates)
-            minor = effective["minor"]
-            moderate = effective["moderate"]
-            major = effective["major"]
-            if minor <= increment:
-                logger.warning(
-                    "trust_budget_severity_asymmetry_rejected",
-                    extra={
-                        "minor": minor,
-                        "increment": increment,
-                        "moderate": moderate,
-                        "major": major,
-                    },
-                )
-                return
-            if not (major >= moderate >= minor):
-                logger.warning(
-                    "trust_budget_severity_asymmetry_rejected",
-                    extra={
-                        "minor": minor,
-                        "moderate": moderate,
-                        "major": major,
-                    },
-                )
-                return
+            effective_severity.update(severity_candidates)
+        minor = effective_severity["minor"]
+        moderate = effective_severity["moderate"]
+        major = effective_severity["major"]
+        if minor <= increment:
+            logger.warning(
+                "trust_budget_severity_asymmetry_rejected",
+                extra={
+                    "minor": minor,
+                    "increment": increment,
+                    "moderate": moderate,
+                    "major": major,
+                },
+            )
+            return
+        if not (major >= moderate >= minor):
+            logger.warning(
+                "trust_budget_severity_asymmetry_rejected",
+                extra={
+                    "minor": minor,
+                    "moderate": moderate,
+                    "major": major,
+                },
+            )
+            return
         for key, value in candidates.items():
             setattr(self, f"_{key}", value)
         if severity_candidates:

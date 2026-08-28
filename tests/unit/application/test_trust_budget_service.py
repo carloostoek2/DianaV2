@@ -372,7 +372,9 @@ def test_apply_overrides_changes_thresholds_and_deltas() -> None:
     svc.apply_overrides(
         {
             "initial": 0.1,
-            "increment": 0.2,
+            # increment 0.04 keeps the strengthened severity invariant
+            # (minor 0.08 > increment) while still exercising the scalar path.
+            "increment": 0.04,
             "decrement": 0.3,
             "threshold": 0.6,
             "dispersion_high": 0.5,
@@ -381,7 +383,7 @@ def test_apply_overrides_changes_thresholds_and_deltas() -> None:
         }
     )
     assert svc._initial == 0.1  # noqa: SLF001
-    assert svc._increment == 0.2  # noqa: SLF001
+    assert svc._increment == 0.04  # noqa: SLF001
     assert svc._decrement == 0.3  # noqa: SLF001
     assert svc._threshold == 0.6  # noqa: SLF001
     assert svc._dispersion_high == 0.5  # noqa: SLF001
@@ -430,9 +432,18 @@ def test_apply_overrides_rejects_asymmetry_inversion() -> None:
     assert svc._increment == 0.05  # noqa: SLF001
     assert svc._decrement == 0.2  # noqa: SLF001
 
-    # A valid conservative pair still applies.
+    # A valid conservative pair still applies (increment below minor 0.08 so the
+    # strengthened severity invariant minor > increment is preserved).
+    svc.apply_overrides({"increment": 0.04, "decrement": 0.4})
+    assert svc._increment == 0.04  # noqa: SLF001
+    assert svc._decrement == 0.4  # noqa: SLF001
+
+    # Review round 1 (FIX 2): an increment-only override that pushes increment
+    # >= minor (0.08) is rejected as a whole even though the scalar pair
+    # decrement > increment holds — the minimum punishment must keep outweighing
+    # the reward.
     svc.apply_overrides({"increment": 0.1, "decrement": 0.4})
-    assert svc._increment == 0.1  # noqa: SLF001
+    assert svc._increment == 0.04  # noqa: SLF001
     assert svc._decrement == 0.4  # noqa: SLF001
 
 
@@ -742,6 +753,43 @@ def test_apply_overrides_severity_accepts_valid_table() -> None:
     assert svc._decrement_by_severity["minor"] == pytest.approx(0.1)  # noqa: SLF001
     assert svc._decrement_by_severity["moderate"] == pytest.approx(0.3)  # noqa: SLF001
     assert svc._decrement_by_severity["major"] == pytest.approx(0.5)  # noqa: SLF001
+
+
+def test_apply_overrides_increment_only_rejects_when_minor_le_increment() -> None:
+    """FIX 2: an increment-only override (no decrement_by_severity in the config)
+    that pushes increment >= minor is rejected as a WHOLE — the effective table
+    is validated against the effective increment ALWAYS, not only when the config
+    moves the severity table."""
+    svc = _severity_service()
+    svc.apply_overrides({"increment": 0.10})
+    # increment 0.10 >= minor 0.08 → whole config dropped; increment NOT applied.
+    assert svc._increment == 0.05  # noqa: SLF001
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.08)  # noqa: SLF001
+
+
+def test_apply_overrides_increment_below_minor_is_accepted() -> None:
+    """FIX 2: increment 0.07 < minor 0.08 keeps the strengthened invariant → the
+    increment override is accepted and applied."""
+    svc = _severity_service()
+    svc.apply_overrides({"increment": 0.07})
+    assert svc._increment == 0.07  # noqa: SLF001
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.08)  # noqa: SLF001
+
+
+def test_apply_overrides_revalidates_current_table_against_new_increment() -> None:
+    """FIX 2 (c): the CURRENT effective table (state + candidates) is revalidated
+    against a NEW increment even when the config does not bring
+    decrement_by_severity — a prior override that lowered minor makes a later
+    increment-only override cross the invariant."""
+    svc = _severity_service()
+    # Lower minor to 0.06 (still > increment 0.05 → applies).
+    svc.apply_overrides({"decrement_by_severity": {"minor": 0.06}})
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.06)  # noqa: SLF001
+
+    # Increment-only override now crosses minor (0.06 <= 0.07) → rejected whole.
+    svc.apply_overrides({"increment": 0.07})
+    assert svc._increment == 0.05  # noqa: SLF001
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.06)  # noqa: SLF001
 
 
 # --- import purity ------------------------------------------------------------

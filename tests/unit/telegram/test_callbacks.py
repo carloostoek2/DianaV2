@@ -315,6 +315,47 @@ async def test_severity_callback_expired_session_is_noop(graph: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_severity_callback_stale_turn_does_not_mutate(graph: dict) -> None:
+    """SPEC-EA-07 (review round 1): an sv: button from an OLD turn must not label
+    the live session of a NEWER turn (turn-ownership guard)."""
+    g = graph
+    turn_a = await _queue_draft(g)
+    turn_b = await _queue_draft(g)
+    # Active session belongs to turn B.
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn_b.id),
+        actor_id=OWNER,
+    )
+    assert g["sessions"].get_session(OWNER).turn_id == turn_b.id
+
+    # A stale sv: button from turn A taps while turn B session is live.
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_severity(turn_a.id, "major"),
+        actor_id=OWNER,
+    )
+
+    assert status == "severity_stale"
+    sess = g["sessions"].get_session(OWNER)
+    assert sess is not None
+    assert sess.turn_id == turn_b.id
+    assert sess.severity == "moderate"  # NOT mutated to major by the stale tap
+
+    # The same-turn happy path still applies the chosen severity.
+    status_ok = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_severity(turn_b.id, "major"),
+        actor_id=OWNER,
+    )
+    assert status_ok == "severity_set"
+    assert g["sessions"].get_session(OWNER).severity == "major"
+
+
+@pytest.mark.asyncio
 async def test_correct_callback_non_owner_forbidden(graph: dict) -> None:
     g = graph
     turn = await _queue_draft(g)

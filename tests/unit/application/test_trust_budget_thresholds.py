@@ -104,7 +104,9 @@ async def test_load_runtime_thresholds_applies_trust_override(
     fake = _FakeStore(
         trust_cfg={
             "initial": 0.1,
-            "increment": 0.2,
+            # increment 0.04 keeps the strengthened severity invariant
+            # (minor 0.08 > increment) while still exercising the scalar path.
+            "increment": 0.04,
             "decrement": 0.3,
             "threshold": 0.6,
             "dispersion_high": 0.5,
@@ -115,7 +117,7 @@ async def test_load_runtime_thresholds_applies_trust_override(
     monkeypatch.setattr("diana.composition.SqlSystemConfigStore", lambda _sf: fake)
     await load_runtime_thresholds(app)  # type: ignore[arg-type]
     assert service._initial == 0.1  # noqa: SLF001
-    assert service._increment == 0.2  # noqa: SLF001
+    assert service._increment == 0.04  # noqa: SLF001
     assert service._decrement == 0.3  # noqa: SLF001
     assert service._threshold == 0.6  # noqa: SLF001
     assert service._dispersion_high == 0.5  # noqa: SLF001
