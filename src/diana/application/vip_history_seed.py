@@ -17,7 +17,7 @@ from diana.application.ports import MessageHistoryWriter, OwnerNotifierPort
 logger = logging.getLogger("diana.application")
 
 HistoryRole = Literal["vip", "owner"]
-SeedKind = Literal["disabled", "skipped_existing", "ok", "failed"]
+SeedKind = Literal["disabled", "ok", "failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,17 +46,15 @@ class SeedOutcome:
                 f"Historial del VIP {uid}: no se pudo importar. "
                 "El VIP quedó registrado igual; el bot arrancará sin contexto previo."
             )
-        if self.kind == "skipped_existing":
-            return (
-                f"Historial del VIP {uid}: ya había mensajes guardados; "
-                "no se reimportó."
-            )
         if self.kind == "disabled":
             return (
                 f"Historial del VIP {uid}: importación no disponible "
                 "(Telethon no configurado)."
             )
-        # ok — includes 0 messages from an empty Telegram chat
+        if self.count == 0:
+            # Fetch succeeded but nothing was missing: either the personal
+            # chat is empty or every available message was already stored.
+            return f"Historial del VIP {uid}: no había historial previo que importar."
         return (
             f"Historial del VIP {uid}: importación correcta "
             f"({self.count} mensaje{'s' if self.count != 1 else ''})."
@@ -138,7 +136,15 @@ class VipHistorySeedService:
         *,
         username: str | None = None,
     ) -> SeedOutcome:
-        """Fetch + append if chat history is empty. Returns structured outcome."""
+        """Fetch recent personal-chat history and append what is missing.
+
+        Import is always attempted and idempotent: rows whose
+        ``telegram_message_id`` is already in ``message_history`` are skipped,
+        so a chat that already holds system messages (atencion channel turns,
+        bot/owner replies from the same day) still receives the missing
+        pre-existing history instead of being skipped as "already imported".
+        Returns a structured outcome.
+        """
         uid = int(telegram_user_id)
         if self._fetcher is None:
             logger.info(
@@ -149,16 +155,6 @@ class VipHistorySeedService:
 
         # chat_id for private DM with VIP is the Telegram user id.
         chat_id = uid
-        existing = await self._history.get_recent(chat_id, limit=1)
-        if existing:
-            logger.info(
-                "vip_history_seed_skipped_existing",
-                extra={"chat_id": chat_id, "telegram_user_id": uid},
-            )
-            return SeedOutcome(
-                kind="skipped_existing", count=0, telegram_user_id=uid
-            )
-
         lines = await self._fetcher.fetch_recent(
             chat_id, limit=self._limit, username=username
         )
@@ -169,23 +165,35 @@ class VipHistorySeedService:
             )
             return SeedOutcome(kind="ok", count=0, telegram_user_id=uid)
 
-        for line in lines:
-            await self._history.append(
-                chat_id,
-                role=line.role,
-                text=line.text,
-                telegram_message_id=line.telegram_message_id,
-                timestamp=line.timestamp,
-            )
+        rows = [
+            (line.role, line.text, line.telegram_message_id, line.timestamp)
+            for line in lines
+        ]
+        append_missing = getattr(self._history, "append_missing", None)
+        if callable(append_missing):
+            added = await append_missing(chat_id, rows=rows)
+        else:
+            # Fallback for minimal writers without dedup support: plain append
+            # (pre-dedup behavior) — production always uses append_missing.
+            for line in lines:
+                await self._history.append(
+                    chat_id,
+                    role=line.role,
+                    text=line.text,
+                    telegram_message_id=line.telegram_message_id,
+                    timestamp=line.timestamp,
+                )
+            added = len(lines)
         logger.info(
             "vip_history_seeded",
             extra={
                 "chat_id": chat_id,
                 "telegram_user_id": uid,
                 "count": len(lines),
+                "added": added,
             },
         )
-        return SeedOutcome(kind="ok", count=len(lines), telegram_user_id=uid)
+        return SeedOutcome(kind="ok", count=added, telegram_user_id=uid)
 
     def schedule_seed_for_new_vip(
         self,

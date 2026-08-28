@@ -6,6 +6,34 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
+Un escalón más de pensamiento para los borradores — 2026-08-28
+
+Diana pensaba los borradores de texto libre con el esfuerzo de razonamiento más bajo: suficiente para respuestas simples, pero corto cuando el mensaje pedía más cuidado. Subimos un escalón para que el modelo razone un poco más antes de escribir cada borrador, con mejor calidad en tono, contexto y detalle a cambio de un poco más de tiempo y consumo por borrador.
+
+- El esfuerzo de razonamiento de los borradores pasa de "low" a "medium" (escalón intermedio de low/medium/high).
+- Se puede ajustar sin tocar el código con la variable `LLM_THINKING_EFFORT` (low, medium o high).
+- Los nodos de análisis en formato JSON (Analista, Evaluador) no cambian: siguen sin razonamiento extendido, igual que antes.
+- El mecanismo de respaldo sigue intacto: si el razonamiento agota el presupuesto, Diana reintenta y, si hace falta, escribe el borrador sin pensar.
+
+Verificación: 3256 tests pasando (3213 unitarios + 43 e2e sin base + 187 e2e con base).
+
+---
+
+Importación de historial que ya no se salta a los VIP nuevos — 2026-08-28
+
+Cuando un VIP nuevo se registra, Diana intenta importar su historial previo del chat de la cuenta personal para arrancar con contexto y destilar la memoria desde el primer día. Pero el sistema tenía una trampa: si el chat ya tenía cualquier mensaje guardado —aunque fueran solo los del canal de Atención de ese mismo día, o una respuesta del bot— daba por hecho que el historial ya estaba importado y avisaba "ya había mensajes guardados; no se reimportó". Resultado: los VIP que se suscriben el mismo día en que empiezan a hablar con el negocio se quedaban sin su historial previo, justo lo que alimenta la memoria.
+
+Técnicamente, esto representa: separar "el chat tiene filas" de "el historial previo ya fue importado", haciendo la importación idempotente en lugar de condicional.
+
+- Al registrar un VIP, la importación se intenta siempre, sin el chequeo que la saltaba.
+- Solo se guardan los mensajes que no estén ya en el historial (identificados por su id de Telegram), así no se duplican los mensajes del canal de Atención ni las respuestas ya guardadas.
+- La importación se puede repetir sin riesgo de duplicar nada.
+- El aviso a la dueña ahora dice cuántos mensajes se importaron de verdad, o que no había historial previo que importar.
+
+Verificación: 3398 tests pasando (3211 unitarios + 187 e2e).
+
+---
+
 Penalización proporcional por gravedad de corrección — 2026-08-28
 
 No me parecía justo que todas las correcciones de la dueña pesaran igual en la confianza de Diana. Un ajuste de tono para suavizar un borrador frío no es lo mismo que un incumplimiento doctrinal o un riesgo de seguridad, y quería que el sistema distinguiera esas situaciones sin volver a delegar el juicio en un LLM: la lección del incidente de calibración es que un número que gobierna la autonomía no debe moverse por un proceso automático sin supervisión.

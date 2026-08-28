@@ -425,6 +425,53 @@ class InMemoryMessageHistoryWriter:
         )
         return "inserted"
 
+    async def append_missing(
+        self,
+        chat_id: int,
+        *,
+        rows: list[tuple[str, str, int | None, datetime | None]],
+    ) -> int:
+        """Idempotent seed insert: append only rows not already stored.
+
+        Same semantics as SqlMessageHistoryRepo.append_missing: rows whose
+        ``telegram_message_id`` already exists are skipped; rows without an id
+        are matched by ``(timestamp, text)``.
+        """
+        history = self._messages.setdefault(chat_id, [])
+        existing_ids = {
+            row.get("telegram_message_id")
+            for row in history
+            if row.get("telegram_message_id") is not None
+        }
+        existing_no_id = {
+            (row.get("timestamp"), row.get("text"))
+            for row in history
+            if row.get("telegram_message_id") is None
+        }
+        now = datetime.now(UTC)
+        added = 0
+        for role, text, mid, ts in rows:
+            ts_norm = (ts or now).isoformat()
+            if mid is not None:
+                if mid in existing_ids:
+                    continue
+                existing_ids.add(mid)
+            else:
+                key = (ts_norm, text)
+                if key in existing_no_id:
+                    continue
+                existing_no_id.add(key)
+            history.append(
+                {
+                    "role": role,
+                    "text": text,
+                    "telegram_message_id": mid,
+                    "timestamp": ts_norm,
+                }
+            )
+            added += 1
+        return added
+
     async def get_recent(self, chat_id: int, *, limit: int = 20) -> list[dict]:
         history = self._messages.get(chat_id, [])
         if limit <= 0:

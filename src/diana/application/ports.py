@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, Sequence, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -1034,6 +1034,23 @@ class MessageHistoryWriter(Protocol):
     ) -> None: ...
 
     async def get_recent(self, chat_id: int, *, limit: int = 20) -> list[dict]: ...
+
+    async def append_missing(
+        self,
+        chat_id: int,
+        *,
+        rows: Sequence[tuple[str, str, int | None, datetime | None]],
+    ) -> int:
+        """Append only rows whose ``telegram_message_id`` is not already stored
+        for this chat; rows without an id are matched by ``(timestamp, text)``.
+
+        Rows are ``(role, text, telegram_message_id, timestamp)``. Returns the
+        number of rows actually appended. Idempotent re-runs append nothing.
+        Used by the VIP history seed so a chat that already holds system
+        messages (atencion channel, bot/owner replies) still gets the missing
+        pre-existing personal-chat history without duplicating what is there.
+        """
+        ...
 
     async def upsert_vip_message(
         self,

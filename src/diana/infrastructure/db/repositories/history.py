@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Sequence
 
 from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -112,6 +113,66 @@ class SqlMessageHistoryRepo:
                 )
             await session.commit()
             return "updated"
+
+    async def append_missing(
+        self,
+        chat_id: int,
+        *,
+        rows: Sequence[tuple[str, str, int | None, datetime | None]],
+    ) -> int:
+        """Idempotent seed insert: append only rows not already stored.
+
+        Rows are ``(role, text, telegram_message_id, timestamp)``. A row whose
+        ``telegram_message_id`` already exists for the chat is skipped; rows
+        without an id are matched by ``(timestamp, text)``. Returns the number
+        of appended rows. One transaction: a partial failure leaves nothing.
+        """
+        now = datetime.now(UTC)
+        normalized = [
+            (role, text, mid, (ts or now).astimezone(UTC) if ts is not None else now)
+            for role, text, mid, ts in rows
+        ]
+        async with self._sf() as session:
+            result = await session.execute(
+                select(MessageHistory.telegram_message_id).where(
+                    MessageHistory.chat_id == chat_id,
+                    MessageHistory.telegram_message_id.is_not(None),
+                )
+            )
+            existing_ids = {row[0] for row in result.all() if row[0] is not None}
+            result = await session.execute(
+                select(MessageHistory.timestamp, MessageHistory.text).where(
+                    MessageHistory.chat_id == chat_id,
+                    MessageHistory.telegram_message_id.is_(None),
+                )
+            )
+            existing_no_id = {
+                (ts.astimezone(UTC) if ts is not None else None, text)
+                for ts, text in result.all()
+            }
+            added = 0
+            for role, text, mid, ts in normalized:
+                if mid is not None:
+                    if mid in existing_ids:
+                        continue
+                    existing_ids.add(mid)
+                else:
+                    key = (ts.astimezone(UTC) if ts is not None else None, text)
+                    if key in existing_no_id:
+                        continue
+                    existing_no_id.add(key)
+                session.add(
+                    MessageHistory(
+                        chat_id=chat_id,
+                        telegram_message_id=mid,
+                        role=role,
+                        text=text,
+                        timestamp=ts,
+                    )
+                )
+                added += 1
+            await session.commit()
+            return added
 
     async def get_recent(self, chat_id: int, *, limit: int = 20) -> list[dict]:
         if limit <= 0:

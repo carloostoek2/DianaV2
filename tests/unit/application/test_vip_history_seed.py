@@ -66,6 +66,8 @@ def test_seed_outcome_owner_messages() -> None:
     assert "3 mensajes" in ok.owner_message()
     one = SeedOutcome(kind="ok", count=1, telegram_user_id=99)
     assert "1 mensaje)" in one.owner_message() or "1 mensaje" in one.owner_message()
+    zero = SeedOutcome(kind="ok", count=0, telegram_user_id=99)
+    assert "no había historial previo" in zero.owner_message()
     fail = SeedOutcome(kind="failed", count=0, telegram_user_id=99)
     assert "no se pudo importar" in fail.owner_message()
 
@@ -92,18 +94,66 @@ async def test_seed_writes_chronological_history_when_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_seed_skips_when_history_already_present() -> None:
+async def test_seed_imports_missing_when_chat_already_has_rows() -> None:
+    """The reported bug: existing system rows (atencion/bot replies) must not
+    block the import — only rows already stored are skipped."""
     history = InMemoryMessageHistoryWriter()
     await history.append(42, role="vip", text="already", telegram_message_id=1)
-    fetcher = FakeFetcher([_line("vip", "new", 2)])
+    fetcher = FakeFetcher(
+        [
+            _line("vip", "old chat", 100),
+            _line("owner", "old reply", 101),
+            _line("vip", "already", 1),  # same telegram id → must be skipped
+        ]
+    )
     svc = VipHistorySeedService(history=history, fetcher=fetcher, limit=20)
     outcome = await svc.seed_for_new_vip(42)
-    assert outcome.kind == "skipped_existing"
-    assert outcome.count == 0
-    assert fetcher.calls == []
+    assert outcome.kind == "ok"
+    assert outcome.count == 2  # only the two missing messages were appended
     recent = await history.get_recent(42, limit=10)
-    assert len(recent) == 1
-    assert recent[0]["text"] == "already"
+    assert len(recent) == 3
+    # No duplicates: "already" stays a single row; both missing rows arrived.
+    assert [r["text"] for r in recent].count("already") == 1
+    assert {r["text"] for r in recent} == {"old chat", "old reply", "already"}
+    assert fetcher.calls == [(42, 20)]
+
+
+@pytest.mark.asyncio
+async def test_seed_is_idempotent_on_rerun() -> None:
+    """A second seed run appends nothing and reports 0 new messages."""
+    history = InMemoryMessageHistoryWriter()
+    fetcher = FakeFetcher([_line("vip", "msg1", 1), _line("owner", "msg2", 2)])
+    svc = VipHistorySeedService(history=history, fetcher=fetcher, limit=20)
+    first = await svc.seed_for_new_vip(42)
+    assert first.kind == "ok" and first.count == 2
+    second = await svc.seed_for_new_vip(42)
+    assert second.kind == "ok" and second.count == 0
+    assert len(await history.get_recent(42, limit=10)) == 2
+
+
+@pytest.mark.asyncio
+async def test_seed_dedup_rows_without_message_id() -> None:
+    """Rows without a telegram id are matched by (timestamp, text)."""
+    history = InMemoryMessageHistoryWriter()
+    fetcher = FakeFetcher(
+        [
+            _line("vip", "dup", None),
+            _line("vip", "dup", None),  # same timestamp + text → skipped
+            HistoryLine(
+                role="vip",
+                text="other",
+                telegram_message_id=None,
+                timestamp=datetime(2026, 1, 2, 12, 0, tzinfo=UTC),
+            ),
+        ]
+    )
+    svc = VipHistorySeedService(history=history, fetcher=fetcher, limit=20)
+    outcome = await svc.seed_for_new_vip(42)
+    assert outcome.kind == "ok"
+    assert outcome.count == 2
+    recent = await history.get_recent(42, limit=10)
+    assert len(recent) == 2
+    assert [r["text"] for r in recent] == ["dup", "other"]
 
 
 @pytest.mark.asyncio
