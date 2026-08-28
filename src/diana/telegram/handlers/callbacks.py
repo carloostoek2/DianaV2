@@ -310,9 +310,18 @@ async def _preselect_severity_for_turn(
         except Exception:
             trace = None
         evaluation = getattr(trace, "evaluation", None)
-        if isinstance(evaluation, dict):
-            doctrine = evaluation.get("doctrine")
-            safety = evaluation.get("safety")
+        # Type guard (review round 1): a trace may persist non-numeric dims
+        # (string/None) — they must be treated as absent, never compared against
+        # the numeric mins (which would raise TypeError and break the "Corregir"
+        # tap). Best-effort contract preserved.
+        _d = evaluation.get("doctrine") if isinstance(evaluation, dict) else None
+        _s = evaluation.get("safety") if isinstance(evaluation, dict) else None
+        doctrine = (
+            _d if isinstance(_d, (int, float)) and not isinstance(_d, bool) else None
+        )
+        safety = (
+            _s if isinstance(_s, (int, float)) and not isinstance(_s, bool) else None
+        )
     hard_gate = False
     try:
         approval = await admin.get_approval(turn_id)

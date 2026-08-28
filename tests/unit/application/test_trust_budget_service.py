@@ -640,6 +640,61 @@ async def test_flag_off_moderate_does_not_log_shadow(caplog) -> None:
 
 
 @pytest.mark.asyncio
+async def test_flag_off_minor_logs_shadow(caplog) -> None:
+    """FIX 4: minor (0.08 != 0.20) logs the hypothetical with flag OFF."""
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    cat_log = _FakeTurnCategoryLogReader(
+        {turn_id: _log_record(turn_id=turn_id, vip_id=vip, category="informativo")}
+    )
+    svc = _severity_service(store=store, cat_log=cat_log)
+    await svc.record_autonomous(vip, "informativo")  # 0.25
+
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        rec = await svc.record_correction(turn_id, severity="minor")
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.25 - 0.2)  # byte-identical
+    shadow = [
+        r for r in caplog.records
+        if r.message == "trust_severity_shadow" and r.severity == "minor"
+    ]
+    assert shadow, "shadow log missing for minor with flag OFF"
+    assert shadow[0].hypothetical_delta == pytest.approx(0.08)
+
+
+@pytest.mark.asyncio
+async def test_flag_off_custom_moderate_logs_shadow(caplog) -> None:
+    """FIX 4: an override that redefines moderate != 0.20 with flag OFF logs the
+    hypothetical for a moderate correction — the shadow metric must not silently
+    skip a custom tier just because the keyword is "moderate"."""
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    cat_log = _FakeTurnCategoryLogReader(
+        {turn_id: _log_record(turn_id=turn_id, vip_id=vip, category="informativo")}
+    )
+    svc = _severity_service(store=store, cat_log=cat_log)  # flag OFF
+    svc.apply_overrides({"decrement_by_severity": {"moderate": 0.15}})
+    assert svc._decrement_by_severity["moderate"] == pytest.approx(0.15)  # noqa: SLF001
+    await svc.record_autonomous(vip, "informativo")  # 0.25
+
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        rec = await svc.record_correction(turn_id, severity="moderate")
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.25 - 0.2)  # byte-identical
+    shadow = [
+        r for r in caplog.records
+        if r.message == "trust_severity_shadow" and r.severity == "moderate"
+    ]
+    assert shadow, "shadow log missing for custom moderate with flag OFF"
+    assert shadow[0].applied_delta == pytest.approx(0.2)
+    assert shadow[0].hypothetical_delta == pytest.approx(0.15)
+
+
+@pytest.mark.asyncio
 async def test_flag_on_applies_severity_table() -> None:
     """Flag ON → each severity applies its own delta. Distinct VIP per severity
     (isolated rows) with a 0.7 baseline so no delta clamps to 0."""

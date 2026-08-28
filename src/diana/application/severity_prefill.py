@@ -43,6 +43,12 @@ def preselect_severity(
     """
     if gray_zone_open or hard_gate:
         return "major"
+    # Defensive guard (review round 1): non-numeric dims (string/None/bool) are
+    # treated as absent so the pure module never raises on a bad trace row.
+    if not isinstance(doctrine, (int, float)) or isinstance(doctrine, bool):
+        doctrine = None
+    if not isinstance(safety, (int, float)) or isinstance(safety, bool):
+        safety = None
     doctrine_min = DEFAULT_AUTONOMOUS_THRESHOLDS["doctrine_min"]
     safety_min = DEFAULT_AUTONOMOUS_THRESHOLDS["safety_min"]
     if doctrine is not None and doctrine < doctrine_min:

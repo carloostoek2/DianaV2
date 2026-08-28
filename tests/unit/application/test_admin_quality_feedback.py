@@ -214,6 +214,29 @@ async def test_handle_reprimand_counter_example_uses_save_correction_id() -> Non
 
 
 @pytest.mark.asyncio
+async def test_handle_reprimand_does_not_fabricate_moderate_severity() -> None:
+    """SPEC-EA-07 (review round 1, FIX 3): the reprimand flow never shows the
+    sv: picker, so it must NOT fabricate correction_severity="moderate". The
+    trust path receives severity=None (fallback decrement, byte-identical math)
+    and the ledger tag stays None — the shadow distribution stays honest."""
+    trust = _FakeTrustBudgetAdmin()
+    staging, _ = _real_staging()
+    g, turn, staging, _ = await _pending_vip_draft(
+        staging=staging, trust_budget=trust
+    )
+    result = await g["admin"].handle_reprimand(
+        turn.id,
+        "corrected final",
+        mode="counter_example",
+        scope="global",
+        actor_id=OWNER_ID,
+    )
+    assert result is not None and result.success
+    assert trust.correction_calls == [turn.id]
+    assert trust.correction_severities == [None]  # NOT ["moderate"]
+
+
+@pytest.mark.asyncio
 async def test_handle_reprimand_policy_forwards_vip_and_trigger() -> None:
     vid = uuid4()
     staging, _ = _real_staging()

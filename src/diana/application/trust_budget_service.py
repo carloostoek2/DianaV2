@@ -250,42 +250,51 @@ class TrustBudgetService:
             initial=self._initial,
         )
 
-    def _decrement_for(self, severity: str) -> float:
+    def _decrement_for(self, severity: str | None) -> float:
         """Resolved correction decrement (SPEC-EA-07).
 
         Flag OFF (default) → always ``self._decrement`` — byte-identical to the
         pre-feature behavior regardless of severity. Flag ON → the severity
-        table with a fallback to ``self._decrement`` for unknown severities.
-        This single switch centralizes the regla de oro "flag OFF = byte-idéntico".
+        table with a fallback to ``self._decrement`` for unknown severities
+        (``None`` included, e.g. the reprimand flow). This single switch
+        centralizes the regla de oro "flag OFF = byte-idéntico".
         """
         if not self._severity_decrement_enabled:
             return self._decrement
         return self._decrement_by_severity.get(severity, self._decrement)
 
-    def _log_shadow(self, severity: str) -> None:
+    def _log_shadow(self, severity: str | None) -> None:
         """Shadow log of the severity-graded delta the feature WOULD apply.
 
-        Only when the flag is OFF and the severity differs from the default
-        (minor/major): the score is untouched (applied_delta = self._decrement),
-        but the hypothetical severity delta is logged so the distribution is
-        measurable before the flag ships. Channel = module logger (robust even
-        with no ledger, e.g. quality OFF).
+        Only when the flag is OFF and the severity's hypothetical delta differs
+        from the applied scalar decrement: the score is untouched (applied_delta
+        = self._decrement), but the hypothetical severity delta is logged so the
+        distribution is measurable before the flag ships. Channel = module
+        logger (robust even with no ledger, e.g. quality OFF).
+
+        KNOWN STATE (SPEC-EA-07, not a new bug): with quality ON + readiness OFF
+        (the pre-existing double-counting config) ``trust_severity_shadow`` MAY
+        be emitted TWICE for the same turn — camino A (``record_correction`` in
+        ``_correct_core``) plus camino B (``record_outcome`` in
+        ``record_owner_outcome``). The ledger ``correction_severity`` is
+        persisted only ONCE (camino B).
         """
         if self._severity_decrement_enabled:
             return
-        if severity not in ("minor", "major"):
+        hypothetical = self._decrement_by_severity.get(severity)
+        if hypothetical is None or hypothetical == self._decrement:
             return
         logger.info(
             "trust_severity_shadow",
             extra={
                 "severity": severity,
                 "applied_delta": self._decrement,
-                "hypothetical_delta": self._decrement_by_severity.get(severity),
+                "hypothetical_delta": hypothetical,
             },
         )
 
     async def record_correction(
-        self, turn_id: Any, *, severity: str = "moderate"
+        self, turn_id: Any, *, severity: str | None = "moderate"
     ) -> VipTrustBudgetRecord | None:
         """Owner-correction event: resolve (VIP, category) by turn_id and decay.
 
@@ -314,7 +323,12 @@ class TrustBudgetService:
         )
 
     async def record_outcome(
-        self, turn_id: Any, *, event: str, value: str, severity: str = "moderate"
+        self,
+        turn_id: Any,
+        *,
+        event: str,
+        value: str,
+        severity: str | None = "moderate",
     ) -> VipTrustBudgetRecord | None:
         """Fila 4 outcome-driven trust event (SPEC-AUTONOMIA-CALIBRACION §7).
 

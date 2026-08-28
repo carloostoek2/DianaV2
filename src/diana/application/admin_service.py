@@ -708,7 +708,7 @@ class AdminService:
         corrected_text: str,
         *,
         actor_id: int | None = None,
-        severity: str = "moderate",
+        severity: str | None = "moderate",
     ) -> tuple[DeliveryResult | None, UUID | None]:
         self._assert_owner(actor_id)
         if not (corrected_text or "").strip():
@@ -870,8 +870,13 @@ class AdminService:
             )
         delivery: DeliveryResult | None
         if candidate_id is None:
+            # SPEC-EA-07 (review round 1): the reprimand flow never shows the
+            # sv: picker, so it must NOT fabricate a "moderate" tag. Threading
+            # severity=None keeps the shadow distribution honest: the ledger
+            # correction_severity stays None and the trust path uses the
+            # fallback decrement (flag OFF/ON byte-identical math).
             delivery, candidate_id = await self._correct_core(
-                turn_id, corrected_text, actor_id=actor_id
+                turn_id, corrected_text, actor_id=actor_id, severity=None
             )
             if delivery is None or delivery.cancelled:
                 return delivery

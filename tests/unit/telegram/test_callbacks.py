@@ -217,6 +217,35 @@ async def test_correct_prefill_major_when_gray_zone_open(graph: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_correct_prefill_survives_non_numeric_trace_dims(graph: dict) -> None:
+    """SPEC-EA-07 (review round 1, FIX 5): a trace whose evaluation carries
+    non-numeric dims (string/None) must not raise a TypeError — the "Corregir"
+    tap keeps its best-effort contract and falls back to moderate."""
+    from types import SimpleNamespace
+
+    g = graph
+    turn = await _queue_draft(g)
+    fake_trace = SimpleNamespace(
+        get_full_trace=AsyncMock(
+            return_value=SimpleNamespace(
+                evaluation={"doctrine": "high", "safety": None}
+            )
+        )
+    )
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+        admin_trace=fake_trace,  # type: ignore[arg-type]
+    )
+    assert status == "awaiting_correct"
+    sess = g["sessions"].get_session(OWNER)
+    assert sess is not None
+    assert sess.severity == "moderate"
+
+
+@pytest.mark.asyncio
 async def test_correct_router_sends_severity_picker_with_moderate_default(
     graph: dict,
 ) -> None:
