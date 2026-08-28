@@ -776,10 +776,8 @@ def test_composition_load_runtime_thresholds_reads_phatic_and_mood(
 
 def test_composition_trust_budget_service_wired(_comp_src: str) -> None:
     """The pure TrustBudgetService is imported and constructed in build_app."""
-    assert (
-        "from diana.application.trust_budget_service import TrustBudgetService"
-        in _comp_src
-    )
+    assert "from diana.application.trust_budget_service import (" in _comp_src
+    assert "TrustBudgetService" in _comp_src
     assert "trust_budget_service = TrustBudgetService(" in _comp_src
 
 
