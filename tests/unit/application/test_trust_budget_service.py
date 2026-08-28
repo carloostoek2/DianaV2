@@ -720,14 +720,15 @@ def test_apply_overrides_severity_rejects_non_monotonic() -> None:
     assert svc._decrement_by_severity["major"] == pytest.approx(0.35)  # noqa: SLF001
 
 
-def test_apply_overrides_severity_rejects_out_of_range() -> None:
+def test_apply_overrides_severity_ignores_out_of_range() -> None:
     svc = _severity_service()
     svc.apply_overrides(
         {
             "decrement_by_severity": {"minor": 0.1, "moderate": 0.2, "major": 1.5},
         }
     )
-    # major out of [0,1] → REJECT (not clamped), whole config dropped.
+    # major out of [0,1] → silently IGNORED (not clamped); the in-range
+    # minor/moderate are still applied. The config is NOT rejected as a whole.
     assert svc._decrement_by_severity["major"] == pytest.approx(0.35)  # noqa: SLF001
 
 

@@ -123,16 +123,22 @@ class TrustBudgetService:
     def apply_overrides(self, config: dict[str, Any]) -> None:
         """Manual override from ``system_config`` (key ``trust_budget``).
 
-        Missing keys are ignored; invalid values are rejected without crashing
+        Missing keys are ignored; invalid values are skipped without crashing
         (pattern ``MoodEngine.apply_overrides``). Never auto-calibrated.
 
-        Validation policy (review round 1, S7): unlike ``__init__`` — which
-        CLAMPS constructor args to [0, 1] to absorb typos — an explicit manual
-        override REJECTS out-of-range values (a deliberate override must be
-        valid, not silently corrected). It also REJECTS the whole config when it
-        would invert the conservative asymmetry (``decrement > increment``): the
-        punishment must keep outweighing the reward, otherwise the gates stop
-        being conservative by design.
+        Range policy (review round 1, S7): unlike ``__init__`` — which CLAMPS
+        constructor args to [0, 1] to absorb typos — a manual override silently
+        IGNORES any value outside [0, 1]: it is neither applied nor clamped and
+        does NOT reject the config. This applies to the scalar keys and to each
+        tier of ``decrement_by_severity`` (an out-of-range tier keeps its
+        current value).
+
+        All-or-nothing rejection: the WHOLE config is dropped when it would
+        invert the conservative asymmetry (``decrement > increment``) or, for the
+        severity table, when the effective tiers invert ``minor > increment`` or
+        break monotonicity (``major >= moderate >= minor``). The punishment must
+        keep outweighing the reward, otherwise the gates stop being conservative
+        by design.
         """
         if not isinstance(config, dict):
             return
@@ -158,10 +164,12 @@ class TrustBudgetService:
             )
             return
         # SPEC-EA-07: severity table override — all-or-nothing per tier, like the
-        # scalar path. Each provided tier must be in [0, 1] (REJECT, not clamp),
-        # the minimum punishment must keep outweighing the reward (minor >
+        # scalar path. Each provided tier outside [0, 1] is silently IGNORED
+        # (neither applied nor clamped, and it does NOT reject the config — the
+        # tier keeps its current value). The REAL all-or-nothing rejections: the
+        # effective minimum punishment must keep outweighing the reward (minor >
         # increment) and the tiers must be monotone (major >= moderate >= minor).
-        # Any violation rejects the WHOLE config.
+        # Either violation rejects the WHOLE config.
         severity_candidates: dict[str, float] = {}
         raw_severity = config.get("decrement_by_severity")
         if isinstance(raw_severity, dict):
