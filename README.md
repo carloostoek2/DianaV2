@@ -108,11 +108,13 @@ Mi principio aquí es conservador y se traduce en números fijos, el presupuesto
 |---|---|
 | Acierto: Diana habría enviado y la dueña aprobó sin cambios | +0,05 |
 | Señal positiva del VIP (reacción favorable) | +0,05 |
-| Desacuerdo: la dueña corrigió o escaló lo que Diana habría enviado | −0,20 |
+| Corrección leve: ajuste de tono (🎨 Tono) | −0,08 |
+| Corrección habitual: contenido (📋 Contenido) | −0,20 |
+| Corrección grave: doctrina o seguridad (⚠️ Doctrina/Seguridad) | −0,35 |
 | Señal negativa del VIP (reacción desfavorable) | −0,20 |
 | Caso conservador (Diana no habría enviado) o señal neutral | 0 (no cambia) |
 
-Cada VIP y categoría de conversación arranca con 0,20 de confianza, y el umbral para que Diana pueda actuar sola es 0,90. La asimetría es deliberada: un error resta cuatro veces más de lo que suma un acierto, es decir, un solo desacuerdo borra el equivalente a cuatro aciertos.
+Cada VIP y categoría de conversación arranca con 0,20 de confianza, y el umbral para que Diana pueda actuar sola es 0,90. La asimetría es deliberada: en el nivel habitual (Contenido), un error resta cuatro veces más de lo que suma un acierto, es decir, un solo desacuerdo borra el equivalente a cuatro aciertos; un incumplimiento grave cuesta siete aciertos y un ajuste de tono, menos de dos.
 
 Desde el 28 de agosto de 2026, además, la corrección puede distinguir su gravedad. No quería que un ajuste de tono pesara igual que un incumplimiento doctrinal. Al corregir, la dueña indica con un toque si fue 🎨 Tono, 📋 Contenido o ⚠️ Doctrina/Seguridad; el sistema preselecciona una opción según la evidencia del turno —zona gris, doctrina o seguridad por debajo del umbral, o un gate de seguridad—, pero la dueña siempre tiene la última palabra y el botón nunca bloquea la entrega de la corrección. Cada nivel tiene su propio castigo: Tono resta −0,08, Contenido −0,20 y Doctrina/Seguridad −0,35. El mínimo castigo sigue pesando más que el premio, y la gravedad queda registrada en el historial del turno y en la ficha del VIP para entender por qué cambia la confianza.
 
