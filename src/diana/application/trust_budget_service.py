@@ -48,6 +48,19 @@ DEFAULT_TRUST_BUDGET_THRESHOLD = 0.9
 DEFAULT_TRUST_DISPERSION_HIGH = 0.25
 DEFAULT_TRUST_TREND_WINDOW_DAYS = 14
 
+# SPEC-EA-07: severity-graded correction decrement. The "moderate" value equals
+# the classic scalar decrement (0.20), so the feature is byte-identical at the
+# default severity. Gated by ``severity_decrement_enabled`` (flag
+# FEATURE_SEVERITY_TRUST_DECREMENT) — flag OFF → always ``self._decrement``.
+DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY = {
+    "minor": 0.08,
+    "moderate": 0.20,
+    "major": 0.35,
+}
+
+# Severity vocabulary of an owner correction (must match the DB CheckConstraint).
+_SEVERITY_LEVELS = ("minor", "moderate", "major")
+
 _DAY_SECONDS = 86400
 
 
@@ -77,6 +90,8 @@ class TrustBudgetService:
         thresholds_by_category: dict[str, float] | None = None,
         dispersion_high: float = DEFAULT_TRUST_DISPERSION_HIGH,
         trend_window_days: int = DEFAULT_TRUST_TREND_WINDOW_DAYS,
+        decrement_by_severity: dict[str, float] | None = None,
+        severity_decrement_enabled: bool = False,
     ) -> None:
         # Clamp to [0, 1] so typo'd constructor args cannot invert the gates.
         self._initial = _clamp01(initial)
@@ -89,6 +104,16 @@ class TrustBudgetService:
             str(cat): _clamp01(value)
             for cat, value in (thresholds_by_category or {}).items()
         }
+        # SPEC-EA-07: severity-graded deltas (default = fixed table; never
+        # auto-calibrated). Constructor args are clamped like the other deltas.
+        base = dict(DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY)
+        if decrement_by_severity is not None:
+            base.update(decrement_by_severity)
+        self._decrement_by_severity: dict[str, float] = {
+            str(k): _clamp01(v) for k, v in base.items()
+        }
+        # Flag governs ONLY the math (regla de oro: OFF → byte-identical).
+        self._severity_decrement_enabled = bool(severity_decrement_enabled)
         self._store = store
         self._turn_category_log = turn_category_log
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -132,8 +157,55 @@ class TrustBudgetService:
                 extra={"increment": increment, "decrement": decrement},
             )
             return
+        # SPEC-EA-07: severity table override — all-or-nothing per tier, like the
+        # scalar path. Each provided tier must be in [0, 1] (REJECT, not clamp),
+        # the minimum punishment must keep outweighing the reward (minor >
+        # increment) and the tiers must be monotone (major >= moderate >= minor).
+        # Any violation rejects the WHOLE config.
+        severity_candidates: dict[str, float] = {}
+        raw_severity = config.get("decrement_by_severity")
+        if isinstance(raw_severity, dict):
+            for level in _SEVERITY_LEVELS:
+                raw_value = raw_severity.get(level)
+                if raw_value is None:
+                    continue
+                try:
+                    value = float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if 0.0 <= value <= 1.0:
+                    severity_candidates[level] = value
+        if severity_candidates:
+            effective = dict(self._decrement_by_severity)
+            effective.update(severity_candidates)
+            minor = effective["minor"]
+            moderate = effective["moderate"]
+            major = effective["major"]
+            if minor <= increment:
+                logger.warning(
+                    "trust_budget_severity_asymmetry_rejected",
+                    extra={
+                        "minor": minor,
+                        "increment": increment,
+                        "moderate": moderate,
+                        "major": major,
+                    },
+                )
+                return
+            if not (major >= moderate >= minor):
+                logger.warning(
+                    "trust_budget_severity_asymmetry_rejected",
+                    extra={
+                        "minor": minor,
+                        "moderate": moderate,
+                        "major": major,
+                    },
+                )
+                return
         for key, value in candidates.items():
             setattr(self, f"_{key}", value)
+        if severity_candidates:
+            self._decrement_by_severity.update(severity_candidates)
         raw_window = config.get("trend_window_days")
         if raw_window is not None:
             try:
@@ -165,8 +237,42 @@ class TrustBudgetService:
             initial=self._initial,
         )
 
+    def _decrement_for(self, severity: str) -> float:
+        """Resolved correction decrement (SPEC-EA-07).
+
+        Flag OFF (default) → always ``self._decrement`` — byte-identical to the
+        pre-feature behavior regardless of severity. Flag ON → the severity
+        table with a fallback to ``self._decrement`` for unknown severities.
+        This single switch centralizes the regla de oro "flag OFF = byte-idéntico".
+        """
+        if not self._severity_decrement_enabled:
+            return self._decrement
+        return self._decrement_by_severity.get(severity, self._decrement)
+
+    def _log_shadow(self, severity: str) -> None:
+        """Shadow log of the severity-graded delta the feature WOULD apply.
+
+        Only when the flag is OFF and the severity differs from the default
+        (minor/major): the score is untouched (applied_delta = self._decrement),
+        but the hypothetical severity delta is logged so the distribution is
+        measurable before the flag ships. Channel = module logger (robust even
+        with no ledger, e.g. quality OFF).
+        """
+        if self._severity_decrement_enabled:
+            return
+        if severity not in ("minor", "major"):
+            return
+        logger.info(
+            "trust_severity_shadow",
+            extra={
+                "severity": severity,
+                "applied_delta": self._decrement,
+                "hypothetical_delta": self._decrement_by_severity.get(severity),
+            },
+        )
+
     async def record_correction(
-        self, turn_id: Any
+        self, turn_id: Any, *, severity: str = "moderate"
     ) -> VipTrustBudgetRecord | None:
         """Owner-correction event: resolve (VIP, category) by turn_id and decay.
 
@@ -177,20 +283,25 @@ class TrustBudgetService:
         inflated ``correction_count`` (review round 1, S2). A turn without a
         classification (pre-Fase-2) or a non-VIP turn (``vip_id`` None) is also
         a no-op — no row is created without a category (A2).
+
+        SPEC-EA-07: ``severity`` (minor/moderate/major) selects the delta ONLY
+        when the severity feature flag is ON; flag OFF → ``self._decrement``
+        (byte-identical) with a shadow log of the hypothetical delta.
         """
         log = await self._turn_category_log.get_by_turn_id(turn_id)
         if log is None or log.vip_id is None or not log.would_autonomous:
             return None
+        self._log_shadow(severity)
         return await self._store.decrement_correction(
             log.vip_id,
             log.category,
-            delta=self._decrement,
+            delta=self._decrement_for(severity),
             initial=self._initial,
             correction_time=self._clock(),
         )
 
     async def record_outcome(
-        self, turn_id: Any, *, event: str, value: str
+        self, turn_id: Any, *, event: str, value: str, severity: str = "moderate"
     ) -> VipTrustBudgetRecord | None:
         """Fila 4 outcome-driven trust event (SPEC-AUTONOMIA-CALIBRACION §7).
 
@@ -207,17 +318,21 @@ class TrustBudgetService:
         Resolves (VIP, category) by ``turn_id`` via ``turn_category_log``
         (same reader as ``record_correction``); unclassified / non-VIP turns
         are a no-op. Never auto-calibrated — the deltas are the fixed
-        conservative +0.05 / −0.20 pair.
+        conservative +0.05 / −0.20 pair (severity-graded only behind the flag).
+
+        SPEC-EA-07: ``severity`` selects the decrement delta ONLY when the flag
+        is ON; flag OFF → ``self._decrement`` with a shadow log.
         """
         log = await self._turn_category_log.get_by_turn_id(turn_id)
         if log is None or log.vip_id is None:
             return None
         if event == "label":
             if value == "desacuerdo":
+                self._log_shadow(severity)
                 return await self._store.decrement_correction(
                     log.vip_id,
                     log.category,
-                    delta=self._decrement,
+                    delta=self._decrement_for(severity),
                     initial=self._initial,
                     correction_time=self._clock(),
                 )
@@ -228,10 +343,11 @@ class TrustBudgetService:
             return None  # conservadora → no change
         if event == "signal":
             if value == "negative":
+                self._log_shadow(severity)
                 return await self._store.decrement_correction(
                     log.vip_id,
                     log.category,
-                    delta=self._decrement,
+                    delta=self._decrement_for(severity),
                     initial=self._initial,
                     correction_time=self._clock(),
                 )
@@ -361,6 +477,7 @@ class TrustBudgetService:
 
 __all__ = [
     "DEFAULT_TRUST_BUDGET_DECREMENT",
+    "DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY",
     "DEFAULT_TRUST_BUDGET_INCREMENT",
     "DEFAULT_TRUST_BUDGET_INITIAL",
     "DEFAULT_TRUST_BUDGET_THRESHOLD",

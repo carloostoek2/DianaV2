@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -12,7 +13,10 @@ from diana.application.ports import (
     TurnCategoryLogRecord,
     VipTrustBudgetRecord,
 )
-from diana.application.trust_budget_service import TrustBudgetService
+from diana.application.trust_budget_service import (
+    DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY,
+    TrustBudgetService,
+)
 from diana.cognitive.models import EvaluationProfile
 
 NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
@@ -546,6 +550,197 @@ async def test_list_for_ficha_shape() -> None:
     assert by_cat["informativo"]["trend"] == "up"
     # list_by_vip is ordered by category.
     assert [r["category"] for r in rows] == ["fatico", "informativo"]
+
+
+# --- SPEC-EA-07: severity-graded decrement ------------------------------------
+
+
+def _severity_service(
+    store: _MemoryVipTrustBudgetStore | None = None,
+    cat_log: _FakeTurnCategoryLogReader | None = None,
+    **kwargs,
+) -> TrustBudgetService:
+    kwargs.setdefault(
+        "decrement_by_severity", dict(DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY)
+    )
+    return _service(store=store, cat_log=cat_log, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_default_moderate_is_parity_flag_off() -> None:
+    """Flag OFF + default severity → the classic -0.20 (byte-identical)."""
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    cat_log = _FakeTurnCategoryLogReader(
+        {turn_id: _log_record(turn_id=turn_id, vip_id=vip, category="informativo")}
+    )
+    svc = _severity_service(store=store, cat_log=cat_log)
+    await svc.record_autonomous(vip, "informativo")  # 0.25
+
+    rec = await svc.record_correction(turn_id)  # default severity=moderate
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.25 - 0.2)
+
+
+@pytest.mark.asyncio
+async def test_flag_off_severity_major_is_byte_identical_with_shadow(caplog) -> None:
+    """Regla de oro: flag OFF → severity="major" still applies 0.20, and the
+    hypothetical 0.35 is only logged (metadata shadow, never touches the score)."""
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    cat_log = _FakeTurnCategoryLogReader(
+        {turn_id: _log_record(turn_id=turn_id, vip_id=vip, category="informativo")}
+    )
+    svc = _severity_service(store=store, cat_log=cat_log)  # flag OFF (default)
+    await svc.record_autonomous(vip, "informativo")  # 0.25
+
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        rec = await svc.record_correction(turn_id, severity="major")
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.25 - 0.2)  # NOT 0.25 - 0.35
+    shadow = [
+        r for r in caplog.records
+        if r.message == "trust_severity_shadow" and r.severity == "major"
+    ]
+    assert shadow, "shadow log missing for severity != default with flag OFF"
+    assert shadow[0].applied_delta == pytest.approx(0.2)
+    assert shadow[0].hypothetical_delta == pytest.approx(0.35)
+
+
+@pytest.mark.asyncio
+async def test_flag_off_moderate_does_not_log_shadow(caplog) -> None:
+    """Default severity (moderate) is the byte-identical path → no shadow noise."""
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    cat_log = _FakeTurnCategoryLogReader(
+        {turn_id: _log_record(turn_id=turn_id, vip_id=vip)}
+    )
+    svc = _severity_service(store=store, cat_log=cat_log)
+
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        await svc.record_correction(turn_id, severity="moderate")
+
+    assert not [r for r in caplog.records if r.message == "trust_severity_shadow"]
+
+
+@pytest.mark.asyncio
+async def test_flag_on_applies_severity_table() -> None:
+    """Flag ON → each severity applies its own delta. Distinct VIP per severity
+    (isolated rows) with a 0.7 baseline so no delta clamps to 0."""
+    expected = {"minor": 0.08, "moderate": 0.20, "major": 0.35}
+    store = _MemoryVipTrustBudgetStore()
+    for severity, delta in expected.items():
+        vip = uuid4()
+        turn_id = uuid4()
+        cat_log = _FakeTurnCategoryLogReader(
+            {turn_id: _log_record(turn_id=turn_id, vip_id=vip, category="informativo")}
+        )
+        svc = _severity_service(
+            store=store, cat_log=cat_log, severity_decrement_enabled=True
+        )
+        await store.increment_autonomous(
+            vip, "informativo", delta=0.5, initial=0.2
+        )  # baseline 0.7
+        rec = await svc.record_correction(turn_id, severity=severity)
+        assert rec is not None
+        assert rec.trust_score == pytest.approx(0.7 - delta)
+
+
+@pytest.mark.asyncio
+async def test_flag_on_unknown_severity_falls_back_to_decrement() -> None:
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    cat_log = _FakeTurnCategoryLogReader(
+        {turn_id: _log_record(turn_id=turn_id, vip_id=vip)}
+    )
+    svc = _severity_service(store=store, cat_log=cat_log, severity_decrement_enabled=True)
+    await svc.record_autonomous(vip, "fatico")  # 0.25
+
+    rec = await svc.record_correction(turn_id, severity="critical")
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.25 - 0.2)
+
+
+def test_severity_table_constructor_clamped_to_unit_interval() -> None:
+    svc = _severity_service(
+        decrement_by_severity={"minor": -1.0, "moderate": 2.0, "major": 0.5}
+    )
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.0)  # noqa: SLF001
+    assert svc._decrement_by_severity["moderate"] == pytest.approx(1.0)  # noqa: SLF001
+    assert svc._decrement_by_severity["major"] == pytest.approx(0.5)  # noqa: SLF001
+
+
+def test_decrement_for_flag_off_is_always_decrement() -> None:
+    """The single switch: flag OFF returns self._decrement for ANY severity."""
+    svc = _severity_service()
+    assert svc._decrement_for("minor") == pytest.approx(0.2)  # noqa: SLF001
+    assert svc._decrement_for("moderate") == pytest.approx(0.2)  # noqa: SLF001
+    assert svc._decrement_for("major") == pytest.approx(0.2)  # noqa: SLF001
+    assert svc._decrement_for("bogus") == pytest.approx(0.2)  # noqa: SLF001
+
+
+def test_apply_overrides_severity_rejects_minor_le_increment() -> None:
+    """Minor <= increment inverts the conservative asymmetry → whole config dropped."""
+    svc = _severity_service()
+    svc.apply_overrides(
+        {
+            "increment": 0.1,
+            "decrement_by_severity": {"minor": 0.1, "moderate": 0.2, "major": 0.3},
+        }
+    )
+    # minor == increment → rejected; nothing (not even increment) applied.
+    assert svc._increment == 0.05  # noqa: SLF001
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.08)  # noqa: SLF001
+
+
+def test_apply_overrides_severity_rejects_non_monotonic() -> None:
+    svc = _severity_service()
+    svc.apply_overrides(
+        {
+            "decrement_by_severity": {"minor": 0.2, "moderate": 0.1, "major": 0.3},
+        }
+    )
+    # major >= moderate >= minor violated (moderate < minor) → whole config dropped.
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.08)  # noqa: SLF001
+    assert svc._decrement_by_severity["moderate"] == pytest.approx(0.20)  # noqa: SLF001
+
+    svc.apply_overrides(
+        {
+            "decrement_by_severity": {"minor": 0.2, "moderate": 0.3, "major": 0.1},
+        }
+    )
+    # major < moderate → rejected too.
+    assert svc._decrement_by_severity["major"] == pytest.approx(0.35)  # noqa: SLF001
+
+
+def test_apply_overrides_severity_rejects_out_of_range() -> None:
+    svc = _severity_service()
+    svc.apply_overrides(
+        {
+            "decrement_by_severity": {"minor": 0.1, "moderate": 0.2, "major": 1.5},
+        }
+    )
+    # major out of [0,1] → REJECT (not clamped), whole config dropped.
+    assert svc._decrement_by_severity["major"] == pytest.approx(0.35)  # noqa: SLF001
+
+
+def test_apply_overrides_severity_accepts_valid_table() -> None:
+    svc = _severity_service()
+    svc.apply_overrides(
+        {
+            "decrement_by_severity": {"minor": 0.1, "moderate": 0.3, "major": 0.5},
+        }
+    )
+    assert svc._decrement_by_severity["minor"] == pytest.approx(0.1)  # noqa: SLF001
+    assert svc._decrement_by_severity["moderate"] == pytest.approx(0.3)  # noqa: SLF001
+    assert svc._decrement_by_severity["major"] == pytest.approx(0.5)  # noqa: SLF001
 
 
 # --- import purity ------------------------------------------------------------

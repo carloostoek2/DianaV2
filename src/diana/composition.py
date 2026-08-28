@@ -58,7 +58,10 @@ from diana.application.staging_service import StagingService
 from diana.application.turn_classifier import TurnClassifier, make_pure_greeting_cut
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
-from diana.application.trust_budget_service import TrustBudgetService
+from diana.application.trust_budget_service import (
+    DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY,
+    TrustBudgetService,
+)
 from diana.application.emotional_signal_detector import EmotionalSignalDetector
 from diana.application.profile_synthesis_service import ProfileSynthesisService
 from diana.application.profile_synthesis_trigger_service import (
@@ -479,6 +482,12 @@ def build_app(
         threshold=settings.trust_budget_threshold,
         dispersion_high=settings.trust_dispersion_high,
         trend_window_days=settings.trust_trend_window_days,
+        # SPEC-EA-07: severity-graded decrement. The flag lives ONLY here (the
+        # math), never in AdminService — which just threads severity as metadata.
+        decrement_by_severity=DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY,
+        severity_decrement_enabled=(
+            settings.feature_severity_trust_decrement_enabled
+        ),
     )
     policy = delay_policy or RandomDelayPolicy(
         supervised_min=settings.delivery_supervised_delay_min,

@@ -179,6 +179,10 @@ class Settings(BaseSettings):
     trust_budget_threshold: float = 0.9    # umbral autoenvío por categoría (coincide con phatic_trust_min reservado L108)
     trust_dispersion_high: float = 0.25    # 5.2: dispersión del EvaluationProfile que invalida autoenvío
     trust_trend_window_days: int = 14      # ventana "tendencia reciente" de la ficha (EA-06)
+    # SPEC-EA-07: decremento del trust budget graduado por severidad de corrección.
+    # Flag OFF (default) → _decrement_for() devuelve self._decrement (byte-idéntico);
+    # el botón de severidad y correction_severity corren SIEMPRE como metadata shadow.
+    feature_severity_trust_decrement_enabled: bool = False
 
     # Fila 4 — Camino a la autonomía (SPEC-AUTONOMIA-CALIBRACION.md). All
     # default off; each phase behind its own flag (regla de oro AGENTS.md §1).

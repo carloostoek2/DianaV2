@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -11,7 +12,10 @@ from diana.application.ports import (
     TurnCategoryLogRecord,
     VipTrustBudgetRecord,
 )
-from diana.application.trust_budget_service import TrustBudgetService
+from diana.application.trust_budget_service import (
+    DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY,
+    TrustBudgetService,
+)
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
@@ -91,11 +95,13 @@ def _log_record(*, turn_id, vip_id, category="informativo"):
     )
 
 
-def _service(store, cat_log) -> TrustBudgetService:
+def _service(store, cat_log, **kwargs) -> TrustBudgetService:
     return TrustBudgetService(
         store=store,
         turn_category_log=cat_log,
         clock=lambda: NOW,
+        decrement_by_severity=dict(DEFAULT_TRUST_BUDGET_DECREMENT_BY_SEVERITY),
+        **kwargs,
     )
 
 
@@ -211,3 +217,69 @@ async def test_unclassified_turn_noop() -> None:
 
     assert rec is None
     assert store.rows == {}
+
+
+# --- SPEC-EA-07: severity through record_outcome -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_label_desacuerdo_major_flag_on_decrements_035() -> None:
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    svc = _service(
+        store,
+        _FakeTurnCategoryLogReader({turn_id: _log_record(turn_id=turn_id, vip_id=vip)}),
+        severity_decrement_enabled=True,
+    )
+    await store.increment_autonomous(vip, "informativo", delta=0.5, initial=0.2)  # 0.7
+
+    rec = await svc.record_outcome(
+        turn_id, event="label", value="desacuerdo", severity="major"
+    )
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.7 - 0.35)
+
+
+@pytest.mark.asyncio
+async def test_label_desacuerdo_major_flag_off_is_020_with_shadow(caplog) -> None:
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    svc = _service(
+        store,
+        _FakeTurnCategoryLogReader({turn_id: _log_record(turn_id=turn_id, vip_id=vip)}),
+    )  # flag OFF (default)
+    await svc.record_autonomous(vip, "informativo")  # 0.25
+
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        rec = await svc.record_outcome(
+            turn_id, event="label", value="desacuerdo", severity="major"
+        )
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.25 - 0.2)  # NOT 0.25 - 0.35
+    shadow = [r for r in caplog.records if r.message == "trust_severity_shadow"]
+    assert shadow, "shadow log missing for severity != default with flag OFF"
+    assert shadow[0].hypothetical_delta == pytest.approx(0.35)
+
+
+@pytest.mark.asyncio
+async def test_signal_negative_minor_flag_on_decrements_008() -> None:
+    store = _MemoryVipTrustBudgetStore()
+    vip = uuid4()
+    turn_id = uuid4()
+    svc = _service(
+        store,
+        _FakeTurnCategoryLogReader({turn_id: _log_record(turn_id=turn_id, vip_id=vip)}),
+        severity_decrement_enabled=True,
+    )
+    await store.increment_autonomous(vip, "informativo", delta=0.5, initial=0.2)  # 0.7
+
+    rec = await svc.record_outcome(
+        turn_id, event="signal", value="negative", severity="minor"
+    )
+
+    assert rec is not None
+    assert rec.trust_score == pytest.approx(0.7 - 0.08)
