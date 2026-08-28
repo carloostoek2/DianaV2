@@ -247,6 +247,65 @@ async def test_correct_free_text_delivers(graph: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_correct_free_text_propagates_session_severity(graph: dict) -> None:
+    """SPEC-EA-07 (Fase 3): the free-text correct handler forwards the session
+    severity to AdminService.handle_correct (defaults to moderate otherwise)."""
+    from types import SimpleNamespace
+
+    from unittest.mock import AsyncMock
+
+    from diana.application.memory import InMemoryVipStore
+    from diana.telegram.handlers.admin import handle_admin_text
+
+    g = graph
+    turn = await _queue_draft(g, draft="original")
+    g["sessions"].start(OWNER, turn.id, severity="major")
+
+    spy = AsyncMock(return_value=SimpleNamespace(success=True, cancelled=False))
+    g["admin"].handle_correct = spy  # type: ignore[method-assign]
+    await handle_admin_text(
+        text="corrected text",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+    )
+    spy.assert_awaited_once()
+    kwargs = spy.await_args.kwargs
+    assert kwargs.get("severity") == "major"
+
+
+@pytest.mark.asyncio
+async def test_correct_free_text_defaults_severity_to_moderate(graph: dict) -> None:
+    """SPEC-EA-07 (Fase 3): a session without severity falls back to moderate."""
+    from types import SimpleNamespace
+
+    from unittest.mock import AsyncMock
+
+    from diana.application.memory import InMemoryVipStore
+    from diana.telegram.handlers.admin import handle_admin_text
+
+    g = graph
+    turn = await _queue_draft(g, draft="original")
+    g["sessions"].start(OWNER, turn.id)  # no severity set
+
+    spy = AsyncMock(return_value=SimpleNamespace(success=True, cancelled=False))
+    g["admin"].handle_correct = spy  # type: ignore[method-assign]
+    await handle_admin_text(
+        text="corrected text",
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+        vips=InMemoryVipStore(),
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+    )
+    spy.assert_awaited_once()
+    kwargs = spy.await_args.kwargs
+    assert kwargs.get("severity") == "moderate"
+
+
+@pytest.mark.asyncio
 async def test_correct_free_text_after_supersede_stale(graph: dict) -> None:
     from diana.telegram.handlers.admin import handle_admin_text
     from diana.application.memory import InMemoryVipStore

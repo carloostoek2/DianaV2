@@ -708,6 +708,7 @@ class AdminService:
         corrected_text: str,
         *,
         actor_id: int | None = None,
+        severity: str = "moderate",
     ) -> tuple[DeliveryResult | None, UUID | None]:
         self._assert_owner(actor_id)
         if not (corrected_text or "").strip():
@@ -757,15 +758,23 @@ class AdminService:
             # Fila 4 readiness ON → the desacuerdo event from record_outcome
             # is the single trust decrement (record_correction would double-
             # count against it). Byte-identical pre-Fila-4 behavior otherwise.
+            # KNOWN STATE (SPEC-EA-07, not a new bug): with quality ON + readiness
+            # OFF both paths run — path A here AND path B in _resolve_and_deliver —
+            # each applying the SAME severity, so the pre-existing double count is
+            # identical to today. The gate below is intentionally untouched.
             if not self._autonomy_readiness:
                 try:
-                    await self._trust_budget.record_correction(turn_id)
+                    await self._trust_budget.record_correction(
+                        turn_id, severity=severity
+                    )
                 except Exception:
                     logger.exception(
                         "trust_budget_correction_failed",
                         extra={"turn_id": str(turn_id)},
                     )
-        delivery = await self._resolve_and_deliver(turn_id, corrected_text=stripped)
+        delivery = await self._resolve_and_deliver(
+            turn_id, corrected_text=stripped, severity=severity
+        )
         return delivery, candidate_id
 
     async def handle_correct(
@@ -774,9 +783,10 @@ class AdminService:
         corrected_text: str,
         *,
         actor_id: int | None = None,
+        severity: str = "moderate",
     ) -> DeliveryResult | None:
         delivery, _ = await self._correct_core(
-            turn_id, corrected_text, actor_id=actor_id
+            turn_id, corrected_text, actor_id=actor_id, severity=severity
         )
         return delivery
 
@@ -786,9 +796,10 @@ class AdminService:
         corrected_text: str,
         *,
         actor_id: int | None = None,
+        severity: str = "moderate",
     ) -> tuple[DeliveryResult | None, UUID | None]:
         return await self._correct_core(
-            turn_id, corrected_text, actor_id=actor_id
+            turn_id, corrected_text, actor_id=actor_id, severity=severity
         )
 
     async def handle_mark_gold(
@@ -1158,6 +1169,7 @@ class AdminService:
         *,
         corrected_text: str | None,
         on_progress: DeliveryProgressCallback | None = None,
+        severity: str | None = None,
     ) -> DeliveryResult | None:
         turn = await self._turns.get(turn_id)
         if turn is None:
@@ -1342,6 +1354,7 @@ class AdminService:
                                     else claimed.draft_text
                                 ),
                                 vip_id=claimed.vip_id,
+                                severity=severity,
                             )
                         except Exception:
                             log_swallowed(

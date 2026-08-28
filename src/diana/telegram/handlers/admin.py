@@ -366,7 +366,10 @@ async def handle_admin_text(
         if sess is not None and sess.mode == "reprimand":
             try:
                 delivery, candidate_id = await admin.handle_correct_with_candidate(
-                    pending_turn, stripped, actor_id=actor_id
+                    pending_turn,
+                    stripped,
+                    actor_id=actor_id,
+                    severity=sess.severity or "moderate",
                 )
             except OwnerAuthError:
                 correct_sessions.cancel(actor_id)
@@ -402,7 +405,10 @@ async def handle_admin_text(
             return "awaiting_reprimand_combo"
         try:
             result = await admin.handle_correct(
-                pending_turn, stripped, actor_id=actor_id
+                pending_turn,
+                stripped,
+                actor_id=actor_id,
+                severity=sess.severity or "moderate",
             )
         except OwnerAuthError:
             correct_sessions.cancel(actor_id)

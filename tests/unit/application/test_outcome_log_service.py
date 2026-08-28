@@ -228,7 +228,10 @@ class FakeOutcomeStore:
     async def get_by_turn_id(self, turn_id):
         return self.rows.get(str(turn_id))
 
-    async def update_outcome(self, turn_id, *, owner_outcome, sent_score, quality_delta):
+    async def update_outcome(
+        self, turn_id, *, owner_outcome, sent_score, quality_delta,
+        correction_severity=None,
+    ):
         rec = self.rows.get(str(turn_id))
         if rec is None:
             return None
@@ -237,6 +240,7 @@ class FakeOutcomeStore:
                 "owner_outcome": owner_outcome,
                 "sent_score": sent_score,
                 "quality_delta": quality_delta,
+                "correction_severity": correction_severity,
             }
         )
         self.rows[str(turn_id)] = updated
@@ -263,9 +267,11 @@ class FakeOutcomeStore:
 class FakeTrustBudget:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.severities: list[str] = []
 
-    async def record_outcome(self, turn_id, *, event, value):
+    async def record_outcome(self, turn_id, *, event, value, severity="moderate"):
         self.calls.append((str(turn_id), event, value))
+        self.severities.append(severity)
         return object()
 
 
@@ -661,6 +667,79 @@ class TestRecordOwnerOutcome:
         rec = budget_store.rows.get((vip_id, "informativo"))
         assert rec is not None
         assert rec.trust_score == pytest.approx(0.25)
+
+    def test_corrected_persists_severity_and_threads_to_trust(self) -> None:
+        """SPEC-EA-07: corrected + severity="major" → the row persists
+        correction_severity and the label event carries severity="major"."""
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace()))
+
+        updated = asyncio.run(
+            svc.record_owner_outcome(
+                turn_id,
+                owner_outcome="corrected",
+                sent_text="mejor texto",
+                vip_id=vip_id,
+                severity="major",
+            )
+        )
+
+        assert updated is not None
+        assert updated.correction_severity == "major"
+        assert ("label", "desacuerdo") in _label_events(trust)
+        assert trust.severities[-1] == "major"
+
+    def test_approved_as_is_ignores_severity(self) -> None:
+        """SPEC-EA-07: approved_as_is is not a correction → no correction_severity
+        persisted and the label event keeps the default moderate."""
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace()))
+
+        updated = asyncio.run(
+            svc.record_owner_outcome(
+                turn_id,
+                owner_outcome="approved_as_is",
+                sent_text="borrador",
+                vip_id=vip_id,
+                severity="major",
+            )
+        )
+
+        assert updated is not None
+        assert updated.correction_severity is None
+        assert ("label", "acierto") in _label_events(trust)
+        assert trust.severities[-1] == "moderate"
+
+    def test_escalated_ignores_severity(self) -> None:
+        """SPEC-EA-07: escalated carries no severity either."""
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust)
+        turn_id = uuid4()
+        vip_id = uuid4()
+        asyncio.run(svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace()))
+
+        updated = asyncio.run(
+            svc.record_owner_outcome(
+                turn_id,
+                owner_outcome="escalated",
+                sent_text=None,
+                vip_id=vip_id,
+                severity="major",
+            )
+        )
+
+        assert updated is not None
+        assert updated.correction_severity is None
+        assert trust.severities[-1] == "moderate"
 
 
 class TestRecordReaction:

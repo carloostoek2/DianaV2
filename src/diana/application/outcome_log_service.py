@@ -320,12 +320,18 @@ class OutcomeLogService:
         owner_outcome: str,
         sent_text: str | None,
         vip_id: UUID | None,
+        severity: str | None = None,
     ) -> TurnOutcomeLogRecord | None:
         """Owner-resolution half: sent score + delta + trust label event.
 
         ``escalated`` carries no sent text → sent_score/quality_delta stay
         None. Fires the trust-budget label event (acierto/desacuerdo/
         conservadora) once per outcome.
+
+        SPEC-EA-07: ``severity`` (minor/moderate/major) is persisted to the
+        ledger and threaded to the trust label event ONLY when the owner
+        actually corrected (acierto/conservadora are not corrections → None /
+        the moderate default, byte-identical).
         """
         if not self._enabled or self._store is None:
             return None
@@ -345,12 +351,20 @@ class OutcomeLogService:
                 owner_outcome=owner_outcome,
                 sent_score=sent_score,
                 quality_delta=delta,
+                correction_severity=(
+                    severity if owner_outcome == "corrected" else None
+                ),
             )
             if updated is not None and self._trust_budget is not None:
                 coincidence = label_turn(updated.shadow_verdict, owner_outcome)
                 if coincidence is not None:
                     await self._trust_budget.record_outcome(
-                        turn_id, event="label", value=coincidence
+                        turn_id,
+                        event="label",
+                        value=coincidence,
+                        severity=(
+                            severity if owner_outcome == "corrected" else "moderate"
+                        ),
                     )
             return updated
         except Exception:

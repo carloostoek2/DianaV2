@@ -171,3 +171,46 @@ async def test_handle_correct_fires_desacuerdo() -> None:
     events = _label_events(trust)
     assert ("label", "desacuerdo") in events
     assert ("label", "corrected") not in events
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_threads_severity_to_owner_outcome() -> None:
+    """SPEC-EA-07 (camino B): handle_correct(severity="major") → the outcome
+    row persists correction_severity="major" and the trust label event carries
+    severity="major"."""
+    store = FakeOutcomeStore()
+    trust = FakeTrustBudget()
+    outcome = _fase_b_service(store, trust)
+    g = _admin_graph(outcome=outcome)
+    vip_id = uuid4()
+    turn = await _seed_pending(
+        g, draft="original draft", vip_id=vip_id, outcome=outcome
+    )
+
+    result = await g["admin"].handle_correct(
+        turn.id, "texto corregido", actor_id=OWNER_ID, severity="major"
+    )
+
+    assert result is not None and result.success is True
+    assert store.rows[str(turn.id)].correction_severity == "major"
+    assert ("label", "desacuerdo") in _label_events(trust)
+    assert trust.severities[-1] == "major"
+
+
+@pytest.mark.asyncio
+async def test_handle_approve_passes_no_severity() -> None:
+    """SPEC-EA-07: approve never threads severity → no correction_severity on
+    the row and the acierto label uses the default moderate (byte-identical)."""
+    store = FakeOutcomeStore()
+    trust = FakeTrustBudget()
+    outcome = _fase_b_service(store, trust)
+    g = _admin_graph(outcome=outcome)
+    vip_id = uuid4()
+    turn = await _seed_pending(g, draft="send me", vip_id=vip_id, outcome=outcome)
+
+    result = await g["admin"].handle_approve(turn.id, actor_id=OWNER_ID)
+
+    assert result is not None and result.success is True
+    assert store.rows[str(turn.id)].correction_severity is None
+    assert ("label", "acierto") in _label_events(trust)
+    assert trust.severities[-1] == "moderate"

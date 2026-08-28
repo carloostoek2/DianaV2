@@ -83,6 +83,9 @@ class CorrectSession:
     candidate_id: UUID | None = None
     corrected_text: str | None = None
     chat_id: int | None = None
+    # SPEC-EA-07: severity tag of the correction (minor/moderate/major). Data
+    # plumbing (Fase 3); the UI picker that sets it ships in Fase 4.
+    severity: str | None = None
 
 
 class CorrectSessionStore:
@@ -111,6 +114,7 @@ class CorrectSessionStore:
         *,
         mode: str = "correct",
         chat_id: int | None = None,
+        severity: str | None = None,
     ) -> None:
         self._awaiting[owner_id] = CorrectSession(
             turn_id=turn_id,
@@ -118,6 +122,7 @@ class CorrectSessionStore:
             mode=mode,
             phase="await_text",
             chat_id=chat_id,
+            severity=severity,
         )
         logger.info(
             "correct_session_started",

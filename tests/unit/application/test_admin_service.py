@@ -2075,12 +2075,14 @@ class _FakeTrustBudgetAdmin:
 
     def __init__(self, *, raise_on_correction: bool = False) -> None:
         self.correction_calls: list = []
+        self.correction_severities: list[str] = []
         self._raise = raise_on_correction
 
-    async def record_correction(self, turn_id):
+    async def record_correction(self, turn_id, *, severity: str = "moderate"):
         if self._raise:
             raise RuntimeError("trust db down")
         self.correction_calls.append(turn_id)
+        self.correction_severities.append(severity)
 
 
 @pytest.mark.asyncio
@@ -2108,6 +2110,31 @@ async def test_handle_correct_decrements_trust_budget() -> None:
     assert trust.correction_calls == [turn.id]
     staging_repo.insert.assert_awaited_once()
     assert g["actuator"].send_count() == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_correct_threads_severity_to_record_correction() -> None:
+    """SPEC-EA-07 (camino A): handle_correct(severity="major") → the wired
+    trust service receives record_correction(turn_id, severity="major")."""
+    trust = _FakeTrustBudgetAdmin()
+    staging, _ = _real_staging()
+    history = InMemoryMessageHistoryWriter()
+    g = _admin_graph(staging=staging, history=history, trust_budget=trust)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, telegram_message_id=7),
+        _decision(draft="original draft"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    result = await g["admin"].handle_correct(
+        turn.id, "corrected final", actor_id=OWNER_ID, severity="major"
+    )
+
+    assert result is not None and result.success
+    assert trust.correction_calls == [turn.id]
+    assert trust.correction_severities == ["major"]
 
 
 @pytest.mark.asyncio
