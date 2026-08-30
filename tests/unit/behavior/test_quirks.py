@@ -149,3 +149,66 @@ def test_apply_typo_spanish_accented_word() -> None:
     word = correction[1:]
     assert any(c in "áéíóúñüÁÉÍÓÚÑÜ" or c.isalpha() for c in word)
     assert word in text
+
+
+# --- apply_typo: la risa se desordena pero nunca se corrige ---
+# Decisión de la dueña: la risa (jsjs/jshshs/jsjsjs y variantes j/s/h) puede
+# salir desordenada como sea — es natural — pero jamás lleva corrección *….
+# Nadie corrige su propia risa.
+
+
+def test_apply_typo_standalone_laugh_scrambled_without_correction() -> None:
+    """Una risa sola puede desordenarse, pero nunca se corrige."""
+    rng = random.Random(0)
+    for laugh in (
+        "jsjs",
+        "jsjjs",
+        "jsjsjh",
+        "jshshs",
+        "jsjsjs",
+        "jaja",
+        "jajaja",
+        "jejeje",
+        "jiji",
+        "jojo",
+        "ajajaja",
+        "ksks",
+        "ksksks",
+        "xdxdxd",
+    ):
+        result = apply_typo(laugh, rng)
+        assert result is not None, laugh
+        typoed, correction = result
+        assert typoed != laugh, laugh
+        assert correction is None, laugh
+
+
+def test_apply_typo_laugh_at_start_scrambled_no_correction() -> None:
+    """Risa inicial (caso reportado): se desordena como sea, sin *jsjs."""
+    rng = random.Random(0)
+    text = "jsjs mira esto"
+    typoed, correction = apply_typo(text, rng)
+    assert typoed is not None
+    assert typoed.split()[0] != "jsjs"  # la risa fue desordenada
+    assert correction is None           # y jamás se corrige
+
+
+def test_apply_typo_laugh_variants_scrambled_never_corrected() -> None:
+    """Cualquier variante j/s/h se puede desordenar; nunca lleva corrección."""
+    rng = random.Random(0)
+    for laugh in ("jsjs", "jsjjs", "jsjsjh", "jshshs", "jsjsjs", "jajaja"):
+        text = f"{laugh} trabajo final"
+        result = apply_typo(text, rng)
+        assert result is not None, laugh
+        typoed, correction = result
+        assert typoed.split()[0] != laugh, laugh  # la risa fue desordenada
+        assert correction is None, laugh
+
+
+def test_apply_typo_non_laugh_word_still_corrected() -> None:
+    """Las palabras normales siguen llevando su corrección *… (sin regresión)."""
+    rng = random.Random(0)
+    typoed, correction = apply_typo("hola jsjs todo bien", rng)
+    assert typoed is not None
+    assert correction == "*hola"    # la primera palabra normal se corrige
+    assert "jsjs" in typoed         # la risa en medio queda tal cual

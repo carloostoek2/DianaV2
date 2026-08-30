@@ -773,6 +773,52 @@ async def test_quirks_force_typo_sends_correction_bubble() -> None:
 
 
 @pytest.mark.asyncio
+async def test_quirks_force_typo_scrambles_laugh_without_correction() -> None:
+    """Risa al inicio: se desordena como sea y NO se agrega corrección *…."""
+    engine, actuator, _, _ = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="typo_correct",
+        initial=0.0,
+        typing=0.0,
+    )
+    text = "jsjs mira esto"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"].startswith("jjss ")  # risa desordenada
+    assert "*" not in sends[0]["text"]           # sin burbuja de corrección
+
+
+@pytest.mark.asyncio
+async def test_quirks_force_typo_standalone_laugh_scrambled() -> None:
+    """Mensaje que es solo risa: se envía desordenado, sin corrección."""
+    engine, actuator, _, _ = _engine(
+        feature_advanced_behavior=True,
+        quirk_probability=1.0,
+        quirk_force="typo_correct",
+        initial=0.0,
+        typing=0.0,
+    )
+    text = "jsjsjs"
+    result = await engine.deliver(
+        [text],
+        _ctx(allow_human_quirks=True, telegram_message_id=None),
+        uuid4(),
+    )
+    assert result.success is True
+    sends = [c for c in actuator.calls if c["op"] == "send_message"]
+    assert len(sends) == 1
+    assert sends[0]["text"] != "jsjsjs"
+    assert "*" not in sends[0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_quirks_force_natural_split_multi_bubble() -> None:
     engine, actuator, _, clock = _engine(
         feature_advanced_behavior=True,

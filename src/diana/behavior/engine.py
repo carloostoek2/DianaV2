@@ -425,13 +425,19 @@ class BehaviorEngine:
         return expanded, did
 
     def _apply_typo_quirk(self, texts: list[str]) -> list[str] | None:
-        """Rewrite first bubble with mild typo + insert ``*{word}`` correction."""
+        """Rewrite first bubble with mild typo; insert ``*{word}`` if any.
+
+        A laugh word (jsjs/jshshs/…) is scrambled without a correction bubble
+        — nobody corrects their own laugh (product decision).
+        """
         if not texts:
             return None
         result = apply_typo(texts[0], self._rng)
         if result is None:
             return None
         typoed, correction = result
+        if correction is None:
+            return [typoed, *texts[1:]]
         return [typoed, correction, *texts[1:]]
 
     def _prepare_texts(

@@ -28,6 +28,21 @@ _WORD_RE = re.compile(
 )
 _MIN_NATURAL_SPLIT_LEN = 20
 _MIN_TYPO_WORD_LEN = 4
+# Onomatopeya de risa. Decisión de la dueña (ajuste quirúrgico de quirks):
+# la risa SÍ puede salir desordenada ("se puede desordenar como sea", es
+# natural), pero NUNCA se corrige: nadie corrige su propia risa. Cubre el
+# formato real de Diana (letras j/s/h: jsjsjh, jshshs, jsjsjs), además de:
+#   · sílabas j+vocal repetidas: jaja, jeje, jiji, jojo, ajaja, jajaja
+#   · mezclas j/s/h con doble letra: jsjs, jsjjs, jshshs, jsjsjh
+#   · risas meme: ksksks, xdxdxd
+_LAUGH_RE = re.compile(
+    r"^(?:"
+    r"(?:[aeiou]?j[aeiou]?){2,}"   # jaja / jeje / jiji / jojo / ajaja
+    r"|j[jsh]{2,}"                 # jsjs / jsjjs / jshshs / jsjsjh / jsjsjs
+    r"|(?:ks|sk|xd|dx){2,}"        # ksks / xdxd
+    r")$",
+    re.IGNORECASE,
+)
 
 
 def pick_quirk(
@@ -74,13 +89,18 @@ def natural_split_text(text: str) -> list[str]:
     return parts
 
 
-def apply_typo(text: str, rng: Random) -> tuple[str, str] | None:
+def apply_typo(text: str, rng: Random) -> tuple[str, str | None] | None:
     """Mild typo on first viable alphabetic word len≥4; correction ``*{word}``.
 
-    Prefer first long word; try adjacent interior swaps starting at (1,2), then
-    (2,3), … If a swap is a no-op (e.g. ``book`` double letter), try the next
-    pair, then the next word. Returns ``None`` when no real typo is possible.
-    ``rng`` reserved for injectable determinism contract (first viable wins).
+    Laugh onomatopoeia (jsjs/jshshs/…) may be scrambled freely — any letter
+    order is natural — but never gets a correction bubble: nobody corrects
+    their own laugh (decision of the product owner). A non-laugh word returns
+    ``(*{word})``; a laugh word returns ``(typoed, None)``.
+    Prefer first viable word; try adjacent interior swaps starting at (1,2),
+    then (2,3), … If a swap is a no-op (e.g. ``book`` double letter), try the
+    next pair, then the next word. Returns ``None`` when no real typo is
+    possible. ``rng`` reserved for injectable determinism contract (first
+    viable wins).
     """
     del rng  # first-viable policy; kept for injectable determinism contract
     stripped = text.strip()
@@ -95,7 +115,8 @@ def apply_typo(text: str, rng: Random) -> tuple[str, str] | None:
         if typoed_word is None:
             continue
         typoed = stripped[: match.start()] + typoed_word + stripped[match.end() :]
-        return typoed, f"*{word}"
+        correction = None if _LAUGH_RE.match(word) else f"*{word}"
+        return typoed, correction
     return None
 
 
