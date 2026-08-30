@@ -28,6 +28,7 @@ Por eso hoy Diana cuenta con:
 - Comportamiento humanizado — la entrega incorpora lectura, escritura, pausas, ritmo y división natural de mensajes.
 - Decisiones antes de responder — no quiero que el sistema genere primero y se pregunte después si debía enviar. Primero analizamos el turno y determinamos la acción.
 - Supervisión humana — una conversación puede pasar por aprobación, corrección o escalación antes de llegar al VIP.
+- Personalidad y reglas editables — la dueña define cómo habla Diana (tono, estilo, patrones de voz y agenda) desde el panel, con historial de versiones y restauración en un toque.
 - Zona gris y reglas propuestas — si Diana no tiene una regla de negocio suficiente para decidir, no quiero que improvise. Congela la conversación y pide criterio a la dueña, pudiendo además proponer una regla como ayuda.
 - Sandbox — podemos probar comportamiento con perfiles ficticios sin contaminar los datos reales.
 - Métricas y trazabilidad — la dueña puede revisar qué ocurrió durante un turno y cómo está evolucionando el sistema.
@@ -139,6 +140,34 @@ Desde el panel administrativo de Telegram puede administrar VIPs, consultar y ed
 El menú administrativo se convirtió en la superficie principal del producto. Los comandos tradicionales siguen disponibles como atajos.
 
 Esta estructura también nos permite evolucionar el sistema sin convertir cada nueva capacidad en una acción irreversible.
+
+---
+
+La dueña decide cómo habla Diana
+
+Durante mucho tiempo, la personalidad de Diana vivió en un archivo de configuración. Cualquier ajuste de tono o de estilo —responde más corto, cambia una muletilla, corrige un dato personal— requería editar ese archivo y esperar un reinicio. Algo tan simple como "responde más corto" se convertía en una operación de desarrollo.
+
+Eso era exactamente lo que no quería.
+
+Por eso construí el panel de "🎭 Personalidad y reglas".
+
+Desde el menú, la dueña puede revisar y editar:
+
+- Cómo habla Diana — la descripción base que define quién es y cómo se expresa.
+- Reglas de tono y estilo — reglas simples y concretas, como "máximo 2-3 líneas por mensaje".
+- Datos personales — hechos de la vida de Diana que pueden aparecer en la conversación.
+- Patrones de voz — muletillas y formas características de hablar.
+- Políticas de conducta — los límites de lo que Diana puede decir o hacer.
+- Agenda — bloques de actividad, respuestas libres y zona horaria.
+- Historial — todas las versiones guardadas, con restauración en un toque.
+
+El criterio es el mismo que uso en el resto del sistema: control sin riesgo.
+
+Cada cambio se guarda como una versión nueva. Si algo no queda como se esperaba, se puede volver a cualquier versión anterior en un toque, y el catálogo de fábrica queda intacto como punto de partida. El cambio aplica al instante: el siguiente mensaje que procesa el bot ya usa la nueva personalidad, sin reiniciar nada.
+
+Diana también distingue cómo habla en cada canal: la personalidad del canal VIP y la del canal de Atención son independientes y se editan por separado.
+
+Y con la sección apagada, Diana se comporta exactamente como antes: la personalidad estática de siempre, sin consultas extra.
 
 ---
 
@@ -399,11 +428,11 @@ La hemos ido construyendo por capas.
 
 Primero establecimos la base conversacional, la memoria, los perfiles, el control administrativo y la trazabilidad.
 
-Después fuimos incorporando sandbox, feedback de calidad, integración con Lucien, eventos temporales, recontacto, zona gris, reglas de negocio y evolución del agente.
+Después fuimos incorporando sandbox, feedback de calidad, integración con Lucien, eventos temporales, recontacto, zona gris, reglas de negocio, personalidad editable y evolución del agente.
 
 Más adelante nos concentramos en medir la autonomía sin activarla, mejorar la privacidad y hacer que el sistema fuera operativamente más robusto.
 
-En agosto de 2026 empezamos a cerrar piezas más profundas de infraestructura: embeddings reales para perfiles, contextos persistidos, personalización de recontacto, control de políticas, historial de versiones, cambio de modelo en caliente y medición de autonomía desde el propio panel.
+En agosto de 2026 empezamos a cerrar piezas más profundas de infraestructura: embeddings reales para perfiles, contextos persistidos, personalización de recontacto, control de políticas, historial de versiones de personalidad y perfiles, cambio de modelo en caliente y medición de autonomía desde el propio panel.
 
 También reforzamos la frontera de privacidad con el enmascaramiento de PII antes de las llamadas al LLM.
 
@@ -439,6 +468,7 @@ Producto y estado
 
 - "docs/ESTADO-PROYECTO.md" — estado actual del sistema y pendientes reales.
 - "docs/PRODUCT_OWNER_ADMIN_SANDBOX.md" — reglas del producto y superficie administrativa.
+- "docs/PRODUCT_OWNER_PERSONALIDAD.md" — panel de personalidad y reglas (cómo habla Diana).
 - "CHANGELOG.md" — historial de cambios.
 
 Técnica

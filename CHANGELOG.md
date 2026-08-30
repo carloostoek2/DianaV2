@@ -6,6 +6,23 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
+Re-importado del historial de los VIP existentes, sin riesgo para la cuenta — 2026-08-28
+
+Cuando corregimos la importación de historial, quedó un pendiente: los VIP que ya estaban registrados nunca recibieron su historial previo, porque el bug de "ya había mensajes guardados" bloqueaba la importación el mismo día del alta. Reimportar ese historial requiere entrar al chat personal con la cuenta de Diana, y hacerlo de golpe sería un movimiento agresivo que Telegram podría sancionar. Por eso el re-importado se programa como el backfill original: un solo VIP por hora, sin excepción.
+
+Técnicamente, esto representa: un nuevo job de aplicación que rota sobre los VIPs activos (uno por ciclo, con intervalo configurable por defecto 1 hora), reutilizando la importación ya corregida e idempotente, y re-encolando el backfill de memoria solo cuando la importación agregó mensajes nuevos.
+
+- Se procesa un VIP por hora (configurable con `HISTORY_REIMPORT_INTERVAL_SEC`, por defecto 3600).
+- El avance se guarda en la base de datos: si el bot se reinicia, continúa por donde iba, no vuelve a empezar.
+- La importación no duplica nada: solo agrega los mensajes que faltan del chat personal.
+- El perfil se reprocesa (backfill de memoria) únicamente cuando entraron mensajes nuevos; si no había nada que importar, no se gasta trabajo del modelo.
+- La dueña recibe un aviso por cada VIP con historial importado (con el paso "X de N") o si algo falla; los ciclos sin novedades son silenciosos.
+- Se activa con `FEATURE_HISTORY_REIMPORT_ENABLED=true` (apagado por defecto, para que el arranque sea siempre el mismo hasta que se decida).
+
+Verificación: 3414 tests pasando (3225 unitarios + 43 e2e sin base + 146 e2e con base).
+
+---
+
 Un escalón más de pensamiento para los borradores — 2026-08-28
 
 Diana pensaba los borradores de texto libre con el esfuerzo de razonamiento más bajo: suficiente para respuestas simples, pero corto cuando el mensaje pedía más cuidado. Subimos un escalón para que el modelo razone un poco más antes de escribir cada borrador, con mejor calidad en tono, contexto y detalle a cambio de un poco más de tiempo y consumo por borrador.
@@ -221,6 +238,22 @@ Quería que el criterio de la dueña no desapareciera después de corregir una r
 Técnicamente, esto representa: convertir el feedback humano y los eventos externos en partes formales del sistema.
 
 Incorporamos destacar/reprender, banco de ejemplos prioritario, eventos de Lucien, contexto temporal, feedback de entrega, manejo de mensajes editados y recuperación tras reinicios. El menú administrativo pasó a ser la superficie principal de control.
+
+---
+
+Panel de personalidad y reglas — 2026-08-04
+
+Antes, la voz de Diana vivía en un archivo de configuración. Cualquier ajuste de tono o de estilo —hablar más corto, cambiar una muletilla, corregir un dato personal— requería editar ese archivo y reiniciar el bot. Quería que la dueña pudiera decidir cómo habla Diana directamente desde el panel, sin depender de un desarrollador y sin perder la posibilidad de volver atrás.
+
+Técnicamente, esto representa: convertir la personalidad de Diana en un catálogo versionado que la dueña edita desde Telegram, con aplicación en caliente y restauración de versiones.
+
+- Nueva sección del menú "🎭 Personalidad y reglas", protegida por el flag `FEATURE_PERSONA_ADMIN_ENABLED`.
+- La dueña puede ver y editar cómo habla Diana: la descripción base, las reglas de tono y estilo, los datos personales, los patrones de voz, las políticas de conducta y la agenda (bloques, respuestas libres y zona horaria).
+- Cada cambio se guarda como versión nueva en la base de datos y aplica al instante: el siguiente mensaje que procesa el bot ya usa la personalidad editada, sin reiniciar nada.
+- El historial muestra las versiones guardadas y permite restaurar cualquiera en un toque; el catálogo de fábrica queda intacto como versión cero.
+- La personalidad se administra por canal: VIP y Atención tienen versiones activas independientes.
+- Solo la dueña puede editar; una edición mal formada no se guarda y muestra el motivo para corregirla.
+- Con la sección apagada, el bot se comporta exactamente como antes: catálogo estático, sin consultas extra a la base.
 
 ---
 
