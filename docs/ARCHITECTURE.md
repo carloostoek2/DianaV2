@@ -100,7 +100,7 @@ src/diana/
 ├── learning/                  # aprendizaje post-turno (post_turn.py)
 ├── llm/                       # provider abstracto: deepseek.py (primario), fake.py
 ├── jobs/                      # recontact, calibration, metrics, trace_purge, backfill,
-│                              #   profile_synthesis_job, gray_zone_expiration, agent_data_purge
+│                              #   history_reimport, profile_synthesis_job, gray_zone_expiration, agent_data_purge
 ├── infrastructure/
 │   ├── db/                    # models.py (ORM SQLAlchemy), session.py, repositories/ (por tabla)
 │   └── telethon/              # vip_history_fetcher.py (historial para backfill)
@@ -139,6 +139,7 @@ Valores leídos de `.env` del repo (runtime). Los defaults del código en `src/d
 | Flag | Estado | Superficie que gobierna |
 | --- | --- | --- |
 | `FEATURE_MEMORY_ENABLED` | `true` | Wiring de memoria VIP (retrievers) |
+| `FEATURE_HISTORY_REIMPORT_ENABLED` | `false` | Re-importado programado del historial previo de VIPs existentes (1 VIP por hora; `HISTORY_REIMPORT_INTERVAL_SEC`) |
 | `FEATURE_GRAY_ZONE_ENABLED` | `true` | Zona gris / consulta de doctrina + freeze |
 | `FEATURE_STAGING_ENABLED` | `true` | Staging Area y superficie `/staging` |
 | `FEATURE_SANDBOX_ENABLED` | `true` | Sandbox (perfiles ficticios) |

@@ -158,9 +158,13 @@ class MemoryBackfillQueue:
     # ------------------------------------------------------------------
 
     async def enqueue_by_telegram_user(
-        self, telegram_user_id: int
+        self, telegram_user_id: int, *, notify: bool = True
     ) -> EnqueueReport:
-        """Enqueue the backfill job for one VIP (button / registration flow)."""
+        """Enqueue the backfill job for one VIP (button / registration flow).
+
+        ``notify=False`` silences the owner DM — used by the scheduled history
+        re-import, which reports its own single DM per imported VIP.
+        """
         if not self._enabled:
             logger.info(
                 "backfill_enqueue_disabled",
@@ -183,6 +187,7 @@ class MemoryBackfillQueue:
             chat_id=vip.telegram_user_id,
             name=vip.display_name,
             telegram_user_id=telegram_user_id,
+            notify=notify,
         )
 
     async def _enqueue_vip(

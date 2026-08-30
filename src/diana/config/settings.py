@@ -227,6 +227,11 @@ class Settings(BaseSettings):
     telethon_api_hash: SecretStr = SecretStr("")
     telethon_session_path: str = ""  # e.g. /path/to/diana_session (no .session)
     vip_history_seed_limit: Annotated[int, Field(ge=1, le=100)] = 20
+    # Scheduled re-import of pre-existing history for VIPs registered before
+    # the seed fix (one VIP per cycle; owner personal account protection —
+    # same pacing as the backfill scheduler).
+    feature_history_reimport_enabled: bool = False
+    history_reimport_interval_sec: Annotated[int, Field(ge=1)] = 3600
 
     # F5 Pool 2 (REQ-MEM-05/08): backfill pacing + semantic dedup threshold.
     # backfill_interval_sec spaces EVERY processed unit (between VIPs AND

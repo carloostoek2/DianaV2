@@ -355,6 +355,8 @@ class AppContainer:
     ephemeral_event_service: EphemeralEventService | None = None
     backfill_queue: MemoryBackfillQueue | None = None
     backfill_wake: asyncio.Event | None = None
+    # Scheduled history re-import for existing VIPs (None when flag off).
+    history_reimport: object | None = None
     # REQ-MEM-06: interpreted context store (repo always built; writer gated).
     contexts_repo: ContextsRepo | None = None
     # Evo-Agente Fase 0: shadow emotional detector (None when flag off).
@@ -1227,6 +1229,32 @@ def build_app(
         clock=clock.now,
     )
 
+    # Scheduled re-import of pre-existing history for existing VIPs (seed fix
+    # backfill): one VIP per history_reimport_interval_sec, rotation persisted
+    # in system_config. Built only when the flag is ON, Telethon is configured
+    # AND the memory backfill is enabled (it re-enqueues backfill jobs).
+    history_reimport = None
+    if (
+        settings.feature_history_reimport_enabled
+        and history_seed is not None
+        and history_seed.enabled
+        and backfill_queue is not None
+        and settings.feature_memory_enabled
+    ):
+        from diana.application.history_reimport import HistoryReimportService
+        from diana.infrastructure.db.repositories.reimport_cursor import (
+            SqlReimportCursorStore,
+        )
+
+        history_reimport = HistoryReimportService(
+            vips=vips,
+            seed=history_seed,
+            backfill=backfill_queue,
+            cursor=SqlReimportCursorStore(sf),
+            notifier=notifier,
+        )
+        logger.info("history_reimport_enabled")
+
     # F5 Pool 4 (F5-05): owner approval of pending_owner facts — built
     # ALWAYS (pattern Pool 2), gated at the dispatcher (flag OFF → None →
     # inert router, byte-identical). vips enriches the DM list with names.
@@ -1345,6 +1373,7 @@ def build_app(
         ephemeral_event_service=ephemeral_event_service,
         backfill_queue=backfill_queue,
         backfill_wake=backfill_wake,
+        history_reimport=history_reimport,
         contexts_repo=contexts_repo,
         emotional_detector=(
             detector if settings.feature_emotional_detector_enabled else None

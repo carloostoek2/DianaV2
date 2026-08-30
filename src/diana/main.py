@@ -115,6 +115,8 @@ async def async_main() -> None:
     profile_synthesis_job = _setup_profile_synthesis_job(app)
     # F5 Pool 2: backfill scheduler (flag-gated; recover_stale inside start()).
     backfill_job = _setup_backfill_job(app)
+    # History re-import for existing VIPs (flag-gated; one VIP per interval).
+    history_reimport_job = _setup_history_reimport_job(app)
 
     # F5 Pool 2: enqueue missing VIP profiles at startup (before polling,
     # NEVER during turn processing). Best-effort.
@@ -153,6 +155,7 @@ async def async_main() -> None:
     finally:
         # Stop new jobs first, then existing F2/F3 jobs.
         await _cancel_job(backfill_job, "backfill_job")
+        await _cancel_job(history_reimport_job, "history_reimport_job")
         await _cancel_job(profile_synthesis_job, "profile_synthesis_job")
         await _cancel_job(calibration_job, "calibration_job")
         await _cancel_job(outcome_reaction_job, "outcome_reaction_job")
@@ -247,6 +250,34 @@ def _setup_backfill_job(app: AppContainer) -> asyncio.Task | None:
     logger.info(
         "backfill_job_started",
         extra={"interval_seconds": app.settings.backfill_interval_sec},
+    )
+    return task
+
+
+def _setup_history_reimport_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the scheduled history re-import when its flag is on.
+
+    One VIP per cycle (``history_reimport_interval_sec``, default 3600) so the
+    owner's personal Telegram session is never hit more than once per hour.
+    Flag OFF or service not wired → job never starts.
+    """
+    if (
+        not app.settings.feature_history_reimport_enabled
+        or app.history_reimport is None
+    ):
+        logger.info("history_reimport_job_skipped_flag_off")
+        return None
+
+    from diana.jobs.history_reimport import HistoryReimportJob
+
+    job = HistoryReimportJob(
+        app.history_reimport,  # type: ignore[arg-type]
+        interval_seconds=app.settings.history_reimport_interval_sec,
+    )
+    task = asyncio.create_task(job.start())
+    logger.info(
+        "history_reimport_job_started",
+        extra={"interval_seconds": app.settings.history_reimport_interval_sec},
     )
     return task
 
