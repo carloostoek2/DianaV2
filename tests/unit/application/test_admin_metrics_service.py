@@ -181,7 +181,7 @@ class TestFormatSummaryText:
         store.seed(week, _full_values(style_drift_score=0.15, total_turns=10.0))
         summary = await svc.get_week_summary(week)
         text = svc.format_summary_text(summary)
-        assert "0.15 (alto — revisá las últimas conversaciones)" in text
+        assert "0.15 (alto — revisa las últimas conversaciones)" in text
 
     async def test_drift_boundary_normal_at_under_0_1(
         self, svc: AdminMetricsService, store: FakeLearningMetricsStore
@@ -197,7 +197,7 @@ class TestFormatSummaryText:
         week = date(2026, 7, 20)
         store.seed(week, _full_values(style_drift_score=0.1))
         text = svc.format_summary_text(await svc.get_week_summary(week))
-        assert "alto — revisá" in text
+        assert "alto — revisa" in text
 
     async def test_no_delta_when_previous_missing(
         self, svc: AdminMetricsService, store: FakeLearningMetricsStore

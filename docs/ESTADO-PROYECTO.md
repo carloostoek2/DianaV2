@@ -153,7 +153,7 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria; alineado también en `system_config` — antes la semilla 003 quedó en `false`).
 - Flag `FEATURE_CONTEXT_ENABLED=true` (2026-08-21): activa el store de contexto interpretado (REQ-MEM-06).
 - Migraciones en repo: **001–029**. En producción: **verificadas al head 029** (2026-08-22).
-- Persona sin reglas de voseo; español neutro. CHANGELOG.md vigente.
+- Persona en español neutro. CHANGELOG.md vigente.
 - Auditoría de documentación 2026-08-16: wiki + estado alineados al código post-11-ago. Informes en `.planning/quick/docs-audit-2026-08-16/`.
 
 ---

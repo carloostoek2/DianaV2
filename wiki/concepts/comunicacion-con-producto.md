@@ -29,7 +29,7 @@ Regla obligatoria de AGENTS.md §0: el interlocutor del chat **no es un desarrol
 
 ## Idioma (AGENTS.md §0.6)
 
-Todo texto de producto — UI, prompts, seeds, mensajes al VIP, specs — se escribe en **español neutro (variante mexicana/neutra)**. El **español rioplatense (voseo) está prohibido**: querés, tenés, hacés, decime, sos, vos, y los imperativos voseantes (Revisá, Elegí, Mirá, Fijate…). Regla de acción inmediata: cualquier texto en voseo encontrado en código, docs, prompts, seeds o DB se corrige en el mismo instante a neutro; ninguna regla que prescriba voseo debe sobrevivir.
+Todo texto de producto — UI, prompts, seeds, mensajes al VIP, specs — se escribe en **español neutro (variante mexicana/neutra)**. Regla de acción inmediata: cualquier texto que no sea español neutro encontrado en código, docs, prompts, seeds o DB se corrige en el mismo instante a neutro.
 
 ## Qué NO cambia esta regla
 

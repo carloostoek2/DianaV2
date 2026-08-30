@@ -180,11 +180,11 @@ async def test_template_escalate_delivers_ia_then_escalates(
         notifier=g["notifier"],
         behavior=g["behavior"],
         chat_id=42,
-        text="sos un bot?",
+        text="eres un bot?",
         vip_id=None,
         business_connection_id="bc-1",
         message_id=22,
-        keywords_hit=["sos un bot"],
+        keywords_hit=["eres un bot"],
     )
     assert g["actuator"].send_count() == 1
     send_calls = [c for c in g["actuator"].calls if c["op"] == "send_message"]
@@ -234,11 +234,11 @@ async def test_template_soft_fail_still_escalates(escalate_graph: dict, caplog) 
             notifier=g["notifier"],
             behavior=behavior,
             chat_id=42,
-            text="sos un bot?",
+            text="eres un bot?",
             vip_id=None,
             business_connection_id="bc-1",
             message_id=30,
-            keywords_hit=["sos un bot"],
+            keywords_hit=["eres un bot"],
         )
     rec = await g["turns"].get(turn_id)
     assert rec is not None and rec.status == "escalated"
@@ -266,11 +266,11 @@ async def test_template_exception_still_escalates(escalate_graph: dict) -> None:
         notifier=g["notifier"],
         behavior=behavior,
         chat_id=42,
-        text="sos un bot?",
+        text="eres un bot?",
         vip_id=None,
         business_connection_id="bc-1",
         message_id=31,
-        keywords_hit=["sos un bot"],
+        keywords_hit=["eres un bot"],
     )
     rec = await g["turns"].get(turn_id)
     assert rec is not None and rec.status == "escalated"
@@ -292,11 +292,11 @@ async def test_template_empty_falls_back_to_ia_constant(escalate_graph: dict) ->
         notifier=g["notifier"],
         behavior=g["behavior"],
         chat_id=42,
-        text="sos un bot?",
+        text="eres un bot?",
         vip_id=None,
         business_connection_id="bc-1",
         message_id=40,
-        keywords_hit=["sos un bot"],
+        keywords_hit=["eres un bot"],
         template="   ",
     )
     send_calls = [c for c in g["actuator"].calls if c["op"] == "send_message"]

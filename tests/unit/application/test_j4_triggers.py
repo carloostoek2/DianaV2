@@ -24,16 +24,16 @@ def test_pago_hit() -> None:
 def test_pure_ia_returns_none() -> None:
     """Pure identity probes are no longer J.4; TemplateGate handles annex set in Director."""
     for text in (
-        "sos un bot o qué?",
+        "eres un bot o qué?",
         "eres una ia?",
         "eres real?",
-        "sos real",
-        "usás chatgpt?",
+        "eres real",
+        "usas chatgpt?",
         "eres un chatbot",
-        "sos humano?",
+        "eres humano?",
         "eres humano",
         "eres una ai?",
-        "sos ai",
+        "eres ai",
     ):
         assert classify_j4_text(text) is None, text
 

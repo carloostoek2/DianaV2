@@ -195,7 +195,7 @@ Mensaje de texto enviado por Lucien al chat de coordinación, con **prefijo rese
 
 - **Qué**: mensaje al DM del bot (owner `6181290784`, patrón existente `AiogramOwnerNotifier`) con teclado inline de 3 botones.
 - **Dónde**: reutilizar `AiogramOwnerNotifier` (o su puerto) + teclado nuevo en `telegram/keyboards.py` (`link_kick_keyboard(event_id)`).
-- **Texto aprobado por la dueña** (español neutro, sin voseo):
+- **Texto aprobado por la dueña** (español neutro):
 
 ```
 ⚠️ ATENCIÓN ⚠️
@@ -268,7 +268,7 @@ Sin cambios en tablas existentes de Diana (`vips` ya tiene todo lo necesario). N
 - Los mensajes de coordinación **no** tocan `cognitive/` (pipeline), `behavior/` (envío de respuestas) ni `learning/`.
 - El emisor en Lucien es un servicio de infraestructura (envío), no lógica de negocio: no toca el dominio VIP de Lucien más allá del hook post-expulsión.
 - Purity gates, serialización por chat y flags vigentes.
-- Nada de voseo en textos nuevos (revisar el barrido en el checklist).
+- Textos nuevos en español neutro (revisar el barrido en el checklist).
 
 ---
 
@@ -288,7 +288,7 @@ Sin cambios en tablas existentes de Diana (`vips` ya tiene todo lo necesario). N
 - [x] Mismo `event_id` reenviado → no re-notifica (dedup).
 - [x] Payload malformado → log + descarte, sin crash.
 - [x] Flag OFF en ambos bots → suite completa verde, comportamiento idéntico al actual.
-- [x] Unit + e2e (fakes) verdes; purity gates verdes; sin voseo en textos nuevos.
+- [x] Unit + e2e (fakes) verdes; purity gates verdes; textos nuevos en español neutro.
 
 ---
 

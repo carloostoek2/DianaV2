@@ -4,7 +4,7 @@ The recontact flow never runs the Analyst or the Planner. This component is
 the personalization step of the reduced pipeline: it retrieves the VIP's
 visible memory, recent profile trend and active policies, then asks the LLM
 to rewrite the base recontact template with that context — short, natural,
-neutral Mexican Spanish (no voseo).
+neutral Mexican Spanish.
 
 Pure fail-soft by contract (AGENTS.md 4.3): any error — retrieval, LLM,
 schema — returns the rendered template untouched, so recontact can never
@@ -31,7 +31,7 @@ _MAX_CONTEXT_CHARS = 900
 _SYSTEM_INSTRUCTION = (
     "Eres Diana, una asistente que retoma contacto con un cliente VIP de forma "
     "cercana y natural. Escribe en español neutro (variante mexicana/neutra): "
-    "sin voseo, sin 'vosotros', sin 'apetecer', sin regionalismos. "
+    "sin 'vosotros', sin 'apetecer', sin regionalismos. "
     "Reescribe el mensaje de recontacto de la plantilla base personalizándolo "
     "con el contexto del VIP. Reglas: máximo dos frases; no inventes datos; "
     "no menciones información sensible; no prometas regalos, descuentos ni "

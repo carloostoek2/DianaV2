@@ -43,65 +43,65 @@ _PERSONA_BACK = encode_menu("personalidad")
 # Item sections → (prompt hint when a wizard captures text).
 _ADD_PROMPTS: dict[str, str] = {
     "persona": (
-        "📝 Enviame la nueva descripción de Diana (cómo habla, quién es).\n\n"
+        "📝 Envíame la nueva descripción de Diana (cómo habla, quién es).\n\n"
         "Usa /cancelar para abortar."
     ),
     "rule": (
-        "✍️ Enviame la regla de tono/estilo nueva.\n\n"
+        "✍️ Envíame la regla de tono/estilo nueva.\n\n"
         "Ej: \"Máximo 2-3 líneas por mensaje\".\nUsa /cancelar para abortar."
     ),
     "rule_edit": (
-        "✍️ Enviame el texto nuevo de la regla.\n\nUsa /cancelar para abortar."
+        "✍️ Envíame el texto nuevo de la regla.\n\nUsa /cancelar para abortar."
     ),
     "fact": (
-        "👤 Enviame el dato nuevo con este formato:\n"
+        "👤 Envíame el dato nuevo con este formato:\n"
         "id | tema1, tema2 | hecho\n"
         "Ej: estudios | psicologia, trayectoria | Termino la carrera de psicología.\n"
         "Usa /cancelar para abortar."
     ),
     "fact_edit": (
-        "👤 Enviame el dato con este formato (puedes cambiar id, temas o hecho):\n"
+        "👤 Envíame el dato con este formato (puedes cambiar id, temas o hecho):\n"
         "id | tema1, tema2 | hecho\nUsa /cancelar para abortar."
     ),
     "pattern": (
-        "🗣️ Enviame el patrón de voz con este formato:\n"
+        "🗣️ Envíame el patrón de voz con este formato:\n"
         "id | tag1, tag2 | patron | uso\n"
         "Ej: conector_o_sea | conector, explicacion | o sea | Conector natural.\n"
         "Usa /cancelar para abortar."
     ),
     "pattern_edit": (
-        "🗣️ Enviame el patrón con este formato:\n"
+        "🗣️ Envíame el patrón con este formato:\n"
         "id | tag1, tag2 | patron | uso\nUsa /cancelar para abortar."
     ),
     "policy": (
-        "📜 Enviame la política con este formato:\n"
+        "📜 Envíame la política con este formato:\n"
         "id | tema1, tema2 | regla\n"
         "Ej: no_consultas | psicologia | No doy consultas clínicas.\n"
         "Usa /cancelar para abortar."
     ),
     "policy_edit": (
-        "📜 Enviame la política con este formato:\n"
+        "📜 Envíame la política con este formato:\n"
         "id | tema1, tema2 | regla\nUsa /cancelar para abortar."
     ),
     "bloque": (
-        "🗓️ Enviame el bloque de agenda con este formato:\n"
+        "🗓️ Envíame el bloque de agenda con este formato:\n"
         "dias1, dias2 | inicio | fin | actividad\n"
         "Ej: lunes, martes | 09:00 | 12:00 | en el servicio social\n"
         "Usa /cancelar para abortar."
     ),
     "bloque_edit": (
-        "🗓️ Enviame el bloque con este formato:\n"
+        "🗓️ Envíame el bloque con este formato:\n"
         "dias1, dias2 | inicio | fin | actividad\nUsa /cancelar para abortar."
     ),
     "default": (
-        "🗓️ Enviame la respuesta libre nueva (para cuando no hay actividad).\n"
+        "🗓️ Envíame la respuesta libre nueva (para cuando no hay actividad).\n"
         "Usa /cancelar para abortar."
     ),
     "default_edit": (
-        "🗓️ Enviame el texto nuevo de la respuesta libre.\nUsa /cancelar para abortar."
+        "🗓️ Envíame el texto nuevo de la respuesta libre.\nUsa /cancelar para abortar."
     ),
     "timezone": (
-        "🗓️ Enviame la zona horaria nueva (ej: America/Mexico_City).\n"
+        "🗓️ Envíame la zona horaria nueva (ej: America/Mexico_City).\n"
         "Usa /cancelar para abortar."
     ),
 }
@@ -789,7 +789,7 @@ async def dispatch_personalidad(
             await _show(
                 message,
                 "No se pudo mostrar la lista (algún elemento excede el límite de "
-                "tamaño). Editalo o eliminálo con otra herramienta.",
+                "tamaño). Edítalo o elimínalo con otra herramienta.",
                 back,
             )
             return
@@ -870,7 +870,7 @@ async def dispatch_personalidad(
             last_chat_id=message.chat.id,
         )
         prompt = _ADD_PROMPTS.get(action) or _ADD_PROMPTS.get(
-            section, "Enviame el valor nuevo."
+            section, "Envíame el valor nuevo."
         )
         # For EDIT actions, show the CURRENT full value so the owner can
         # review it before fine-tuning (product requirement: no truncation).
@@ -963,7 +963,7 @@ async def handle_persona_edit_text(
     except ValueError as exc:
         await _restart_persona_wizard(sessions, message, section, extra, channel)
         await _edit_or_answer(
-            bot, f"❌ {exc}\n\nEnviame el texto corregido o usa /cancelar.",
+            bot, f"❌ {exc}\n\nEnvíame el texto corregido o usa /cancelar.",
             session=session, fallback=message, keyboard=None,
         )
         return

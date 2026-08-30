@@ -20,7 +20,7 @@ from diana.telegram.keyboards import (
     reprimand_combo_keyboard,
 )
 
-_VOSEO = re.compile(
+_NO_NEUTRO = re.compile(
     r"querés|tenés|hacés|decime|sos |vos |Revisá|Elegí",
     re.IGNORECASE,
 )
@@ -96,7 +96,7 @@ class TestGoldAndReprimandKeyboards:
         for cb in _all_callback_data(kb):
             assert len(cb.encode("utf-8")) <= 64, cb
 
-    def test_labels_have_no_voseo(self) -> None:
+    def test_labels_use_neutral_spanish(self) -> None:
         tid = uuid4()
         blobs = [
             " ".join(_all_labels(draft_keyboard(tid, show_quality_feedback=True))),
@@ -104,16 +104,16 @@ class TestGoldAndReprimandKeyboards:
             " ".join(_all_labels(reprimand_combo_keyboard(tid))),
         ]
         for blob in blobs:
-            assert _VOSEO.search(blob) is None, blob
+            assert _NO_NEUTRO.search(blob) is None, blob
 
-    def test_owner_quality_alerts_have_no_voseo(self) -> None:
+    def test_owner_quality_alerts_use_neutral_spanish(self) -> None:
         from diana.telegram.handlers.callbacks import (
             _APPROVE_NOOP_ALERTS,
             _QUALITY_ALERTS,
         )
 
         blob = " ".join(_QUALITY_ALERTS.values())
-        assert _VOSEO.search(blob) is None, blob
+        assert _NO_NEUTRO.search(blob) is None, blob
         assert _QUALITY_ALERTS["reprimand_promoted"] == "Lección guardada."
         assert (
             _QUALITY_ALERTS["reprimand_promoted"]

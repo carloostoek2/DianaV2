@@ -19,8 +19,7 @@ por fases (Fase 1 MVP → Fase 3 Producto Completo → Fase 5 Evolución de Agen
 - Al actualizar una página, subir la fecha `updated`.
 - Toda página nueva se agrega a `index.md` bajo su sección.
 - Toda acción se registra en `log.md` (append-only, rotar a `log-YYYY.md` a 500 entradas).
-- **Idioma: español neutro obligatorio** (regla AGENTS.md v1.3 §0.6). Prohibido el
-  voseo rioplatense (querés, tenés, hacés, podés, vos, y los imperativos voseantes).
+- **Idioma: español neutro obligatorio** (regla AGENTS.md §0.6).
 - **Provenance:** en páginas que sintetizan 3+ fuentes, anexar `^[docs/<archivo>]` al
   final del párrafo cuya afirmación proviene de esa fuente.
 - **Fuentes:** las fuentes NO se duplican en `wiki/raw/` — ya viven versionadas en

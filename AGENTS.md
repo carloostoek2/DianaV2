@@ -55,28 +55,22 @@ Si alguna respuesta es “no”, reescribir el mensaje antes de enviarlo.
 
 Todo texto de producto — UI del bot, prompts, seeds de persona, plantillas,
 mensajes al VIP, textos de la dueña, specs y este documento — se escribe en
-**español neutro** (variante mexicana/neutra). El **español rioplatense
-(voseo) está prohibido**: querés, tenés, hacés, decime, sos, vos, contame,
-andás, podés, escribime, y los imperativos voseantes (Revisá, Elegí, Tocá,
-Esperá, Enviá, Mandá, Comprá, Buscá, Cargá, Hablá, Poné, Dejá, Sacá, Mirá,
-Fijate, Acordate, Quedate, Pará, Seguí, Probá, Usá, Creá, Editá, Borrá,
-Guardá, Volvé, Pedí, Sentí, Sabé, Chequeá, Vení, Entrá, Agregá, Anotá).
+**español neutro** (variante mexicana/neutra).
 
 Regla de acción inmediata para cualquier agente (humano o IA):
 
 1. Al encontrar **cualquier** texto, referencia, código hardcodeado o
-   instrucción que use español rioplatense — en código, docs, prompts,
+   instrucción que no esté en español neutro — en código, docs, prompts,
    seeds, DB o ejemplos — **corregirlo en ese mismo instante** a español
    neutro, sin esperar una tarea aparte ni una orden explícita.
-2. Si la referencia es una **regla o instrucción que prescribe usar
-   voseo/rioplatense** (ej. “respondé de forma cercana” con verbos
-   voseantes), **borrar esa regla** y reemplazarla por la forma neutra.
+2. Si la referencia es una **regla o instrucción que prescribe otro
+   dialecto**, **borrar esa regla** y reemplazarla por la forma neutra.
 3. Verificar también la **base de datos** cuando aplique (ej.
-   `persona_versions.payload` puede conservar seeds viejos con voseo);
-   actualizar las filas afectadas.
+   `persona_versions.payload` puede conservar seeds viejos); actualizar
+   las filas afectadas.
 4. Los textos de producto nuevos que escriba el agente deben nacer ya en
-   español neutro; no es válido dejarlos en voseo “porque es lo que se
-   entiende” ni postergar la corrección.
+   español neutro; no es válido dejarlos en otro dialecto “porque es lo
+   que se entiende” ni postergar la corrección.
 
 ---
 

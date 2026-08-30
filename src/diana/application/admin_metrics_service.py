@@ -72,7 +72,7 @@ def format_count_delta(new: float, old: float | None) -> str:
 def _drift_label(score: float) -> str:
     if float(score) < _DRIFT_NORMAL_MAX:
         return "normal"
-    return "alto — revisá las últimas conversaciones"
+    return "alto — revisa las últimas conversaciones"
 
 
 def _as_int(value: float | int | None, default: int = 0) -> int:

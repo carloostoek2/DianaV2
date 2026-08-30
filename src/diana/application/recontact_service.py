@@ -213,7 +213,7 @@ class RecontactService:
 
         if not await self._ams.is_autonomous_enabled(vip_id):
             vip = await self._vips.get_by_id(vip_id)
-            nombre = vip.display_name if vip and vip.display_name else "vos"
+            nombre = vip.display_name if vip and vip.display_name else "tú"
             try:
                 await self._notifier.notify_info(
                     "Recontacto supervisado (sin auto-envío): "
@@ -303,7 +303,7 @@ class RecontactService:
 
     async def _render_for_vip(self, vip_id: UUID, templates: list[str]) -> str:
         vip = await self._vips.get_by_id(vip_id)
-        nombre = "vos"
+        nombre = "tú"
         if vip is not None and vip.display_name:
             nombre = vip.display_name
         idx = vip_id.int % len(templates)
