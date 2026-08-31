@@ -15,9 +15,10 @@ Application layer (orchestration only; no business text is generated here):
    - Receipt/invoice keywords alone ⇒ nothing to hide, travels as-is (the
      amount stays visible — it is the payment proof)
    - Clean ⇒ travels as-is
-3. The image that travels (masked or clean) goes to the cognitive
-   ImageDescriber (Gemini) for a short caption; a caption failure is
-   fail-open (plain media tag).
+3. The image that travels (masked or clean) is downscaled to a max 1280px
+   edge (huge base64 payloads were timing out Gemini) and goes to the
+   cognitive ImageDescriber (Gemini) for a short caption; a caption failure
+   is fail-open (plain media tag).
 
 Fail-closed: OCR unavailable/unreadable, identity documents, unavailable
 boxes, or a failed post-redaction verification ⇒ sensitive (manual review).
@@ -34,6 +35,7 @@ from typing import Callable
 from diana.cognitive.image_vision import ImageDescriber
 from diana.infrastructure.vision.ocr import OcrEngine, OcrUnavailableError
 from diana.infrastructure.vision.redact import mask_lines
+from diana.infrastructure.vision.resize import downscale_image
 
 # --- Sensitivity rules (owner-approved, 2026-08-26) --------------------------
 # Categories: credit/debit cards, invoices/receipts, identity documents,
@@ -249,8 +251,9 @@ class ImageVisionService:
                 return ImageVisionResult(
                     enabled=True, sensitive=True, reason="mask_verification_failed"
                 )
+            send_bytes, send_mime = self._prepare_for_gemini(masked, mime_type)
             description = await self._describer.describe(
-                masked, mime_type=mime_type
+                send_bytes, mime_type=send_mime
             )
             return ImageVisionResult(
                 enabled=True,
@@ -261,8 +264,9 @@ class ImageVisionService:
             )
         # 4) Clean (or receipt keywords alone — nothing to hide; the amount
         #    stays visible) ⇒ travels as today.
+        send_bytes, send_mime = self._prepare_for_gemini(image_bytes, mime_type)
         description = await self._describer.describe(
-            image_bytes, mime_type=mime_type
+            send_bytes, mime_type=send_mime
         )
         return ImageVisionResult(
             enabled=True,
@@ -270,6 +274,21 @@ class ImageVisionService:
             reason=None,
             description=description,
         )
+
+    def _prepare_for_gemini(
+        self, image_bytes: bytes, mime_type: str
+    ) -> tuple[bytes, str]:
+        """Downscale before the external caption call.
+
+        Full-res phone photos produced huge base64 payloads that exceeded
+        Gemini's read timeout (fail-open placeholder). Returns (bytes,
+        mime_type); the original pair when the image is already small or the
+        resize fails.
+        """
+        resized = downscale_image(image_bytes)
+        if resized is None:
+            return image_bytes, mime_type
+        return resized, "image/jpeg"
 
     def _mask_sensitive(self, image_bytes: bytes, *, mime_type: str) -> bytes | None:
         """Return masked bytes, or None when masking cannot guarantee hiding."""

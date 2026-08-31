@@ -61,11 +61,13 @@ class _SpyVision:
         self._text = text
         self._error = error
         self.seen_bytes: bytes | None = None
+        self.seen_mime: str | None = None
         self.calls = 0
 
     async def describe_image(self, image_bytes, *, mime_type, prompt) -> str:
         self.calls += 1
         self.seen_bytes = image_bytes
+        self.seen_mime = mime_type
         if self._error:
             raise RuntimeError("gemini down")
         return self._text
@@ -322,3 +324,46 @@ async def test_redacted_image_describer_failure_is_fail_open() -> None:
     assert result.sensitive is False
     assert result.masked is True
     assert result.description is None
+
+
+def _max_edge(img: Image.Image) -> int:
+    return max(img.width, img.height)
+
+
+@pytest.mark.asyncio
+async def test_large_clean_image_is_downscaled_before_gemini() -> None:
+    svc, vision = _service(ocr_text="", vision_text="un concierto al aire libre")
+    result = await svc.analyze(_png_bytes(2000, 1500), mime_type="image/png")
+    assert result.sensitive is False
+    assert result.description == "un concierto al aire libre"
+    with Image.open(io.BytesIO(vision.seen_bytes)) as img:
+        assert img.format == "JPEG"
+        assert _max_edge(img) <= 1280
+    assert vision.seen_mime == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_small_clean_image_travels_as_is() -> None:
+    svc, vision = _service(ocr_text="", vision_text="una foto del plato")
+    original = _png_bytes(64, 32)
+    result = await svc.analyze(original, mime_type="image/png")
+    assert result.sensitive is False
+    assert vision.seen_bytes == original
+    assert vision.seen_mime == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_large_masked_image_is_downscaled_before_gemini() -> None:
+    line = OcrLine(
+        text="1234 5678 9012 3456", left=10, top=10, width=300, height=30
+    )
+    svc, vision = _service(
+        ocr_text="1234 5678 9012 3456", lines=(line,), verify_text=""
+    )
+    result = await svc.analyze(_png_bytes(2000, 1500), mime_type="image/png")
+    assert result.sensitive is False
+    assert result.masked is True
+    with Image.open(io.BytesIO(vision.seen_bytes)) as img:
+        assert img.format == "JPEG"
+        assert _max_edge(img) <= 1280
+    assert vision.seen_mime == "image/jpeg"
