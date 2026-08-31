@@ -406,7 +406,11 @@ async def test_window_llm_failure_no_partial_write() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transcript_uses_diana_vip_prefixes() -> None:
+async def test_transcript_identifies_authors_unambiguously() -> None:
+    """The transcript prefixes identify WHO says each line: 'VIP (cliente)'
+    is the customer whose profile is built; 'Asistente (Diana)' is the bot/
+    owner side — never the VIP. A bare 'Diana' prefix was ambiguous and made
+    the extractor attribute owner statements to the VIP."""
     llm = FakeLLM([WindowExtraction(hechos=[])])
     svc, _, _, _, _ = _build_service(
         messages=[
@@ -419,10 +423,15 @@ async def test_transcript_uses_diana_vip_prefixes() -> None:
     await svc.generate_profile(uuid4(), chat_id=7)
 
     user_content = llm.calls[0][1]["content"]
-    assert "Diana: hola!" in user_content
-    assert "VIP: hola!" in user_content
-    assert "[2026-08-05 10:30] Diana: hola!" in user_content
-    assert "[2026-08-05 10:31] VIP: hola!" in user_content
+    system_content = llm.calls[0][0]["content"]
+    assert "Asistente (Diana): hola!" in user_content
+    assert "VIP (cliente): hola!" in user_content
+    assert "[2026-08-05 10:30] Asistente (Diana): hola!" in user_content
+    assert "[2026-08-05 10:31] VIP (cliente): hola!" in user_content
+    # The system prompt defines who is who and the attribution rule.
+    assert "VIP (cliente)' es el CLIENTE" in system_content
+    assert "NO es el VIP" in system_content
+    assert "Extrae SOLO hechos SOBRE el VIP" in system_content
 
 
 @pytest.mark.asyncio
@@ -694,11 +703,11 @@ async def test_transcript_skips_empty_lines_and_missing_timestamp() -> None:
     await svc.generate_profile(uuid4(), chat_id=15)
 
     user_content = llm.calls[0][1]["content"]
-    assert "VIP: sin timestamp" in user_content  # no [ts] prefix
+    assert "VIP (cliente): sin timestamp" in user_content  # no [ts] prefix
     assert "[2026-08-05 10:30]" not in user_content  # empty line skipped
     assert "[2026-08-05 10:31]" not in user_content  # blank line skipped
-    assert "[2026-08-05 10:32] Diana: con ts" in user_content
-    assert "\nVIP: \n" not in user_content
+    assert "[2026-08-05 10:32] Asistente (Diana): con ts" in user_content
+    assert "\nVIP (cliente): \n" not in user_content
 
 
 @pytest.mark.asyncio

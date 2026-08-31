@@ -876,6 +876,30 @@ async def test_prompt_known_facts_fenced_and_data_disclaimer() -> None:
     assert "SEC-INJ-02" in system_content
 
 
+@pytest.mark.asyncio
+async def test_prompt_identifies_authors_and_attribution_rule() -> None:
+    """Autoría: the turn extractor must know WHO says each line. 'VIP
+    (cliente)' is the customer whose profile is built; 'Asistente (Diana)'
+    is the bot/owner side — never the VIP. The system prompt declares the
+    roles and the attribution rule so owner-written text is not extracted
+    as a VIP fact."""
+    turn = _turn()
+    history = FakeHistory(
+        _turn_msgs("me gusta el trato cercano", role="vip")
+        + _turn_msgs("te confirmo tu pedido", role="owner")
+    )
+    llm = FakeLLM([WindowExtraction(hechos=[])])
+    svc = _service(llm=llm, history=history, memories=FakeMemories(), turns=FakeTurns([turn]))
+    await svc.extract_post_turn(turn.id, CHAT_ID)
+    system_content = llm.calls[0][0]["content"]
+    user_content = llm.calls[0][1]["content"]
+    assert "Asistente (Diana): te confirmo tu pedido" in user_content
+    assert "VIP (cliente): me gusta el trato cercano" in user_content
+    assert "VIP (cliente)' es el CLIENTE" in system_content
+    assert "NO es el VIP" in system_content
+    assert "Extrae SOLO hechos SOBRE el VIP" in system_content
+
+
 def test_filter_turn_messages_window_and_fail_closed() -> None:
     """SEC F4 + window (A3/M1): only vip/owner messages with a valid
     timestamp >= since stay; untimestamped or unparseable rows are OUT of the
