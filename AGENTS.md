@@ -92,6 +92,13 @@ Principios rectores (no negociables):
 
 Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, FEATURE_IMAGE_VISION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
+Regla de PRIORIDAD — feature flags en el .env real (fija desde 2026-09-02, obligatoria para toda implementación):
+
+1. Todo flag que se implemente DEBE escribirse de forma explícita en el `.env` real con su valor (`true`/`false`) y un comentario de intención (VIVO / SHADOW / kill-switch). El default de `Settings` (false) es SOLO la red de seguridad de un entorno fresco o roto; nunca es el estado operativo ni excusa para omitir el flag del `.env`.
+2. Un comportamiento implementado para estar VIVO se enciende al implementarlo: `flag=true` en el `.env` en el MISMO cambio. "Queda apagado por default" NO es un estado válido para una feature terminada que debe operar.
+3. Si un flag se deja en `false` (shadow/medición, no listo, o kill-switch conservador), el `.env` lleva comentario que diga POR QUÉ está off, se reporta a la dueña en el mismo cambio y se pregunta EXPLÍCITAMENTE si se quiere encender en ese momento. Nunca en silencio.
+4. Origen de la regla: HistoryReimportJob (re-import de historial pre-existente de VIPs registrados antes del seed fix, 1 VIP/hora vía Telethon) se implementó sin flag en el `.env` → quedó apagado por el default y nadie lo reportó. Los VIPs con historial real escaso (p. ej. Alfonso: 5 mensajes `role='vip'`) nunca recibieron su historial completo ni re-backfill, mientras la dueña asumía que el trabajo corría.
+
 ---
 
 2. Mapa de módulos y límites duros (Actualizado con Fase 3)
@@ -637,6 +644,8 @@ async def detect_drift() -> Dict[str, float]
 5.6 Feature flags
 
 Todos los nuevos comportamientos deben estar envueltos en if settings.FEATURE_XXX_ENABLED:.
+
+Disciplina operativa obligatoria (regla de prioridad, sección 1): cada flag nuevo aparece SIEMPRE escrito en el `.env` real con valor explícito y comentario de intención; los flags VIVOS se encienden en el mismo cambio; los flags en `false` se reportan y se pregunta a la dueña si encenderlos en ese momento. Un flag ausente del `.env` es un defecto, no una decisión.
 
 ---
 
