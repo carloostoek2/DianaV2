@@ -22,14 +22,6 @@ _DIMS = (
     "empathy",
 )
 
-# Distinctive B.3 doctrine-guidance tokens (must not fire when policy is included).
-_DOCTRINE_GUIDANCE_TOKENS = (
-    "approximately 0.7",
-    "neutral-high",
-    "not among included_blocks",
-)
-
-
 def _profile(**overrides: float) -> EvaluationProfile:
     data = {d: 0.8 for d in _DIMS}
     data.update(overrides)
@@ -196,7 +188,36 @@ async def test_evaluate_messages_include_bloques_names_not_knowledge_bodies() ->
 
 
 @pytest.mark.asyncio
-async def test_evaluate_system_prompt_doctrine_guidance_when_policy_absent() -> None:
+async def test_evaluate_messages_include_fenced_knowledge_content() -> None:
+    """Essential evidence (knowledge_content) travels in the payload BEFORE the
+    draft — fenced product data, never a raw internal dump."""
+    content = (
+        "## Knowledge: knowledge.policy\n"
+        "<<KNOWLEDGE_POLICY_DATA>>\n"
+        "Trigger: promo | Rule: never offer discounts unprompted\n"
+        "<</KNOWLEDGE_POLICY_DATA>>"
+    )
+    llm = FakeLLM(structured_responses=[_profile()])
+    await Evaluator(llm).evaluate(
+        _input(
+            included_blocks=["knowledge.history", "knowledge.policy"],
+            knowledge_content=content,
+        )
+    )
+    messages = llm.calls[0][1]["messages"]
+    user = next(m["content"] for m in messages if m["role"] == "user")
+    assert "never offer discounts unprompted" in user
+    assert "<<KNOWLEDGE_POLICY_DATA>>" in user
+    assert "knowledge:" in user
+    # Evidence precedes the draft so the model reads it as grounding.
+    assert user.index("knowledge:") < user.index("draft:")
+    assert "raw_llm_output" not in " ".join(m.get("content", "") for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_system_prompt_doctrine_not_applicable_when_no_policy() -> None:
+    """No rule in context and none required → doctrine NOT APPLICABLE (honest
+    neutral 0.5), never the fabricated 'neutral-high ~0.7'."""
     llm = FakeLLM(structured_responses=[_profile()])
     await Evaluator(llm).evaluate(
         _input(included_blocks=["knowledge.history"])  # no knowledge.policy
@@ -204,14 +225,15 @@ async def test_evaluate_system_prompt_doctrine_guidance_when_policy_absent() -> 
     messages = llm.calls[0][1]["messages"]
     system = next(m["content"] for m in messages if m["role"] == "system")
     system_l = system.lower()
-    # Distinctive B.3 tokens (not bare "doctrine" from the 7D list).
-    assert "approximately 0.7" in system_l
-    assert "neutral-high" in system_l
-    assert "not among included_blocks" in system_l
+    assert "not applicable" in system_l
+    assert "0.5" in system_l
+    assert "approximately 0.7" not in system_l
+    assert "neutral-high" not in system_l
 
 
 @pytest.mark.asyncio
-async def test_evaluate_system_prompt_no_neutral_doctrine_when_policy_included() -> None:
+async def test_evaluate_system_prompt_doctrine_measures_real_policy_when_present() -> None:
+    """Policy block present → doctrine measures real compliance against the rule."""
     llm = FakeLLM(structured_responses=[_profile()])
     await Evaluator(llm).evaluate(
         _input(included_blocks=["knowledge.history", "knowledge.policy"])
@@ -219,8 +241,29 @@ async def test_evaluate_system_prompt_no_neutral_doctrine_when_policy_included()
     messages = llm.calls[0][1]["messages"]
     system = next(m["content"] for m in messages if m["role"] == "system")
     system_l = system.lower()
-    for token in _DOCTRINE_GUIDANCE_TOKENS:
-        assert token not in system_l
+    assert "compliance" in system_l
+    assert "real compliance" in system_l
+    assert "not applicable" not in system_l
+    assert "approximately 0.7" not in system_l
+
+
+@pytest.mark.asyncio
+async def test_evaluate_system_prompt_doctrine_conservative_when_needs_policy_without_policy() -> None:
+    """Turn required a rule that was not retrieved → doctrine flagged LOW (~0.2),
+    never treated as neutral compliance."""
+    llm = FakeLLM(structured_responses=[_profile()])
+    await Evaluator(llm).evaluate(
+        _input(
+            included_blocks=["knowledge.history"],
+            comprehension=_comprehension(needs_policy=True),
+        )
+    )
+    messages = llm.calls[0][1]["messages"]
+    system = next(m["content"] for m in messages if m["role"] == "system")
+    system_l = system.lower()
+    assert "0.2" in system_l
+    assert "not applicable" not in system_l
+    assert "approximately 0.7" not in system_l
 
 
 @pytest.mark.asyncio

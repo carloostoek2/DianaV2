@@ -16,7 +16,7 @@ El Evaluador produce un **vector de dimensiones independientes**. **No existe sc
 
 - **Naturalidad** — ¿suena a la dueña?
 - **Precisión** — ¿dice algo falso?
-- **Doctrina** — ¿respeta reglas de negocio?
+- **Doctrina** — ¿respeta reglas de negocio **cuando el turno trae reglas recuperadas o las requiere**? Con regla presente se mide cumplimiento real contra ella. Sin regla aplicable (no hay `knowledge.policy` y `needs_policy=false`), la dimensión se marca "no aplica" (neutro honesto 0.5) y **no gatea** la autonomía — un número inventado no debe bloquear un turno que no tenía nada que cumplir.
 - **Consistencia** — ¿coherente con el historial?
 - **Seguridad** — ¿evita promesas/riesgos?
 - **Cobertura** — ¿responde lo que preguntaron?

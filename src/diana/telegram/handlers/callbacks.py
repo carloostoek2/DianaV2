@@ -26,6 +26,7 @@ from diana.application.draft_variants import (
 )
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.severity_prefill import preselect_severity
+from diana.cognitive.models import is_doctrine_relevant
 from diana.application.text_quality_heuristics import hard_gate_hit
 from diana.telegram.keyboards import (
     MENU_ROOT_TEXT,
@@ -304,6 +305,7 @@ async def _preselect_severity_for_turn(
         except Exception:
             gray_zone_open = False
     doctrine = safety = None
+    trace = None
     if admin_trace is not None:
         try:
             trace = await admin_trace.get_full_trace(turn_id)
@@ -330,11 +332,23 @@ async def _preselect_severity_for_turn(
     draft_text = getattr(approval, "draft_text", None)
     if draft_text:
         hard_gate = hard_gate_hit(draft_text, forbidden_keywords=forbidden_keywords)
+    # A low doctrine only signals a major correction when the turn actually had a
+    # business rule (present or required). Mirror the Decider to avoid inflating
+    # the severity of everyday no-rule turns.
+    doctrine_relevant = True
+    if trace is not None:
+        comp = getattr(trace, "comprehension", None)
+        retr = getattr(trace, "retrieved", None)
+        doctrine_relevant = is_doctrine_relevant(
+            comp if isinstance(comp, dict) else None,
+            retr if isinstance(retr, dict) else None,
+        )
     return preselect_severity(
         gray_zone_open=gray_zone_open,
         doctrine=doctrine,
         safety=safety,
         hard_gate=hard_gate,
+        doctrine_relevant=doctrine_relevant,
     )
 
 

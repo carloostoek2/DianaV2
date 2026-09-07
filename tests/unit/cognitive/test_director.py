@@ -964,6 +964,41 @@ async def test_director_passes_included_blocks_to_evaluator() -> None:
 
 
 @pytest.mark.asyncio
+async def test_director_forwards_essential_knowledge_to_evaluator() -> None:
+    """The Evaluator receives the ESSENTIAL evidence blocks (policy/memory/profile)
+    as fenced content — while the style-heavy history body stays out (cost cap)."""
+    history = InMemoryMessageHistory(
+        {42: [{"role": "vip", "text": "HISTORY-BODY-NOT-FORWARDED", "telegram_message_id": 1}]}
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(needs_history=True),
+            _profile(),
+        ],
+        text_responses=["draft for vip"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    overrides = {
+        "knowledge.history": "HISTORY-BODY-NOT-FORWARDED",
+        "knowledge.policy": ["Trigger: promo | Rule: never offer discounts"],
+        "knowledge.memory": ["[gustos] le gusta el café"],
+    }
+    await director.handle_turn(
+        _turn(chat_id=42, text="¿hay promoción?"), knowledge_overrides=overrides
+    )
+
+    eval_call = llm.calls[2]
+    assert eval_call[0] == "generate_structured"
+    flat = " ".join(m.get("content", "") for m in eval_call[1]["messages"])
+    # Essential evidence travels (fenced product data).
+    assert "never offer discounts" in flat
+    assert "le gusta el café" in flat
+    # Style-heavy history is NOT duplicated into the Evaluator payload.
+    assert "HISTORY-BODY-NOT-FORWARDED" not in flat
+    assert "raw_llm_output" not in flat
+
+
+@pytest.mark.asyncio
 async def test_director_prompt_uses_built_context_current_turn_last() -> None:
     """Trace prompt_text is a string with Current VIP message after knowledge/comprehension."""
     history = InMemoryMessageHistory(
@@ -1293,6 +1328,31 @@ async def test_naturalness_below_min_redrafts_once() -> None:
     assert timings["total_ms"] == pytest.approx(ms_sum)
     assert "generator_redraft_ms" in timings
     assert "evaluator_redraft_ms" in timings
+
+
+@pytest.mark.asyncio
+async def test_naturalness_redraft_forwards_knowledge_to_both_evaluations() -> None:
+    """Both Evaluator calls (first + naturalness redraft) receive the essential
+    knowledge evidence — a silent regression if the redraft drops it."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(),
+            _profile(naturalness=0.2),  # below min → redraft
+            _profile(naturalness=0.9),
+        ],
+        text_responses=["draft-low", "draft-high"],
+    )
+    director, _, _ = make_director(llm)
+    overrides = {"knowledge.policy": ["Trigger: promo | Rule: never offer discounts"]}
+    decision = await director.handle_turn(_turn(), knowledge_overrides=overrides)
+    assert decision.action == "approve"
+
+    # call order: analyst(0) gen(1) eval(2) gen_redraft(3) eval(4)
+    eval_indexes = [i for i, c in enumerate(llm.calls) if c[0] == "generate_structured"]
+    assert len(eval_indexes) == 3  # analyst + two evaluator calls
+    for i in eval_indexes[1:]:
+        flat = " ".join(m.get("content", "") for m in llm.calls[i][1]["messages"])
+        assert "never offer discounts" in flat
 
 
 @pytest.mark.asyncio

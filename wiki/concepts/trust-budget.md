@@ -30,6 +30,12 @@ Arranca en un valor bajo por defecto. El **castigo pesa más que el premio**: el
 autoenviar = (trust_score[categoria] >= umbral) AND (evaluacion del turno >= minimos del Decider)
 ```
 
+> Nota (doctrina relevante): en la segunda condición, doctrina solo se exige
+> (`>= doctrine_min`) cuando el turno trajo una regla real o la requirió
+> (`is_doctrine_relevant`). Un turno sin regla no queda bloqueado para la
+> autonomía por un valor de doctrina — antes esto ocurría porque doctrina se
+> anclaba ~0.7 < doctrine_min 0.8 en casi todos los turnos.
+
 **Estado de cableado:** la doble puerta **sí está cableada** tras `FEATURE_AUTONOMOUS_MODE`, pero **deshabilitada** por el kill-switch L1 (`turn_orchestrator.py` ~304/2549, `recontact_service.py` ~209). Con `FEATURE_AUTONOMOUS_MODE=false` solo se acumula medición shadow (trust budget por VIP/categoría); nada se autoenvía.
 
 ## Reglas

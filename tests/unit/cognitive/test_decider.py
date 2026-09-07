@@ -473,9 +473,12 @@ def test_autonomous_approve_fallback_when_dim_below_min(
     overrides = {"safety": 0.95, "doctrine": 0.85, "naturalness": 0.75}
     overrides[dim] = value
     decider = Decider(feature_autonomous_mode=True)
+    # Carry a real policy rule so doctrine is relevant for the doctrine case
+    # (no-rule turns no longer block autonomy on a fabricated doctrine number).
     decision = decider.decide(
         _profile(**overrides),
         _comprehension(risk="bajo"),
+        retrieved={"knowledge.policy": ["Trigger: promo | Rule: no promos"]},
         mode="supervised",
     )
     assert decision.action == "approve"
@@ -502,6 +505,46 @@ def test_autonomous_boundary_equality_sends(dim: str, value: float) -> None:
     )
     assert decision.action == "send"
     assert decision.reason == "autonomous_ok"
+
+
+def test_autonomous_send_when_no_policy_and_not_needed_even_if_doctrine_low() -> None:
+    """Product fix: a no-rule turn must not be blocked by a fabricated doctrine
+    number. needs_policy=False + no retrieved policy → doctrine is not relevant,
+    so safety/naturalness alone can satisfy the autonomous gate."""
+    decider = Decider(feature_autonomous_mode=True)
+    decision = decider.decide(
+        _profile(safety=0.95, doctrine=0.1, naturalness=0.75),
+        _comprehension(risk="bajo"),
+        retrieved={},
+    )
+    assert decision.action == "send"
+    assert decision.reason == "autonomous_ok"
+
+
+def test_autonomous_blocks_when_policy_present_and_doctrine_below_min() -> None:
+    """Product fix: with a real rule in context, doctrine IS measured and gates —
+    below doctrine_min → approve, never send."""
+    decider = Decider(feature_autonomous_mode=True)
+    decision = decider.decide(
+        _profile(safety=0.95, doctrine=0.79, naturalness=0.75),
+        _comprehension(risk="bajo"),
+        retrieved={"knowledge.policy": ["Trigger: promo | Rule: no promos"]},
+    )
+    assert decision.action == "approve"
+    assert decision.reason == "autonomous_below_threshold"
+
+
+def test_autonomous_approve_when_no_policy_but_needs_policy_and_doctrine_low() -> None:
+    """Product fix: business turn that REQUIRED a rule and got none stays
+    conservative (doctrine relevant via needs_policy) — never auto-sends."""
+    decider = Decider(feature_autonomous_mode=True)
+    decision = decider.decide(
+        _profile(safety=0.95, doctrine=0.2, naturalness=0.75),
+        _comprehension_needs_policy(),
+        retrieved={},
+    )
+    assert decision.action == "approve"
+    assert decision.reason == "autonomous_below_threshold"
 
 
 def test_safety_priority_beats_autonomous_send() -> None:
@@ -581,9 +624,11 @@ def test_partial_autonomous_thresholds_merge_defaults() -> None:
     assert short.action == "approve"
     assert short.reason == "autonomous_below_threshold"
     # doctrine/naturalness still at defaults: doctrine 0.79 fails default 0.8
+    # when a real rule is present (doctrine relevant).
     doctrine_short = decider.decide(
         _profile(safety=0.95, doctrine=0.79, naturalness=0.75),
         _comprehension(risk="bajo"),
+        retrieved={"knowledge.policy": ["Trigger: promo | Rule: no promos"]},
     )
     assert doctrine_short.action == "approve"
     assert doctrine_short.reason == "autonomous_below_threshold"

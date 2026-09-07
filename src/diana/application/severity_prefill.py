@@ -34,12 +34,17 @@ def preselect_severity(
     doctrine: float | None = None,
     safety: float | None = None,
     hard_gate: bool = False,
+    doctrine_relevant: bool = True,
 ) -> str:
     """Deterministic default severity for the owner correction picker.
 
     Returns ``"major"`` when any strong signal fires (open gray-zone query,
     hard gate, or doctrine/safety below the autonomous mins), otherwise
     ``"moderate"``. Never returns ``"minor"`` — only the owner can downgrade.
+
+    ``doctrine_relevant`` (default True) mirrors the Decider: a low doctrine on
+    a no-rule turn is NOT a strong signal — it would inflate corrections to
+    "major" for messages that had no business rule to violate.
     """
     if gray_zone_open or hard_gate:
         return "major"
@@ -51,7 +56,7 @@ def preselect_severity(
         safety = None
     doctrine_min = DEFAULT_AUTONOMOUS_THRESHOLDS["doctrine_min"]
     safety_min = DEFAULT_AUTONOMOUS_THRESHOLDS["safety_min"]
-    if doctrine is not None and doctrine < doctrine_min:
+    if doctrine_relevant and doctrine is not None and doctrine < doctrine_min:
         return "major"
     if safety is not None and safety < safety_min:
         return "major"

@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from typing import Any
 
 from diana.cognitive.exceptions import ContextExceedsLimitError
-from diana.cognitive.models import BuiltContext, Comprehension, IncomingTurn
+from diana.cognitive.models import (
+    BuiltContext,
+    Comprehension,
+    IncomingTurn,
+    is_null_like,
+)
 
 # D.4 fixed knowledge emission order (independent of dict insertion).
 _KNOWLEDGE_EMISSION_ORDER: tuple[str, ...] = (
@@ -20,6 +26,20 @@ _KNOWLEDGE_EMISSION_ORDER: tuple[str, ...] = (
     "knowledge.schedule",
     "knowledge.ephemeral",
     "knowledge.profile",
+)
+
+# Essential evidence blocks forwarded (fenced) to the Evaluator. Doctrine needs
+# the business rules; precision/consistency need the VIP's memory facts and the
+# standing profile. History/examples/voice are style-heavy and would duplicate
+# the Generator payload for little evaluative gain (cost decision, EA fix).
+# ``knowledge.policy`` may be missing (most turns) — doctrine is then scored as
+# "not applicable", never as a fabricated neutral-high.
+EVALUATOR_KNOWLEDGE_BLOCKS: frozenset[str] = frozenset(
+    {
+        "knowledge.policy",
+        "knowledge.memory",
+        "knowledge.profile",
+    }
 )
 
 DEFAULT_MAX_PROMPT_CHARS = 100_000
@@ -89,17 +109,9 @@ class ContextBuilder:
             if isinstance(rule, str) and rule.strip():
                 parts.append(rule.strip())
 
-        included_blocks: list[str] = []
-        for name in _KNOWLEDGE_EMISSION_ORDER:
-            if name not in knowledge:
-                continue
-            value = knowledge[name]
-            if _is_null_like(value):
-                continue
-            parts.append("")
-            parts.append(f"## Knowledge: {name}")
-            parts.append(_format_knowledge_body(name, value))
-            included_blocks.append(name)
+        # Shared emission (single source of truth for headings/fences/included).
+        section_parts, included_blocks = _knowledge_section_parts(knowledge)
+        parts.extend(section_parts)
 
         parts.extend(
             [
@@ -126,21 +138,51 @@ class ContextBuilder:
 
     def list_included_blocks(self, knowledge: dict[str, Any | None]) -> list[str]:
         """Capability names that appear as ## Knowledge sections in build() (D.4 order)."""
-        return [
-            name
-            for name in _KNOWLEDGE_EMISSION_ORDER
-            if name in knowledge and not _is_null_like(knowledge[name])
-        ]
+        return _knowledge_section_parts(knowledge)[1]
+
+    def render_knowledge_sections(
+        self,
+        knowledge: dict[str, Any | None],
+        only: Collection[str] | None = EVALUATOR_KNOWLEDGE_BLOCKS,
+    ) -> str:
+        """Fenced knowledge evidence for the Evaluator (D.4 order).
+
+        Defaults to the ESSENTIAL blocks (policy/memory/profile) so the extra
+        Evaluator call does not re-send the style-heavy history/examples payload
+        the Generator already paid for. Pass ``only=None`` for all included
+        blocks. Empty string when nothing to forward. Reuses the same SEC-INJ-02
+        fences as ``build()`` — product data, never instructions.
+        """
+        parts, _ = _knowledge_section_parts(knowledge, only=only)
+        return "\n".join(parts).lstrip("\n")
 
 
-def _is_null_like(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, (list, dict, tuple, set)) and len(value) == 0:
-        return True
-    if isinstance(value, str) and not value.strip():
-        return True
-    return False
+def _knowledge_section_parts(
+    knowledge: dict[str, Any | None],
+    only: Collection[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Render the ``## Knowledge:`` section parts (D.4 emission order).
+
+    Returns ``(parts, included)`` where ``included`` lists the emitted block
+    names. When ``only`` is given, restricted to that subset (still in emission
+    order). Null-like values are omitted — the same filter ``build()`` uses.
+    """
+    parts: list[str] = []
+    included: list[str] = []
+    only_set = set(only) if only is not None else None
+    for name in _KNOWLEDGE_EMISSION_ORDER:
+        if name not in knowledge:
+            continue
+        if only_set is not None and name not in only_set:
+            continue
+        value = knowledge[name]
+        if is_null_like(value):
+            continue
+        parts.append("")
+        parts.append(f"## Knowledge: {name}")
+        parts.append(_format_knowledge_body(name, value))
+        included.append(name)
+    return parts, included
 
 
 def _format_value(value: Any) -> str:

@@ -505,6 +505,10 @@ class CognitiveDirector:
             )
         timings["context_builder_ms"] = tc.elapsed_ms
         await self._store(turn_id, "prompt_text", built.prompt_final)
+        # Essential knowledge evidence (policy/memory/profile, fenced) for the
+        # Evaluator. Rendered once from the same retrieved map that fed the
+        # Generator; reused by the naturalness redraft re-evaluation.
+        eval_knowledge = self._context_builder.render_knowledge_sections(retrieved)
 
         await self._status.transition(turn_id, TurnStatus.GENERATING)
         # On GeneratorEmptyOutputError: do not store generated_text/evaluation/decision.
@@ -523,6 +527,7 @@ class CognitiveDirector:
                     comprehension=comprehension,
                     included_blocks=built.included_blocks,
                     current_turn=turn.text,
+                    knowledge_content=eval_knowledge,
                 )
             )
         timings["evaluator_ms"] = tc.elapsed_ms
@@ -561,6 +566,7 @@ class CognitiveDirector:
                         comprehension=comprehension,
                         included_blocks=built.included_blocks,
                         current_turn=turn.text,
+                        knowledge_content=eval_knowledge,
                     )
                 )
             timings["evaluator_redraft_ms"] = tc.elapsed_ms

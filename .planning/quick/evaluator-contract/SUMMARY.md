@@ -7,6 +7,15 @@
 **Source of truth:** `contrato_evaluador.md` (Anexo B.1–B.7)  
 **Depends on:** analyst-contract (A.6 retry + typed fail path pattern)
 
+> **ERRATA (2026-09-07) — doctrina relevante + evidencia esencial.** Revoca el
+> alcance "without feeding raw knowledge bodies into the Evaluator" y el residual
+> "doctrine hard-clamp to 0.7 when policy absent". Nuevo estado: el Evaluador
+> recibe el contenido CERRADO (SEC-INJ-02) de los bloques esenciales
+> policy/memory/profile como evidencia; doctrina se mide contra la regla real, es
+> "no aplica" (0.5) sin policy y sin `needs_policy`, y baja (~0.2) si faltó una
+> regla requerida; y solo gatea la autonomía cuando es "relevante". Ver
+> `contrato_evaluador.md` B.2/B.3/B.8.
+
 ## Objective achieved
 
 Aligned Evaluator runtime + `EvaluatorInput` + B.6 schema fail path to `contrato_evaluador.md` without renaming English `EvaluationProfile` 7D fields, without expanding F1 `Decision.action`, without inventing a default profile on fail, and without feeding raw knowledge bodies into the Evaluator.

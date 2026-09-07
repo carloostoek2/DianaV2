@@ -18,9 +18,10 @@ Each dimension is a finite float in ``[0.0, 1.0]``.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -208,7 +209,15 @@ class EvaluatorInput(BaseModel):
 
     English fields map to Spanish contract names:
     draft←borrador, comprehension←comprension,
-    included_blocks←bloques_incluidos, current_turn←turno_actual.
+    included_blocks←bloques_incluidos, current_turn←turno_actual,
+    knowledge_content←contenido_conocimiento.
+
+    ``included_blocks`` lists the NAMES of every capability whose value entered
+    the Generator context. ``knowledge_content`` (optional) carries the fenced
+    ``## Knowledge:`` sections of the ESSENTIAL evidence blocks only — the
+    business rules, memory facts and profile the draft is grounded on (SEC-INJ-02
+    product-data fences) — so the Evaluator can score doctrine/precision against
+    real content instead of blind names.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -217,6 +226,7 @@ class EvaluatorInput(BaseModel):
     comprehension: Comprehension
     included_blocks: list[str]
     current_turn: str
+    knowledge_content: str | None = None
 
 
 class EvaluationProfile(BaseModel):
@@ -243,6 +253,48 @@ class EvaluationProfile(BaseModel):
         if not math.isfinite(value):
             raise ValueError("evaluation dimension must be a finite float in [0, 1]")
         return value
+
+
+# --- knowledge / doctrine relevance helpers (pure) -----------------------------
+# Null-like semantics shared with ContextBuilder: a block only counts as present
+# when its value is non-null (the same filter that decides whether it was emitted
+# into the Generator prompt). Doctrine must only gate/be measured when the turn
+# carried a real business rule OR explicitly required one — a conversational turn
+# with no retrieved policy has nothing to comply with, so a fabricated doctrine
+# number must never block autonomy there (EA-01 double-gate, §5 SPEC-EVOLUCION-AGENTE).
+
+
+def is_null_like(value: Any) -> bool:
+    """True for None / empty list|dict|tuple|set / empty or whitespace str."""
+    if value is None:
+        return True
+    if isinstance(value, (list, dict, tuple, set)) and len(value) == 0:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def policy_content_present(retrieved: Mapping[str, Any] | None) -> bool:
+    """True when the turn actually carried business-rule content (knowledge.policy)."""
+    if not retrieved:
+        return False
+    return not is_null_like(retrieved.get("knowledge.policy"))
+
+
+def is_doctrine_relevant(
+    comprehension: Comprehension | Mapping[str, Any] | None,
+    retrieved: Mapping[str, Any] | None = None,
+) -> bool:
+    """Whether doctrine applies to this turn: a rule is present in the retrieved
+    context OR the turn explicitly required one (``needs_policy``). Accepts a
+    ``Comprehension`` or a raw dict (traces JSONB)."""
+    needs = (
+        comprehension.needs_policy
+        if isinstance(comprehension, Comprehension)
+        else bool((comprehension or {}).get("needs_policy"))
+    )
+    return bool(needs) or policy_content_present(retrieved)
 
 
 def evaluation_dispersion(profile: EvaluationProfile) -> float:
@@ -315,6 +367,9 @@ __all__ = [
     "IncomingTurn",
     "Plan",
     "ScoreUnit",
+    "is_doctrine_relevant",
+    "is_null_like",
+    "policy_content_present",
     "SignalType",
     "SynthesisTrigger",
     "TERMINAL_TURN_STATUSES",

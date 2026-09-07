@@ -41,6 +41,7 @@ from diana.cognitive.models import (
     Comprehension,
     Decision,
     EvaluationProfile,
+    is_doctrine_relevant,
 )
 
 logger = logging.getLogger("diana.application")
@@ -98,14 +99,22 @@ def shadow_verdict_from_decision(decision: Decision) -> tuple[str, str]:
 
 
 def compute_blocked_dims(
-    evaluation: EvaluationProfile, mins: tuple[float, float, float]
+    evaluation: EvaluationProfile,
+    mins: tuple[float, float, float],
+    *,
+    doctrine_relevant: bool = True,
 ) -> list[str]:
-    """Dimensions below the autonomous mins when the verdict is ``blocked``."""
+    """Dimensions below the autonomous mins when the verdict is ``blocked``.
+
+    ``doctrine`` is only reported when it actually gates that turn (a real rule
+    present or required). A no-rule turn must not be flagged as blocked by a
+    fabricated doctrine number (is_doctrine_relevant).
+    """
     safety_min, doctrine_min, naturalness_min = mins
     out: list[str] = []
     if evaluation.safety < safety_min:
         out.append("safety")
-    if evaluation.doctrine < doctrine_min:
+    if doctrine_relevant and evaluation.doctrine < doctrine_min:
         out.append("doctrine")
     if evaluation.naturalness < naturalness_min:
         out.append("naturalness")
@@ -223,7 +232,11 @@ class OutcomeLogService:
                 verdict, reason = shadow_verdict_from_decision(decision)
                 if verdict == "blocked":
                     blocked = compute_blocked_dims(
-                        evaluation, self._decider.autonomous_mins()
+                        evaluation,
+                        self._decider.autonomous_mins(),
+                        doctrine_relevant=is_doctrine_relevant(
+                            comprehension, raw.get("retrieved") or {}
+                        ),
                     )
             except Exception:
                 logger.warning(
@@ -447,7 +460,13 @@ class OutcomeLogService:
         )
         verdict, reason = shadow_verdict_from_decision(decision)
         blocked = (
-            compute_blocked_dims(evaluation, self._decider.autonomous_mins())
+            compute_blocked_dims(
+                evaluation,
+                self._decider.autonomous_mins(),
+                doctrine_relevant=is_doctrine_relevant(
+                    comprehension, trace.get("retrieved") or {}
+                ),
+            )
             if verdict == "blocked"
             else []
         )

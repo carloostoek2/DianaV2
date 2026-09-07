@@ -608,3 +608,49 @@ def test_policy_default_scope_is_all() -> None:
 
     p = Policy(trigger_description="x", rule="y")
     assert p.scope == "all"
+
+
+def test_evaluator_input_knowledge_content_is_optional() -> None:
+    """knowledge_content carries the fenced essential evidence; absent by default."""
+    from diana.cognitive.models import EvaluatorInput
+
+    inp = EvaluatorInput(
+        draft="d",
+        comprehension=_full_comprehension(),
+        included_blocks=["knowledge.history"],
+        current_turn="hola",
+        knowledge_content="## Knowledge: knowledge.policy\nPOLICY-BODY",
+    )
+    assert inp.knowledge_content == "## Knowledge: knowledge.policy\nPOLICY-BODY"
+
+    without = EvaluatorInput(
+        draft="d",
+        comprehension=_full_comprehension(),
+        included_blocks=["knowledge.history"],
+        current_turn="hola",
+    )
+    assert without.knowledge_content is None
+
+
+def test_is_doctrine_relevant_cases() -> None:
+    """Doctrine applies when a real rule is present OR the turn required one."""
+    from diana.cognitive.models import is_doctrine_relevant
+
+    # Policy content present → relevant even when needs_policy is false.
+    assert (
+        is_doctrine_relevant(
+            {"needs_policy": False}, {"knowledge.policy": ["Trigger: x | Rule: y"]}
+        )
+        is True
+    )
+    # needs_policy true, no policy found → relevant (rule required, missing).
+    assert is_doctrine_relevant({"needs_policy": True}, {}) is True
+    # No policy, not needed → NOT relevant (nothing to comply with).
+    assert is_doctrine_relevant({"needs_policy": False}, {}) is False
+    # Comprehension object accepted too.
+    assert is_doctrine_relevant(_full_comprehension(), {}) is False
+    # Null-like policy values do not count as rule content.
+    assert (
+        is_doctrine_relevant({"needs_policy": False}, {"knowledge.policy": []}) is False
+    )
+    assert is_doctrine_relevant({"needs_policy": False}, None) is False

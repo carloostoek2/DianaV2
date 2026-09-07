@@ -6,6 +6,13 @@
 **Status:** locked for F1 runtime  
 **Pattern gold:** analyst-contract A.6 (`AnalystSchemaInvalidError` + orchestrator notify)
 
+> **ERRATA (2026-09-07) — doctrina relevante + evidencia esencial.** Revoca D2/D3/D4
+> (names-only / no bodies / doctrine ~0.7 neutral). Nuevo estado: `EvaluatorInput`
+> gana `knowledge_content` (opcional, fenced policy/memory/profile como evidencia);
+> doctrina = cumplimiento real si hay policy, "no aplica" (0.5) sin policy y sin
+> `needs_policy`, baja (~0.2) si faltó una regla requerida; doctrina solo gatea la
+> autonomía cuando es "relevante". Ver `contrato_evaluador.md` B.2/B.3/B.8.
+
 ## D1 — English identifiers + EvaluationProfile 7D (locked)
 
 | Field | Decision |

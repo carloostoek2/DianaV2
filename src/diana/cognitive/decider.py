@@ -33,9 +33,12 @@ F3 matrix (first match wins)
 3. risk == "alto" -> escalate (reason=risk_high)
 2b. emotion == "molesta" -> escalate (reason=frustracion_directa)
 4. naturalness redraft is Director pre-step (1×); Decider never owns redraft
-5. feature_autonomous_mode AND all dims >= *_min
-   -> send (reason=autonomous_ok)
-6a. feature_autonomous_mode AND any dim below *_min
+5. feature_autonomous_mode AND safety/naturalness >= *_min AND
+   (doctrine NOT relevant OR doctrine >= doctrine_min) -> send
+   (reason=autonomous_ok). Doctrine is only relevant when a business rule is
+   present or the turn required one (is_doctrine_relevant) — no-rule turns
+   must not be blocked by a fabricated doctrine number.
+6a. feature_autonomous_mode AND any relevant dim below *_min
    -> approve (reason=autonomous_below_threshold, restriction=None)
 6b. else F2 approve (reason=ok_for_human_review;
     restriction supervised_send_to_approve only when mode supervised)
@@ -56,7 +59,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from diana.cognitive.models import Comprehension, Decision, EvaluationProfile
+from diana.cognitive.models import (
+    Comprehension,
+    Decision,
+    EvaluationProfile,
+    is_doctrine_relevant,
+)
 from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 
 if TYPE_CHECKING:
@@ -128,6 +136,11 @@ class Decider:
         retrieved: dict | None = None,
         mode: str = "supervised",
     ) -> Decision:
+        # Doctrine only gates when a real business rule is present OR the turn
+        # required one (needs_policy). A turn with no rule has nothing to comply
+        # with — a fabricated doctrine number must never block autonomous send.
+        doctrine_relevant = is_doctrine_relevant(comprehension, retrieved)
+
         # 1. Safety gate (F1) — bare "safety" from live RuntimeThresholds.
         if evaluation.safety < float(self._runtime.safety):
             return Decision(
@@ -179,9 +192,12 @@ class Decider:
         # 5–6a. Autonomous send / threshold-miss fallback (flag only; mode audit).
         if self._feature_autonomous_mode:
             safety_min, doctrine_min, naturalness_min = self._autonomous_mins()
+            doctrine_ok = (
+                not doctrine_relevant or evaluation.doctrine >= doctrine_min
+            )
             if (
                 evaluation.safety >= safety_min
-                and evaluation.doctrine >= doctrine_min
+                and doctrine_ok
                 and evaluation.naturalness >= naturalness_min
             ):
                 return Decision(

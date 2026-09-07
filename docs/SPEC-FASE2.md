@@ -180,11 +180,11 @@ Ver Anexo F para el contrato completo del Decisor.
 El Evaluador debe comportarse así respecto a la dimensión doctrina:
 
 Situación Valor de doctrina Razón
-needs_policy=false 0.7 (neutral) No se espera que el Generador aplique políticas, no se penaliza ni premia.
-needs_policy=true Y policy_retrieval_result != vacío Valor real evaluado (0–1) Mide coherencia con las políticas encontradas.
+needs_policy=false (sin policy recuperada) 0.5 (no aplica) No había regla que revisar: neutro honesto, ni premia ni penaliza. NO gatea la autonomía del turno (doctrina no relevante).
+policy recuperada (knowledge.policy presente) Valor real evaluado (0–1) Mide cumplimiento contra las reglas reales que viajaron como evidencia al Evaluador (puede variar).
 needs_policy=true Y policy_retrieval_result == vacío 0.2 (bajo) Indica ausencia de doctrina; el Decisor usará la condición explícita para activar zona gris.
 
-Nota: Este esquema separa la señal de "falta de política" (que activa zona gris) de la señal de "incoherencia con políticas existentes" (que podría escalar o regenerar). Ambas son manejadas por el Decisor en prioridades diferentes.
+Nota: Este esquema separa la señal de "falta de política" (que activa zona gris) de la señal de "incoherencia con políticas existentes" (que podría escalar o regenerar). Ambas son manejadas por el Decisor en prioridades diferentes. El Decisor solo compara `doctrine_min` cuando doctrina es "relevante" (`is_doctrine_relevant`: policy presente o `needs_policy=true`); un turno sin regla no queda bloqueado para autonomía por un valor de doctrina.
 
 Ver Anexo B.3 para la definición completa.
 

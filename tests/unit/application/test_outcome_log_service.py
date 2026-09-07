@@ -119,6 +119,20 @@ class TestComputeBlockedDims:
             "naturalness",
         ]
 
+    def test_low_doctrine_ignored_when_not_relevant(self) -> None:
+        """No-rule turn: doctrine must not appear as a blocking dimension."""
+        evaluation = EvaluationProfile(**_evaluation(doctrine=0.3, naturalness=0.9))
+        assert (
+            compute_blocked_dims(
+                evaluation, (0.9, 0.8, 0.7), doctrine_relevant=False
+            )
+            == []
+        )
+        low_nat = EvaluationProfile(**_evaluation(doctrine=0.3, naturalness=0.2))
+        assert compute_blocked_dims(
+            low_nat, (0.9, 0.8, 0.7), doctrine_relevant=False
+        ) == ["naturalness"]
+
 
 def _make_service(source: FakeSource) -> OutcomeLogService:
     decider = Decider(feature_autonomous_mode=True)

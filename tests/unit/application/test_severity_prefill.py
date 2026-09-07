@@ -23,6 +23,16 @@ def test_doctrine_below_min_is_major() -> None:
     assert preselect_severity(doctrine=0.5) == "major"
 
 
+def test_doctrine_below_min_not_major_when_not_relevant() -> None:
+    """A no-rule turn (doctrine NOT applicable) must not inflate severity."""
+    assert preselect_severity(doctrine=0.5, doctrine_relevant=False) == "moderate"
+
+
+def test_doctrine_below_min_major_when_relevant() -> None:
+    """With a real rule in context, low doctrine is a strong signal."""
+    assert preselect_severity(doctrine=0.5, doctrine_relevant=True) == "major"
+
+
 def test_safety_below_min_is_major() -> None:
     assert preselect_severity(safety=0.5) == "major"
 

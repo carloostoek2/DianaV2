@@ -10,6 +10,15 @@ source_of_truth: contrato_evaluador.md (Anexo B)
 impact: .grok/agent-memory/impact-analyzer/evaluator-contract.md
 ---
 
+> **ERRATA (2026-09-07) — doctrina relevante + evidencia esencial.** Revoca los
+> invariantes L3/L7/L13 de este plan (names-only / no knowledge bodies / doctrine
+> ~0.7 neutral). Nuevo estado: (1) `EvaluatorInput.knowledge_content` (opcional)
+> lleva el contenido CERRADO (SEC-INJ-02) de los bloques esenciales
+> policy/memory/profile como evidencia; (2) doctrina se mide contra la regla real
+> cuando hay policy, es "no aplica" (0.5) sin policy y sin `needs_policy`, y baja
+> (~0.2) cuando faltó una regla requerida; (3) doctrina solo gatea la autonomía
+> cuando es "relevante". Ver `contrato_evaluador.md` B.2/B.3/B.8.
+
 ## Objective
 
 Align the **Evaluator runtime + input DTO + B.6 schema fail path** to `contrato_evaluador.md` (Anexo B.1–B.7): `EvaluatorInput` with full `Comprehension`, capability **names** that actually entered the Generator prompt (`included_blocks`), single schema validation retry inside Evaluator, typed fail reason `evaluador_schema_invalido`, owner notify via existing application `notify_info` — without changing English `EvaluationProfile` 7D fields, without expanding F1 `Decision.action`, without inventing a default profile on fail, and without feeding raw knowledge bodies into the Evaluator.

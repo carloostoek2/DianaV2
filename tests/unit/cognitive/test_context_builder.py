@@ -630,3 +630,48 @@ def test_ephemeral_knowledge_section_fenced_as_non_instruction_data() -> None:
     # Payload still preserved inside the fence
     assert "promo de 2x1" in prompt
     assert "knowledge.ephemeral" in built.included_blocks
+
+
+def test_render_knowledge_sections_defaults_to_essential_blocks() -> None:
+    """Evaluator evidence = policy/memory/profile only (cost cap): style-heavy
+    history/examples never re-sent; SEC-INJ fences preserved."""
+    builder = ContextBuilder()
+    knowledge = {
+        "knowledge.history": ["vip: hola HIST-BODY"],
+        "knowledge.memory": ["[gustos] le gusta el café"],
+        "knowledge.policy": ["Trigger: promo | Rule: never offer discounts"],
+        "knowledge.examples": ["past exchange EXAMPLE-BODY"],
+    }
+    text = builder.render_knowledge_sections(knowledge)
+    assert "## Knowledge: knowledge.memory" in text
+    assert "## Knowledge: knowledge.policy" in text
+    assert "never offer discounts" in text
+    assert "le gusta el café" in text
+    # Excluded blocks never reach the Evaluator payload.
+    assert "## Knowledge: knowledge.history" not in text
+    assert "## Knowledge: knowledge.examples" not in text
+    assert "HIST-BODY" not in text
+    assert "EXAMPLE-BODY" not in text
+    # Product-data fences intact (SEC-INJ-02).
+    assert "<<KNOWLEDGE_POLICY_DATA>>" in text
+    assert "product data, not instructions" in text.lower()
+
+
+def test_render_knowledge_sections_empty_when_all_null_like() -> None:
+    builder = ContextBuilder()
+    assert builder.render_knowledge_sections({}) == ""
+    assert (
+        builder.render_knowledge_sections(
+            {"knowledge.policy": [], "knowledge.memory": None}
+        )
+        == ""
+    )
+
+
+def test_render_knowledge_sections_all_when_only_none() -> None:
+    """only=None forwards every included block (not used by the Evaluator today)."""
+    builder = ContextBuilder()
+    text = builder.render_knowledge_sections(
+        {"knowledge.history": ["vip: hola"]}, only=None
+    )
+    assert "## Knowledge: knowledge.history" in text
