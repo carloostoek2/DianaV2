@@ -38,7 +38,7 @@ Capa que ejecuta el pipeline de decisión (Director → Analista → Planificado
 
 - **Director** (`director.py`) — sequencer determinista del path de decisión. Tras el Registry puede inyectar un `KnowledgeAugmenter` de aplicación (`knowledge.ephemeral`, perfil sandbox) **sin** que el Core conozca esas tablas.
 - **Decider** (`decider.py`) — matriz F3 pura (ver [[decisor]]). Los hooks de evolución de agente (clasificador, mood, trust, detector, síntesis) viven en `application/` y son **shadow-only**: miden y registran; no cambian esta matriz.
-- **Evaluator** (`evaluator.py`) — perfil 7D. Recibe los bloques esenciales (policy/memory/profile) como evidencia CERRADA (SEC-INJ), y doctrina "no aplica" cuando el turno no usó reglas (nunca un 0.7 neutral fijo). **Generator** — solo redacta; **Analyst** — Comprensión.
+- **Evaluator** (`evaluator.py`) — perfil 7D. Recibe los bloques esenciales (policy/memory/profile) como evidencia CERRADA (SEC-INJ). Doctrina se puntúa **solo** contra `<<KNOWLEDGE_POLICY_DATA>>`; memoria/perfil alimentan precisión y consistencia. Sin reglas, doctrina es "no aplica" (0.5 interno; la dueña no ve un 5 clavado). **Generator** — solo redacta; **Analyst** — Comprensión.
 - **Planner** (`planner.py`) — función pura, sin llamadas al modelo.
 - **Registry** (`registry.py`) — resolución nombre → Retriever (Anexo H.1).
 - **Thresholds** (`thresholds.py`) — defaults duales F3 (SPEC-FASE3 §4.2); `runtime_thresholds.py` — umbrales mutables en runtime para lecturas del Decider tras la calibración (ver [[calibracion-de-umbrales]]).
