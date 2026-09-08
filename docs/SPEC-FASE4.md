@@ -108,7 +108,7 @@ Regla de oro: **una sola rama determinista** — en la puerta (AuthMiddleware) s
 ### REQ-ATN-03 — Contador diario
 - Solo aplica a chats de canal `atencion` (no-VIP).
 - Se cuentan **mensajes del cliente** (no las respuestas del bot) por `chat_id` y día local (`America/Mexico_City`).
-- Alcanzado el tope (20): el bot envía **una única respuesta de cierre por día** (plantilla fija implementada: "¡Hola! Por hoy ya cubrimos todo, si necesitas algo más escríbeme mañana 😊") y los siguientes mensajes del día se ignoran (drop silencioso con log).
+- Alcanzado el tope (20): el mensaje se ignora (drop silencioso con log), sin enviar nada al cliente. La respuesta fija de cierre ("¡Hola! Por hoy ya cubrimos todo, si necesitas algo más escríbeme mañana 😊") se implementó y luego se **retiró por decisión de la dueña (2026-09-08)**: al superar el tope el bot ya no contesta ni informa al cliente.
 - El contador se reinicia al cambiar el día local. Sin reinicio por inactividad (decisión de producto).
 
 ### REQ-ATN-04 — Persistencia
@@ -232,7 +232,7 @@ Downgrade: drop de la tabla de límites y de la columna `channel_type` (con re-s
 
 - [x] Flag OFF → comportamiento idéntico al previo a la Fase 4 (suite completa verde).
 - [x] Flag ON + no-VIP → el turno corre con canal `atencion`, perfil de atención, supervisado.
-- [x] Tope 20/día: el mensaje 21 recibe la plantilla de cierre (una vez) y luego drop silencioso; el contador se reinicia al día siguiente local.
+- [x] Tope 20/día: el mensaje 21+ se ignora en silencio (sin plantilla de cierre; la respuesta de cierre se retiró el 2026-09-08); el contador se reinicia al día siguiente local.
 - [x] Promo de bienvenida automática intacta; el mensaje posterior entra al pipeline.
 - [x] Intención de pago → borrador con guion de pago + DM a la dueña.
 - [x] "¿Dónde te puedo ver?" → respuesta de política `no_contacto_personal` (sin inventar).
@@ -245,7 +245,7 @@ Downgrade: drop de la tabla de límites y de la columna `channel_type` (con re-s
 
 ## 16. Decisiones resueltas durante la implementación
 
-1. **Plantilla de cierre de límite diario**: implementada como constante fija en `turn_orchestrator.py` (`ATENCION_DAILY_LIMIT_CLOSE`): "¡Hola! Por hoy ya cubrimos todo, si necesitas algo más escríbeme mañana 😊" (una única respuesta de cierre por día). Se ajusta en código, no es configurable por la dueña.
+1. **Plantilla de cierre de límite diario** (retirada): se implementó como constante fija en `turn_orchestrator.py` (`ATENCION_DAILY_LIMIT_CLOSE`): "¡Hola! Por hoy ya cubrimos todo, si necesitas algo más escríbeme mañana 😊" (una única respuesta de cierre por día). La dueña la **retiró el 2026-09-08**: al superar el tope de 20 el bot ya no envía aviso; el mensaje se descarta en silencio (drop, sin turno ni pipeline).
 2. **Zona horaria del corte diario**: `America/Mexico_City` (implementado; el contador se reinicia al cambiar el día local).
 3. **Tono del perfil de atención**: definido en el perfil semilla `persona_atencion.json` (cálida-profesional, sin coqueteo) y ajustable por la dueña vía el panel de persona `/persona`.
 4. **Plantillas de notificación (pago)**: constantes fijas en código (`ATENCION_PAYMENT_NOTICE` en `turn_orchestrator.py`); no hay personalización configurable.
