@@ -52,19 +52,19 @@ _SYSTEM_BASE = (
 
 
 def _doctrine_guidance(included_blocks: list[str], needs_policy: bool) -> str:
-    """Case-specific doctrine scoring rule (replaces the old ~0.7 neutral anchor).
+    """Case-specific doctrine scoring rule.
 
-    Doctrine is only meaningful against real business rules. With no rule in
-    context AND no rule required, it is NOT APPLICABLE — an honest neutral 0.5,
-    never a fabricated "neutral-high" that looks like measured compliance and
-    would silently block autonomy (doctrine_min) on everyday turns.
+    Doctrine is scored only against the policy fence, never against memory
+    or profile facts.
     """
     if "knowledge.policy" in included_blocks:
         return (
             " Doctrine: a business-rule block (knowledge.policy) is present. Score "
-            "doctrine as the draft's REAL compliance with those specific rules — "
-            "check the draft against each rule in the fenced Knowledge sections. "
-            "It may vary across [0, 1]; do not default it to a neutral value."
+            "doctrine as the draft's REAL compliance exclusively against the fenced "
+            "<<KNOWLEDGE_POLICY_DATA>> ... <</KNOWLEDGE_POLICY_DATA>> section. "
+            "Memory (KNOWLEDGE_MEMORY_DATA) and profile (OWNER_PROFILE_DATA) are "
+            "for precision and consistency, not doctrine. It may vary across [0, 1]; "
+            "do not default it to a neutral value."
         )
     if needs_policy:
         return (

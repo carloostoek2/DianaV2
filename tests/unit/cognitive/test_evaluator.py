@@ -243,6 +243,9 @@ async def test_evaluate_system_prompt_doctrine_measures_real_policy_when_present
     system_l = system.lower()
     assert "compliance" in system_l
     assert "real compliance" in system_l
+    assert "KNOWLEDGE_POLICY_DATA" in system
+    assert "for precision and consistency, not doctrine" in system
+    assert "exclusively against the fenced" in system
     assert "not applicable" not in system_l
     assert "approximately 0.7" not in system_l
 

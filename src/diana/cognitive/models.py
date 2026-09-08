@@ -216,8 +216,8 @@ class EvaluatorInput(BaseModel):
     the Generator context. ``knowledge_content`` (optional) carries the fenced
     ``## Knowledge:`` sections of the ESSENTIAL evidence blocks only — the
     business rules, memory facts and profile the draft is grounded on (SEC-INJ-02
-    product-data fences) — so the Evaluator can score doctrine/precision against
-    real content instead of blind names.
+    product-data fences). Doctrine is scored only against the policy fence;
+    memory and profile remain for precision and consistency.
     """
 
     model_config = ConfigDict(extra="forbid")
