@@ -24,7 +24,11 @@ from datetime import date, datetime
 from typing import Any, Protocol
 
 from diana.application.mexico_tz import cdmx_local_date
-from diana.cognitive.models import Comprehension, EvaluationProfile
+from diana.cognitive.models import (
+    Comprehension,
+    EvaluationProfile,
+    is_doctrine_relevant,
+)
 
 logger = logging.getLogger("diana.application")
 
@@ -315,10 +319,12 @@ class AdminShadowService:
             )
             return ["   — evaluación no legible para simular el veredicto"]
 
+        retrieved = row.get("retrieved") or {}
+        relevant = is_doctrine_relevant(comprehension, retrieved)
         decision = self._decider.decide(
             evaluation,
             comprehension,
-            retrieved=row.get("retrieved") or {},
+            retrieved=retrieved,
         )
 
         # Real outcome reference (what the pipeline actually decided).
@@ -327,10 +333,14 @@ class AdminShadowService:
             real.get("action"), str(real.get("action") or "?")
         )
         lines = [f"   Decisión real: {real_label}"]
+        doctrine_summary = (
+            f"doctrina {evaluation.doctrine:.2f}"
+            if relevant
+            else "doctrina no aplica"
+        )
         lines.append(
-            f"   Seguridad {evaluation.safety:.2f} · doctrina "
-            f"{evaluation.doctrine:.2f} · naturalidad "
-            f"{evaluation.naturalness:.2f}"
+            f"   Seguridad {evaluation.safety:.2f} · {doctrine_summary} "
+            f"· naturalidad {evaluation.naturalness:.2f}"
         )
 
         if decision.action == "send":
@@ -348,11 +358,18 @@ class AdminShadowService:
         else:  # approve (autonomous_below_threshold)
             lines.append("   ❌ Con autonomía: no habría enviado — umbrales no alcanzados:")
             safety_min, doctrine_min, naturalness_min = self._decider.autonomous_mins()
-            for label, value, minv in (
+            dims: list[tuple[str, float | None, float | None]] = [
                 ("Seguridad", evaluation.safety, safety_min),
-                ("Doctrina", evaluation.doctrine, doctrine_min),
-                ("Naturalidad", evaluation.naturalness, naturalness_min),
-            ):
+            ]
+            if relevant:
+                dims.append(("Doctrina", evaluation.doctrine, doctrine_min))
+            else:
+                dims.append(("Doctrina", None, None))
+            dims.append(("Naturalidad", evaluation.naturalness, naturalness_min))
+            for label, value, minv in dims:
+                if value is None or minv is None:
+                    lines.append("     Doctrina: no aplica")
+                    continue
                 mark = "✅" if value >= minv else "❌"
                 lines.append(f"     {label} {value:.2f} vs {minv:.2f} {mark}")
 

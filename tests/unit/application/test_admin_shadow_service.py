@@ -254,7 +254,7 @@ async def test_decisions_would_send_when_all_thresholds_met() -> None:
     assert "1. 22/08 · Hug Vbs · fatico (conf. 0.70)" in body
     assert "✅ CON AUTONOMÍA TOTAL: habría enviado sola" in body
     assert "Decisión real: aprobar (revisión de la dueña)" in body
-    assert "Seguridad 0.95 · doctrina 0.85 · naturalidad 0.80" in body
+    assert "Seguridad 0.95 · doctrina no aplica · naturalidad 0.80" in body
     assert "Confianza 0.95 vs 0.90: ✅ cumple" in body
     assert "el interruptor maestro está apagado" in body
     assert 'Borrador generado: "Hola, ¿en qué te ayudo?"' in body
@@ -276,9 +276,68 @@ async def test_decisions_below_threshold_shows_dimension_detail() -> None:
     body, total_pages = await service.render_decisions()
     assert "❌ Con autonomía: no habría enviado — umbrales no alcanzados:" in body
     assert "Seguridad 0.50 vs 0.90 ❌" in body
-    assert "Doctrina 0.85 vs 0.80 ✅" in body
+    assert "Doctrina: no aplica" in body
+    assert "Doctrina 0.85 vs 0.80 ✅" not in body
     assert "Naturalidad 0.80 vs 0.70 ✅" in body
     assert 'Borrador generado: "Hola, ¿en qué te ayudo?"' in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_below_threshold_shows_doctrine_when_policy_present() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[
+            _decision_row(
+                vip_id,
+                category="informativo",
+                evaluation=_eval(safety=0.50, doctrine=0.85, naturalness=0.80),
+                retrieved={"knowledge.policy": ["Trigger: x | Rule: y"]},
+            )
+        ],
+        vips=[_vip(vip_id, name="Alfonso")],
+    )
+    body, _total_pages = await service.render_decisions()
+    assert "Seguridad 0.50 vs 0.90 ❌" in body
+    assert "Doctrina 0.85 vs 0.80 ✅" in body
+    assert "Doctrina: no aplica" not in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_send_with_na_doctrine_does_not_show_score() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[
+            _decision_row(
+                vip_id,
+                evaluation=_eval(safety=0.95, doctrine=0.50, naturalness=0.80),
+            )
+        ],
+        trust=[_trust(vip_id, category="fatico", score=0.95, auton=9)],
+        vips=[_vip(vip_id, name="Hug Vbs")],
+    )
+    body, _total_pages = await service.render_decisions()
+    assert "habría enviado sola" in body
+    assert "doctrina no aplica" in body
+    assert "doctrina 0.50" not in body
+    assert "Doctrina 0.50 vs" not in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_policy_present_low_doctrine_shows_number() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[
+            _decision_row(
+                vip_id,
+                evaluation=_eval(safety=0.95, doctrine=0.20, naturalness=0.80),
+                retrieved={"knowledge.policy": ["Trigger: x | Rule: y"]},
+            )
+        ],
+        vips=[_vip(vip_id, name="Alfonso")],
+    )
+    body, _total_pages = await service.render_decisions()
+    assert "Doctrina 0.20 vs 0.80 ❌" in body
+    assert "Doctrina: no aplica" not in body
 
 
 @pytest.mark.asyncio
