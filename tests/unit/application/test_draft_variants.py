@@ -7,6 +7,8 @@ from uuid import uuid4
 import pytest
 
 from diana.application.draft_variants import (
+    DOCTRINE_NA_LABEL,
+    DOCTRINE_RELEVANT_KEY,
     DraftVariantService,
     build_owner_draft_text,
     ensure_versions,
@@ -415,6 +417,77 @@ def test_build_owner_draft_text_uses_resolved_name() -> None:
     body = build_owner_draft_text(rec, vip_name="Marian")
     assert "Marian" in body
     assert "123" not in body
+
+
+def test_build_owner_draft_text_appends_doc_no_aplica() -> None:
+    eval_dict = ensure_versions(
+        {
+            "naturalness": 0.9,
+            "precision": 0.8,
+            "safety": 0.95,
+            "doctrine": 0.50,
+            DOCTRINE_RELEVANT_KEY: False,
+        },
+        draft_text="hola",
+        reason="ok",
+        vip_text="msg del vip",
+    )
+    rec = ApprovalRecord(
+        id=uuid4(),
+        turn_id=uuid4(),
+        chat_id=123,
+        business_connection_id="bc",
+        draft_text="hola",
+        evaluation=eval_dict,
+    )
+    body = build_owner_draft_text(rec)
+    assert f"doc={DOCTRINE_NA_LABEL}" in body
+    assert "doc=0.50" not in body
+
+
+def test_build_owner_draft_text_appends_doc_number_when_relevant() -> None:
+    eval_dict = ensure_versions(
+        {
+            "naturalness": 0.9,
+            "precision": 0.8,
+            "safety": 0.95,
+            "doctrine": 0.90,
+            DOCTRINE_RELEVANT_KEY: True,
+        },
+        draft_text="hola",
+        reason="ok",
+        vip_text="msg del vip",
+    )
+    rec = ApprovalRecord(
+        id=uuid4(),
+        turn_id=uuid4(),
+        chat_id=123,
+        business_connection_id="bc",
+        draft_text="hola",
+        evaluation=eval_dict,
+    )
+    body = build_owner_draft_text(rec)
+    assert "doc=0.90" in body
+    assert DOCTRINE_NA_LABEL not in body
+
+
+def test_build_owner_draft_text_omits_doc_when_flag_absent() -> None:
+    eval_dict = ensure_versions(
+        {"naturalness": 0.9, "precision": 0.8, "safety": 0.95, "doctrine": 0.50},
+        draft_text="hola",
+        reason="ok",
+        vip_text="msg del vip",
+    )
+    rec = ApprovalRecord(
+        id=uuid4(),
+        turn_id=uuid4(),
+        chat_id=123,
+        business_connection_id="bc",
+        draft_text="hola",
+        evaluation=eval_dict,
+    )
+    body = build_owner_draft_text(rec)
+    assert "doc=" not in body
 
 
 @pytest.mark.asyncio

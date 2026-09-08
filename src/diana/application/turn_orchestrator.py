@@ -7,7 +7,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from diana.application.admin_service import AdminService
@@ -1118,6 +1118,33 @@ class TurnOrchestrator:
             log_swallowed(
                 logger, "outcome_reaction_error", turn_id=str(turn_id), chat_id=chat_id
             )
+
+    async def _doctrine_display_kwargs(self, turn_id: UUID) -> dict[str, Any]:
+        """Trace fragments the owner-draft UI needs for doctrina 'no aplica'.
+
+        Fail-soft: missing reader/trace means AdminService shows the number
+        (never infers N/A from a 0.5 score).
+        """
+        reader = self._trace_reader
+        if reader is None:
+            return {}
+        try:
+            trace = await reader.get_full_trace(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "doctrine_display_trace_error", turn_id=str(turn_id)
+            )
+            return {}
+        if not isinstance(trace, dict):
+            return {}
+        kwargs: dict[str, Any] = {}
+        comp = trace.get("comprehension")
+        retr = trace.get("retrieved")
+        if comp is not None:
+            kwargs["comprehension"] = comp
+        if isinstance(retr, dict):
+            kwargs["retrieved"] = retr
+        return kwargs
 
     async def _maybe_post_turn_terminal(
         self, turn_id: UUID, chat_id: int
@@ -2302,7 +2329,8 @@ class TurnOrchestrator:
                 turn_id, TurnStatus.PENDING_APPROVAL
             )
             await self._admin.send_draft_for_approval(
-                turn_ctx, decision, turn_id
+                turn_ctx, decision, turn_id,
+                **(await self._doctrine_display_kwargs(turn_id)),
             )
             # CRITICAL: never call behavior.deliver here (L2 / R1)
         elif decision.action == "consult_doctrine":
@@ -2320,7 +2348,8 @@ class TurnOrchestrator:
                     turn_id, TurnStatus.PENDING_APPROVAL
                 )
                 await self._admin.send_draft_for_approval(
-                    turn_ctx, demoted, turn_id
+                    turn_ctx, demoted, turn_id,
+                    **(await self._doctrine_display_kwargs(turn_id)),
                 )
                 logger.info(
                     "sandbox_consult_doctrine_demoted",
@@ -2408,6 +2437,7 @@ class TurnOrchestrator:
                             proposed_rule=prop_rule,
                             proposed_reply=prop_reply,
                             proposal_source=prop_source,
+                            **(await self._doctrine_display_kwargs(turn_id)),
                         )
                     except Exception:
                         # F6: a notify failure must not orphan the query and
@@ -2434,7 +2464,8 @@ class TurnOrchestrator:
                             turn_id, TurnStatus.PENDING_APPROVAL
                         )
                         await self._admin.send_draft_for_approval(
-                            turn_ctx, demoted, turn_id
+                            turn_ctx, demoted, turn_id,
+                            **(await self._doctrine_display_kwargs(turn_id)),
                         )
                         logger.warning(
                             "atencion_doctrine_notify_failed",
@@ -2471,7 +2502,8 @@ class TurnOrchestrator:
                         turn_id, TurnStatus.PENDING_APPROVAL
                     )
                     await self._admin.send_draft_for_approval(
-                        turn_ctx, demoted, turn_id
+                        turn_ctx, demoted, turn_id,
+                        **(await self._doctrine_display_kwargs(turn_id)),
                     )
                     logger.info(
                         "atencion_consult_doctrine_demoted",
@@ -2521,6 +2553,7 @@ class TurnOrchestrator:
                         proposed_rule=prop_rule,
                         proposed_reply=prop_reply,
                         proposal_source=prop_source,
+                        **(await self._doctrine_display_kwargs(turn_id)),
                     )
                 except Exception:
                     # F6 VIP: notify failure must not leave a 24h orphan freeze
@@ -2547,7 +2580,8 @@ class TurnOrchestrator:
                         turn_id, TurnStatus.PENDING_APPROVAL
                     )
                     await self._admin.send_draft_for_approval(
-                        turn_ctx, demoted, turn_id
+                        turn_ctx, demoted, turn_id,
+                        **(await self._doctrine_display_kwargs(turn_id)),
                     )
                     logger.warning(
                         "vip_doctrine_notify_failed",
@@ -2673,7 +2707,8 @@ class TurnOrchestrator:
                 turn_id, TurnStatus.PENDING_APPROVAL
             )
             await self._admin.send_draft_for_approval(
-                turn_ctx, demoted, turn_id
+                turn_ctx, demoted, turn_id,
+                **(await self._doctrine_display_kwargs(turn_id)),
             )
             return None
 
@@ -2695,7 +2730,8 @@ class TurnOrchestrator:
                 turn_id, TurnStatus.PENDING_APPROVAL
             )
             await self._admin.send_draft_for_approval(
-                turn_ctx, demoted, turn_id
+                turn_ctx, demoted, turn_id,
+                **(await self._doctrine_display_kwargs(turn_id)),
             )
             return None
 
@@ -2931,7 +2967,8 @@ class TurnOrchestrator:
                 turn_id, TurnStatus.PENDING_APPROVAL
             )
             await self._admin.send_draft_for_approval(
-                turn_ctx, demoted, turn_id
+                turn_ctx, demoted, turn_id,
+                **(await self._doctrine_display_kwargs(turn_id)),
             )
             return None
 

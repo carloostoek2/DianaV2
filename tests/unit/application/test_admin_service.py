@@ -10,7 +10,16 @@ from uuid import uuid4
 
 import pytest
 
-from diana.application.admin_service import AdminService, OwnerAuthError
+from diana.application.admin_service import (
+    AdminService,
+    OwnerAuthError,
+    _eval_summary,
+    _resolve_doctrine_relevant,
+)
+from diana.application.draft_variants import (
+    DOCTRINE_NA_LABEL,
+    DOCTRINE_RELEVANT_KEY,
+)
 from diana.application.memory import (
     FakeOwnerNotifier,
     InMemoryEscalationStore,
@@ -149,11 +158,31 @@ def _eval() -> EvaluationProfile:
     )
 
 
-def _decision(action: str = "approve", draft: str = "hola VIP") -> Decision:
+def _eval_dims(**overrides: float) -> EvaluationProfile:
+    data = {
+        "naturalness": 0.9,
+        "precision": 0.9,
+        "doctrine": 0.9,
+        "consistency": 0.9,
+        "safety": 0.95,
+        "coverage": 0.9,
+        "empathy": 0.9,
+    }
+    data.update(overrides)
+    return EvaluationProfile(**data)
+
+
+def _decision(
+    action: str = "approve",
+    draft: str = "hola VIP",
+    *,
+    reason: str = "ok",
+    evaluation: EvaluationProfile | None = None,
+) -> Decision:
     return Decision(
         action=action,  # type: ignore[arg-type]
-        reason="ok",
-        evaluation=_eval(),
+        reason=reason,
+        evaluation=evaluation or _eval(),
         draft_text=draft,
     )
 
@@ -1293,6 +1322,10 @@ async def test_gray_zone_supervised_delivery_creates_approval_and_transitions(
 
     assert len(g["notifier"].drafts) == 1
     assert g["notifier"].drafts[0].draft_text == "gray draft"
+    summary = g["notifier"].drafts[0].evaluation_summary or ""
+    assert "no aplica" not in summary
+    assert "doc=0.50" in summary
+    assert approval.evaluation.get(DOCTRINE_RELEVANT_KEY) is True
 
 
 @pytest.mark.asyncio
@@ -2216,3 +2249,99 @@ async def test_send_draft_for_approval_propagates_photo_file_id(admin_graph: dic
     appr = await g["approvals"].get_by_turn(turn.id)
     assert appr is not None
     assert appr.photo_file_id == "big"
+
+
+def test_eval_summary_no_aplica_when_doctrine_not_relevant() -> None:
+    decision = _decision(evaluation=_eval_dims(doctrine=0.50))
+    relevant = _resolve_doctrine_relevant(
+        decision,
+        comprehension={"needs_policy": False},
+        retrieved={},
+    )
+    assert relevant is False
+    summary = _eval_summary(decision, doctrine_relevant=relevant)
+    assert f"doc={DOCTRINE_NA_LABEL}" in summary
+    assert "doc=0.50" not in summary
+
+
+def test_eval_summary_missing_rule_shows_low_number() -> None:
+    decision = _decision(evaluation=_eval_dims(doctrine=0.20))
+    relevant = _resolve_doctrine_relevant(
+        decision,
+        comprehension={"needs_policy": True},
+        retrieved={},
+    )
+    assert relevant is True
+    summary = _eval_summary(decision, doctrine_relevant=relevant)
+    assert "doc=0.20" in summary
+    assert DOCTRINE_NA_LABEL not in summary
+
+
+def test_eval_summary_policy_present_shows_number() -> None:
+    decision = _decision(evaluation=_eval_dims(doctrine=0.85))
+    relevant = _resolve_doctrine_relevant(
+        decision,
+        comprehension={"needs_policy": False},
+        retrieved={"knowledge.policy": ["Trigger: x | Rule: y"]},
+    )
+    assert relevant is True
+    summary = _eval_summary(decision, doctrine_relevant=relevant)
+    assert "doc=0.85" in summary
+    assert DOCTRINE_NA_LABEL not in summary
+
+
+def test_eval_summary_missing_inputs_does_not_infer_na() -> None:
+    decision = _decision(evaluation=_eval_dims(doctrine=0.50))
+    relevant = _resolve_doctrine_relevant(decision)
+    assert relevant is True
+    summary = _eval_summary(decision, doctrine_relevant=relevant)
+    assert "doc=0.50" in summary
+    assert DOCTRINE_NA_LABEL not in summary
+
+
+def test_eval_summary_consult_doctrine_without_kwargs_shows_number() -> None:
+    decision = _decision(
+        action="consult_doctrine",
+        evaluation=_eval_dims(doctrine=0.20),
+    )
+    relevant = _resolve_doctrine_relevant(decision)
+    assert relevant is True
+    summary = _eval_summary(decision, doctrine_relevant=relevant)
+    assert "doc=0.20" in summary
+    assert DOCTRINE_NA_LABEL not in summary
+
+
+@pytest.mark.asyncio
+async def test_send_draft_persists_doctrine_relevant_false(
+    admin_graph: dict,
+) -> None:
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    decision = _decision(evaluation=_eval_dims(doctrine=0.50))
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id),
+        decision,
+        turn.id,
+        comprehension={"needs_policy": False},
+        retrieved={},
+    )
+    payload = g["notifier"].drafts[0]
+    assert f"doc={DOCTRINE_NA_LABEL}" in (payload.evaluation_summary or "")
+    assert "doc=0.50" not in (payload.evaluation_summary or "")
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None
+    assert appr.evaluation.get(DOCTRINE_RELEVANT_KEY) is False
+
+
+@pytest.mark.asyncio
+async def test_send_draft_for_approval_notifies_persists_relevant_fallback(
+    admin_graph: dict,
+) -> None:
+    g = admin_graph
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(), turn.id
+    )
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None
+    assert appr.evaluation.get(DOCTRINE_RELEVANT_KEY) is True

@@ -30,6 +30,8 @@ from diana.cognitive.models import (
 logger = logging.getLogger("diana.application")
 
 VERSIONS_KEY = "_draft_versions"
+DOCTRINE_RELEVANT_KEY = "_doctrine_relevant"
+DOCTRINE_NA_LABEL = "no aplica"
 MAX_DRAFT_VARIANTS = 10
 
 # Fires when a regeneration run actually starts (after the soft-lock), so the
@@ -130,6 +132,15 @@ def build_owner_draft_text(
             )
         except (TypeError, ValueError):
             summary = ""
+        else:
+            if DOCTRINE_RELEVANT_KEY in e:
+                if e.get(DOCTRINE_RELEVANT_KEY) is False:
+                    summary += f" doc={DOCTRINE_NA_LABEL}"
+                else:
+                    try:
+                        summary += f" doc={float(e.get('doctrine', 0)):.2f}"
+                    except (TypeError, ValueError):
+                        pass
     return format_draft_owner_text(
         vip_name=vip_name or str(record.chat_id),
         vip_text=vip_text,
@@ -548,6 +559,8 @@ class DraftVariantService:
 
 
 __all__ = [
+    "DOCTRINE_NA_LABEL",
+    "DOCTRINE_RELEVANT_KEY",
     "MAX_DRAFT_VARIANTS",
     "VERSIONS_KEY",
     "DraftVariantService",

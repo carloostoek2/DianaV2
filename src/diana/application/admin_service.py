@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from typing import Any, Literal
@@ -30,7 +30,12 @@ from diana.application.ports import (
     TurnStore,
     VipStore,
 )
-from diana.application.draft_variants import ensure_versions, resolve_vip_display_name
+from diana.application.draft_variants import (
+    DOCTRINE_NA_LABEL,
+    DOCTRINE_RELEVANT_KEY,
+    ensure_versions,
+    resolve_vip_display_name,
+)
 from diana.application.escalation_labels import tipo_from_reason
 from diana.behavior.ports import DeliveryProgressCallback
 from diana.application.memory_extraction_service import (
@@ -41,10 +46,12 @@ from diana.application.staging_service import AtencionPromoteBlocked, StagingSer
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.models import (
+    Comprehension,
     Decision,
     EvaluationProfile,
     IncomingTurn,
     TurnStatus,
+    is_doctrine_relevant,
     is_turn_status_terminal,
 )
 
@@ -106,12 +113,41 @@ class QualityFeedbackDisabled(ValueError):
     """FEATURE_QUALITY_FEEDBACK_ENABLED is off."""
 
 
-def _eval_summary(decision: Decision) -> str:
+def _resolve_doctrine_relevant(
+    decision: Decision,
+    *,
+    comprehension: Comprehension | Mapping[str, Any] | None = None,
+    retrieved: Mapping[str, Any] | None = None,
+    doctrine_relevant: bool | None = None,
+) -> bool:
+    """Whether owner UI should treat doctrine as a measured score.
+
+    Never infer N/A from ``evaluation.doctrine == 0.5`` (real compliance and
+    gray-zone dummy profiles can share that number). Missing inputs show the
+    number (fail-open), not "no aplica".
+    """
+    if doctrine_relevant is not None:
+        return bool(doctrine_relevant)
+    if comprehension is not None or retrieved is not None:
+        return is_doctrine_relevant(comprehension, retrieved)
+    if decision.action == "consult_doctrine":
+        return True
+    if decision.reason == "gray_zone_resolved_by_doctrine":
+        return True
+    return True
+
+
+def _eval_summary(decision: Decision, *, doctrine_relevant: bool) -> str:
     """Display-only summary string; never fed back into Decider."""
     e = decision.evaluation
+    doc_slot = (
+        f"doc={DOCTRINE_NA_LABEL}"
+        if not doctrine_relevant
+        else f"doc={e.doctrine:.2f}"
+    )
     return (
         f"nat={e.naturalness:.2f} prec={e.precision:.2f} "
-        f"doc={e.doctrine:.2f} con={e.consistency:.2f} "
+        f"{doc_slot} con={e.consistency:.2f} "
         f"saf={e.safety:.2f} cov={e.coverage:.2f} emp={e.empathy:.2f}"
     )
 
@@ -244,13 +280,25 @@ class AdminService:
         turn: IncomingTurn,
         decision: Decision,
         turn_id: UUID,
+        *,
+        comprehension: Comprehension | Mapping[str, Any] | None = None,
+        retrieved: Mapping[str, Any] | None = None,
+        doctrine_relevant: bool | None = None,
     ) -> None:
         bc = (turn.business_connection_id or "").strip()
         if not bc:
             raise ValueError("business_connection_id is required for approval")
         draft = decision.draft_text or ""
+        relevant = _resolve_doctrine_relevant(
+            decision,
+            comprehension=comprehension,
+            retrieved=retrieved,
+            doctrine_relevant=doctrine_relevant,
+        )
+        eval_dict = decision.evaluation.model_dump(mode="json")
+        eval_dict[DOCTRINE_RELEVANT_KEY] = relevant
         eval_dict = ensure_versions(
-            decision.evaluation.model_dump(mode="json"),
+            eval_dict,
             draft_text=draft,
             reason=decision.reason or "",
             vip_text=turn.text,
@@ -289,7 +337,9 @@ class AdminService:
                 draft_text=draft,
                 reason=reason,
                 vip_display_name=vip_name,
-                evaluation_summary=_eval_summary(decision),
+                evaluation_summary=_eval_summary(
+                    decision, doctrine_relevant=relevant
+                ),
                 evaluation=decision.evaluation.model_dump(mode="json"),
                 business_connection_id=bc,
                 reply_markup_spec={
@@ -451,7 +501,9 @@ class AdminService:
                 draft_text=draft,
             )
             try:
-                await self.send_draft_for_approval(incoming, decision, turn_id)
+                await self.send_draft_for_approval(
+                    incoming, decision, turn_id, doctrine_relevant=True
+                )
             except Exception:
                 # send_draft_for_approval persists the approval (waiting)
                 # BEFORE the owner DM; if the DM (or anything after persist)
@@ -584,6 +636,9 @@ class AdminService:
         proposed_rule: str | None = None,
         proposed_reply: str | None = None,
         proposal_source: str | None = None,
+        comprehension: Comprehension | Mapping[str, Any] | None = None,
+        retrieved: Mapping[str, Any] | None = None,
+        doctrine_relevant: bool | None = None,
     ) -> None:
         """Notify owner of a gray zone doctrine query (VIP frozen).
 
@@ -628,7 +683,15 @@ class AdminService:
                     vip_text=turn.text,
                     draft_text=draft,
                     reason=reason,
-                    evaluation_summary=_eval_summary(decision),
+                    evaluation_summary=_eval_summary(
+                        decision,
+                        doctrine_relevant=_resolve_doctrine_relevant(
+                            decision,
+                            comprehension=comprehension,
+                            retrieved=retrieved,
+                            doctrine_relevant=doctrine_relevant,
+                        ),
+                    ),
                     business_connection_id=bc,
                     reply_markup_spec=reply_spec,
                     proposed_rule=proposed_rule,
