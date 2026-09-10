@@ -1,10 +1,16 @@
 # Estado del proyecto — Diana Business Bot (DianaV2)
 
-**Fecha:** 2026-08-22
-**Rama:** main · **Head:** `7cf8ce7` (fix(application): gate per-VIP state writes under sandbox).
-**Bot en producción:** Fase 6 (link Lucien→Diana) desplegada y verificada E2E — bot-to-bot DM, aceptación real pasada. Flags `FEATURE_LINK_ENABLED` y `FEATURE_QUALITY_FEEDBACK_ENABLED` activos en `.env`. <!-- VERIFY: estado del deploy real (Railway+EC2) y aceptación E2E no verificables desde el repo -->
-**Base de datos (repo):** Alembic head `029_feedback_quality` (cadena 001→029).
-**Base de datos (producción):** **VERIFICADO 2026-08-22: 001→029 aplicadas.** Las migraciones 027 (ephemeral_events), 028 (link_events) y 029 (feedback quality) ya estaban aplicadas en la base real de Supabase; se confirmó además la presencia de datos reales (`link_events` 14 filas, `examples.quality='gold'` 2 filas, `ephemeral_events` 1 fila). El ítem operativo pendiente quedó cerrado.
+**Fecha:** 2026-09-10
+**Rama:** main · **Head:** `5ff0b77` (Feat/vista borrador autonomia #3).
+**Bot en producción:** Fase 6 (link Lucien→Diana) desplegada y verificada E2E — bot-to-bot DM, aceptación real pasada. Flags `FEATURE_LINK_ENABLED` y `FEATURE_QUALITY_FEEDBACK_ENABLED` activos en `.env`. `GLOBAL_MODE=supervised`; `FEATURE_AUTONOMOUS_MODE=false`. <!-- VERIFY: estado del deploy real (Railway+EC2) no re-verificado en esta actualización -->
+**Base de datos (repo):** Alembic head `036_correction_severity` (cadena 001→036; incluye 030 turn_outcome_log, 031 profile_synthesis_queue, 032–036).
+**Base de datos (producción):** **VERIFICADO 2026-08-22: 001→029 aplicadas.** Migraciones **030–036: VERIFY** (presentes en repo; **no** afirmar aplicadas en prod hasta comprobar en la base real). Snapshot 2026-08-22 también confirmó datos reales (`link_events`, `examples.quality='gold'`, `ephemeral_events`).
+
+**Trabajo reciente (sep 2026, código en `main`):**
+- Vista de borrador con evaluación/autonomía para la dueña (PR #3, `5ff0b77`).
+- Doctrina «no aplica» / policy-fence scoring (evaluator no bloquea autonomía cuando no hay regla aplicable; UI marca «no aplica»).
+- Severidad de corrección → decremento de trust (migración `036_correction_severity`).
+- Image vision (downscale antes de caption) + masking de PII al borde LLM (activo).
 
 ---
 
@@ -84,7 +90,7 @@ El comentario del `.env` lo explicita: *"Turning on only measures/records"*. Ver
 (3 rondas c/u); suite unit 2441 passed / 2 pre-existentes (`test_sql_repo_shapes.py`, no atribuibles); e2e DB verde
 con Docker. **Datos shadow reales en producción (verif. 2026-08-11):** `turn_category_log` 48, `emotional_signal_log` 29,
 `vip_profile` 9 (versiones hasta v7), `vip_profile_history` 9, `vip_mood_state` 8, `vip_trust_budget` 2 (fático, score ~0.18).
-**Pendiente:** cola durable `synthesis_queue` y ficha perfil EA-06 completa (historial de versiones) — ver §3.
+**Cerrado desde entonces:** cola durable `synthesis_queue` (031 + `SqlProfileSynthesisQueueRepo`) y ficha perfil EA-06 (historial). Pendientes de autonomía/autoenvío — ver §3. Apply prod de 030–036: **VERIFY**.
 
 ### Fase 6 — Vínculo entre bots (Lucien → Diana) para aviso de expulsión VIP ✅ (IMPLEMENTADO Y ACTIVO — 2026-08-21)
 Spec `docs/SPEC-FASE6.md` v1.0 (REQ-LNK-01..10). Two-repo feature: cuando **Lucien** expulsa a un suscriptor
@@ -111,7 +117,7 @@ Spec `docs/SPEC-FEEDBACK.md`. Pool `feedback-calidad` cerrado (4 ítems). **Acti
 - **Reprender:** el texto de corrección **se entrega ya** al VIP; después se elige si esa lección queda para este VIP o para todas.
 - El banco de ejemplos ya ordena primero los destacados (gold-first) y separa lecciones por VIP, aunque el flag esté apagado.
 - Si falla el aviso de consulta de doctrina al VIP, el sistema **descongela** y manda el borrador a aprobación (no deja al VIP trabado).
-- Migración **029** (`examples.quality`, `examples.vip_id`, `policies.vip_id`). Apply en producción: SIN VERIFICAR (pendiente operativo).
+- Migración **029** (`examples.quality`, `examples.vip_id`, `policies.vip_id`). Apply en producción: **verificado 2026-08-22** (ver cabecera).
 
 ### Eventos temporales ✅ (IMPLEMENTADO — sin flag, 2026-08-12)
 La dueña puede cargar un dato de contexto con fecha de inicio y fin (menú 📅 Eventos temporales). Entra al contexto como `knowledge.ephemeral` (global, no por VIP). No se mezcla con la memoria del VIP ni con el banco de ejemplos. Migración **027**. Siempre cableado.
@@ -152,7 +158,7 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 ### Otros
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria; alineado también en `system_config` — antes la semilla 003 quedó en `false`).
 - Flag `FEATURE_CONTEXT_ENABLED=true` (2026-08-21): activa el store de contexto interpretado (REQ-MEM-06).
-- Migraciones en repo: **001–029**. En producción: **verificadas al head 029** (2026-08-22).
+- Migraciones en repo: **001–036** (`036_correction_severity`). En producción: **verificadas al head 029** (2026-08-22); **030–036: VERIFY**.
 - Persona en español neutro. CHANGELOG.md vigente.
 - Auditoría de documentación 2026-08-16: wiki + estado alineados al código post-11-ago. Informes en `.planning/quick/docs-audit-2026-08-16/`.
 
@@ -175,35 +181,47 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 
 ## 3. Qué falta (pendiente real)
 
-> Pendientes de implementación y operación al 2026-08-21. Ningún ítem está "en curso de implementación"; se listan porque aún no existen o están diferidos. Referencia de IDs: `docs/INFORME_AUDITORIA.md` y `REQUERIMIENTOS.md`.
+> Pendientes de implementación y operación al **2026-09-10**. Catálogo detallado: `faltantes.md`. Ningún ítem está "en curso de implementación" salvo lo indicado; se listan porque aún no existen, están deshabilitados, diferidos o pendientes de verificación. Referencia de IDs: `docs/INFORME_AUDITORIA.md` y `REQUERIMIENTOS.md`.
 
-### Requerimientos no implementados (auditoría 2026-07)
-- **AUTH-03 — Tope configurable de VIPs:** ~~no implementado~~ → **DESCARTADO por decisión de producto (2026-08-22).** El sistema está pensado para una base pequeña de VIPs; un tope solo crearía fricción innecesaria (llegar al 11 con tope de 10 no aporta valor).
-- **AUTH-07 — Modo observación silenciosa de chats no-VIP:** **DIFERIDO por decisión de producto (2026-08-22).** Tiene sentido como extensión del modo sombra, pero primero se acopla el modo sombra VIP recién activado (sistema + dueña) antes de extender la observación a no-VIP.
-- ~~**GAP-11 — Generalización explícita al crear políticas**~~ → **CERRADO 2026-08-22** (alcance preguntado a la dueña; ver Fila 2). Además, el 2026-08-22 se **conectó la promoción**: las reglas de zona gris ahora aparecen en la cola de revisión (📋 Cola de revisión) y la dueña puede **activarlas** (✅) o descartarlas, respetando el alcance elegido. Antes quedaban como candidatas huérfanas sin superficie de activación.
-- ~~**REE-02 / COG-15 — Recontacto con pipeline reducido**~~ → **IMPLEMENTADO 2026-08-22 (Fila 3).** `RecontactPersonalizer`: pipeline reducido (sin Analista ni Planificador) que recupera memoria visible del VIP (excluye categoría `sensible`), tendencia reciente del perfil y políticas activas (globales + del VIP), y pide al LLM reescribir la plantilla base personalizada — máx. 2 frases, español neutro, sin inventar datos. Fail-soft total: cualquier error devuelve la plantilla renderizada. Habilitado por defecto cuando el personalizador está cableado; config `personalize: false` lo apaga. Verificado contra producción: mensajes personalizados con datos reales (p. ej. "hablamos de coordinar algo para comer").
+### Requerimientos abiertos / diferidos (auditoría)
+- **AUTH-07 — Modo observación silenciosa de chats no-VIP:** **DIFERIDO por decisión de producto (2026-08-22).** Tiene sentido como extensión del modo sombra, pero primero se acopla el modo sombra VIP antes de extender la observación a no-VIP. (= brecha v1→v2 #12).
+- **GAP-08 — UI para listar/desactivar políticas de la tabla `policies`:** **no implementado.** `deactivate_policy` existe pero solo se usa en cleanup de fallo de regeneración de doctrina; el panel "Políticas de conducta" edita el catálogo de persona (almacén distinto).
 - **MODE-09 — Feedback post-send autónomo dedicado:** no implementado. Solo existe la corrección de turno (Destacar/Reprender); no hay calificador post-envío.
-- ~~**ADM-03 — Cambio de LLM en caliente**~~ → **CERRADO 2026-08-22** (`HotSwapLLMProvider` + superficie Configuración → Modelo de IA; ver Fila 2).
+- **EVAL-04 — Visualización de calibración por dimensión:** no implementado (resumen semanal = tasa global + drift).
 
-### Evolución de agente — pendiente real
-- ~~**Fila 4 — Camino a la autonomía:** diseño aprobado por producto~~ → **EN IMPLEMENTACIÓN (2026-08-22, `docs/SPEC-AUTONOMIA-CALIBRACION.md` v1.0).** Fases A–C construidas detrás de flags en `false` (`FEATURE_AUTONOMY_READINESS_ENABLED` + derivados): motor de coincidencia C1 (puro, `coincidence.py`) + comparativas on-the-fly, heurísticas H1/H2 sin LLM, migración **030** (`turn_outcome_log`, círculo de aprendizaje post-turno), `record_outcome` en el trust budget (sin doble conteo con `FEATURE_AUTONOMY_READINESS_ENABLED` ON), job C3 de reacción/silencio, migración **031** (`profile_synthesis_queue`, cola durable de síntesis). La puerta de recomendación C6 + botón por VIP ya existe en servicio (`autonomy_readiness_service.py`) y el panel 🧭 en el menú, pero la **activación real del envío autónomo sigue apagada** (kill-switch maestro).
-- **Autoenvío (doble puerta): deshabilitado.** `FEATURE_AUTONOMOUS_MODE=false`; la ruta de envío autónomo está cableada tras el flag (`turn_orchestrator.py` ~304/2549, `recontact_service.py` ~209) pero apagada. En shadow solo se acumula medición (trust budget por VIP/categoría, `recent_trend`); no hay envío autónomo. El panel 🧭 solo recomienda y activa `vips.auto_send` por VIP cuando se cumplen las 3 condiciones (§8) y el flag maestro está encendido.
-- ~~**Cola durable `synthesis_queue` para síntesis de perfiles**~~ → **IMPLEMENTADO 2026-08-22 (Fila 4, Fase C):** migración 031 + `SqlProfileSynthesisQueueRepo`; `ProfileSynthesisTriggerService` persiste enqueues y el job drena desde la cola con `recover_stale` al arrancar (pendiente de aplicación de la migración en producción).
-- ~~**Ficha de perfil EA-06 con historial de versiones**~~ → **CERRADO 2026-08-22** (sección 📚 en la ficha; ver Fila 2).
+Cerrados / fuera de catálogo abierto (no listar como pendientes): **AUTH-03** descartado por producto (2026-08-22); **GAP-11**, **REE-02/COG-15** (`RecontactPersonalizer`; flag `FEATURE_RECONTACT_ENABLED=false` → implementado pero deshabilitado), **ADM-03** (`HotSwapLLMProvider`), **EA-06** (historial de perfil).
+
+### Evolución de agente / autonomía
+- **Fila 4 — Camino a la autonomía:** código + flags de medición/readiness **activos en `.env`** (`FEATURE_AUTONOMY_READINESS_ENABLED`, `FEATURE_AUTONOMY_COINCIDENCE_ENABLED`, `FEATURE_AUTONOMY_QUALITY_ENABLED`, `FEATURE_AUTONOMY_RECOMMENDATION_ENABLED` = true). Spec `docs/SPEC-AUTONOMIA-CALIBRACION.md`. Incluye coincidencia C1, heurísticas H1/H2, migraciones **030** (`turn_outcome_log`) y **031** (`profile_synthesis_queue` + `SqlProfileSynthesisQueueRepo`), job C3, puerta de recomendación C6 + panel 🧭. **Kill-switch de autoenvío sigue off** (`FEATURE_AUTONOMOUS_MODE=false`). PR **#3** vista borrador autonomía **merged** (`5ff0b77`).
+- **Autoenvío (doble puerta): deshabilitado.** `FEATURE_AUTONOMOUS_MODE=false`; `GLOBAL_MODE=supervised`. Ruta cableada tras el flag pero apagada. En shadow solo medición.
+- **Autonomía fática real más allá del saludo puro:** no implementada (shadow + plantilla de saludo).
+- **Escalación emocional forzada:** shadow-only (no fuerza al Decider).
+- **Fase 4 de evolución de agente (iniciativa contextual):** diferida por decisión de producto (no confundir con Fase 4 Atención general).
+
+### Brechas v1→v2
+- **#8 — Agenda / rutina semanal:** parcial (`ScheduleRetriever` listo; inyección condicional vía Planner).
+- **#12:** = AUTH-07 diferido.
+
+### Feedback de calidad (deuda de producto)
+- UI para editar `trigger`/`rule` de políticas creadas por reprimenda — no implementada (relacionado GAP-08).
+- Dorado/reprimenda retroactiva vía `/traza` — fuera de alcance.
+- Enganche reprimenda → `vip_trust_budget` por categoría como flujo dedicado — no implementado (036 sí introduce decremento por severidad en corrección de turno).
 
 ### Operativo y despliegue
-- ~~Migraciones 027-029 en producción: pendiente~~ → **CERRADO 2026-08-22**: verificadas aplicadas en la base real (ver cabecera).
+- **Migraciones 030–036 en producción: VERIFY** (repo al head 036; última verificación documentada = 029 el 2026-08-22).
+- **`needs_examples`:** cableado; falta confirmar retrievals efectivos en traces de producción.
 - **Acuerdo con el proveedor de IA (DeepSeek):** pendiente de gestión de la dueña — guía en `docs/ACUERDO-PROVEEDOR-LLM.md`. No bloquea al bot (el masking ya está activo).
-- **Fase 4 de evolución de agente (iniciativa contextual):** especificada pero diferida por decisión de producto (no confundir con la Fase 4 de Atención general, implementada).
 
 ### Deuda técnica / mejoras menores (trazadas)
 - Ampliar el masking a direcciones/CURP/RFC y nombres (versión 2; hoy cubre correos, teléfonos, tarjetas, @usuarios y enlaces).
-- Retención/modelo local y acuerdo de procesamiento con el proveedor (privacidad, F3 — la parte legal sigue pendiente de la dueña).
+- Retención/modelo local y acuerdo de procesamiento con el proveedor (privacidad, F3 — la parte legal sigue pendiente de la dueña); opt-out de backfill por VIP.
 - Recalibración del umbral de dedup 0.85 tras uso real.
 - Calibración de deriva: score 0.25 vs umbral 0.1 (esperado tras cambios de persona; se re-ancla en ~4 semanas).
+- Política de purga/retención para tablas del Evo-Agente (crecen sin límite).
+- `FEATURE_CALIBRATION_ENABLED=false` (job de calibración semanal deshabilitado).
 - `reasonix.toml` untracked (config local de tooling — decidir si va a `.gitignore`).
+- COG-16 (capa del cortocircuito de escalación) y VIP-07 (ventana de dedup) — menores, no bloqueantes.
 
----
 
 ## 4. Referencias
 
