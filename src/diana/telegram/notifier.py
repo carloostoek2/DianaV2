@@ -49,7 +49,7 @@ class AiogramOwnerNotifier:
             vip_text=payload.vip_text,
             draft_text=payload.draft_text,
             reason=payload.reason or "",
-            evaluation_summary=payload.evaluation_summary or "",
+            evaluation=payload.evaluation,
             version_index=selected if items else 0,
             version_count=count,
         )

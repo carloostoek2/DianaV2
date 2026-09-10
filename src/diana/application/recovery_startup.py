@@ -583,9 +583,8 @@ async def _renotify_approval(
             chat_id=approval.chat_id,
             vip_text=vip_text,
             draft_text=approval.draft_text,
-            reason="startup_re_notify",
+            reason=approval.cognitive_summary or "",
             vip_display_name=vip_name,
-            evaluation_summary=approval.cognitive_summary,
             evaluation=approval.evaluation,
             business_connection_id=approval.business_connection_id,
             reply_markup_spec={

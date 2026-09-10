@@ -655,6 +655,22 @@ def build_app(
         reaction_window_hours=settings.outcome_reaction_window_hours,
     )
 
+    # Fila 4 — Camino a la autonomía (C5/C6). Built ALWAYS (the menu renders
+    # "sin datos" when nothing is measured); the recommendation/activation is
+    # gated by feature_autonomy_recommendation_enabled. Constructed here (before
+    # AdminService) so the owner draft DM can embed the Autonomía snapshot.
+    # Mins are read live from the shared decider (calibration-aware).
+    autonomy_readiness = AutonomyReadinessService(
+        outcome=outcome_log,
+        trust=vip_trust_budget_repo,
+        vips=vips,
+        window_days=settings.autonomy_window_days,
+        confidence_min=settings.autonomy_confidence_min,
+        match_rate_min=settings.autonomy_match_rate_min,
+        recommendation_enabled=settings.feature_autonomy_recommendation_enabled,
+        autonomous_mins=decider.autonomous_mins,
+    )
+
     # AMS L2 gate — always constructed; with L1 false is_autonomous_enabled → False.
     ams = AutonomousModeService(
         feature_autonomous_mode=feature_autonomous_mode,
@@ -759,6 +775,12 @@ def build_app(
         ),
         feature_autonomy_readiness_enabled=settings.feature_autonomy_readiness_enabled,
         gray_zone=gray_zone,
+        # Draft DM "Autonomía" section only when the panel/activation feature is on.
+        autonomy_readiness=(
+            autonomy_readiness
+            if settings.feature_autonomy_recommendation_enabled
+            else None
+        ),
     )
 
     catalog = get_persona_catalog()
@@ -1144,18 +1166,6 @@ def build_app(
             trust_min=settings.trust_budget_threshold,
             classifier_confidence_min=settings.classifier_confidence_min,
         ),
-    )
-    # Fila 4 — Camino a la autonomía (C5/C6): built ALWAYS (the menu renders
-    # "sin datos" when nothing is measured); the recommendation/activation is
-    # gated by feature_autonomy_recommendation_enabled.
-    autonomy_readiness = AutonomyReadinessService(
-        outcome=outcome_log,
-        trust=vip_trust_budget_repo,
-        vips=vips,
-        window_days=settings.autonomy_window_days,
-        confidence_min=settings.autonomy_confidence_min,
-        match_rate_min=settings.autonomy_match_rate_min,
-        recommendation_enabled=settings.feature_autonomy_recommendation_enabled,
     )
     profile_admin = ProfileAdminService(
         profiles=profiles_repo,

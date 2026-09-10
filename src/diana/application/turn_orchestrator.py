@@ -61,13 +61,11 @@ logger = logging.getLogger("diana.application")
 _BURST_HISTORY_LIMIT = 40
 _MULTI_VIP_BURST_HEADER = "(el VIP envió varios mensajes seguidos)"
 
-# F4-02: fixed closing reply for the atencion channel when the daily
-# client-message limit (20) is reached. Sent best-effort, direct to the
-# client chat, never LLM / never supervised. Fixed constant (locked #7).
-ATENCION_DAILY_LIMIT_CLOSE = (
-    "¡Hola! Por hoy ya cubrimos todo, "
-    "si necesitas algo más escríbeme mañana 😊"
-)
+# F4-02: daily cap for atencion client messages, per CDMX civil day. Once a
+# chat exceeds it, over-limit messages are dropped in silence - no closing
+# reply is ever sent (owner decision: the former fixed "messages are over"
+# text was removed). Counters still advance so the metric keeps working.
+_ATENCION_DAILY_CAP = 20
 
 
 # A7: exact informational DM text when an atencion turn shows payment intent.
@@ -379,13 +377,13 @@ class TurnOrchestrator:
 
     async def _enforce_daily_limit(
         self, incoming: VipInboundMessage
-    ) -> tuple[str, UUID | None]:
-        """Return ``(outcome, close_turn_id)`` after the atomic increment.
+    ) -> str:
+        """Return "proceed" | "dropped" after the atomic increment.
 
-        outcome is "proceed" | "closed" | "dropped"; ``close_turn_id`` is the
-        real minted turn for "closed" (None when the close was skipped), None
-        otherwise. Fails open on store error so a DB hiccup never drops a
-        legitimate message.
+        At-or-under the cap the message proceeds; once the chat is over
+        the cap the message is dropped in silence - no closing reply, no
+        minted turn, nothing enters the pipeline. Fails open on store
+        error so a DB hiccup never drops a legitimate message.
         """
         now = (
             self._clock.now()  # type: ignore[union-attr]
@@ -405,12 +403,9 @@ class TurnOrchestrator:
                     "fecha_local": fecha_local.isoformat(),
                 },
             )
-            return "proceed", None
-        if count <= 20:
-            return "proceed", None
-        if count == 21:
-            close_id = await self._send_atencion_limit_close(incoming)
-            return "closed", close_id
+            return "proceed"
+        if count <= _ATENCION_DAILY_CAP:
+            return "proceed"
         logger.info(
             "atencion_limit_dropped",
             extra={
@@ -419,121 +414,7 @@ class TurnOrchestrator:
                 "count": count,
             },
         )
-        return "dropped", None
-
-    async def _send_atencion_limit_close(
-        self, incoming: VipInboundMessage
-    ) -> UUID | None:
-        """Best-effort direct-to-chat closing reply; never supervised/LLM.
-
-        Mirrors ``PromoService.execute_promo``: mints a REAL turn with a
-        non-terminal status (``promo_pending``) so the delivery path satisfies
-        both the ``pending_deliveries.turn_id`` FK and the engine's
-        TurnStatusReader liveness gate — a synthetic uuid4 aborts the send in
-        production. Returns the close turn id (None when skipped).
-        """
-        bc = incoming.business_connection_id
-        if self._behavior is None or not bc or not str(bc).strip():
-            logger.info(
-                "atencion_limit_close_skipped",
-                extra={"chat_id": incoming.chat_id, "reason": "no_sender_or_bc"},
-            )
-            return None
-        if self._turns is None:
-            logger.info(
-                "atencion_limit_close_skipped",
-                extra={"chat_id": incoming.chat_id, "reason": "no_turn_store"},
-            )
-            return None
-        try:
-            turn = await self._turns.create(
-                TurnRecord(
-                    id=uuid4(),
-                    chat_id=incoming.chat_id,
-                    status=TurnStatus.PROMO_PENDING.value,
-                    vip_id=None,
-                    channel_type=incoming.channel_type,
-                )
-            )
-        except Exception:
-            logger.exception(
-                "atencion_limit_close_skipped",
-                extra={
-                    "chat_id": incoming.chat_id,
-                    "reason": "turn_create_failed",
-                },
-            )
-            return None
-        ctx = DeliveryContext(
-            chat_id=incoming.chat_id,
-            business_connection_id=str(bc),
-            vip_id=None,
-            mode=self._delivery_mode,
-            is_frozen=False,
-            telegram_message_id=incoming.telegram_message_id,
-            skip_initial_delay=True,
-        )
-        try:
-            result = await self._behavior.deliver(
-                [ATENCION_DAILY_LIMIT_CLOSE],
-                ctx,
-                turn.id,
-                decision=None,
-            )
-        except Exception:
-            await self._try_transition(
-                turn.id,
-                TurnStatus.FAILED.value,
-                error="atencion_limit_close_failed",
-                chat_id=incoming.chat_id,
-            )
-            logger.exception(
-                "atencion_limit_close_failed",
-                extra={"chat_id": incoming.chat_id, "turn_id": str(turn.id)},
-            )
-            return turn.id
-        status = (
-            TurnStatus.DELIVERED.value
-            if result.success
-            else TurnStatus.FAILED.value
-        )
-        await self._try_transition(
-            turn.id,
-            status,
-            error=None if result.success else result.error,
-            chat_id=incoming.chat_id,
-        )
-        return turn.id
-
-    async def _try_transition(
-        self,
-        turn_id: UUID,
-        status: str,
-        *,
-        error: str | None = None,
-        chat_id: int,
-    ) -> None:
-        """Fail-soft close-turn transition: never let a store error escape.
-
-        The closing reply is best-effort; a turn-store failure on bookkeeping
-        must not propagate out of ``_send_atencion_limit_close`` and drop the
-        client's 21st message (same fail-open invariant as the increment).
-        """
-        try:
-            await self._turns.transition(  # type: ignore[union-attr]
-                turn_id,
-                status,
-                error=error,
-            )
-        except Exception:
-            logger.exception(
-                "atencion_limit_close_transition_failed",
-                extra={
-                    "turn_id": str(turn_id),
-                    "status": status,
-                    "chat_id": chat_id,
-                },
-            )
+        return "dropped"
 
     async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
         if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
@@ -1340,13 +1221,10 @@ class TurnOrchestrator:
         # F4-02: enforce the atencion daily limit BEFORE any pipeline work
         # (epoch bump, durable history, mint, LLM). Over-limit messages never
         # write history, never advance the epoch, never enter the cognitive
-        # pipeline. "closed" returns the real close turn id (minted by the
-        # closing-reply send); "dropped" returns a synthetic uuid4
-        # (business.py only logs it).
+        # pipeline and receive no reply at all — the synthetic uuid4 returned
+        # is only logged by business.py.
         if self._should_enforce_daily_limit(incoming):
-            outcome, close_id = await self._enforce_daily_limit(incoming)
-            if outcome == "closed":
-                return close_id or uuid4()
+            outcome = await self._enforce_daily_limit(incoming)
             if outcome == "dropped":
                 return uuid4()
         # Capture before any await so owner marks during pre-mint are visible.
