@@ -305,6 +305,64 @@ async def test_correct_router_sends_severity_picker_with_moderate_default(
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_severity_router_hides_picker_and_shows_confirm(graph: dict) -> None:
+    """UX: after a successful sv: tap, strip the keyboard and show chosen severity.
+
+    Selection already mutates the session (see test_severity_callback_sets_session_severity);
+    this asserts the owner-facing visual feedback so the click is obvious.
+    """
+    from aiogram.types import CallbackQuery, Chat, Message, User
+    from unittest.mock import AsyncMock
+
+    from diana.telegram.handlers.callbacks import build_callback_router
+
+    g = graph
+    turn = await _queue_draft(g)
+    # Open a live correct session (preselect moderate) then tap major.
+    await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_callback("correct", turn.id),
+        actor_id=OWNER,
+    )
+    router = build_callback_router(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+
+    msg = Message(
+        message_id=11,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="Gravedad de la corrección:",
+    )
+    edit_text = AsyncMock(return_value=True)
+    object.__setattr__(msg, "edit_text", edit_text)
+    object.__setattr__(msg, "answer", AsyncMock(return_value=True))
+    query = CallbackQuery(
+        id="cq-sv",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_severity(turn.id, "major"),
+        message=msg,
+    )
+    object.__setattr__(query, "answer", AsyncMock(return_value=True))
+
+    await on_callback(query)
+
+    assert g["sessions"].get_session(OWNER).severity == "major"
+    assert edit_text.await_count == 1
+    args, kwargs = edit_text.await_args
+    assert args[0].startswith("Severidad: Mayor")
+    assert "✓" in args[0]
+    assert "texto corregido" in args[0]
+    assert kwargs.get("reply_markup") is None
+
+
 async def test_severity_callback_sets_session_severity(graph: dict) -> None:
     """SPEC-EA-07 (sv:): tapping a severity button mutates the session in-place."""
     g = graph

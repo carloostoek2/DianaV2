@@ -30,6 +30,7 @@ from diana.cognitive.models import is_doctrine_relevant
 from diana.application.text_quality_heuristics import hard_gate_hit
 from diana.telegram.keyboards import (
     MENU_ROOT_TEXT,
+    SEVERITY_LABELS,
     draft_keyboard,
     gold_scope_keyboard,
     menu_root_keyboard,
@@ -69,6 +70,13 @@ ADMIN_MENU_TEXT = (
 )
 
 SESSION_EXPIRED_UX = "Sesión expirada — presiona Corregir de nuevo en el borrador"
+
+# Owner-facing severity confirm (SPEC-EA-07 UX). Keys match SEVERITY_LABELS.
+_SEVERITY_CONFIRM_ES = {
+    "minor": "Menor",
+    "moderate": "Moderada",
+    "major": "Mayor",
+}
 
 logger = logging.getLogger("diana.telegram")
 
@@ -1014,8 +1022,37 @@ def build_callback_router(
                 await query.answer("No autorizado", show_alert=True)
                 return
             if status == "severity_set":
-                # Non-blocking ack; the corrected text still completes the flow.
-                await query.answer("Gravedad registrada ✅")
+                # Primary UX: strip the picker and show a persistent confirm.
+                # Toast is best-effort (early answer above may already have run).
+                try:
+                    await query.answer("Gravedad registrada ✅")
+                except Exception:
+                    logger.debug("severity_set_answer_failed", exc_info=True)
+                if query.message:
+                    parsed_sv = parse_severity(data)
+                    sev_key = parsed_sv[1] if parsed_sv is not None else None
+                    sev_es = _SEVERITY_CONFIRM_ES.get(sev_key or "", "registrada")
+                    btn = SEVERITY_LABELS.get(sev_key or "", "")
+                    detail = f"{sev_es} ({btn})" if btn else sev_es
+                    try:
+                        await query.message.edit_text(
+                            f"Severidad: {detail} ✓ — ahora envía el texto corregido",
+                            reply_markup=None,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "owner_callback_severity_confirm_failed",
+                            extra={"callback_data": data, "actor_id": actor_id},
+                        )
+                return
+            if status == "severity_stale":
+                try:
+                    await query.answer(
+                        "Esa gravedad ya no aplica — usa el picker del turno actual",
+                        show_alert=True,
+                    )
+                except Exception:
+                    logger.debug("severity_stale_answer_failed", exc_info=True)
                 return
             if status == "severity_session_expired":
                 await query.answer(SESSION_EXPIRED_UX, show_alert=True)
