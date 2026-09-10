@@ -236,7 +236,12 @@ class FakeOutcomeStore:
         self.signal_calls: list[tuple] = []
 
     async def insert(self, record):
-        self.rows[str(record.turn_id)] = record
+        key = str(record.turn_id)
+        existing = self.rows.get(key)
+        if existing is not None and existing.shadow_verdict:
+            # Mirror SQL upsert: keep first shadow + already-filled owner/reaction.
+            return existing
+        self.rows[key] = record
         return record
 
     async def get_by_turn_id(self, turn_id):
@@ -769,3 +774,48 @@ class TestRecordReaction:
         assert updated.vip_signal == "negative"
         assert trust.calls[-1] == (str(turn_id), "signal", "negative")
 
+
+class TestRecordShadowPreservesOwnerOnRerecord:
+    """Service contract: second record_shadow must not wipe owner or flip verdict."""
+
+    def test_second_record_shadow_skips_when_row_exists(self) -> None:
+        store = FakeOutcomeStore()
+        trust = FakeTrustBudget()
+        svc = _fase_b_service(store, trust, scorer=lambda text, vip_name=None: 0.8)
+        turn_id = uuid4()
+        vip_id = uuid4()
+
+        first = asyncio.run(
+            svc.record_shadow(turn_id, vip_id=vip_id, trace=_trace(draft="borrador"))
+        )
+        assert first is not None
+        assert first.shadow_verdict == "send"
+        first_verdict = first.shadow_verdict
+
+        owned = asyncio.run(
+            svc.record_owner_outcome(
+                turn_id,
+                owner_outcome="corrected",
+                sent_text="mejor texto",
+                vip_id=vip_id,
+                severity="major",
+            )
+        )
+        assert owned is not None
+        assert owned.owner_outcome == "corrected"
+        assert owned.correction_severity == "major"
+        assert owned.sent_score == pytest.approx(0.8)
+
+        # Hostile re-decide input: would yield a different verdict if re-run.
+        low_safety = _trace(
+            evaluation=_evaluation(safety=0.5), draft="otro borrador"
+        )
+        again = asyncio.run(
+            svc.record_shadow(turn_id, vip_id=vip_id, trace=low_safety)
+        )
+        assert again is not None
+        assert again.shadow_verdict == first_verdict
+        assert again.owner_outcome == "corrected"
+        assert again.correction_severity == "major"
+        assert again.sent_score == pytest.approx(0.8)
+        assert again.quality_delta is not None

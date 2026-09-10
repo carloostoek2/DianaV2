@@ -83,9 +83,78 @@ async def test_insert_is_idempotent_by_turn(session_factory) -> None:
 
     found = await repo.get_by_turn_id(turn_id)
     assert found is not None
-    assert found.shadow_verdict == "send"  # upsert overwrites, no duplicate row
+    # First shadow decision sticks — second insert must not flip coincidence.
+    assert found.shadow_verdict == "blocked"
+    assert found.shadow_reason == "safety_below_threshold"
     rows = await repo.list_recent(since=datetime.now(UTC) - timedelta(days=1))
     assert sum(1 for r in rows if r.turn_id == turn_id) == 1
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_upsert_preserves_owner_outcome_and_shadow_verdict(session_factory) -> None:
+    """Contract: shadow → owner → shadow must not wipe owner cols or flip verdict.
+
+    Mirrors the live bug: post-approve ``finally`` re-calls record_shadow /
+    insert with NULL owner defaults; ON CONFLICT must keep owner fields and
+    the first ``shadow_verdict``.
+    """
+    repo = SqlTurnOutcomeLogRepo(session_factory)
+    vip = await _create_vip(session_factory, 9620)
+    turn_id = await _create_turn(session_factory, vip)
+
+    first = await repo.insert(
+        _record(turn_id, vip.id, verdict="blocked", reason="safety_below_threshold")
+    )
+    assert first.owner_outcome is None
+    assert first.shadow_verdict == "blocked"
+
+    owned = await repo.update_outcome(
+        turn_id,
+        owner_outcome="corrected",
+        sent_score=0.91,
+        quality_delta=0.21,
+        correction_severity="major",
+    )
+    assert owned is not None
+    assert owned.owner_outcome == "corrected"
+    assert owned.sent_score == pytest.approx(0.91)
+    assert owned.quality_delta == pytest.approx(0.21)
+    assert owned.correction_severity == "major"
+
+    # Reaction column must also survive a later shadow upsert.
+    signaled = await repo.update_signal(turn_id, vip_signal="negative")
+    assert signaled is not None
+    assert signaled.vip_signal == "negative"
+
+    # Second shadow insert: different verdict + NULL owner/reaction defaults
+    # (what OutcomeLogService.record_shadow passes on re-hook).
+    second = await repo.insert(
+        TurnOutcomeLogRecord(
+            turn_id=turn_id,
+            vip_id=vip.id,
+            shadow_verdict="send",
+            shadow_reason="autonomous_ok",
+            draft_score=0.55,
+            blocked_dims=[],
+        )
+    )
+    assert second.shadow_verdict == "blocked"
+    assert second.shadow_reason == "safety_below_threshold"
+    assert second.owner_outcome == "corrected"
+    assert second.sent_score == pytest.approx(0.91)
+    assert second.quality_delta == pytest.approx(0.21)
+    assert second.correction_severity == "major"
+    assert second.vip_signal == "negative"
+    # First draft_score sticks (fill-when-empty).
+    assert second.draft_score == pytest.approx(0.7)
+
+    found = await repo.get_by_turn_id(turn_id)
+    assert found is not None
+    assert found.shadow_verdict == "blocked"
+    assert found.owner_outcome == "corrected"
+    assert found.correction_severity == "major"
+    assert found.vip_signal == "negative"
 
 
 @pytest.mark.db

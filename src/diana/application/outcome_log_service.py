@@ -301,10 +301,17 @@ class OutcomeLogService:
 
         Best-effort (never raises out); idempotent by ``turn_id``. No row when
         the trace lacks evaluation/comprehension (template cut, aborted).
+
+        If a row already has ``shadow_verdict``, skip re-decide/re-insert so a
+        post-approve ``finally`` hook cannot flip the verdict or race the
+        owner-resolution columns (SQL upsert also preserves them).
         """
         if not self._enabled or self._store is None or trace is None:
             return None
         try:
+            existing = await self._store.get_by_turn_id(turn_id)
+            if existing is not None and existing.shadow_verdict:
+                return existing
             verdict, reason, blocked = self._redecide(trace)
             if verdict is None:
                 return None

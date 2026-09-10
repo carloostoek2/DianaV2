@@ -149,38 +149,61 @@ class SqlTurnOutcomeLogRepo:
     # ------------------------------------------------------------------
 
     async def insert(self, record: TurnOutcomeLogRecord) -> TurnOutcomeLogRecord:
-        """Create one outcome-log row (post-turn write; idempotent by turn_id)."""
+        """Create one outcome-log row (post-turn write; idempotent by turn_id).
+
+        ON CONFLICT preserves already-populated owner/reaction columns and the
+        first shadow decision. A later shadow re-insert (post-approve finally)
+        must not NULL-wipe ``owner_outcome`` / scores / severity / ``vip_signal``
+        nor flip ``shadow_verdict`` (coincidence history stays stable).
+        """
+        insert_stmt = insert(TurnOutcomeLog).values(
+            turn_id=record.turn_id,
+            vip_id=record.vip_id,
+            shadow_verdict=record.shadow_verdict,
+            shadow_reason=record.shadow_reason,
+            owner_outcome=record.owner_outcome,
+            draft_score=record.draft_score,
+            sent_score=record.sent_score,
+            quality_delta=record.quality_delta,
+            blocked_dims=record.blocked_dims or None,
+            vip_signal=record.vip_signal,
+            correction_severity=record.correction_severity,
+        )
         stmt = (
-            insert(TurnOutcomeLog)
-            .values(
-                turn_id=record.turn_id,
-                vip_id=record.vip_id,
-                shadow_verdict=record.shadow_verdict,
-                shadow_reason=record.shadow_reason,
-                owner_outcome=record.owner_outcome,
-                draft_score=record.draft_score,
-                sent_score=record.sent_score,
-                quality_delta=record.quality_delta,
-                blocked_dims=record.blocked_dims or None,
-                vip_signal=record.vip_signal,
-                correction_severity=record.correction_severity,
-            )
-            .on_conflict_do_update(
+            insert_stmt.on_conflict_do_update(
                 index_elements=[TurnOutcomeLog.turn_id],
                 set_={
-                    "shadow_verdict": record.shadow_verdict,
-                    "shadow_reason": record.shadow_reason,
-                    "owner_outcome": record.owner_outcome,
-                    "draft_score": record.draft_score,
-                    "sent_score": record.sent_score,
-                    "quality_delta": record.quality_delta,
-                    "blocked_dims": record.blocked_dims or None,
-                    "vip_signal": record.vip_signal,
-                    "correction_severity": record.correction_severity,
+                    # Keep first shadow decision (do not flip after owner resolve).
+                    "shadow_verdict": TurnOutcomeLog.shadow_verdict,
+                    "shadow_reason": TurnOutcomeLog.shadow_reason,
+                    # Fill-when-empty for draft side / owner / reaction.
+                    "draft_score": func.coalesce(
+                        TurnOutcomeLog.draft_score, insert_stmt.excluded.draft_score
+                    ),
+                    "blocked_dims": func.coalesce(
+                        TurnOutcomeLog.blocked_dims, insert_stmt.excluded.blocked_dims
+                    ),
+                    "owner_outcome": func.coalesce(
+                        TurnOutcomeLog.owner_outcome,
+                        insert_stmt.excluded.owner_outcome,
+                    ),
+                    "sent_score": func.coalesce(
+                        TurnOutcomeLog.sent_score, insert_stmt.excluded.sent_score
+                    ),
+                    "quality_delta": func.coalesce(
+                        TurnOutcomeLog.quality_delta,
+                        insert_stmt.excluded.quality_delta,
+                    ),
+                    "vip_signal": func.coalesce(
+                        TurnOutcomeLog.vip_signal, insert_stmt.excluded.vip_signal
+                    ),
+                    "correction_severity": func.coalesce(
+                        TurnOutcomeLog.correction_severity,
+                        insert_stmt.excluded.correction_severity,
+                    ),
                     "updated_at": func.now(),
                 },
-            )
-            .returning(TurnOutcomeLog)
+            ).returning(TurnOutcomeLog)
         )
         async with self._sf() as session:
             result = await session.execute(stmt)
