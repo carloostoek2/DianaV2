@@ -263,3 +263,66 @@ class TestByVipRender:
         assert "Ana" in body and "Beto" in body
         assert "LISTO" in body
         assert "en camino" in body
+
+
+class TestReadinessSnapshot:
+    def test_none_vip_is_no_history(self) -> None:
+        service, _, _ = _make_service([], [], FakeVipStore([]))
+        snap = asyncio.run(service.readiness_snapshot(None))
+        assert snap["has_history"] is False
+        assert snap["v"] == 1
+        assert snap["mins"]["safety_min"] == 0.9
+
+    def test_unknown_or_inactive_vip_is_no_history(self) -> None:
+        service, _, _ = _make_service([], [], FakeVipStore([]))
+        snap = asyncio.run(service.readiness_snapshot(uuid4()))
+        assert snap["has_history"] is False
+
+    def test_active_vip_without_trust_rows_is_no_history(self) -> None:
+        vip = uuid4()
+        service, _, _ = _make_service([], [], FakeVipStore([_vip(vip)]))
+        snap = asyncio.run(service.readiness_snapshot(vip))
+        assert snap["has_history"] is False
+
+    def test_low_trust_en_camino(self) -> None:
+        vip = uuid4()
+        source = [_finished_row(), _finished_row()]  # rate 100 %
+        trust = [
+            type("R", (), {"vip_id": vip, "turn_category": "emocional",
+                           "trust_score": 0.55, "autonomous_count": 1,
+                           "correction_count": 4})()
+        ]
+        service, _, _ = _make_service(source, trust, FakeVipStore([_vip(vip)]))
+        snap = asyncio.run(service.readiness_snapshot(vip))
+        assert snap["has_history"] is True
+        assert snap["best_trust"] == 0.55
+        assert snap["trust_rows"][0]["category"] == "emocional"
+        assert snap["meets_confidence"] is False
+        assert snap["ready"] is False
+        assert snap["global_rate"] == 1.0
+
+    def test_ready_when_all_conditions_met(self) -> None:
+        vip = uuid4()
+        source = [{**_finished_row(), "vip_id": vip} for _ in range(19)]
+        source.append({**_finished_row(corrected_text="x"), "vip_id": vip})
+        trust = [
+            type("R", (), {"vip_id": vip, "turn_category": "informativo",
+                           "trust_score": 0.95, "autonomous_count": 3,
+                           "correction_count": 0})()
+        ]
+        service, _, _ = _make_service(source, trust, FakeVipStore([_vip(vip)]))
+        snap = asyncio.run(service.readiness_snapshot(vip))
+        assert snap["has_history"] is True
+        assert snap["ready"] is True
+        assert snap["global_safety_escalations"] == 0
+
+    def test_mins_use_injected_callable(self) -> None:
+        vip = uuid4()
+        service, _, _ = _make_service([], [], FakeVipStore([_vip(vip)]))
+        service._autonomous_mins = lambda: (0.91, 0.82, 0.71)
+        snap = asyncio.run(service.readiness_snapshot(None))
+        assert snap["mins"] == {
+            "safety_min": 0.91,
+            "doctrine_min": 0.82,
+            "naturalness_min": 0.71,
+        }

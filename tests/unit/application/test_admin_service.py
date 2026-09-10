@@ -17,6 +17,7 @@ from diana.application.admin_service import (
     _resolve_doctrine_relevant,
 )
 from diana.application.draft_variants import (
+    AUTONOMY_KEY,
     DOCTRINE_NA_LABEL,
     DOCTRINE_RELEVANT_KEY,
 )
@@ -198,6 +199,7 @@ def _admin_graph(
     history: object | None = None,
     turns: InMemoryTurnStore | None = None,
     trust_budget: object | None = None,
+    autonomy_readiness: object | None = None,
 ) -> dict:
     from diana.application.memory import InMemoryVipStore
 
@@ -241,6 +243,7 @@ def _admin_graph(
         history=history,  # type: ignore[arg-type]
         trust_budget=trust_budget,  # type: ignore[arg-type]
         feature_quality_feedback_enabled=feature_quality_feedback_enabled,
+        autonomy_readiness=autonomy_readiness,  # type: ignore[arg-type]
     )
     return {
         "admin": admin,
@@ -994,7 +997,7 @@ async def test_supersede_voids_owner_draft_dm(admin_graph: dict) -> None:
     assert mid == approval.owner_message_id
     assert "cancelado" in text.lower()
     # Draft body is preserved for audit, not erased by the void notice.
-    assert "[propuesta]: old" in text
+    assert "<b>[propuesta]</b>\nold" in text
     assert g["actuator"].send_count() == 0
 
 
@@ -2345,3 +2348,70 @@ async def test_send_draft_for_approval_notifies_persists_relevant_fallback(
     appr = await g["approvals"].get_by_turn(turn.id)
     assert appr is not None
     assert appr.evaluation.get(DOCTRINE_RELEVANT_KEY) is True
+
+
+class _StubReadiness:
+    """AutonomyReadinessService stand-in for the draft DM snapshot."""
+
+    def __init__(self, snapshot: object) -> None:
+        self.snapshot = snapshot
+        self.calls = 0
+
+    async def readiness_snapshot(self, vip_id) -> object:
+        self.calls += 1
+        if isinstance(self.snapshot, Exception):
+            raise self.snapshot
+        return self.snapshot
+
+
+@pytest.mark.asyncio
+async def test_draft_snapshot_stored_when_readiness_provider_wired() -> None:
+    """Feature ON: send_draft_for_approval embeds the Autonomía snapshot."""
+    vip = uuid4()
+    snap = {
+        "v": 1,
+        "mins": {"safety_min": 0.9, "doctrine_min": 0.8, "naturalness_min": 0.7},
+        "has_history": False,
+    }
+    stub = _StubReadiness(snap)
+    g = _admin_graph(autonomy_readiness=stub)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, vip_id=vip), _decision(draft="hola"), turn.id
+    )
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None
+    assert appr.evaluation is not None and appr.evaluation.get(AUTONOMY_KEY) == snap
+    draft = g["notifier"].drafts[0]
+    assert draft.evaluation is not None and draft.evaluation.get(AUTONOMY_KEY) == snap
+    # The first draft version also snapshots its own dimension floats.
+    items = draft.evaluation["_draft_versions"]["items"]
+    assert items[0]["evaluation"]["safety"] == 0.95
+
+
+@pytest.mark.asyncio
+async def test_draft_snapshot_absent_without_provider() -> None:
+    """Feature OFF (no provider): no snapshot, no Autonomía section stored."""
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, vip_id=uuid4()), _decision(draft="hola"), turn.id
+    )
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None
+    assert appr.evaluation is not None and AUTONOMY_KEY not in appr.evaluation
+
+
+@pytest.mark.asyncio
+async def test_draft_snapshot_provider_error_does_not_break_flow() -> None:
+    stub = _StubReadiness(RuntimeError("db down"))
+    g = _admin_graph(autonomy_readiness=stub)
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id, vip_id=uuid4()), _decision(draft="hola"), turn.id
+    )
+    assert stub.calls == 1
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None and appr.status == "waiting"
+    assert appr.evaluation is not None and AUTONOMY_KEY not in appr.evaluation
+    assert len(g["notifier"].drafts) == 1

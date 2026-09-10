@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from diana.application.draft_variants import (
+    AUTONOMY_KEY,
     DOCTRINE_NA_LABEL,
     DOCTRINE_RELEVANT_KEY,
     DraftVariantService,
     build_owner_draft_text,
     ensure_versions,
+    localize_reason,
     read_versions,
     resolve_vip_display_name,
     selected_text,
@@ -441,8 +444,10 @@ def test_build_owner_draft_text_appends_doc_no_aplica() -> None:
         evaluation=eval_dict,
     )
     body = build_owner_draft_text(rec)
-    assert f"doc={DOCTRINE_NA_LABEL}" in body
-    assert "doc=0.50" not in body
+    assert "<b>Doctrina:</b> no aplica" in body
+    assert "<b>Doctrina:</b> 0.50" not in body
+    assert "<b>Motivo:</b>" in body
+    assert "<b>Evaluación</b>" in body
 
 
 def test_build_owner_draft_text_appends_doc_number_when_relevant() -> None:
@@ -467,11 +472,13 @@ def test_build_owner_draft_text_appends_doc_number_when_relevant() -> None:
         evaluation=eval_dict,
     )
     body = build_owner_draft_text(rec)
-    assert "doc=0.90" in body
+    assert "<b>Doctrina:</b> 0.90" in body
     assert DOCTRINE_NA_LABEL not in body
 
 
-def test_build_owner_draft_text_omits_doc_when_flag_absent() -> None:
+def test_build_owner_draft_text_shows_doctrine_number_fail_open_when_flag_absent() -> None:
+    # Legacy record without the relevance flag: the number is shown (fail-open,
+    # matching _resolve_doctrine_relevant), never inferred as "no aplica".
     eval_dict = ensure_versions(
         {"naturalness": 0.9, "precision": 0.8, "safety": 0.95, "doctrine": 0.50},
         draft_text="hola",
@@ -487,7 +494,8 @@ def test_build_owner_draft_text_omits_doc_when_flag_absent() -> None:
         evaluation=eval_dict,
     )
     body = build_owner_draft_text(rec)
-    assert "doc=" not in body
+    assert "<b>Doctrina:</b> 0.50" in body
+    assert "<b>Doctrina:</b> no aplica" not in body
 
 
 @pytest.mark.asyncio
@@ -547,3 +555,222 @@ async def test_refresh_owner_message_uses_vip_display_name() -> None:
     assert r.ok and r.token == "nav_ok"
     assert any("Marian" in text for text, _ in notifier.infos)
     assert not any("Propuesta de respuesta para 1" in text for text, _ in notifier.infos)
+
+
+# --- improved owner draft view: Motivo localizado, Evaluación, Autonomía -------
+
+def _dims_eval_dict(
+    *,
+    reason: str = "ok_for_human_review",
+    draft: str = "hola",
+    vip_text: str = "msg del vip",
+    doctrine_relevant: bool = True,
+    **dims: float,
+) -> dict:
+    base: dict[str, Any] = {
+        "naturalness": 0.9,
+        "precision": 0.9,
+        "doctrine": 0.9,
+        "consistency": 0.9,
+        "safety": 0.95,
+        "coverage": 0.9,
+        "empathy": 0.9,
+    }
+    base.update(dims)
+    base[DOCTRINE_RELEVANT_KEY] = doctrine_relevant
+    return ensure_versions(base, draft_text=draft, reason=reason, vip_text=vip_text)
+
+
+def _owner_rec(eval_dict: dict, *, chat_id: int = 123) -> ApprovalRecord:
+    return ApprovalRecord(
+        id=uuid4(),
+        turn_id=uuid4(),
+        chat_id=chat_id,
+        business_connection_id="bc",
+        draft_text="hola",
+        cognitive_summary="ok_for_human_review",
+        evaluation=eval_dict,
+    )
+
+
+def _autonomy_snap(*, has_history: bool = False, **kw: Any) -> dict:
+    snap: dict[str, Any] = {
+        "v": 1,
+        "mins": {"safety_min": 0.9, "doctrine_min": 0.8, "naturalness_min": 0.7},
+        "has_history": has_history,
+        "confidence_min": 0.9,
+        "match_rate_min": 0.95,
+        "window_days": 14,
+    }
+    snap.update(kw)
+    return snap
+
+
+def test_draft_header_shows_italic_version_counter() -> None:
+    rec = _owner_rec(_dims_eval_dict())
+    body = build_owner_draft_text(rec)
+    assert "<b>Propuesta de respuesta para 123</b> — <i>borrador 1/1</i>" in body
+    assert "<b>[usuario]</b>\nmsg del vip" in body
+    assert "<b>[propuesta]</b>\nhola" in body
+
+
+def test_evaluation_section_lists_all_seven_dims_in_spanish() -> None:
+    rec = _owner_rec(_dims_eval_dict())
+    body = build_owner_draft_text(rec)
+    assert "<b>Evaluación</b>" in body
+    for label, value in (
+        ("Naturalidad", "0.90"),
+        ("Precisión", "0.90"),
+        ("Doctrina", "0.90"),
+        ("Consistencia", "0.90"),
+        ("Seguridad", "0.95"),
+        ("Cobertura", "0.90"),
+        ("Empatía", "0.90"),
+    ):
+        assert f"• <b>{label}:</b> {value}" in body
+
+
+def test_evaluation_doctrine_no_aplica_when_not_relevant() -> None:
+    eval_dict = _dims_eval_dict(doctrine_relevant=False, doctrine=0.5)
+    body = build_owner_draft_text(_owner_rec(eval_dict))
+    assert "<b>Doctrina:</b> no aplica" in body
+    assert "<b>Doctrina:</b> 0.50" not in body
+
+
+def test_motivo_localized_in_body() -> None:
+    eval_dict = _dims_eval_dict(reason="autonomous_below_threshold")
+    rec = _owner_rec(eval_dict)
+    rec = ApprovalRecord(
+        id=rec.id,
+        turn_id=rec.turn_id,
+        chat_id=rec.chat_id,
+        business_connection_id="bc",
+        draft_text="hola",
+        cognitive_summary="autonomous_below_threshold",
+        evaluation=eval_dict,
+    )
+    body = build_owner_draft_text(rec)
+    assert "<b>Motivo:</b>" in body
+    assert "no alcanzó los mínimos de autonomía" in body
+
+
+def test_localize_reason_known_unknown_and_sandbox_prefix() -> None:
+    assert "revisión" in localize_reason("ok_for_human_review")
+    assert localize_reason("token_desconocido") == "token_desconocido"
+    out = localize_reason("SANDBOX — profile: p | ok_for_human_review")
+    assert out.startswith("SANDBOX — profile: p |")
+    assert "revisión" in out
+
+
+def test_autonomy_section_absent_without_snapshot() -> None:
+    body = build_owner_draft_text(_owner_rec(_dims_eval_dict()))
+    assert "<b>Autonomía</b>" not in body
+
+
+def test_autonomy_sin_historial_shows_discreet_line() -> None:
+    eval_dict = _dims_eval_dict()
+    eval_dict[AUTONOMY_KEY] = _autonomy_snap(has_history=False)
+    body = build_owner_draft_text(_owner_rec(eval_dict))
+    assert "<b>Autonomía</b>" in body
+    assert "aún sin historial para evaluar autonomía con este contacto" in body
+
+
+def test_autonomy_draft_missing_dim_and_vip_en_camino() -> None:
+    eval_dict = _dims_eval_dict(naturalness=0.6)
+    eval_dict[AUTONOMY_KEY] = _autonomy_snap(
+        has_history=True,
+        best_trust=0.55,
+        trust_rows=[
+            {
+                "category": "emocional",
+                "trust_score": 0.55,
+                "autonomous_count": 1,
+                "correction_count": 4,
+            }
+        ],
+        global_rate=0.9,
+        global_safety_escalations=0,
+        meets_confidence=False,
+        ready=False,
+        auto_send=False,
+    )
+    body = build_owner_draft_text(_owner_rec(eval_dict))
+    assert "<b>Autonomía</b>" in body
+    # parte (a): este borrador no habría ido solo por naturalidad.
+    assert "Este borrador no habría ido solo" in body
+    assert "naturalidad (0.60; se pide 0.70)" in body
+    # parte (b): al VIP le falta confianza y coincidencia.
+    assert "todavía no le alcanza la confianza en conversaciones emocionales" in body
+    assert "la mejor confianza es 0.55 de 0.90" in body
+    assert "La coincidencia de Diana con tus aprobaciones está en 90 % (se pide 95 %)." in body
+
+
+def test_autonomy_vip_ready_waits_activation() -> None:
+    eval_dict = _dims_eval_dict()
+    eval_dict[AUTONOMY_KEY] = _autonomy_snap(
+        has_history=True,
+        best_trust=0.95,
+        trust_rows=[
+            {
+                "category": "informativo",
+                "trust_score": 0.95,
+                "autonomous_count": 6,
+                "correction_count": 0,
+            }
+        ],
+        global_rate=0.96,
+        global_safety_escalations=0,
+        meets_confidence=True,
+        ready=True,
+        auto_send=False,
+    )
+    body = build_owner_draft_text(_owner_rec(eval_dict))
+    assert "sí cumpliría los mínimos para el envío autónomo" in body
+    assert "solo falta activarlo" in body
+
+
+def test_autonomy_vip_ready_and_active() -> None:
+    eval_dict = _dims_eval_dict()
+    eval_dict[AUTONOMY_KEY] = _autonomy_snap(
+        has_history=True,
+        best_trust=0.95,
+        trust_rows=[
+            {
+                "category": "informativo",
+                "trust_score": 0.95,
+                "autonomous_count": 6,
+                "correction_count": 0,
+            }
+        ],
+        global_rate=0.96,
+        global_safety_escalations=0,
+        meets_confidence=True,
+        ready=True,
+        auto_send=True,
+    )
+    body = build_owner_draft_text(_owner_rec(eval_dict))
+    assert "puede enviar sola" in body
+
+
+def test_render_uses_selected_versions_own_dims() -> None:
+    """Per-version eval: old variants keep their own dimension floats."""
+    eval_dict = _dims_eval_dict(naturalness=0.9)
+    items = eval_dict["_draft_versions"]["items"]
+    # Variant 1 was an older draft with low naturalness.
+    items[0]["evaluation"] = {
+        **items[0]["evaluation"],
+        "naturalness": 0.1,
+    }
+    items.append(
+        {
+            "text": "v2",
+            "reason": "r2",
+            "evaluation": {**items[0]["evaluation"], "naturalness": 0.9},
+        }
+    )
+    eval_dict["_draft_versions"]["selected"] = 0
+    body = build_owner_draft_text(_owner_rec(eval_dict))
+    assert "<b>Naturalidad:</b> 0.10" in body
+    eval_dict["_draft_versions"]["selected"] = 1
+    body = build_owner_draft_text(_owner_rec(eval_dict))
+    assert "<b>Naturalidad:</b> 0.90" in body

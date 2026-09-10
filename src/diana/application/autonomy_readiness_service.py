@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
 from diana.application.outcome_log_service import OutcomeLogService
 from diana.application.ports import VipStore
+from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 
 logger = logging.getLogger("diana.application")
 
@@ -102,6 +104,7 @@ class AutonomyReadinessService:
         match_rate_min: float = 0.95,
         recommendation_enabled: bool = False,
         clock: Any | None = None,
+        autonomous_mins: Callable[[], tuple[float, float, float]] | None = None,
     ) -> None:
         self._outcome = outcome
         self._trust = trust
@@ -111,6 +114,21 @@ class AutonomyReadinessService:
         self._match_rate_min = float(match_rate_min)
         self._recommendation_enabled = bool(recommendation_enabled)
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._autonomous_mins = autonomous_mins
+
+    def _current_mins(self) -> dict[str, float]:
+        """Live autonomous minimums (safety, doctrine, naturalness)."""
+        if self._autonomous_mins is not None:
+            try:
+                safety, doctrine, naturalness = self._autonomous_mins()
+                return {
+                    "safety_min": float(safety),
+                    "doctrine_min": float(doctrine),
+                    "naturalness_min": float(naturalness),
+                }
+            except Exception:
+                logger.debug("autonomy_mins_read_failed", exc_info=True)
+        return dict(DEFAULT_AUTONOMOUS_THRESHOLDS)
 
     # ------------------------------------------------------------------
     # evidence
@@ -205,6 +223,86 @@ class AutonomyReadinessService:
             if readiness.vip_id == vip_id:
                 return readiness
         return None
+
+    async def readiness_snapshot(self, vip_id: UUID | None) -> dict[str, Any]:
+        """Point-in-time §8 snapshot for the owner draft DM (Autonomía section).
+
+        Same math as ``_by_vip``/``recommendation`` but shaped JSON-friendly and
+        cheap to store inside ``approval.evaluation[AUTONOMY_KEY]`` once at
+        approval creation (re-renders never re-query). Never raises: a DB fault
+        degrades to ``has_history=False``.
+
+        ``has_history=True`` only when the VIP is an active, measured VIP (has
+        at least one trust row); otherwise the draft shows the discreet
+        "aún sin historial" line.
+        """
+        mins = self._current_mins()
+        base: dict[str, Any] = {
+            "v": 1,
+            "mins": mins,
+            "has_history": False,
+            "confidence_min": self._confidence_min,
+            "match_rate_min": self._match_rate_min,
+            "window_days": self._window_days,
+        }
+        if vip_id is None:
+            return base
+        try:
+            vips = await self._vips.list_active()
+            vip = next((v for v in vips if getattr(v, "id", None) == vip_id), None)
+            if vip is None:
+                return base
+            all_rows = await self._trust.list_all()
+            rows = [r for r in all_rows if getattr(r, "vip_id", None) == vip_id]
+            if not rows:
+                return base
+            trust_view = [
+                {
+                    "category": r.turn_category,
+                    "trust_score": float(r.trust_score),
+                    "autonomous_count": int(r.autonomous_count or 0),
+                    "correction_count": int(r.correction_count or 0),
+                }
+                for r in rows
+            ]
+            best = max((float(r.trust_score) for r in rows), default=0.0)
+            summary = await self._outcome.coincidence_summary(
+                window_days=self._window_days
+            )
+            comparativas = await self._outcome.list_comparativas(
+                window_days=self._window_days, limit=500
+            )
+            safety = sum(
+                1
+                for r in comparativas
+                if getattr(r, "shadow_reason", None) == "safety_below_threshold"
+            )
+            rate = summary.get("rate")
+            rate_f = float(rate) if rate is not None else None
+            meets_confidence = best >= self._confidence_min
+            ready = bool(
+                meets_confidence
+                and rate_f is not None
+                and rate_f >= self._match_rate_min
+                and safety == 0
+            )
+            return {
+                **base,
+                "has_history": True,
+                "best_trust": best,
+                "trust_rows": trust_view,
+                "global_rate": rate_f,
+                "global_safety_escalations": safety,
+                "meets_confidence": meets_confidence,
+                "ready": ready,
+                "auto_send": bool(getattr(vip, "auto_send", False)),
+            }
+        except Exception:
+            logger.exception(
+                "autonomy_snapshot_failed",
+                extra={"vip_id": str(vip_id) if vip_id is not None else None},
+            )
+            return base
 
     async def activate(self, vip_id: UUID) -> tuple[bool, str]:
         """Enable ``vips.auto_send`` ONLY when the §8 gate is met.

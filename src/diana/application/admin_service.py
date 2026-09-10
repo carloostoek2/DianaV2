@@ -31,6 +31,7 @@ from diana.application.ports import (
     VipStore,
 )
 from diana.application.draft_variants import (
+    AUTONOMY_KEY,
     DOCTRINE_NA_LABEL,
     DOCTRINE_RELEVANT_KEY,
     ensure_versions,
@@ -187,6 +188,9 @@ class AdminService:
         feature_autonomy_readiness_enabled: bool = False,
         director: Any | None = None,
         gray_zone: GrayZoneServicePort | None = None,
+        # Fila 4 draft DM: readiness snapshot provider for the "Autonomía"
+        # section (None → section omitted, byte-compatible with flag OFF).
+        autonomy_readiness: Any | None = None,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -215,6 +219,7 @@ class AdminService:
         # Doctrine rule→regen: Director + GrayZone (wired post-construct when needed).
         self._director = director
         self._gray_zone = gray_zone
+        self._autonomy_readiness_svc = autonomy_readiness
 
     def set_director(self, director: Any) -> None:
         """Wire CognitiveDirector after composition builds it (draft regen / doctrine)."""
@@ -303,6 +308,7 @@ class AdminService:
             reason=decision.reason or "",
             vip_text=turn.text,
         )
+        await self._store_autonomy_snapshot(turn, eval_dict)
         record = ApprovalRecord(
             id=uuid4(),
             turn_id=turn_id,
@@ -340,7 +346,7 @@ class AdminService:
                 evaluation_summary=_eval_summary(
                     decision, doctrine_relevant=relevant
                 ),
-                evaluation=decision.evaluation.model_dump(mode="json"),
+                evaluation=eval_dict,
                 business_connection_id=bc,
                 reply_markup_spec={
                     "actions": ["approve", "correct", "escalate"],
@@ -359,6 +365,29 @@ class AdminService:
             "draft_for_approval",
             extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
         )
+
+    async def _store_autonomy_snapshot(
+        self, turn: IncomingTurn, eval_dict: dict[str, Any]
+    ) -> None:
+        """Embed the Autonomía snapshot into the approval evaluation (best-effort).
+
+        Only runs when a readiness provider is wired (recommendation feature
+        on). A fault never breaks the approval flow; without a provider or with
+        a failure the section is simply absent/fallback on the draft.
+        """
+        svc = self._autonomy_readiness_svc
+        if svc is None:
+            return
+        try:
+            snapshot = await svc.readiness_snapshot(turn.vip_id)
+        except Exception:
+            logger.exception(
+                "autonomy_snapshot_store_failed",
+                extra={"turn_id": str(turn.turn_id if hasattr(turn, "turn_id") else None)},
+            )
+            return
+        if isinstance(snapshot, dict):
+            eval_dict[AUTONOMY_KEY] = snapshot
 
     async def create_supervised_delivery_from_gray_zone(
         self,

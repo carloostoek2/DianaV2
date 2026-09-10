@@ -7,6 +7,7 @@ is required. ``draft_text`` always mirrors the selected variant for approve.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -26,13 +27,65 @@ from diana.cognitive.models import (
     TurnStatus,
     is_turn_status_terminal,
 )
+from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 
 logger = logging.getLogger("diana.application")
 
 VERSIONS_KEY = "_draft_versions"
 DOCTRINE_RELEVANT_KEY = "_doctrine_relevant"
 DOCTRINE_NA_LABEL = "no aplica"
+AUTONOMY_KEY = "_autonomy"
 MAX_DRAFT_VARIANTS = 10
+
+# Canonical order of the stored evaluation dimensions.
+_DIM_KEYS: tuple[str, ...] = (
+    "naturalness",
+    "precision",
+    "doctrine",
+    "consistency",
+    "safety",
+    "coverage",
+    "empathy",
+)
+
+# Owner-facing Spanish labels for the evaluation section (display only).
+DIMENSION_LABELS_ES: tuple[tuple[str, str], ...] = (
+    ("naturalness", "Naturalidad"),
+    ("precision", "Precisión"),
+    ("doctrine", "Doctrina"),
+    ("consistency", "Consistencia"),
+    ("safety", "Seguridad"),
+    ("coverage", "Cobertura"),
+    ("empathy", "Empatía"),
+)
+
+# Decision.reason tokens that can reach an approval draft → clear Spanish.
+# Machine tokens stay stable for stores/parsers (escalation_labels pattern).
+APPROVAL_REASON_LABELS: dict[str, str] = {
+    "ok_for_human_review": (
+        "El envío autónomo está apagado: el turno pasa por tu revisión."
+    ),
+    "autonomous_below_threshold": (
+        "Diana no envió sola: el borrador no alcanzó los mínimos de autonomía."
+    ),
+    "autonomous_ok": "Diana habría enviado sola, pero este VIP aún no está activado.",
+    "safety_below_threshold": (
+        "Se frenó por seguridad: el contenido no se considera seguro para enviar."
+    ),
+    "risk_high": "Se frenó por riesgo alto en la conversación.",
+    "frustracion_directa": "El VIP está molesto: conviene tu revisión.",
+    "doctrine_not_found": "Faltaba una regla de negocio y se consultó la doctrina.",
+    "gray_zone_resolved_by_doctrine": "Doctrina resuelta: borrador generado con la regla.",
+    "startup_re_notify": "Recordatorio de un borrador pendiente de aprobación.",
+}
+
+# Turn categories (stored ASCII) → Spanish for the non-technical Autonomía text.
+_TURN_CATEGORY_ES: dict[str, str] = {
+    "fatico": "de cortesía",
+    "informativo": "informativas",
+    "emocional": "emocionales",
+    "sensible": "sensibles",
+}
 
 # Fires when a regeneration run actually starts (after the soft-lock), so the
 # owner sees live "Regenerando" feedback; the caller replaces it on success.
@@ -51,6 +104,19 @@ class VariantNavResult:
     toast: str = ""
 
 
+def _dims_subset(mapping: dict[str, Any] | None) -> dict[str, float]:
+    """Floats of the 7 evaluation dims present in a stored dict (JSON-safe)."""
+    out: dict[str, float] = {}
+    for key in _DIM_KEYS:
+        try:
+            value = float(mapping.get(key))  # type: ignore[union-attr]
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if math.isfinite(value):
+            out[key] = value
+    return out
+
+
 def ensure_versions(
     evaluation: dict[str, Any] | None,
     *,
@@ -65,8 +131,12 @@ def ensure_versions(
         items = existing["items"]
         if items:
             return base
+    first = {"text": draft_text, "reason": reason or ""}
+    per_version = _dims_subset(base)
+    if per_version:
+        first["evaluation"] = per_version
     base[VERSIONS_KEY] = {
-        "items": [{"text": draft_text, "reason": reason or ""}],
+        "items": [first],
         "selected": 0,
         "regenerating": False,
         "vip_text": vip_text,
@@ -113,7 +183,9 @@ def build_owner_draft_text(
 ) -> str:
     """Reconstruct the owner draft DM body from an approval record.
 
-    Mirrors the on-message body so void/audit paths show the same text the
+    Single source of truth is ``record.evaluation`` (dims, doctrine relevance,
+    ``_draft_versions`` and — when the readiness feature was on at creation —
+    the ``_autonomy`` snapshot), so void/audit paths show the same body the
     owner last saw. VIP name falls back to chat_id when the caller does not
     resolve a display name.
     """
@@ -121,32 +193,12 @@ def build_owner_draft_text(
     vip_text = v.get("vip_text") or ""
     items = v["items"] or [{"text": record.draft_text}]
     selected = v["selected"] if items else 0
-    summary = ""
-    if record.evaluation:
-        e = record.evaluation
-        try:
-            summary = (
-                f"nat={float(e.get('naturalness', 0)):.2f} "
-                f"prec={float(e.get('precision', 0)):.2f} "
-                f"saf={float(e.get('safety', 0)):.2f}"
-            )
-        except (TypeError, ValueError):
-            summary = ""
-        else:
-            if DOCTRINE_RELEVANT_KEY in e:
-                if e.get(DOCTRINE_RELEVANT_KEY) is False:
-                    summary += f" doc={DOCTRINE_NA_LABEL}"
-                else:
-                    try:
-                        summary += f" doc={float(e.get('doctrine', 0)):.2f}"
-                    except (TypeError, ValueError):
-                        pass
     return format_draft_owner_text(
         vip_name=vip_name or str(record.chat_id),
         vip_text=vip_text,
         draft_text=record.draft_text,
         reason=record.cognitive_summary or "",
-        evaluation_summary=summary,
+        evaluation=record.evaluation,
         version_index=selected,
         version_count=len(items),
     )
@@ -169,35 +221,252 @@ async def resolve_vip_display_name(
     return None
 
 
+def localize_reason(raw: str) -> str:
+    """Decision.reason token → clear Spanish owner-facing text.
+
+    Preserves a ``SANDBOX — profile: x | <token>`` prefix (display-only) and
+    localizes the trailing token. Unknown tokens fall back to the raw value.
+    """
+    if not raw:
+        return ""
+    text = raw.strip()
+    if " | " in text:
+        prefix, _, tail = text.rpartition(" | ")
+        localized = APPROVAL_REASON_LABELS.get(tail.strip(), tail.strip())
+        return f"{prefix} | {localized}"
+    return APPROVAL_REASON_LABELS.get(text, text)
+
+
+def _selected_dimensions(
+    evaluation: dict[str, Any] | None,
+) -> tuple[dict[str, float], bool | None]:
+    """Dims of the SELECTED draft version plus the turn's doctrine relevance.
+
+    A per-version item may carry its own ``evaluation`` floats (new drafts);
+    legacy items fall back to the top-level dims. Doctrine relevance is a turn
+    constant (same across regens) and lives at the top level.
+    """
+    dims = _dims_subset(evaluation)
+    relevant = evaluation.get(DOCTRINE_RELEVANT_KEY) if evaluation else None
+    v = read_versions(evaluation)
+    items = v["items"]
+    if items and isinstance(items[v["selected"]], dict):
+        item_eval = items[v["selected"]].get("evaluation")
+        if isinstance(item_eval, dict):
+            dims = {**dims, **_dims_subset(item_eval)}
+    return dims, relevant
+
+
+def _render_evaluation_rows(evaluation: dict[str, Any] | None) -> list[str]:
+    """One HTML row per evaluation dimension shown (bold label, value 0..1)."""
+    dims, relevant = _selected_dimensions(evaluation)
+    rows: list[str] = []
+    for key, label in DIMENSION_LABELS_ES:
+        if key == "doctrine":
+            if relevant is False:
+                rows.append(f"• <b>{label}:</b> {DOCTRINE_NA_LABEL}")
+            elif key in dims:
+                rows.append(f"• <b>{label}:</b> {dims[key]:.2f}")
+            # Missing value + unknown/absent relevance → no row (fail-open shows
+            # the number only when a value exists; "no aplica" only when known).
+            continue
+        if key in dims:
+            rows.append(f"• <b>{label}:</b> {dims[key]:.2f}")
+    return rows
+
+
+def _mins(autonomy: dict[str, Any]) -> dict[str, float]:
+    raw = autonomy.get("mins")
+    if isinstance(raw, dict):
+        fallback = dict(DEFAULT_AUTONOMOUS_THRESHOLDS)
+        fallback.update(
+            {k: float(v) for k, v in raw.items() if isinstance(v, (int, float))}
+        )
+        return fallback
+    return dict(DEFAULT_AUTONOMOUS_THRESHOLDS)
+
+
+def _draft_mins_text(
+    evaluation: dict[str, Any] | None, autonomy: dict[str, Any]
+) -> str:
+    """Part (a): does THIS draft meet the autonomous-send minimums? Non-technical."""
+    dims, relevant = _selected_dimensions(evaluation)
+    if "safety" not in dims and "naturalness" not in dims:
+        return ""
+    mins = _mins(autonomy)
+    missing: list[str] = []
+    for dim_key, min_key, label in (
+        ("safety", "safety_min", "seguridad"),
+        ("naturalness", "naturalness_min", "naturalidad"),
+    ):
+        if dim_key in dims and dims[dim_key] < mins[min_key]:
+            missing.append(f"{label} ({dims[dim_key]:.2f}; se pide {mins[min_key]:.2f})")
+    if relevant is not False and "doctrine" in dims:
+        if dims["doctrine"] < mins["doctrine_min"]:
+            missing.append(
+                f"doctrina ({dims['doctrine']:.2f}; se pide {mins['doctrine_min']:.2f})"
+            )
+    if missing:
+        return "Este borrador no habría ido solo: le falta " + ", ".join(missing) + "."
+    return "Este borrador sí cumpliría los mínimos para el envío autónomo."
+
+
+def _category_es(category: Any) -> str:
+    return _TURN_CATEGORY_ES.get(str(category), f"«{category}»")
+
+
+def _join_es(items: list[str]) -> str:
+    """Join Spanish words with the last separated by 'y'/'e' (2+ items)."""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    *head, tail = items
+    if tail.startswith(("i", "hi")):
+        return ", ".join(head) + " e " + tail
+    return ", ".join(head) + " y " + tail
+
+
+def _vip_history_text(autonomy: dict[str, Any]) -> str:
+    """Part (b): how far THIS VIP is from autonomy, in plain Spanish."""
+    if not autonomy.get("has_history"):
+        return "Para este VIP: aún sin historial para evaluar autonomía con este contacto."
+    conf_min = float(autonomy.get("confidence_min") or 0.9)
+    bullets: list[str] = []
+    if not autonomy.get("meets_confidence"):
+        low = [
+            r
+            for r in autonomy.get("trust_rows") or []
+            if isinstance(r, dict)
+            and _eval_float(r.get("trust_score")) is not None
+            and float(r["trust_score"]) < conf_min
+        ]
+        cats = (
+            "conversaciones "
+            + _join_es(sorted({_category_es(r.get("category")) for r in low}))
+            if low
+            else "este tipo de conversaciones"
+        )
+        best = autonomy.get("best_trust")
+        if best is not None and _eval_float(best) is not None:
+            anchor = f" (la mejor confianza es {float(best):.2f} de {conf_min:.2f})"
+        else:
+            anchor = f" (se pide {conf_min:.2f})"
+        bullets.append(
+            f"• A Diana todavía no le alcanza la confianza en {cats} para responder "
+            f"sola sin que la revises{anchor}; le faltan turnos bien resueltos sin corrección."
+        )
+    rate = autonomy.get("global_rate")
+    match_min = float(autonomy.get("match_rate_min") or 0.95)
+    if rate is None or _eval_float(rate) is None or float(rate) < match_min:
+        label = (
+            "todavía no hay suficientes casos"
+            if _eval_float(rate) is None
+            else f"está en {round(float(rate) * 100)} %"
+        )
+        bullets.append(
+            f"• La coincidencia de Diana con tus aprobaciones {label} "
+            f"(se pide {round(match_min * 100)} %)."
+        )
+    safety = int(autonomy.get("global_safety_escalations") or 0)
+    if safety > 0:
+        bullets.append(
+            f"• Hay {safety} turno(s) reciente(s) que se frenaron por seguridad."
+        )
+    if bullets:
+        return "Para este VIP: todavía no está listo para que Diana responda sola.\n" + "\n".join(
+            bullets
+        )
+    if autonomy.get("auto_send"):
+        return (
+            "Para este VIP: cumple las condiciones y el envío autónomo está "
+            "activado — puede enviar sola."
+        )
+    return (
+        "Para este VIP: ya cumple las condiciones para el envío autónomo; "
+        "solo falta activarlo."
+    )
+
+
+def _render_autonomy(evaluation: dict[str, Any] | None) -> str:
+    """Autonomía section body ("" when the readiness feature was off / absent)."""
+    if not isinstance(evaluation, dict):
+        return ""
+    autonomy = evaluation.get(AUTONOMY_KEY)
+    if not isinstance(autonomy, dict):
+        return ""
+    blocks: list[str] = []
+    draft_part = _draft_mins_text(evaluation, autonomy)
+    if draft_part:
+        blocks.append(draft_part)
+    vip_part = _vip_history_text(autonomy)
+    if vip_part:
+        blocks.append(vip_part)
+    return "\n".join(blocks)
+
+
+def _eval_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def format_draft_owner_text(
     *,
     vip_name: str,
     vip_text: str,
     draft_text: str,
     reason: str,
-    evaluation_summary: str,
+    evaluation: dict[str, Any] | None,
     version_index: int,
     version_count: int,
 ) -> str:
-    """Plain-ish HTML body for owner draft (matches notifier style)."""
+    """HTML body for the owner draft DM (parse_mode="HTML").
+
+    Reads everything renderable from ``evaluation`` (dims, doctrine relevance,
+    per-version items, ``_autonomy`` snapshot) so the first notify and the
+    regen/nav/void re-renders are byte-identical for the same record. Legacy
+    records with ``evaluation=None`` degrade to header + blocks only.
+    """
 
     def esc(s: str) -> str:
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+    effective_reason = reason or _selected_reason(evaluation)
+    localized = localize_reason(effective_reason)
+
     header = (
         f"<b>Propuesta de respuesta para {esc(vip_name)}</b>"
-        f" — borrador {version_index + 1}/{version_count}\n"
+        f" — <i>borrador {version_index + 1}/{version_count}</i>"
     )
-    body = (
-        f"{header}"
-        f"[usuario]: {esc(vip_text)}\n"
-        f"[propuesta]: {esc(draft_text)}"
-    )
-    if reason:
-        body += f"\n\nMotivo: {esc(reason)}"
-    if evaluation_summary:
-        body += f"\nEvaluación: {esc(evaluation_summary)}"
-    return body
+    lines = [
+        header,
+        "",
+        "<b>[usuario]</b>",
+        esc(vip_text) or "",
+        "",
+        "<b>[propuesta]</b>",
+        esc(draft_text) or "",
+    ]
+    if localized:
+        lines += ["", f"<b>Motivo:</b> {esc(localized)}"]
+    eval_rows = _render_evaluation_rows(evaluation)
+    if eval_rows:
+        lines += ["", "<b>Evaluación</b>", *eval_rows]
+    autonomy_block = _render_autonomy(evaluation)
+    if autonomy_block:
+        lines += ["", "<b>Autonomía</b>", autonomy_block]
+    return "\n".join(lines)
+
+
+def _selected_reason(evaluation: dict[str, Any] | None) -> str:
+    """Fallback reason from the selected draft version ("" when unavailable)."""
+    v = read_versions(evaluation)
+    items = v["items"]
+    if not items or not isinstance(items[v["selected"]], dict):
+        return ""
+    return str(items[v["selected"]].get("reason") or "")
 
 
 class DraftVariantService:
@@ -368,7 +637,15 @@ class DraftVariantService:
 
             v = read_versions(live.evaluation)
             items = list(v["items"])
-            items.append({"text": draft, "reason": decision.reason or ""})
+            new_item: dict[str, Any] = {
+                "text": draft,
+                "reason": decision.reason or "",
+            }
+            if decision.evaluation is not None:
+                per_version = _dims_subset(decision.evaluation.model_dump(mode="json"))
+                if per_version:
+                    new_item["evaluation"] = per_version
+            items.append(new_item)
             selected = len(items) - 1
             eval_dict = dict(live.evaluation or {})
             # Keep latest evaluation dims when present
@@ -559,8 +836,11 @@ class DraftVariantService:
 
 
 __all__ = [
+    "APPROVAL_REASON_LABELS",
+    "AUTONOMY_KEY",
     "DOCTRINE_NA_LABEL",
     "DOCTRINE_RELEVANT_KEY",
+    "DIMENSION_LABELS_ES",
     "MAX_DRAFT_VARIANTS",
     "VERSIONS_KEY",
     "DraftVariantService",
@@ -569,6 +849,7 @@ __all__ = [
     "build_owner_draft_text",
     "ensure_versions",
     "format_draft_owner_text",
+    "localize_reason",
     "read_versions",
     "resolve_vip_display_name",
     "selected_text",
