@@ -21,7 +21,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from diana.cognitive.models import Comprehension, TurnCategory
-from diana.cognitive.template_gate import looks_like_pure_greeting_text
+from diana.cognitive.template_gate import (
+    looks_like_checkin_text,
+    looks_like_pure_greeting_text,
+)
 
 logger = logging.getLogger("diana.application")
 
@@ -282,10 +285,60 @@ def make_pure_greeting_cut(
     return _cut
 
 
+
+def is_checkin_phatic(
+    text: str,
+    comprehension: dict[str, Any] | Comprehension | None,
+    *,
+    classifier: TurnClassifier,
+) -> bool:
+    """True when Director may cut after Analyst for bienestar/dia check-in.
+
+    Contract: intent == ``saludar`` AND text looks like a short check-in
+    (not pure Holis saludo) AND TurnClassifier category is ``fatico`` AND
+    ``is_confident``. Fail open (False) otherwise. Substance / sales / long
+    content never pass ``looks_like_checkin_text``.
+    """
+    if isinstance(comprehension, Comprehension):
+        raw_intent = comprehension.intent
+    elif isinstance(comprehension, dict):
+        raw_intent = comprehension.get("intent")
+    else:
+        return False
+    intent = str(raw_intent).strip().lower() if raw_intent is not None else ""
+    if intent != "saludar":
+        return False
+    if looks_like_pure_greeting_text(text):
+        return False
+    if not looks_like_checkin_text(text):
+        return False
+    classification = classifier.classify(text, comprehension)
+    return (
+        classification.category == "fatico"
+        and classifier.is_confident(classification)
+    )
+
+
+def make_checkin_cut(
+    classifier: TurnClassifier,
+) -> Callable[[str, dict[str, Any] | Comprehension | None], bool]:
+    """Bind a TurnClassifier into a Director-injectable check-in predicate."""
+
+    def _cut(
+        text: str,
+        comprehension: dict[str, Any] | Comprehension | None,
+    ) -> bool:
+        return is_checkin_phatic(text, comprehension, classifier=classifier)
+
+    return _cut
+
+
 __all__ = [
     "CLASSIFIER_CONFIDENCE_MIN",
     "TurnClassification",
     "TurnClassifier",
     "is_pure_greeting",
     "make_pure_greeting_cut",
+    "is_checkin_phatic",
+    "make_checkin_cut",
 ]

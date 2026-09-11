@@ -55,7 +55,11 @@ from diana.application.recovery_startup import (
 from diana.application.sandbox import SandboxService
 from diana.application.sandbox_knowledge import SandboxKnowledgeAugmenter
 from diana.application.staging_service import StagingService
-from diana.application.turn_classifier import TurnClassifier, make_pure_greeting_cut
+from diana.application.turn_classifier import (
+    TurnClassifier,
+    make_checkin_cut,
+    make_pure_greeting_cut,
+)
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.trust_budget_service import (
@@ -75,7 +79,11 @@ from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.director import ANALYST_HISTORY_LIMIT, CognitiveDirector
 from diana.cognitive.repetition_guard import RepetitionGuard
-from diana.cognitive.template_gate import TemplateGate, TemplateRule
+from diana.cognitive.template_gate import (
+    PhaticLightContext,
+    TemplateGate,
+    TemplateRule,
+)
 from diana.cognitive.embedding import EmbeddingService
 from diana.application.j4_triggers import IA_TEMPLATE
 
@@ -874,6 +882,7 @@ def build_app(
     # Single TurnClassifier instance (Director pure-greeting cut + orchestrator shadow).
     classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)
     pure_greeting_cut = make_pure_greeting_cut(classifier)
+    checkin_cut = make_checkin_cut(classifier)
 
     # H6: IA-only pre-pipeline TemplateGate; pure saludo is post-Analyst cut.
     deteccion_ia = TemplateRule(
@@ -900,6 +909,104 @@ def build_app(
         "Hola 😊",
         "Qué tal",
     ]
+    # Check-in phatic lane: light context (mood / recent_trend / 1 safe fact).
+    # Fail-soft — any miss/error → empty PhaticLightContext (plain pool RNG).
+    class _PhaticContextAdapter:
+        async def get(self, turn):  # type: ignore[no-untyped-def]
+            mood_low = None
+            recent_trend = None
+            safe_fact = None
+            try:
+                vip_id = getattr(turn, "vip_id", None)
+                if vip_id is None:
+                    return PhaticLightContext()
+                if vip_mood_state_repo is not None:
+                    try:
+                        mood_row = await vip_mood_state_repo.get_by_vip(vip_id)
+                    except Exception:
+                        mood_row = None
+                    if mood_row is not None:
+                        warm = float(
+                            getattr(mood_row, "axis_warm_distant", 0.0) or 0.0
+                        )
+                        energy = float(
+                            getattr(mood_row, "axis_energy", 0.0) or 0.0
+                        )
+                        mood_low = bool(warm < -0.25 or energy < -0.25)
+                if vip_profile_repo is not None:
+                    try:
+                        prof = await vip_profile_repo.get_by_vip(vip_id)
+                    except Exception:
+                        prof = None
+                    if prof is not None:
+                        sensitive = {
+                            str(s).strip().lower()
+                            for s in (getattr(prof, "sensitivities", None) or [])
+                            if s is not None and str(s).strip()
+                        }
+                        trend = getattr(prof, "recent_trend", None) or {}
+                        if isinstance(trend, dict) and trend:
+                            # Pick a short non-sensitive stringish value as hint.
+                            for key, val in trend.items():
+                                label = str(key).strip().lower()
+                                if label in sensitive:
+                                    continue
+                                text = (
+                                    val
+                                    if isinstance(val, str)
+                                    else (
+                                        val.get("label")
+                                        if isinstance(val, dict)
+                                        else str(val)
+                                    )
+                                )
+                                text_s = str(text or "").strip()
+                                if text_s and len(text_s) <= 40:
+                                    recent_trend = text_s
+                                    break
+                        traits = getattr(prof, "stable_traits", None) or {}
+                        if isinstance(traits, dict) and traits:
+                            for key, val in traits.items():
+                                label = str(key).strip().lower()
+                                if label in sensitive:
+                                    continue
+                                if any(
+                                    bad in label
+                                    for bad in (
+                                        "salud",
+                                        "dinero",
+                                        "ex",
+                                        "familia",
+                                        "trauma",
+                                        "documento",
+                                        "direccion",
+                                        "dirección",
+                                    )
+                                ):
+                                    continue
+                                text = (
+                                    val
+                                    if isinstance(val, str)
+                                    else (
+                                        val.get("label") or val.get("value")
+                                        if isinstance(val, dict)
+                                        else None
+                                    )
+                                )
+                                text_s = str(text or "").strip()
+                                if text_s and 2 <= len(text_s) <= 40:
+                                    safe_fact = text_s
+                                    break
+            except Exception:
+                return PhaticLightContext()
+            return PhaticLightContext(
+                mood_low=mood_low,
+                recent_trend=recent_trend,
+                safe_memory_fact=safe_fact,
+            )
+
+    phatic_context_provider = _PhaticContextAdapter()
+
     template_gate = TemplateGate(rules=[deteccion_ia])
     director = CognitiveDirector(
         analyst=Analyst(provider),
@@ -930,6 +1037,8 @@ def build_app(
         saludo_response_pool=saludo_response_pool,
         # Real plantilla_saludo auto-delivery kill-switch (not phatic shadow).
         phatic_auto_send=settings.feature_phatic_auto_send,
+        checkin_cut=checkin_cut,
+        phatic_context_provider=phatic_context_provider,
         # Supervised naturalness redraft min (Director pre-Decider; not send gate).
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
         knowledge_augmenter=knowledge_augmenter,

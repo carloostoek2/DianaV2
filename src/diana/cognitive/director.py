@@ -36,7 +36,14 @@ from diana.cognitive.models import (
 )
 from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.repetition_guard import RepetitionGuard
-from diana.cognitive.template_gate import TemplateGate, TemplateRule
+from diana.cognitive.template_gate import (
+    TemplateGate,
+    TemplateRule,
+    PhaticLightContext,
+    checkin_reason_for,
+    detect_phatic_subtype,
+    pick_checkin_reply,
+)
 from diana.cognitive.planner import Planner
 
 from diana.cognitive.ports import (
@@ -44,6 +51,8 @@ from diana.cognitive.ports import (
     MessageHistoryPort,
     NoOpTurnStatusSink,
     PersonaCatalogProvider,
+    CheckinCutPort,
+    PhaticContextPort,
     PureGreetingCutPort,
     RecentIntentsPort,
     TraceStore,
@@ -194,9 +203,12 @@ class CognitiveDirector:
         pure_greeting_cut: PureGreetingCutPort | None = None,
         saludo_response_pool: Sequence[str] | None = None,
         saludo_rng: Any = random,
-        # When True, pure-greeting cut emits action=send; else approve (supervised).
+        # When True, pure-greeting / check-in cuts emit action=send; else approve.
         # Injected bool — never import Settings inside cognitive.
         phatic_auto_send: bool = False,
+        # Post-Analyst check-in cut (bienestar/dia pools; optional light context).
+        checkin_cut: CheckinCutPort | None = None,
+        phatic_context_provider: PhaticContextPort | None = None,
         # Supervised naturalness redraft min; not autonomous send gate.
         naturalness_min: float | None = None,
         knowledge_augmenter: KnowledgeAugmenter | None = None,
@@ -223,6 +235,8 @@ class CognitiveDirector:
         self._saludo_response_pool = saludo_response_pool
         self._saludo_rng = saludo_rng
         self._phatic_auto_send = bool(phatic_auto_send)
+        self._checkin_cut = checkin_cut
+        self._phatic_context_provider = phatic_context_provider
         self._naturalness_min = (
             float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"])
             if naturalness_min is None
@@ -404,6 +418,49 @@ class CognitiveDirector:
                     await self._store(turn_id, "generated_text", draft)
                     await self._store(turn_id, "decision", decision)
                     return decision
+
+        # Post-Analyst check-in cut: pools + light context; send when phatic_auto_send.
+        # Runs only when pure-greeting cut did not fire. Never Holis pool.
+        if self._checkin_cut is not None:
+            if self._checkin_cut(turn.text, comprehension):
+                subtype = detect_phatic_subtype(turn.text) or "checkin_bienestar"
+                if subtype.startswith("checkin_"):
+                    ctx = PhaticLightContext()
+                    provider = self._phatic_context_provider
+                    if provider is not None:
+                        try:
+                            got = await provider.get(turn)
+                            if isinstance(got, PhaticLightContext):
+                                ctx = got
+                        except Exception:
+                            logger.exception(
+                                "phatic_context_provider_failed — fail-soft empty context"
+                            )
+                            ctx = PhaticLightContext()
+                    draft = pick_checkin_reply(
+                        subtype,
+                        context=ctx,
+                        rng=self._saludo_rng,
+                    )
+                    if draft and str(draft).strip():
+                        action = "send" if self._phatic_auto_send else "approve"
+                        reason = checkin_reason_for(subtype)
+                        logger.info(
+                            "⚡ Plantilla check-in post-Analyst — %s subtype=%s action=%s",
+                            reason,
+                            subtype,
+                            action,
+                        )
+                        decision = Decision(
+                            action=action,
+                            reason=reason,
+                            evaluation=_early_exit_evaluation(),
+                            draft_text=draft,
+                            mode_restriction_applied=None,
+                        )
+                        await self._store(turn_id, "generated_text", draft)
+                        await self._store(turn_id, "decision", decision)
+                        return decision
 
         # H4: 3+ consecutive same intent → Decision-only escalate (no Planner+).
         if self._recent_intents is not None and self._repetition_guard is not None:

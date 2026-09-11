@@ -135,6 +135,8 @@ def make_director(
     naturalness_min: float | None = None,
     persona_catalog_provider: Any | None = None,
     phatic_auto_send: bool = False,
+    checkin_cut: Any | None = None,
+    phatic_context_provider: Any | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -150,6 +152,10 @@ def make_director(
         director_kwargs["persona_catalog_provider"] = persona_catalog_provider
     if saludo_rng is not None:
         director_kwargs["saludo_rng"] = saludo_rng
+    if checkin_cut is not None:
+        director_kwargs["checkin_cut"] = checkin_cut
+    if phatic_context_provider is not None:
+        director_kwargs["phatic_context_provider"] = phatic_context_provider
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),

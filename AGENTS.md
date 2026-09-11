@@ -359,26 +359,32 @@ consult_doctrine → freeze → [propuesta opcional] → send_doctrine_query a l
     incluido). No descongelar en confirm/resolve previo al send.
 ```
 
-4.17 Saludo puro VIP (FEATURE_PHATIC_AUTO_SEND)
+4.17 Saludo / check-in fático VIP (FEATURE_PHATIC_AUTO_SEND)
 
 ```
 business_message VIP
   → Analyst (siempre; el saludo ya no se corta antes de entender)
-  → Corte a plantilla SOLO si las tres se cumplen:
-      1. intent == saludar
-      2. el texto es un saludo puro corto (keyword hola/holis/buenas/qué tal,
-         máximo 4 palabras, y sin resto de contenido: solo vocativo opcional)
-      3. clasificador fático confiable
-  → Si sí: pool rotativo de plantillas cortas (p. ej. Holis / Holaa / Qué tal)
-      → flag ON: send directo al VIP (sin cola de la dueña)
-      → flag OFF: approve (cola de la dueña)
-  → Si no (pedido, check-in "qué tal tu día", "dale", "ok", hola+contenido):
-      pipeline completo
+  → Corte a plantilla SOLO si intent == saludar + clasificador fático confiable
+    y el texto encaja en UNA de estas formas cortas:
+      A) saludo_puro — keyword hola/holis/buenas/qué tal, ≤4 palabras,
+         solo vocativo opcional → pool Holis / Holaa / Qué tal
+      B) checkin_bienestar — "cómo estás" / "qué tal estás" / similares,
+         sin sustancia extra → pool corto de bienestar
+      C) checkin_dia — "qué tal tu día" / "cómo te fue hoy" / similares,
+         sin sustancia extra → pool corto de día
+  → Pools + contexto ligero (mood / recent_trend / 1 hecho no sensible):
+      mood bajo → variante un poco más suave; hecho seguro → nod cálido
+      (sin interpolar el hecho ni inventar). Si falta contexto → RNG del pool.
+  → flag ON: send directo al VIP (sin cola de la dueña; mismas puertas de
+     Atención / frozen / paused que el saludo)
+  → flag OFF: approve (cola de la dueña)
+  → Si hay sustancia de más (ventas, drama, pedido, texto largo) → pipeline
 ```
 
-Invariante: que el Analista marque `saludar` NO basta. Sin keyword de saludo,
-con más de 4 palabras, o con resto no-vocativo tras el keyword (p. ej.
-"como estás", "tu día"), nunca se usa la plantilla.
+Invariante: que el Analista marque `saludar` NO basta. El saludo puro NUNCA
+responde check-ins con Holis. Check-ins usan sus propios pools. Sin keyword /
+patrón reconocido, o con sustancia extra, siempre pipeline completo. Sin LLM
+en este carril (aún).
 
 4.18 Círculo de aprendizaje de la Fila 4 (FEATURE_AUTONOMY_QUALITY_ENABLED)
 

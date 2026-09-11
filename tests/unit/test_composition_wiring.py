@@ -485,7 +485,9 @@ def test_composition_repetition_guard_disabled(_comp_src: str) -> None:
 
 def test_composition_template_gate_wired(_comp_src: str) -> None:
     """H6: IA-only TemplateGate; pure saludo via Director injectables."""
-    assert "from diana.cognitive.template_gate import TemplateGate, TemplateRule" in _comp_src
+    assert "from diana.cognitive.template_gate import" in _comp_src
+    assert "TemplateGate" in _comp_src and "TemplateRule" in _comp_src
+    assert "PhaticLightContext" in _comp_src
     assert 'id="deteccion_ia"' in _comp_src
     assert "template_gate=" in _comp_src
     assert "TemplateGate(rules=" in _comp_src
@@ -506,6 +508,9 @@ def test_composition_template_gate_wired(_comp_src: str) -> None:
     assert "Holaa, qué tal?" not in _comp_src
     assert "Hola amor, cómo vas?" not in _comp_src
     assert "make_pure_greeting_cut" in _comp_src
+    assert "make_checkin_cut" in _comp_src
+    assert "checkin_cut=" in _comp_src
+    assert "phatic_context_provider=" in _comp_src
     # Single TurnClassifier constructed before Director (reuse for cut + shadow).
     assert "TurnClassifier(confidence_min=" in _comp_src
     classifier_pos = _comp_src.find("classifier = TurnClassifier(")

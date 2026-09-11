@@ -48,6 +48,7 @@ from diana.cognitive.exceptions import (
     GeneratorEmptyOutputError,
     TurnSupersededError,
 )
+from diana.cognitive.template_gate import is_phatic_template_reason
 from diana.cognitive.models import (
     Decision,
     IncomingTurn,
@@ -1703,7 +1704,7 @@ class TurnOrchestrator:
         if (
             delivered
             and self._autonomous_mode is not None
-            and pending_deliver.decision.reason != "plantilla_saludo"
+            and not is_phatic_template_reason(pending_deliver.decision.reason)
         ):
             await self._autonomous_mode.notify_if_needed(
                 turn_id,
@@ -2506,7 +2507,7 @@ class TurnOrchestrator:
                 )
                 raise
         elif decision.action == "send":
-            if decision.reason == "plantilla_saludo":
+            if is_phatic_template_reason(decision.reason):
                 job = await self._prepare_phatic_template_send(
                     turn_id=turn_id,
                     turn_ctx=turn_ctx,
@@ -2562,7 +2563,7 @@ class TurnOrchestrator:
         decision: Decision,
         incoming: VipInboundMessage,
     ) -> _AutonomousDeliverJob | None:
-        """Deliver pure plantilla_saludo without AMS/trust gates.
+        """Deliver phatic plantilla (saludo/check-in) without AMS/trust gates.
 
         Fail-closed on Atención / frozen / paused / empty draft / no behavior.
         Flag off or Atención demotes to owner approval draft.

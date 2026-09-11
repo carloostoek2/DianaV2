@@ -88,6 +88,32 @@ class PureGreetingCutPort(Protocol):
 
 
 @runtime_checkable
+class CheckinCutPort(Protocol):
+    """Post-Analyst check-in predicate (bienestar / dia) for Director.
+
+    Same injection pattern as PureGreetingCutPort. Must not fire on pure
+    saludo (Holis pool) or on substance beyond check-in.
+    """
+
+    def __call__(
+        self,
+        text: str,
+        comprehension: Comprehension | dict[str, Any],
+    ) -> bool: ...
+
+
+@runtime_checkable
+class PhaticContextPort(Protocol):
+    """Best-effort light context for check-in pool pick (mood/trend/fact).
+
+    Fail-soft: adapters should catch errors and return empty context.
+    Cognitive must not import application; composition binds the adapter.
+    """
+
+    async def get(self, turn: IncomingTurn) -> Any: ...
+
+
+@runtime_checkable
 class LLMProvider(Protocol):
     """Swapable LLM I/O surface used by Analyst, Generator, Evaluator."""
 
@@ -333,6 +359,8 @@ __all__ = [
     "NoOpTurnStatusSink",
     "PersonaCatalogProvider",
     "PureGreetingCutPort",
+    "CheckinCutPort",
+    "PhaticContextPort",
     "RecentIntentsPort",
     "Retriever",
     "TraceStore",
