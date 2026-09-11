@@ -366,15 +366,19 @@ business_message VIP
   → Analyst (siempre; el saludo ya no se corta antes de entender)
   → Corte a plantilla SOLO si las tres se cumplen:
       1. intent == saludar
-      2. el texto es un saludo corto (hola/holis/buenas/qué tal, máximo 4 palabras)
+      2. el texto es un saludo puro corto (keyword hola/holis/buenas/qué tal,
+         máximo 4 palabras, y sin resto de contenido: solo vocativo opcional)
       3. clasificador fático confiable
-  → Si sí: plantilla fija "Holis 😁"
+  → Si sí: pool rotativo de plantillas cortas (p. ej. Holis / Holaa / Qué tal)
       → flag ON: send directo al VIP (sin cola de la dueña)
       → flag OFF: approve (cola de la dueña)
-  → Si no (pedido, pregunta, "dale", "ok", hola+contenido): pipeline completo
+  → Si no (pedido, check-in "qué tal tu día", "dale", "ok", hola+contenido):
+      pipeline completo
 ```
 
-Invariante: que el Analista marque `saludar` NO basta. Sin keyword de saludo o con más de 4 palabras, nunca se usa la plantilla.
+Invariante: que el Analista marque `saludar` NO basta. Sin keyword de saludo,
+con más de 4 palabras, o con resto no-vocativo tras el keyword (p. ej.
+"como estás", "tu día"), nunca se usa la plantilla.
 
 4.18 Círculo de aprendizaje de la Fila 4 (FEATURE_AUTONOMY_QUALITY_ENABLED)
 

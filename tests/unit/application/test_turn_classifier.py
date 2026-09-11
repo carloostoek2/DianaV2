@@ -300,6 +300,15 @@ def test_is_pure_greeting_rejects_analyst_false_positive(clf: TurnClassifier) ->
     )
 
 
+def test_is_pure_greeting_rejects_checkin_even_if_saludar(
+    clf: TurnClassifier,
+) -> None:
+    """Check-ins must not take plantilla_saludo even when Analyst says saludar."""
+    saludar = _comp(intent="saludar")
+    for text in ("Que tal como estas?", "Que tal tu día", "Hola como estas"):
+        assert is_pure_greeting(text, saludar, classifier=clf) is False, text
+
+
 def test_is_pure_greeting_rejects_ambiguous_and_short(clf: TurnClassifier) -> None:
     amb = _comp(intent="saludar")
     assert (

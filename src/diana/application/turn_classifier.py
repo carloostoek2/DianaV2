@@ -244,9 +244,10 @@ def is_pure_greeting(
 ) -> bool:
     """True when Director may cut after Analyst for pure VIP saludo.
 
-    Contract (PLAN A1 + 2026-08-17 lock): intent == ``saludar`` AND the raw
-    text looks like a short greeting (keyword + ≤4 words) AND TurnClassifier
-    category is ``fatico`` AND ``is_confident``. Fail open (False) otherwise.
+    Contract (PLAN A1 + 2026-08-17 lock + 2026-09 residual lock): intent ==
+    ``saludar`` AND the raw text looks like a pure short greeting (keyword +
+    ≤4 words + no non-vocative residual) AND TurnClassifier category is
+    ``fatico`` AND ``is_confident``. Fail open (False) otherwise.
     Thanks/goodbye phatic intents are excluded by the saludar gate.
     """
     if isinstance(comprehension, Comprehension):

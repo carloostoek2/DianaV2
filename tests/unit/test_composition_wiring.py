@@ -498,7 +498,11 @@ def test_composition_template_gate_wired(_comp_src: str) -> None:
     assert "TemplateGate(rules=[deteccion_ia, saludo_constante])" not in _comp_src
     assert "pure_greeting_cut=" in _comp_src
     assert "saludo_response_pool=" in _comp_src
-    assert 'saludo_response_pool = ["Holis 😁"]' in _comp_src
+    assert "saludo_response_pool = [" in _comp_src
+    assert '"Holis 😁"' in _comp_src
+    # Variation: more than one short phatic template (not a single canned Holis).
+    assert '"Holaa"' in _comp_src
+    assert '"Qué tal"' in _comp_src
     assert "Holaa, qué tal?" not in _comp_src
     assert "Hola amor, cómo vas?" not in _comp_src
     assert "make_pure_greeting_cut" in _comp_src

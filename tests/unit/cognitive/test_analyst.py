@@ -267,6 +267,8 @@ def test_system_prompt_saludar_only_for_pure_short_greeting() -> None:
     system = analyst_mod._SYSTEM
     assert "Use intent=saludar ONLY" in system
     assert "never saludar" in system
+    assert "qué tal tu día" in system
+    assert "check-in" in system
 
 
 def test_system_prompt_mentions_persona_voice_needs() -> None:

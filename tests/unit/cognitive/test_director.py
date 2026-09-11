@@ -1807,6 +1807,57 @@ async def test_h6_empty_saludo_pool_fails_open_to_full_pipeline(pool: list[str])
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_h6_checkin_question_does_not_take_saludo_pool() -> None:
+    """Regression: 'Que tal como estas?' must not canned-reply Holis."""
+    llm = FakeLLM(
+        structured_responses=[_saludo_comprehension(), _profile(safety=0.5)],
+        text_responses=["Real check-in reply"],
+    )
+    director, trace, _ = make_director(
+        llm,
+        template_gate=_h6_template_gate(),
+        pure_greeting_cut=_pure_greeting_cut_using_tc(),
+        saludo_response_pool=list(SALUDO_POOL),
+        saludo_rng=random.Random(0),
+        phatic_auto_send=True,
+    )
+    _wire_stage_spies(director)
+
+    turn = _turn(text="Que tal como estas?")
+    decision = await director.handle_turn(turn)
+
+    assert decision.reason != "plantilla_saludo"
+    assert decision.draft_text == "Real check-in reply"
+    assert trace.get(turn.turn_id, "plan") is not None
+    director._planner.plan.assert_called()  # type: ignore[attr-defined]
+    director._generator.generate.assert_called()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_h6_saludo_pool_variation_stays_in_pool() -> None:
+    """Pure greetings draw from the rotating pool (not a single canned line)."""
+    pool = ["Holis 😁", "Holaa", "Hey", "Qué tal"]
+    drafts: set[str] = set()
+    for seed in range(12):
+        llm = FakeLLM(
+            structured_responses=[_saludo_comprehension()],
+            text_responses=["should-not-generate"],
+        )
+        director, _, _ = make_director(
+            llm,
+            template_gate=_h6_template_gate(),
+            pure_greeting_cut=_pure_greeting_cut_using_tc(),
+            saludo_response_pool=list(pool),
+            saludo_rng=random.Random(seed),
+        )
+        decision = await director.handle_turn(_turn(text="Hola"))
+        assert decision.reason == "plantilla_saludo"
+        assert decision.draft_text in pool
+        drafts.add(decision.draft_text)
+    assert len(drafts) >= 2
+
+
 async def test_h6_saludo_con_afecto_carinosa_still_cuts() -> None:
     """A1: saludo_con_afecto (emotion=cariñosa, conf 0.7 == min) still pure-cuts."""
     llm = FakeLLM(

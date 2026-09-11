@@ -45,6 +45,32 @@ PURE_GREETING_PATTERNS = (
     "que tal",
 )
 
+# Allowed leftover tokens after stripping the greeting keyword (affection /
+# vocatives only). Anything else ("como", "estas", "tu", "día", fillers)
+# means the turn is a check-in or mixed content — fail open to full pipeline.
+_PURE_GREETING_EXTRA_TOKENS = frozenset(
+    {
+        "amor",
+        "cielo",
+        "bebe",
+        "bebé",
+        "corazon",
+        "corazón",
+        "hermosa",
+        "hermoso",
+        "linda",
+        "lindo",
+        "bonita",
+        "bonito",
+        "guapa",
+        "guapo",
+        "reina",
+        "rey",
+        "vida",
+        "mi",
+    }
+)
+
 
 def _kw_hit(kw: str, lower_text: str) -> bool:
     """Match keyword as a whole-token sequence on lowercased text.
@@ -58,16 +84,41 @@ def _kw_hit(kw: str, lower_text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(k)}(?!\w)", lower_text) is not None
 
 
+def _longest_greeting_keyword(lower_text: str) -> str | None:
+    """Return the longest PURE_GREETING_PATTERNS hit, or None."""
+    hits = [kw for kw in PURE_GREETING_PATTERNS if _kw_hit(kw, lower_text)]
+    if not hits:
+        return None
+    return max(hits, key=len)
+
 
 def looks_like_pure_greeting_text(text: str) -> bool:
-    """True when inbound text is a short greeting (keyword + ≤4 words)."""
+    """True when inbound text is a pure short greeting.
+
+    Contract: known greeting keyword, ≤4 words, and after removing that
+    keyword the only leftover tokens are optional vocatives (amor/cielo/…).
+    Check-ins like ``Que tal como estas?`` / ``Que tal tu día`` keep the
+    keyword + word-count shape but must NOT take the canned saludo pool.
+    """
     if not text or not str(text).strip():
         return False
     words = str(text).strip().split()
     if len(words) > PURE_GREETING_MAX_WORDS:
         return False
     lower = str(text).lower()
-    return any(_kw_hit(kw, lower) for kw in PURE_GREETING_PATTERNS)
+    matched = _longest_greeting_keyword(lower)
+    if matched is None:
+        return False
+    residual = re.sub(
+        rf"(?<!\w){re.escape(matched)}(?!\w)",
+        " ",
+        lower,
+        count=1,
+    )
+    # Drop punctuation / emoji; keep letters (incl. Spanish accents).
+    residual = re.sub(r"[^\w\sáéíóúüñ]", " ", residual, flags=re.UNICODE)
+    residual_words = [w for w in residual.split() if w]
+    return all(w in _PURE_GREETING_EXTRA_TOKENS for w in residual_words)
 
 
 class TemplateGate:

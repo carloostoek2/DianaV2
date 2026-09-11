@@ -78,11 +78,29 @@ def test_saludo_rejects_long_hola_message() -> None:
 def test_looks_like_pure_greeting_text_matches_gate_shape() -> None:
     assert looks_like_pure_greeting_text("Hola") is True
     assert looks_like_pure_greeting_text("holis") is True
+    assert looks_like_pure_greeting_text("qué tal") is True
+    assert looks_like_pure_greeting_text("Hola amor") is True
     assert looks_like_pure_greeting_text("dale") is False
     assert (
         looks_like_pure_greeting_text("Hola, tengo una pregunta sobre el contenido")
         is False
     )
+
+
+def test_looks_like_pure_greeting_rejects_checkin_questions() -> None:
+    """Regression: keyword+≤4 words is not enough for canned Holis.
+
+    Production false positives (2026-09-11 VIP): check-ins matched ``que tal``
+    and auto-sent the saludo pool instead of the full pipeline.
+    """
+    for text in (
+        "Que tal como estas?",
+        "Que tal tu día",
+        "Qué tal tu dia",
+        "Hola como estas",
+        "hola a b c",
+    ):
+        assert looks_like_pure_greeting_text(text) is False, text
 
 
 def test_deteccion_ia_matches_probe_and_renders_exact() -> None:

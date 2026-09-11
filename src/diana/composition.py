@@ -890,7 +890,16 @@ def build_app(
         response_pool=[IA_TEMPLATE],
         reason="plantilla_deteccion_ia",
     )
-    saludo_response_pool = ["Holis 😁"]
+    # Small rotating pool (español neutro). Director picks with saludo_rng;
+    # keep entries short/phatic-only — this path can auto-send without AMS.
+    saludo_response_pool = [
+        "Holis 😁",
+        "Holaa",
+        "Hey",
+        "Holis",
+        "Hola 😊",
+        "Qué tal",
+    ]
     template_gate = TemplateGate(rules=[deteccion_ia])
     director = CognitiveDirector(
         analyst=Analyst(provider),

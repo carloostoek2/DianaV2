@@ -340,7 +340,7 @@ deteccion_ia = TemplateRule(
 template_gate = TemplateGate(rules=[deteccion_ia])
 
 # Pool de saludo (inyectado al Director; NO va al TemplateGate de producción)
-saludo_response_pool = ["Holis 😁"]
+saludo_response_pool = ["Holis 😁", "Holaa", "Hey", "Holis", "Hola 😊", "Qué tal"]
 
 # Predicado de corte (composition adapta un único TurnClassifier → PureGreetingCutPort)
 # intent == "saludar"
