@@ -10,7 +10,10 @@ from aiogram.types import Chat, Message, User
 
 from diana.application.memory import InMemoryVipStore
 from diana.application.ports import PromoTriggerRecord
-from diana.telegram.middlewares.auth import AuthMiddleware
+from diana.telegram.middlewares.auth import (
+    ATENCION_CYCLE_WINDOW_DAYS,
+    AuthMiddleware,
+)
 
 
 def _biz_msg(
@@ -54,11 +57,13 @@ class _CyclesStore:
     def __init__(self, active: bool = True) -> None:
         self._active = active
         self.starts: list[int] = []
+        self.is_active_calls: list[tuple] = []
 
     async def start_if_absent(self, chat_id: int, *, now) -> None:
         self.starts.append(chat_id)
 
     async def is_active(self, chat_id: int, *, since, now) -> bool:
+        self.is_active_calls.append((chat_id, since, now))
         return self._active
 
     async def close_payment(self, chat_id: int, *, now) -> None:
@@ -806,8 +811,32 @@ async def test_training_and_sandbox_do_not_set_marker() -> None:
     assert data2.get("atencion_limit_counted") is None
 
 
+@pytest.mark.asyncio
+async def test_general_mode_uses_atencion_cycle_window_days() -> None:
+    """F4: auth gate passes since = now - ATENCION_CYCLE_WINDOW_DAYS to is_active."""
+    from datetime import timedelta
+
+    vips = InMemoryVipStore()
+    promo = _promo_mock(trigger=None)
+    cycles = _CyclesStore(active=True)
+    mw = AuthMiddleware(
+        vips=vips,
+        promo=promo,
+        feature_promo_enabled=True,
+        feature_general_mode_enabled=True,
+        atencion_cycles=cycles,
+    )
+    handler = AsyncMock(return_value="ok")
+    data: dict = {"business_connection_id": "bc-1"}
+    await mw(handler, _biz_msg(111, text="hola"), data)
+    assert cycles.is_active_calls, "is_active should have been called"
+    _chat_id, since, now = cycles.is_active_calls[0]
+    assert now - since == timedelta(days=ATENCION_CYCLE_WINDOW_DAYS)
+    assert ATENCION_CYCLE_WINDOW_DAYS == 1
+
+
 # ---------------------------------------------------------------------------
-# F4 atencion cycle lifecycle (first promo opens 30d window; payment closes)
+# F4 atencion cycle lifecycle (first promo opens 1d window; payment closes)
 # ---------------------------------------------------------------------------
 
 

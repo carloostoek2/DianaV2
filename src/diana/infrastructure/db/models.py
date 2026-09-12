@@ -717,10 +717,10 @@ class AtencionCycle(Base):
     """Chat-level atencion lifecycle (F4): starts on first promo delivery.
 
     The cycle is what enables the atencion pipeline for a non-VIP chat:
-    ``started_at`` anchors a 30-day linear window (started once, never
-    extended by re-triggers), and ``closed_at``/``close_reason`` terminate
-    the cycle early when payment intent is confirmed (owner delivers
-    manually afterwards).
+    ``started_at`` anchors a 1-day linear window via ATENCION_CYCLE_WINDOW_DAYS
+    (started once, never extended by re-triggers), and ``closed_at``/
+    ``close_reason`` terminate the cycle early when payment intent is
+    confirmed (owner delivers manually afterwards).
     """
 
     __tablename__ = "atencion_cycles"

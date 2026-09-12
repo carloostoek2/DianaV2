@@ -1158,7 +1158,8 @@ class DailyMessageLimitStore(Protocol):
 
 @runtime_checkable
 class AtencionCycleStore(Protocol):
-    """Chat-level atencion lifecycle (F4): first promo opens a 30-day window.
+    """Chat-level atencion lifecycle (F4): first promo opens a 1-day window
+    (length via ATENCION_CYCLE_WINDOW_DAYS in auth middleware).
 
     ``start_if_absent`` is idempotent: a re-trigger of the promo never resets
     ``started_at`` (linear window, never extended). ``is_active`` requires the

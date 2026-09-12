@@ -41,7 +41,7 @@
 
 ### Fase 4 — Atención al cliente general ✅ (activa)
 - `FEATURE_GENERAL_MODE_ENABLED=true` en `.env`.
-- Ciclo de vida por chat: trigger "Quiero más información 🔥" → promo automática sin LLM → chat habilitado por **30 días lineales** (el re-trigger no extiende).
+- Ciclo de vida por chat: trigger "Quiero más información 🔥" → promo automática sin LLM → chat habilitado por **1 día lineal** vía `ATENCION_CYCLE_WINDOW_DAYS` (el re-trigger no extiende).
 - **El pago cierra el ciclo** (aviso a la dueña + el chat sale del proceso; la entrega es manual de la dueña).
 - Límite diario 20 mensajes/chat (CDMX), fail-open si falla la base.
 - Atención supervisada (los borradores pasan por aprobación de la dueña).

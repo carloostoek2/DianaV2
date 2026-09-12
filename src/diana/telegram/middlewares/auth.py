@@ -23,9 +23,10 @@ from diana.application.ports import (
 
 logger = logging.getLogger("diana.telegram")
 
-# F4: linear 30-day atencion window anchored at the FIRST promo delivery.
+# F4: linear 1-day atencion window anchored at the FIRST promo delivery.
 # Re-triggers of the promo never extend it (product decision, owner).
-ATENCION_CYCLE_WINDOW_DAYS = 30
+# Window length is configurable via ATENCION_CYCLE_WINDOW_DAYS.
+ATENCION_CYCLE_WINDOW_DAYS = 1
 
 
 class PromoMatcher(Protocol):
@@ -168,8 +169,9 @@ class AuthMiddleware(BaseMiddleware):
                             },
                         )
                         # F4: a successfully delivered promo opens the chat's
-                        # atencion cycle (linear 30-day window, never extended
-                        # by re-triggers — start_if_absent is idempotent).
+                        # atencion cycle (linear 1-day window via
+                        # ATENCION_CYCLE_WINDOW_DAYS, never extended by
+                        # re-triggers — start_if_absent is idempotent).
                         if status == "sent" and self._atencion_cycles is not None:
                             await self._atencion_cycles.start_if_absent(
                                 chat_id, now=datetime.now(UTC)
@@ -202,7 +204,8 @@ class AuthMiddleware(BaseMiddleware):
                 # F4 general mode gate: non-VIP + flag ON + OPEN atencion cycle
                 # → atencion channel, same deterministic path as training mode
                 # but permanent and only for chats that received the promo
-                # (first promo opens a linear 30-day window; payment closes it).
+                # (first promo opens a linear 1-day window via
+                # ATENCION_CYCLE_WINDOW_DAYS; payment closes it).
                 if self._feature_general_mode_enabled:
                     active = False
                     if self._atencion_cycles is not None:

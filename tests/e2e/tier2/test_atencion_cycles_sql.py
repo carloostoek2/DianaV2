@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from diana.infrastructure.db.repositories.atencion_cycles import (
     SqlAtencionCycleStore,
 )
+from diana.telegram.middlewares.auth import ATENCION_CYCLE_WINDOW_DAYS
 
 _CHAT = 988322
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
@@ -46,19 +47,19 @@ async def test_cycle_start_is_active_and_close(engine) -> None:
     try:
         # absent → not active
         assert (
-            await store.is_active(_CHAT, since=_NOW - timedelta(days=30), now=_NOW)
+            await store.is_active(_CHAT, since=_NOW - timedelta(days=ATENCION_CYCLE_WINDOW_DAYS), now=_NOW)
             is False
         )
         # start opens the cycle
         await store.start_if_absent(_CHAT, now=_NOW)
         assert (
-            await store.is_active(_CHAT, since=_NOW - timedelta(days=30), now=_NOW)
+            await store.is_active(_CHAT, since=_NOW - timedelta(days=ATENCION_CYCLE_WINDOW_DAYS), now=_NOW)
             is True
         )
         # payment closes it → no longer active
         await store.close_payment(_CHAT, now=_NOW)
         assert (
-            await store.is_active(_CHAT, since=_NOW - timedelta(days=30), now=_NOW)
+            await store.is_active(_CHAT, since=_NOW - timedelta(days=ATENCION_CYCLE_WINDOW_DAYS), now=_NOW)
             is False
         )
     finally:
@@ -76,22 +77,22 @@ async def test_cycle_start_idempotent_keeps_original_start(engine) -> None:
         later = _NOW + timedelta(days=5)
         await store.start_if_absent(_CHAT, now=later)
         # Window semantics: the CALLER defines the window via `since`
-        # (auth gate passes since = now - 30d). At now = original_start + 32d
-        # the ORIGINAL window (expires +30d) is expired — and it would NOT be
-        # if the re-trigger had extended it (extended expiry would be +35d).
+        # (auth gate passes since = now - WINDOW). At now = original_start + WINDOW+2d
+        # the ORIGINAL window is expired — and it would NOT be if the
+        # re-trigger had extended it.
         # is_active False here proves the re-trigger never extended the window.
-        later_far = _NOW + timedelta(days=32)
+        later_far = _NOW + timedelta(days=ATENCION_CYCLE_WINDOW_DAYS + 2)
         assert (
             await store.is_active(
                 _CHAT,
-                since=later_far - timedelta(days=30),
+                since=later_far - timedelta(days=ATENCION_CYCLE_WINDOW_DAYS),
                 now=later_far,
             )
             is False
         )
         # ... but still active inside the ORIGINAL window
         assert (
-            await store.is_active(_CHAT, since=_NOW - timedelta(days=30), now=later)
+            await store.is_active(_CHAT, since=_NOW - timedelta(days=ATENCION_CYCLE_WINDOW_DAYS), now=later)
             is True
         )
     finally:
@@ -109,7 +110,7 @@ async def test_cycle_close_payment_idempotent(engine) -> None:
         # closing twice must not raise and must keep the cycle closed
         await store.close_payment(_CHAT, now=_NOW + timedelta(minutes=5))
         assert (
-            await store.is_active(_CHAT, since=_NOW - timedelta(days=30), now=_NOW)
+            await store.is_active(_CHAT, since=_NOW - timedelta(days=ATENCION_CYCLE_WINDOW_DAYS), now=_NOW)
             is False
         )
     finally:

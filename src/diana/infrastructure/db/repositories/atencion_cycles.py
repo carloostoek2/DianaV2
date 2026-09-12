@@ -1,9 +1,10 @@
 """SqlAtencionCycleStore — per-chat atencion lifecycle (F4).
 
 One row per non-VIP chat that received the promo. ``started_at`` anchors the
-30-day linear window; ``closed_at``/``close_reason`` terminate the cycle early
-on payment intent (owner delivers manually afterwards). Re-triggers of the
-promo never reset ``started_at`` (``ON CONFLICT DO NOTHING``).
+1-day linear window (caller passes ``since = now - ATENCION_CYCLE_WINDOW_DAYS``);
+``closed_at``/``close_reason`` terminate the cycle early on payment intent
+(owner delivers manually afterwards). Re-triggers of the promo never reset
+``started_at`` (``ON CONFLICT DO NOTHING``).
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ class SqlAtencionCycleStore:
     async def is_active(
         self, chat_id: int, *, since: datetime, now: datetime
     ) -> bool:
-        """True when the 30-day window is open and the cycle is not closed."""
+        """True when the 1-day window (via caller ``since``) is open and not closed."""
         stmt = (
             select(AtencionCycle.chat_id)
             .where(
