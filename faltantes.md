@@ -1,6 +1,6 @@
 # Faltantes del sistema — catálogo consolidado
 
-> Único punto de consulta de lo que **no está implementado o no está activo** en DianaV2 (2026-09-10).
+> Único punto de consulta de lo que **no está implementado o no está activo** en DianaV2 (2026-09-14).
 > Lo que no aparece aquí está implementado y activo. Consolidado desde `docs/ESTADO-PROYECTO.md`,
 > `docs/INFORME_AUDITORIA.md`, `docs/SPEC-FASE5.md`, `docs/SPEC-EVOLUCION-AGENTE.md`, `docs/SPEC-FEEDBACK.md`
 > y `docs/ANEXO-H.md`. Sin lenguaje de implementación futura: cada ítem reporta su estado actual
@@ -85,7 +85,6 @@ Durante el backfill, el historial completo del chat del VIP se envía al proveed
 
 ## 6. Operativo / despliegue
 
-- **Migraciones 030–036 en repo; producción más allá de 029 — VERIFY.** En el repo: cadena Alembic **001→036** (`036_correction_severity.py`), incluye 030 `turn_outcome_log`, 031 `profile_synthesis_queue`, 032–036. Última verificación documentada en prod: **001→029** (2026-08-22). **No afirmar** que 030–036 estén aplicadas en producción — pendiente de verificación operativa. Fuente: `docs/ESTADO-PROYECTO.md`.
 - **`needs_examples` — pendiente de investigación (operativo).** La capacidad está cableada en el código (Analyst → `planner.py` → `knowledge.examples` → evaluator); falta confirmar en los traces de producción que se activa en turnos reales y que el pool de H8 genera retrievals efectivos. No es una brecha de implementación. Fuente: `docs/ANEXO-H.md`.
 - **Acuerdo con el proveedor de IA (DeepSeek):** pendiente de gestión de la dueña — guía en `docs/ACUERDO-PROVEEDOR-LLM.md`. No bloquea al bot (el masking ya está activo).
 
@@ -93,7 +92,7 @@ Durante el backfill, el historial completo del chat del VIP se envía al proveed
 
 ## Referencias
 
-- `docs/ESTADO-PROYECTO.md` — estado actual del sistema y pendientes reales (2026-09-10).
+- `docs/ESTADO-PROYECTO.md` — estado actual del sistema y pendientes reales (2026-09-14).
 - `docs/INFORME_AUDITORIA.md` — auditoría de alineamiento código ↔ REQUERIMIENTOS.md (161 reqs).
 - `docs/SPEC-FASE5.md` — perfil de VIP con memoria; pendientes de privacidad y dedup (§12).
 - `docs/SPEC-EVOLUCION-AGENTE.md` — evolución de agente (v1.2); fase 4 diferida y retención de datos.

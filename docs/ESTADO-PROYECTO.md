@@ -1,10 +1,10 @@
 # Estado del proyecto — Diana Business Bot (DianaV2)
 
-**Fecha:** 2026-09-10
+**Fecha:** 2026-09-14
 **Rama:** main · **Head:** `5ff0b77` (Feat/vista borrador autonomia #3).
 **Bot en producción:** Fase 6 (link Lucien→Diana) desplegada y verificada E2E — bot-to-bot DM, aceptación real pasada. Flags `FEATURE_LINK_ENABLED` y `FEATURE_QUALITY_FEEDBACK_ENABLED` activos en `.env`. `GLOBAL_MODE=supervised`; `FEATURE_AUTONOMOUS_MODE=false`. <!-- VERIFY: estado del deploy real (Railway+EC2) no re-verificado en esta actualización -->
 **Base de datos (repo):** Alembic head `036_correction_severity` (cadena 001→036; incluye 030 turn_outcome_log, 031 profile_synthesis_queue, 032–036).
-**Base de datos (producción):** **VERIFICADO 2026-08-22: 001→029 aplicadas.** Migraciones **030–036: VERIFY** (presentes en repo; **no** afirmar aplicadas en prod hasta comprobar en la base real). Snapshot 2026-08-22 también confirmó datos reales (`link_events`, `examples.quality='gold'`, `ephemeral_events`).
+**Base de datos (producción):** **VERIFICADO 2026-09-14: head `036_correction_severity`** (`alembic_version`; cadena 001→036 aplicadas en prod). Confirmadas tablas 030+ (`turn_outcome_log` con `correction_severity`, `profile_synthesis_queue`, etc.). Snapshot previo 2026-08-22 ya había confirmado datos reales (`link_events`, `examples.quality='gold'`, `ephemeral_events`) al head 029.
 
 **Trabajo reciente (sep 2026, código en `main`):**
 - Vista de borrador con evaluación/autonomía para la dueña (PR #3, `5ff0b77`).
@@ -90,7 +90,7 @@ El comentario del `.env` lo explicita: *"Turning on only measures/records"*. Ver
 (3 rondas c/u); suite unit 2441 passed / 2 pre-existentes (`test_sql_repo_shapes.py`, no atribuibles); e2e DB verde
 con Docker. **Datos shadow reales en producción (verif. 2026-08-11):** `turn_category_log` 48, `emotional_signal_log` 29,
 `vip_profile` 9 (versiones hasta v7), `vip_profile_history` 9, `vip_mood_state` 8, `vip_trust_budget` 2 (fático, score ~0.18).
-**Cerrado desde entonces:** cola durable `synthesis_queue` (031 + `SqlProfileSynthesisQueueRepo`) y ficha perfil EA-06 (historial). Pendientes de autonomía/autoenvío — ver §3. Apply prod de 030–036: **VERIFY**.
+**Cerrado desde entonces:** cola durable `synthesis_queue` (031 + `SqlProfileSynthesisQueueRepo`) y ficha perfil EA-06 (historial). Pendientes de autonomía/autoenvío — ver §3. Apply prod de 030–036: **verificado 2026-09-14** (head `036_correction_severity`).
 
 ### Fase 6 — Vínculo entre bots (Lucien → Diana) para aviso de expulsión VIP ✅ (IMPLEMENTADO Y ACTIVO — 2026-08-21)
 Spec `docs/SPEC-FASE6.md` v1.0 (REQ-LNK-01..10). Two-repo feature: cuando **Lucien** expulsa a un suscriptor
@@ -158,7 +158,7 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 ### Otros
 - Flag `FEATURE_MEMORY_ENABLED=true` (gate del wiring de memoria; alineado también en `system_config` — antes la semilla 003 quedó en `false`).
 - Flag `FEATURE_CONTEXT_ENABLED=true` (2026-08-21): activa el store de contexto interpretado (REQ-MEM-06).
-- Migraciones en repo: **001–036** (`036_correction_severity`). En producción: **verificadas al head 029** (2026-08-22); **030–036: VERIFY**.
+- Migraciones en repo: **001–036** (`036_correction_severity`). En producción: **verificadas al head `036_correction_severity`** (2026-09-14; antes 001→029 el 2026-08-22).
 - Persona en español neutro. CHANGELOG.md vigente.
 - Auditoría de documentación 2026-08-16: wiki + estado alineados al código post-11-ago. Informes en `.planning/quick/docs-audit-2026-08-16/`.
 
@@ -181,7 +181,7 @@ Menú unificado como superficie principal. Progreso en vivo al aprobar (visto �
 
 ## 3. Qué falta (pendiente real)
 
-> Pendientes de implementación y operación al **2026-09-10**. Catálogo detallado: `faltantes.md`. Ningún ítem está "en curso de implementación" salvo lo indicado; se listan porque aún no existen, están deshabilitados, diferidos o pendientes de verificación. Referencia de IDs: `docs/INFORME_AUDITORIA.md` y `REQUERIMIENTOS.md`.
+> Pendientes de implementación y operación al **2026-09-14**. Catálogo detallado: `faltantes.md`. Ningún ítem está "en curso de implementación" salvo lo indicado; se listan porque aún no existen, están deshabilitados, diferidos o pendientes de verificación. Referencia de IDs: `docs/INFORME_AUDITORIA.md` y `REQUERIMIENTOS.md`.
 
 ### Requerimientos abiertos / diferidos (auditoría)
 - **AUTH-07 — Modo observación silenciosa de chats no-VIP:** **DIFERIDO por decisión de producto (2026-08-22).** Tiene sentido como extensión del modo sombra, pero primero se acopla el modo sombra VIP antes de extender la observación a no-VIP. (= brecha v1→v2 #12).
@@ -208,7 +208,6 @@ Cerrados / fuera de catálogo abierto (no listar como pendientes): **AUTH-03** d
 - Enganche reprimenda → `vip_trust_budget` por categoría como flujo dedicado — no implementado (036 sí introduce decremento por severidad en corrección de turno).
 
 ### Operativo y despliegue
-- **Migraciones 030–036 en producción: VERIFY** (repo al head 036; última verificación documentada = 029 el 2026-08-22).
 - **`needs_examples`:** cableado; falta confirmar retrievals efectivos en traces de producción.
 - **Acuerdo con el proveedor de IA (DeepSeek):** pendiente de gestión de la dueña — guía en `docs/ACUERDO-PROVEEDOR-LLM.md`. No bloquea al bot (el masking ya está activo).
 
