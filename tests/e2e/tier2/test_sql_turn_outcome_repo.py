@@ -181,8 +181,15 @@ async def test_update_outcome_and_signal(session_factory) -> None:
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_count_safety_escalations_since(session_factory) -> None:
+    """Counts rows with shadow_reason=safety_below_threshold in the window.
+
+    The e2e DB is session-scoped, so earlier tests may already have inserted
+    matching rows. Assert the delta rather than an absolute total.
+    """
     repo = SqlTurnOutcomeLogRepo(session_factory)
     vip = await _create_vip(session_factory, 9604)
+    since = datetime.now(UTC) - timedelta(days=1)
+    before = await repo.count_safety_escalations_since(since=since)
 
     safe_turn = await _create_turn(session_factory, vip)
     await repo.insert(_record(safe_turn, vip.id))
@@ -191,8 +198,7 @@ async def test_count_safety_escalations_since(session_factory) -> None:
         _record(unsafe_turn, vip.id, verdict="escalate", reason="safety_below_threshold")
     )
 
-    since = datetime.now(UTC) - timedelta(days=1)
-    assert await repo.count_safety_escalations_since(since=since) == 1
+    assert await repo.count_safety_escalations_since(since=since) == before + 1
 
 
 @pytest.mark.db
