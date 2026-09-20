@@ -22,15 +22,21 @@ from diana.infrastructure.vision.ocr import (
 logger = logging.getLogger("diana.telegram")
 
 # Content types that carry no text: the model sees only the tag so it knows a
-# file was sent. A message has exactly one content type, so order is cosmetic.
+# file was sent. Lookup is first-match, so order matters for ``animation``.
+#
+# A GIF from the GIF picker carries BOTH ``animation`` and ``document``: the
+# Bot API states that when ``animation`` is set, ``document`` is set as well
+# ("for backward compatibility"). Every other content type is exclusive
+# (a video/voice/audio message sets no ``document``), so only this pair is
+# order-sensitive and ``animation`` must win.
 _MEDIA_TAGS: tuple[tuple[str, str], ...] = (
     ("photo", "imagen"),
+    ("animation", "gif"),
     ("video", "video"),
     ("audio", "audio"),
     ("voice", "voz"),
     ("video_note", "video"),
     ("document", "documento"),
-    ("animation", "gif"),
     ("sticker", "sticker"),
 )
 

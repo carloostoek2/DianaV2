@@ -113,10 +113,26 @@ def _document_message(*, caption: str | None = None) -> Message:
 
 
 def _animation_message(*, caption: str | None = None) -> Message:
-    return _media_message(
-        "animation",
-        Animation(file_id="f7", file_unique_id="u7", width=10, height=10, duration=1),
+    """A GIF from the GIF picker, as Telegram actually delivers it.
+
+    The payload carries both ``animation`` and ``document`` (the Bot API sets
+    ``document`` too when ``animation`` is present, for backward
+    compatibility). A fixture with only ``animation`` would pass even with a
+    first-match lookup that tags every GIF as [documento].
+    """
+    return Message(
+        message_id=11,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        animation=Animation(
+            file_id="f7", file_unique_id="u7", width=10, height=10, duration=1
+        ),
+        document=Document(
+            file_id="f7", file_unique_id="u7", mime_type="video/mp4"
+        ),
         caption=caption,
+        business_connection_id="bc-1",
     )
 
 
