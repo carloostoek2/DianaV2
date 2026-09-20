@@ -1534,3 +1534,25 @@ async def test_policy_db_path_channel_scopes_atencion_to_all() -> None:
     result = await retriever.fetch(_turn(), _comprehension())
     assert result == ["Trigger: vip only | Rule: VIP-scoped rule"]
     assert repo.find_active_by_similarity.await_args.kwargs.get("scope") is None
+
+
+@pytest.mark.asyncio
+async def test_history_retriever_collapses_album_into_one_line() -> None:
+    """Album members are N stored rows but one line in the model's history."""
+    port = InMemoryMessageHistory(
+        {
+            100: [
+                {
+                    "role": "owner",
+                    "text": "[imagen parte de álbum]",
+                    "timestamp": f"2026-01-01T10:0{i}:00+00:00",
+                }
+                for i in range(4)
+            ]
+        }
+    )
+    retriever = HistoryRetriever(port, limit=20)
+    result = await retriever.fetch(_turn(100), _comprehension())
+    assert len(result) == 1
+    assert result[0]["texto"] == "[imagen parte de álbum ×4]"
+    assert result[0]["autor"] == "dueña"

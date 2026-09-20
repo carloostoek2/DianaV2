@@ -11,6 +11,7 @@ from aiogram.types import TelegramObject
 
 from diana.application.ports import MessageHistoryWriter
 from diana.application.turn_coordinator import TurnCoordinator
+from diana.telegram.media_tags import inbound_text
 
 logger = logging.getLogger("diana.telegram")
 
@@ -67,17 +68,15 @@ class OwnerDetectionMiddleware(BaseMiddleware):
                 )
                 action = result.action
                 # Persist owner direct reply as history boundary so
-                # trailing_vip_texts stops at the right place.
+                # trailing_vip_texts stops at the right place. Media gets the
+                # same tag the VIP path uses (``[imagen]``, ``[video]``,
+                # ``[imagen parte de álbum]``), so the model knows what she
+                # sent instead of reading a blank line.
                 if self._history is not None:
-                    text = (
-                        getattr(event, "text", None)
-                        or getattr(event, "caption", None)
-                        or ""
-                    )
                     await self._history.append(
                         chat_id,
                         role="owner",
-                        text=str(text),
+                        text=inbound_text(event),
                         telegram_message_id=getattr(event, "message_id", None),
                     )
             logger.info(

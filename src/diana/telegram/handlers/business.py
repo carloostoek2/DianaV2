@@ -18,45 +18,13 @@ from diana.infrastructure.vision.ocr import (
     OcrUnavailableError,
     detect_image_mime,
 )
+from diana.telegram.media_tags import inbound_text, media_tag
 
 logger = logging.getLogger("diana.telegram")
 
-# Content types that carry no text: the model sees only the tag so it knows a
-# file was sent. Lookup is first-match, so order matters for ``animation``.
-#
-# A GIF from the GIF picker carries BOTH ``animation`` and ``document``: the
-# Bot API states that when ``animation`` is set, ``document`` is set as well
-# ("for backward compatibility"). Every other content type is exclusive
-# (a video/voice/audio message sets no ``document``), so only this pair is
-# order-sensitive and ``animation`` must win.
-_MEDIA_TAGS: tuple[tuple[str, str], ...] = (
-    ("photo", "imagen"),
-    ("animation", "gif"),
-    ("video", "video"),
-    ("audio", "audio"),
-    ("voice", "voz"),
-    ("video_note", "video"),
-    ("document", "documento"),
-    ("sticker", "sticker"),
-)
-
-# Marker replacing the plain tag when the local filter flagged the image as
+# Appended to the plain tag when the local filter flagged the image as
 # sensitive: it never went to Gemini and the owner reviews it manually.
-_SENSITIVE_TAG = "[imagen] ⚠️ contiene información sensible (no analizada)"
-
-
-def _inbound_text(message: Message) -> str:
-    """Text for the inbound DTO; media sends get a visible type tag.
-
-    A media message without caption has neither ``text`` nor ``caption``, so
-    the model would otherwise see an empty message. Tag the type and keep the
-    caption (if any) after the tag.
-    """
-    for kind, tag in _MEDIA_TAGS:
-        if getattr(message, kind) is not None:
-            caption = (message.caption or "").strip()
-            return f"[{tag}]" if not caption else f"[{tag}] {caption}"
-    return message.text or message.caption or ""
+_SENSITIVE_MARK = "⚠️ contiene información sensible (no analizada)"
 
 
 PhotoDownloader = Callable[[str], Awaitable[bytes]]
@@ -86,9 +54,13 @@ async def _vision_text_and_photo(
     """
     photo = message.photo
     caption = (message.caption or "").strip()
-    plain = "[imagen]" if not caption else f"[imagen] {caption}"
+    # Album-aware base tag (``imagen`` / ``imagen parte de álbum``); the three
+    # variants below are built from it so an album member stays identifiable
+    # whichever way the analysis ends.
+    tag = media_tag(message) or "imagen"
+    plain = f"[{tag}]" if not caption else f"[{tag}] {caption}"
     if not photo:
-        return _inbound_text(message), None
+        return inbound_text(message), None
     file_id = photo[-1].file_id
     try:
         image_bytes = await downloader(file_id)
@@ -108,11 +80,11 @@ async def _vision_text_and_photo(
     if not result.enabled:
         return plain, file_id
     if result.sensitive:
-        text = _SENSITIVE_TAG
+        text = f"[{tag}] {_SENSITIVE_MARK}"
     elif result.description:
-        text = f"[imagen: {result.description}]"
+        text = f"[{tag}: {result.description}]"
     else:
-        text = "[imagen]"
+        text = f"[{tag}]"
     if caption:
         text = f"{text} {caption}"
     return text, file_id
@@ -146,11 +118,12 @@ def build_business_router(
         business_connection_id: str | None,
         vip_id: UUID | None,
     ) -> VipInboundMessage:
-        text = _inbound_text(message)
+        text = inbound_text(message)
         photo_file_id: str | None = None
         if image_vision is not None and image_vision.enabled:
-            # Vision path only when the feature is ON: OFF keeps today's plain
-            # media tag byte-for-byte (regla de oro AGENTS §1).
+            # Vision path only when the feature is ON: OFF keeps the media tag
+            # only (no download, no analysis, no photo in the owner DM —
+            # regla de oro AGENTS §1).
             if photo_downloader is not None:
                 text, photo_file_id = await _vision_text_and_photo(
                     message, vision=image_vision, downloader=photo_downloader

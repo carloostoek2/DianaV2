@@ -514,10 +514,13 @@ business_message con photo + flag ON:
          tapadas: no mencionarlas ni adivinar qué hay debajo). Fallo del
          proveedor → fail-open: se mantiene el tag plano [imagen] (nunca se
          rompe el turno)
-  → Texto del turno:
+  → Texto del turno (el tag base es consciente de álbum: un miembro de álbum
+    dice "imagen parte de álbum" — NUNCA "álbum de imágenes", porque cada
+    miembro es su propia fila y el modelo leería N álbumes distintos):
       - sensible:      "[imagen] ⚠️ contiene información sensible (no analizada)"
       - descripción:   "[imagen: <descripción>]" (+ caption si existe)
-      - fallo/flag off: tag clásico "[imagen]" (+ caption) — byte a byte igual
+      - fallo/flag off: tag de media "[imagen]" (+ caption) — sin descarga,
+        sin análisis, sin foto en el DM
   → El caption no viaja al proveedor de visión: entra con la descripción al
     pipeline como TEXTO normal de un mensaje y lo procesa el control de
     seguridad de texto existente, igual que cualquier mensaje del VIP
@@ -531,8 +534,9 @@ business_message con photo + flag ON:
     persiste; solo texto.
 ```
 
-Invariantes: flag OFF = comportamiento previo byte a byte (media tag sin
-contenido, sin descarga, sin foto en el DM); la imagen con documento de
+Invariantes: flag OFF = sin descarga, sin análisis y sin foto en el DM (el tag
+de media se mantiene, ahora consciente de álbum: "[imagen]" o
+"[imagen parte de álbum]"); la imagen con documento de
 identidad NUNCA sale a Google (ni tapada); fail-closed ante OCR no disponible,
 texto no legible, cajas no disponibles o verificación post-tapado con datos
 fuertes aún legibles; los datos sensibles NUNCA salen del servidor en forma
@@ -543,9 +547,62 @@ memoria durante el análisis — incluida la copia enmascarada — y el file_id 
 Telegram para el DM); la descripción es texto efímero del turno — no alimenta
 memorias/ejemplos/perfil (anti-contaminación); el prompt de descripción vive en
 cognitive/ (no en llm/); el enmascarado vive bajo el MISMO flag
-FEATURE_IMAGE_VISION_ENABLED (flag OFF = comportamiento previo completo); el
+FEATURE_IMAGE_VISION_ENABLED (flag OFF = sin descarga ni análisis; ver 4.23); el
 Decisor no interviene en esta decisión (el filtro es pre-pipeline, capa de
 aplicación + Telegram I/O).
+
+---
+
+4.23 Tags de media inbound y álbum (sin flag)
+
+```
+Tipo Telegram        Tag
+photo                [imagen]
+video / video_note   [video]
+audio                [audio]
+voice                [voz]
+document             [documento]
+animation            [gif]
+sticker              [sticker]
+```
+
+Una sola implementación (`telegram/media_tags.py`) sirve a las DOS rutas que
+registran lo que envía un humano: el handler de negocio (VIP) y el
+OwnerDetectionMiddleware (lo que la dueña escribe en el chat del VIP). Antes
+estaban duplicadas y divergieron: la media de la dueña se guardaba como cadena
+vacía, así que el modelo leía un renglón en blanco sin saber si era imagen o
+video.
+
+Orden de la tabla: `animation` va ANTES que `document`. Un GIF del selector del
+teclado trae los DOS campos — la Bot API setea `document` cuando `animation`
+está presente (compatibilidad hacia atrás) — y la búsqueda es primer-acierto.
+Es el único par orden-sensible: video/voz/audio no traen `document`.
+
+Álbum: cada miembro llega como update propio y produce su propia fila, con el
+sufijo ` parte de álbum` → `[imagen parte de álbum]`. NUNCA "álbum de imágenes":
+con una fila por miembro, el modelo leería N álbumes distintos. Las filas
+colapsan a UNA línea recién al armar el contexto del modelo
+(`cognitive/album_collapse.py`), no en la escritura: el historial crudo
+conserva cada timestamp real, que la lógica de frontera de memoria lee. El
+colapso anota el conteo (`[imagen parte de álbum ×30]`) y conserva la primera
+fila, donde Telegram pone el caption.
+
+Los conteos altos son normales y NO significan fotos sueltas: la dueña manda
+las fotos reenviando 20-30 de golpe desde otro chat, y como Telegram topa el
+álbum en 10, ese envío se parte en varios álbumes que llegan en el mismo
+instante (un `×15` suele ser un álbum de 10 más uno de 5). El colapso funde el
+envío completo en una línea, no una por álbum — el modelo solo necesita saber
+que mandó un lote grande de imágenes. `media_group_id` no se persiste, así que
+desde la base los grupos no son distinguibles.
+
+Los álbumes de la dueña NO pasan por visión: nunca entran a ese camino. La
+visión solo se invoca desde el handler de negocio, y el middleware de la dueña
+corta antes de que ese handler corra. Analizar sus álbumes es inviable (decenas
+de fotos) y no hace falta: basta la etiqueta.
+
+Invariantes: un mensaje de texto conserva sus palabras textuales (el tag nunca
+se filtra al texto); la marca de álbum no implica descarga ni análisis; el
+conteo del colapso es solo presentación (no se escribe en la DB).
 
 ---
 

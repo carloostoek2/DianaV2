@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from diana.cognitive.album_collapse import collapse_album_runs
 from diana.cognitive.models import Comprehension, IncomingTurn
 from diana.cognitive.ports import MessageHistoryPort
 
@@ -43,6 +44,9 @@ class HistoryRetriever:
     ) -> list[dict]:
         _ = comprehension
         raw = await self._port.get_recent(turn.chat_id, limit=self._limit)
+        # Album members are one row each in the database but a single line for
+        # the model; a 30-photo album would otherwise flood this short window.
+        raw = collapse_album_runs(raw)
         out: list[dict] = []
         for row in raw:
             if not isinstance(row, dict):

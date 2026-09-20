@@ -267,7 +267,7 @@ Product-facing, not a second admin app:
 - **Display name on drafts.** The approval DM header uses the VIP `display_name` (fallback: `chat_id`).
 - **Honest no-ops.** Stale Aprobar / Corregir / Escalar toasts say whether the turn was replaced, already sent, resolved, cancelled, missing, or frozen.
 - **Live approve / regen.** Approve edits the same message (read → typing → sent). Regen shows `♻️ Regenerando…` only after the run actually starts.
-- **Media inbound tags.** Photos/videos/files arrive as `[imagen]`, `[video]`, `[audio]`, `[voz]`, `[documento]`, `[gif]`, `[sticker]` plus caption, so the model never sees a blank turn.
+- **Media inbound tags.** Photos/videos/files arrive as `[imagen]`, `[video]`, `[audio]`, `[voz]`, `[documento]`, `[gif]`, `[sticker]` plus caption, so the model never sees a blank turn. Album members say `[imagen parte de álbum]`, and what the owner sends is tagged the same way — an album collapses to one line for the model (`×30`), never 30 lines.
 - **Menu harden (A1–A13).** Note-from-draft has TTL + `/cancelar`. Wizards survive bad input. Callback spinner clears first. Staging discard is two-step. Errors keep a Back button. Expired sessions warn. Metrics export is a document. Ficha can delete notes/facts. Stale VIP buttons redirect to the list.
 - **Destacar / Reprender** — see G6. Flag default **OFF**. Gold-first retrieval and `vip_id` visibility on examples/policies are always in the schema (migration `029_feedback_quality`); the buttons are what the flag hides.
 - **Doctrine parachute (VIP).** Notify failure unfreezes and demotes to approve; the owner still gets a draft instead of a silent 24h freeze.

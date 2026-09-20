@@ -152,6 +152,45 @@ def _sticker_message(*, caption: str | None = None) -> Message:
     )
 
 
+def _album_message(
+    kind: str, media: object, *, caption: str | None = None
+) -> Message:
+    """One member of an album.
+
+    Telegram sets ``media_group_id`` on every member and delivers each as its
+    own update, so this is what the handler sees for photo 3 of 30 — never the
+    album as a whole.
+    """
+    return Message(
+        message_id=12,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        media_group_id="grp-1",
+        caption=caption,
+        business_connection_id="bc-1",
+        **{kind: media},
+    )
+
+
+def _album_photo(*, caption: str | None = None) -> Message:
+    return _album_message(
+        "photo",
+        [PhotoSize(file_id="f9", file_unique_id="u9", width=10, height=10)],
+        caption=caption,
+    )
+
+
+def _album_video(*, caption: str | None = None) -> Message:
+    return _album_message(
+        "video",
+        Video(
+            file_id="f10", file_unique_id="u10", width=10, height=10, duration=1
+        ),
+        caption=caption,
+    )
+
+
 @pytest.mark.asyncio
 async def test_maps_dto_and_calls_orchestrator_once() -> None:
     orch = AsyncMock()
@@ -379,6 +418,30 @@ async def test_remaining_media_with_caption_keeps_caption() -> None:
     await _assert_inbound_text(
         _document_message(caption="mi pdf"), "[documento] mi pdf"
     )
+
+
+@pytest.mark.asyncio
+async def test_album_photo_says_part_of_album_not_album() -> None:
+    """Each member is ONE image of an album, never an album of its own."""
+    await _assert_inbound_text(_album_photo(), "[imagen parte de álbum]")
+
+
+@pytest.mark.asyncio
+async def test_album_photo_keeps_caption() -> None:
+    await _assert_inbound_text(
+        _album_photo(caption="las de la boda"), "[imagen parte de álbum] las de la boda"
+    )
+
+
+@pytest.mark.asyncio
+async def test_album_video_says_part_of_album() -> None:
+    await _assert_inbound_text(_album_video(), "[video parte de álbum]")
+
+
+@pytest.mark.asyncio
+async def test_single_photo_is_not_marked_as_album() -> None:
+    """No media_group_id → a lone image keeps the plain tag."""
+    await _assert_inbound_text(_photo_message(), "[imagen]")
 
 
 @pytest.mark.asyncio

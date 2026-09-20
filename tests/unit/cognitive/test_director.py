@@ -2220,3 +2220,35 @@ async def test_atencion_fallback_never_resolves_vip_persona() -> None:
     await director.handle_turn(vip_turn)
     prompt = trace.get(vip_turn.turn_id, "prompt_text")
     assert "PERSONA-MARKER-ABC" in prompt
+
+
+@pytest.mark.asyncio
+async def test_director_collapses_owner_album_into_one_line() -> None:
+    """A 6-photo album is 6 rows in the DB but ONE line for the Analyst.
+
+    Rows stay one-per-member in storage (the raw timestamps matter elsewhere),
+    but the model's short history window must not be flooded: without the
+    collapse these 6 near-identical lines would crowd out the conversation.
+    """
+    album = [
+        {
+            "role": "owner",
+            "text": "[imagen parte de álbum]",
+            "timestamp": f"2026-01-01T09:0{i}:00Z",
+        }
+        for i in range(6)
+    ]
+    # Ends with the owner so the open VIP burst is empty (see the limit test).
+    history = InMemoryMessageHistory({42: album})
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, history_port=history)
+    await director.handle_turn(_turn(chat_id=42, text="current-msg"))
+
+    flat = " ".join(
+        m.get("content", "") for m in llm.calls[0][1]["messages"]
+    )
+    assert flat.count("parte de álbum") == 1, "the album must collapse to one line"
+    assert "parte de álbum ×6" in flat

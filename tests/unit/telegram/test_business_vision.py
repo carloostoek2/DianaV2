@@ -37,6 +37,23 @@ def _photo_message(*, caption: str | None = None) -> Message:
     )
 
 
+def _album_photo_message(*, caption: str | None = None) -> Message:
+    """A photo that is one member of an album (media_group_id present)."""
+    return Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        media_group_id="grp-1",
+        photo=[
+            PhotoSize(file_id="small", file_unique_id="u1", width=10, height=10),
+            PhotoSize(file_id="big", file_unique_id="u2", width=200, height=200),
+        ],
+        caption=caption,
+        business_connection_id="bc-1",
+    )
+
+
 def _text_message() -> Message:
     return Message(
         message_id=7,
@@ -114,6 +131,43 @@ async def test_sensitive_photo_never_calls_captioner_and_marks_tag() -> None:
     )
     assert inbound.photo_file_id == "big"
     # The photo still reaches the owner DM — only the caption was suppressed.
+
+
+@pytest.mark.asyncio
+async def test_album_photo_described_keeps_album_mark() -> None:
+    """An album member stays identifiable as such after being described."""
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=False, description="una playa")
+    )
+    downloader = AsyncMock(return_value=_png_bytes())
+    inbound = await _run(_album_photo_message(), vision, downloader)
+    assert inbound.text == "[imagen parte de álbum: una playa]"
+
+
+@pytest.mark.asyncio
+async def test_album_sensitive_photo_keeps_album_mark() -> None:
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=True, reason="factura")
+    )
+    downloader = AsyncMock(return_value=_png_bytes())
+    inbound = await _run(_album_photo_message(), vision, downloader)
+    assert (
+        inbound.text
+        == "[imagen parte de álbum] ⚠️ contiene información sensible (no analizada)"
+    )
+    assert inbound.photo_file_id == "big"
+
+
+@pytest.mark.asyncio
+async def test_album_photo_fail_open_keeps_album_mark() -> None:
+    """With vision unavailable the tag is all the model gets — album included."""
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=False, description="x")
+    )
+    downloader = AsyncMock(side_effect=RuntimeError("telegram down"))
+    inbound = await _run(_album_photo_message(), vision, downloader)
+    assert inbound.text == "[imagen parte de álbum]"
+    assert inbound.photo_file_id == "big"
 
 
 @pytest.mark.asyncio

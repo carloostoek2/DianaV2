@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from aiogram.types import Chat, Message, PhotoSize, User
 
 from diana.application.memory import (
+    InMemoryMessageHistoryWriter,
     InMemoryPendingApprovalStore,
     InMemoryTurnStore,
 )
@@ -152,3 +154,71 @@ async def test_owner_mw_private_does_not_coordinate_discard() -> None:
     assert len(non_term) == 1
     assert non_term[0].id == live.id
     assert non_term[0].status == TurnStatus.PENDING_APPROVAL.value
+
+
+# --- What the owner sends is recorded with a media tag -----------------------
+#
+# Before this, her media was stored as an empty string, so the model read a
+# blank "dueña" line and could not tell an image from a video. The tag now
+# comes from the same helper as the VIP path, album mark included.
+
+def _owner_photo(*, media_group_id: str | None = None, caption: str | None = None) -> Message:
+    """A photo sent by the owner in the VIP chat (real aiogram payload)."""
+    return Message(
+        message_id=55,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        media_group_id=media_group_id,
+        photo=[PhotoSize(file_id="p1", file_unique_id="u1", width=9, height=9)],
+        caption=caption,
+        business_connection_id="bc-1",
+    )
+
+
+def _owner_text() -> Message:
+    return Message(
+        message_id=56,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="ya te atiendo yo",
+        business_connection_id="bc-1",
+    )
+
+
+async def _recorded_text(event: object) -> str:
+    coord, _, _, _ = _make_coordinator()
+    hist = InMemoryMessageHistoryWriter()
+    mw = OwnerDetectionMiddleware(
+        owner_telegram_id=OWNER, coordinator=coord, history=hist
+    )
+    await mw(AsyncMock(), event, {"business_connection_id": "bc-1"})  # type: ignore[arg-type]
+    rows = await hist.get_recent(42)
+    assert len(rows) == 1
+    assert rows[0]["role"] == "owner"
+    return str(rows[0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_owner_photo_recorded_with_tag_not_blank() -> None:
+    assert await _recorded_text(_owner_photo()) == "[imagen]"
+
+
+@pytest.mark.asyncio
+async def test_owner_photo_keeps_caption_after_tag() -> None:
+    assert await _recorded_text(_owner_photo(caption="mira")) == "[imagen] mira"
+
+
+@pytest.mark.asyncio
+async def test_owner_album_photo_marked_as_part_of_album() -> None:
+    assert (
+        await _recorded_text(_owner_photo(media_group_id="grp-9"))
+        == "[imagen parte de álbum]"
+    )
+
+
+@pytest.mark.asyncio
+async def test_owner_text_message_unchanged() -> None:
+    """Non-media keeps her words verbatim — the tag must not leak into text."""
+    assert await _recorded_text(_owner_text()) == "ya te atiendo yo"

@@ -106,6 +106,11 @@ Un archivo sin caption ya no llega vacío. El handler de negocio antepone un tag
 | document | `[documento]` |
 | animation | `[gif]` |
 | sticker | `[sticker]` |
+| miembro de álbum (cualquiera de los anteriores) | `[imagen parte de álbum]` |
+
+Lo mismo aplica a lo que la dueña escribe en el chat del VIP: su media también
+llega etiquetada, no en blanco. Un álbum es una fila por foto en la base, pero
+**una sola línea** en el contexto del modelo (`[imagen parte de álbum ×30]`).
 
 ## Thinking del LLM (ops, no es un botón)
 

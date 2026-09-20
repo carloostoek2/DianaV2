@@ -19,6 +19,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import UUID
 
+from diana.cognitive.album_collapse import collapse_album_runs
 from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
@@ -686,6 +687,9 @@ class CognitiveDirector:
         # Bot-heavy tails need headroom beyond limit (A.2 short window is human lines).
         fetch_limit = max(limit * 8, 32) if limit > 0 else 0
         raw = await self._history.get_recent(turn.chat_id, limit=fetch_limit)
+        # An album is N rows in the database but one line for the model: without
+        # this, a 30-photo album would eat the whole short window.
+        raw = collapse_album_runs(raw)
         raw = self._drop_open_vip_burst(raw)
         mapped = self._map_history_messages(raw)
         if limit > 0 and len(mapped) > limit:
