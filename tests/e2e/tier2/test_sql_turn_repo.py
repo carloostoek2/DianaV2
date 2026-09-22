@@ -215,18 +215,23 @@ async def test_create_roundtrips_atencion_channel_type(session_factory):
 @pytest.mark.asyncio
 async def test_latest_turn_id_returns_the_newest_of_the_chat(session_factory):
     repo = SqlTurnStore(session_factory)
+    # Fixture-local ids: shared testcontainers DB retains rows across tests.
+    chat_id = uuid4().int % 1_000_000_000
+    empty_chat_id = uuid4().int % 1_000_000_000
+    if empty_chat_id == chat_id:
+        empty_chat_id = (chat_id + 1) % 1_000_000_000
     older = await repo.create(
-        TurnRecord(id=uuid4(), chat_id=313, status="escalated")
+        TurnRecord(id=uuid4(), chat_id=chat_id, status="escalated")
     )
     newer = await repo.create(
-        TurnRecord(id=uuid4(), chat_id=313, status="delivered")
+        TurnRecord(id=uuid4(), chat_id=chat_id, status="delivered")
     )
 
-    latest = await repo.latest_turn_id(313)
+    latest = await repo.latest_turn_id(chat_id)
 
     assert latest == newer.id
     assert latest != older.id
-    assert await repo.latest_turn_id(999) is None
+    assert await repo.latest_turn_id(empty_chat_id) is None
 
 
 @pytest.mark.db

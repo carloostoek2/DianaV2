@@ -120,7 +120,7 @@ class InMemoryTurnStore:
         """CAS ``escalated`` → ``status``; None when not escalated (port parity).
 
         Mirrors ``SqlTurnStore.reopen_from_escalated``: the terminal latch is
-        untouched and only an ``escalated`` turn can be reopened.
+        FP resume uses ``pending_approval``; a successful owner manual reply uses ``delivered``.
         """
         rec = self._turns.get(turn_id)
         if rec is None or rec.status != TurnStatus.ESCALATED.value:

@@ -516,17 +516,19 @@ class TurnStore(Protocol):
         *,
         status: str = "pending_approval",
     ) -> TurnRecord | None:
-        """CAS ``escalated`` → ``status`` (owner false-positive resume).
+        """CAS ``escalated`` → ``status`` (FP resume or owner-reply close).
 
         The ONLY sanctioned way out of a terminal status: ``transition`` keeps
         the terminal latch intact (``apply_terminal_latch``), while this method
-        atomically moves a turn that is *still* ``escalated`` back to a live
-        status so the normal supervised flow (draft DM → approve/correct/
-        escalate → delivered) can continue.
+        atomically moves a turn that is *still* ``escalated``. Callers use it
+        for two owner actions:
+
+        - false-positive resume → ``pending_approval`` (live again);
+        - successful manual reply → ``delivered`` (durable terminal so a later
+          FP resume cannot reopen the answered turn after a restart).
 
         Returns ``None`` when the turn does not exist or is not ``escalated`` —
-        ``superseded`` / ``delivered`` / ``failed`` are never reopened. After a
-        successful reopen the turn is a normal (non-terminal) turn again.
+        ``superseded`` / ``delivered`` / ``failed`` are never reopened.
         """
         ...
 

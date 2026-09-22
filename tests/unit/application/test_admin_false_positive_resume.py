@@ -440,7 +440,13 @@ async def test_resume_refuses_when_turn_is_not_escalated(status: str) -> None:
 
     assert outcome.marked is True
     assert outcome.status == RESUME_MARKED_ONLY
-    assert outcome.detail == "not_escalated"
+    # delivered is the durable close after a manual reply/approve → owner_wrote
+    expected = (
+        "owner_intervened"
+        if status == TurnStatus.DELIVERED
+        else "not_escalated"
+    )
+    assert outcome.detail == expected
     assert await _no_approval(g, turn.id)
     assert (await g["turns"].get(turn.id)).status == status
 
@@ -958,8 +964,8 @@ async def test_resume_proceeds_when_the_escalated_turn_is_the_newest() -> None:
 
 
 @pytest.mark.asyncio
-async def test_owner_manual_reply_marks_her_intervention() -> None:
-    """The reply button is the owner writing: the resume guard must see it."""
+async def test_owner_manual_reply_leaves_turn_delivered() -> None:
+    """Successful manual reply is a durable terminal: status becomes delivered."""
     g = _graph()
     turn_id = await _escalated_turn(g)
     _seed_trace(g, turn_id, draft="borrador", reason="risk_high")
@@ -970,10 +976,39 @@ async def test_owner_manual_reply_marks_her_intervention() -> None:
 
     assert delivered is not None and delivered.success is True
     assert g["coordinator"].is_owner_intervened(CHAT_ID) is True
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == TurnStatus.DELIVERED.value
     outcome = await g["admin"].mark_false_positive_and_resume(
         turn_id, actor_id=OWNER_ID
     )
+    assert outcome.status == RESUME_MARKED_ONLY
     assert outcome.detail == "owner_intervened"
+    assert fp_resume_key(outcome) == "skipped_owner_wrote"
+    assert g["notifier"].drafts == []
+
+
+@pytest.mark.asyncio
+async def test_fp_resume_after_manual_reply_fails_closed_without_in_memory_flag() -> None:
+    """Restart parity: after reply, clearing the process-local flag still blocks."""
+    g = _graph()
+    turn_id = await _escalated_turn(g)
+    _seed_trace(g, turn_id, draft="borrador", reason="risk_high")
+
+    delivered = await g["admin"].handle_escalation_reply(
+        turn_id, "te escribo yo", actor_id=OWNER_ID
+    )
+    assert delivered is not None and delivered.success is True
+    g["coordinator"].clear_owner_intervention(CHAT_ID)
+    assert g["coordinator"].is_owner_intervened(CHAT_ID) is False
+
+    outcome = await g["admin"].mark_false_positive_and_resume(
+        turn_id, actor_id=OWNER_ID
+    )
+
+    assert outcome.status == RESUME_MARKED_ONLY
+    assert outcome.detail == "owner_intervened"
+    assert fp_resume_key(outcome) == "skipped_owner_wrote"
+    assert (await g["turns"].get(turn_id)).status == TurnStatus.DELIVERED.value
     assert g["notifier"].drafts == []
 
 
@@ -995,6 +1030,8 @@ async def test_owner_manual_reply_cancels_the_waiting_draft() -> None:
     assert delivered is not None and delivered.success is True
     approval = await g["approvals"].get_by_turn(turn_id)
     assert approval is not None and approval.status == "cancelled"
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == TurnStatus.DELIVERED.value
 
 
 # --- safety fallback without the trace (TTL purge) ---------------------------

@@ -42,6 +42,7 @@ from diana.behavior.fake import (
     SequenceTurnStatusReader,
 )
 from diana.cognitive.models import (
+    TurnStatus,
     Decision,
     EvaluationProfile,
     IncomingTurn,
@@ -1850,6 +1851,7 @@ async def test_handle_escalation_reply_delivers_to_chat() -> None:
     """Owner reply to an escalated turn delivers to the chat via BehaviorEngine."""
     g = _admin_graph()
     turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, TurnStatus.ESCALATED)
     await g["escalations"].create(
         turn.id, tipo="risk_high", motivo="risk", business_connection_id="bc-1"
     )
@@ -1859,6 +1861,9 @@ async def test_handle_escalation_reply_delivers_to_chat() -> None:
     assert result is not None and result.success is True
     sends = [c for c in g["actuator"].calls if c["op"] == "send_message"]
     assert any(c["chat_id"] == 42 and c["text"] == "te espero mañana" for c in sends)
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status == TurnStatus.DELIVERED.value
+    assert g["coordinator"].is_owner_intervened(42) is True
 
 
 @pytest.mark.asyncio

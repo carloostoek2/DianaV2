@@ -1162,8 +1162,17 @@ class AdminService:
             if turn is None:
                 return self._fp_not_resumed("missing_turn", turn_id=turn_id)
             if turn.status != TurnStatus.ESCALATED.value:
+                # ``delivered`` is the durable close after a successful manual
+                # reply (or an approve): same owner-facing key as the
+                # process-local intervention flag so a restart still says she
+                # already answered. Other non-escalated statuses stay stale.
+                detail = (
+                    "owner_intervened"
+                    if turn.status == TurnStatus.DELIVERED.value
+                    else "not_escalated"
+                )
                 return self._fp_not_resumed(
-                    "not_escalated", turn_id=turn_id, chat_id=turn.chat_id
+                    detail, turn_id=turn_id, chat_id=turn.chat_id
                 )
             if self._coordinator.is_owner_intervened(turn.chat_id):
                 # She already wrote in that VIP chat after this escalation: the
@@ -1614,11 +1623,36 @@ class AdminService:
         result = await self._behavior.deliver([stripped], ctx, turn_id)
         if getattr(result, "success", False):
             # The manual reply is the owner's answer for this turn: a later
-            # false-positive tap must see it (the flag is cleared on the next
-            # ``begin_turn``, the semantics the rest of the system uses) and a
-            # draft she left waiting must not be delivered on top of it.
+            # false-positive tap must see it (the in-memory flag is cleared on
+            # the next ``begin_turn``, the semantics the rest of the system
+            # uses) and a draft she left waiting must not be delivered on top
+            # of it. Persist ``delivered`` so a process restart cannot reopen
+            # the case via FP resume (``mark_owner_intervened`` alone dies with
+            # the process; ``reopen_from_escalated`` refuses delivered).
             self._coordinator.mark_owner_intervened(turn.chat_id)
             await self._cancel_waiting_approval(turn_id)
+            try:
+                async with self._coordinator.chat_scope(turn.chat_id):
+                    turn_after = await self._turns.get(turn_id)
+                    if turn_after is None:
+                        pass
+                    elif turn_after.status == TurnStatus.ESCALATED.value:
+                        # CAS escalated → delivered (sanctioned latch exception).
+                        await self._turns.reopen_from_escalated(
+                            turn_id, status=TurnStatus.DELIVERED.value
+                        )
+                    elif not is_turn_status_terminal(turn_after.status):
+                        # e.g. pending_approval after an earlier FP resume.
+                        await self._coordinator.transition(
+                            turn_id, TurnStatus.DELIVERED
+                        )
+            except Exception:
+                log_swallowed(
+                    logger,
+                    "escalation_reply_delivered_transition_failed",
+                    turn_id=str(turn_id),
+                    chat_id=turn.chat_id,
+                )
         return result
 
     async def handle_owner_escalate(

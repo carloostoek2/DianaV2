@@ -2,8 +2,8 @@
 
 ``apply_terminal_latch`` is the rule: a terminal turn refuses every different
 status. ``SqlTurnStore.reopen_from_escalated`` is the single sanctioned
-exception (owner marks an escalation as a false positive and the flow
-continues) and it is expressed as an atomic CAS so it can never clobber a
+exception (FP resume → ``pending_approval``, or owner manual reply →
+``delivered``) and it is expressed as an atomic CAS so it can never clobber a
 concurrent supersede/delivery.
 """
 
