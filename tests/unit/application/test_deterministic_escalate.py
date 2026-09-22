@@ -10,6 +10,7 @@ from diana.application.deterministic_escalate import handle_deterministic_escala
 from diana.application.memory import (
     FakeOwnerNotifier,
     InMemoryEscalationStore,
+    InMemoryMessageHistoryWriter,
     InMemoryPendingApprovalStore,
     InMemoryPendingDeliveryStore,
     InMemoryTurnStore,
@@ -324,3 +325,132 @@ async def test_template_hybrid_reason_passed(escalate_graph: dict) -> None:
         reason="identidad_ia: eres bot,precio [also: pago_precio]",
     )
     assert "also: pago_precio" in g["notifier"].escalations[0].reason
+
+
+# --- VIP message remembered for the false-positive resume (AGENTS §4.21) ----
+
+
+@pytest.mark.asyncio
+async def test_escalation_remembers_vip_message_in_history(
+    escalate_graph: dict,
+) -> None:
+    g = escalate_graph
+    history = InMemoryMessageHistoryWriter()
+    turn_id = await handle_deterministic_escalation(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        chat_id=42,
+        text="cuánto cuesta?",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=10,
+        keywords_hit=["cuesta"],
+        history=history,
+        channel_type="atencion",
+    )
+
+    recent = await history.get_recent(42, limit=5)
+    assert [(r["role"], r["text"]) for r in recent] == [("vip", "cuánto cuesta?")]
+    assert recent[0]["telegram_message_id"] == 10
+    # The turn carries the channel so a resumed draft uses the right persona.
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.channel_type == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_escalation_history_is_idempotent_for_the_same_message(
+    escalate_graph: dict,
+) -> None:
+    g = escalate_graph
+    history = InMemoryMessageHistoryWriter()
+    for _ in range(2):
+        await handle_deterministic_escalation(
+            coordinator=g["coordinator"],
+            escalations=g["escalations"],
+            notifier=g["notifier"],
+            chat_id=42,
+            text="mismo mensaje",
+            vip_id=None,
+            business_connection_id="bc-1",
+            message_id=55,
+            keywords_hit=["x"],
+            history=history,
+        )
+
+    recent = await history.get_recent(42, limit=5)
+    assert len(recent) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_gate_keeps_sandbox_chats_isolated(
+    escalate_graph: dict,
+) -> None:
+    g = escalate_graph
+    history = InMemoryMessageHistoryWriter()
+
+    await handle_deterministic_escalation(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        chat_id=42,
+        text="chat en sandbox",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=10,
+        keywords_hit=["x"],
+        history=history,
+        history_gate=lambda _chat_id: False,
+    )
+
+    assert await history.get_recent(42, limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_history_fault_never_blocks_the_escalation(
+    escalate_graph: dict,
+) -> None:
+    g = escalate_graph
+
+    class BoomHistory:
+        async def upsert_vip_message(self, *a, **kw):  # noqa: ANN002, ANN003
+            raise RuntimeError("history down")
+
+    turn_id = await handle_deterministic_escalation(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        chat_id=42,
+        text="hola",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=10,
+        keywords_hit=["x"],
+        history=BoomHistory(),  # type: ignore[arg-type]
+    )
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "escalated"
+    assert len(g["notifier"].escalations) == 1
+
+
+@pytest.mark.asyncio
+async def test_escalation_without_history_writer_is_unchanged(
+    escalate_graph: dict,
+) -> None:
+    g = escalate_graph
+    turn_id = await handle_deterministic_escalation(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        chat_id=42,
+        text="hola",
+        vip_id=None,
+        business_connection_id="bc-1",
+        message_id=10,
+        keywords_hit=["x"],
+    )
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "escalated"
+    assert stored.channel_type == "vip"

@@ -119,6 +119,8 @@ async def test_escalation_and_history_and_trace_writer() -> None:
     await esc.create(tid, tipo="semantica", motivo="risk")
     await esc.mark_notified(tid)
     assert esc.events[0]["notificado"] is True
+    assert await esc.get_motivo(tid) == "risk"
+    assert await esc.get_motivo(uuid4()) is None
 
     await hist.append(42, role="vip", text="hi", telegram_message_id=1)
     recent = await hist.get_recent(42, limit=5)
@@ -268,3 +270,89 @@ async def test_in_memory_turn_store_list_all_non_terminal() -> None:
     assert t2.id in ids
     assert t3.id not in ids
     assert t4.id not in ids
+
+
+# --- reopen_from_escalated (the only exception to the terminal latch) -------
+
+
+@pytest.mark.asyncio
+async def test_reopen_from_escalated_moves_turn_back_to_live() -> None:
+    store = InMemoryTurnStore()
+    turn = TurnRecord(id=uuid4(), chat_id=1, status=TurnStatus.ESCALATED.value)
+    await store.create(turn)
+
+    reopened = await store.reopen_from_escalated(turn.id)
+
+    assert reopened is not None
+    assert reopened.status == TurnStatus.PENDING_APPROVAL.value
+    stored = await store.get(turn.id)
+    assert stored is not None and stored.status == TurnStatus.PENDING_APPROVAL.value
+    # The reopened turn is a normal live turn again.
+    assert len(await store.list_non_terminal(1)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        TurnStatus.SUPERSEDED,
+        TurnStatus.DELIVERED,
+        TurnStatus.FAILED,
+        TurnStatus.PENDING_APPROVAL,
+    ],
+)
+async def test_reopen_from_escalated_rejects_other_statuses(status: str) -> None:
+    store = InMemoryTurnStore()
+    turn = TurnRecord(id=uuid4(), chat_id=1, status=status.value)
+    await store.create(turn)
+
+    assert await store.reopen_from_escalated(turn.id) is None
+    stored = await store.get(turn.id)
+    assert stored is not None and stored.status == status.value
+
+
+@pytest.mark.asyncio
+async def test_reopen_from_escalated_missing_turn() -> None:
+    assert await InMemoryTurnStore().reopen_from_escalated(uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_transition_latch_still_blocks_after_reopen() -> None:
+    """The latch stays intact: reopen is the exception, transition is the rule."""
+    store = InMemoryTurnStore()
+    turn = TurnRecord(id=uuid4(), chat_id=1, status=TurnStatus.ESCALATED.value)
+    await store.create(turn)
+    await store.reopen_from_escalated(turn.id)
+    await store.transition(turn.id, TurnStatus.DELIVERED.value)
+
+    blocked = await store.transition(turn.id, TurnStatus.ANALYZING.value)
+
+    assert blocked.status == TurnStatus.DELIVERED.value
+
+
+# --- latest_turn_id (durable staleness source) ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_latest_turn_id_is_the_newest_of_the_chat() -> None:
+    store = InMemoryTurnStore()
+    older = TurnRecord(id=uuid4(), chat_id=1, status=TurnStatus.ESCALATED.value)
+    newer = TurnRecord(id=uuid4(), chat_id=1, status=TurnStatus.DELIVERED.value)
+    other_chat = TurnRecord(id=uuid4(), chat_id=2, status=TurnStatus.RECEIVED.value)
+    for turn in (older, newer, other_chat):
+        await store.create(turn)
+
+    assert await store.latest_turn_id(1) == newer.id
+    assert await store.latest_turn_id(2) == other_chat.id
+    assert await store.latest_turn_id(3) is None
+
+
+@pytest.mark.asyncio
+async def test_latest_turn_id_sees_terminal_turns() -> None:
+    """Delivered turns are invisible to list_non_terminal, not to this helper."""
+    store = InMemoryTurnStore()
+    turn = TurnRecord(id=uuid4(), chat_id=7, status=TurnStatus.DELIVERED.value)
+    await store.create(turn)
+
+    assert await store.list_non_terminal(7) == []
+    assert await store.latest_turn_id(7) == turn.id

@@ -492,3 +492,31 @@ def test_settings_rejects_non_loopback_health_host(
     with pytest.raises(ValidationError):
         Settings()
 
+
+def test_settings_escalation_fp_draft_default_true(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """False-positive resume is ON by product decision (documented deviation).
+
+    Every other flag defaults to False; this one is deliberately True and the
+    .env file carries it explicitly. It is NOT part of
+    test_settings_feature_flag_defaults_are_false.
+    """
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    assert settings.feature_escalation_fp_draft_enabled is True
+
+
+def test_settings_escalation_fp_draft_env_false_kills_it(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("FEATURE_ESCALATION_FP_DRAFT_ENABLED", "false")
+    settings = Settings()
+    assert settings.feature_escalation_fp_draft_enabled is False

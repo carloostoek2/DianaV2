@@ -18,6 +18,7 @@ from diana.application.memory import (
     InMemoryTurnStore,
     InMemoryVipStore,
 )
+from diana.application.owner_marks import InMemoryOwnerMarkStore
 from diana.application.ports import VipInboundMessage
 from diana.application.turn_coordinator import TurnCoordinator
 from diana.application.turn_orchestrator import TurnOrchestrator
@@ -43,9 +44,11 @@ class FakeDirector:
     def __init__(self, decisions: list[Decision]) -> None:
         self._decisions: list[Decision] = list(decisions)
         self.calls: list[IncomingTurn] = []
+        self.kwargs: list[dict] = []
 
-    async def handle_turn(self, turn: IncomingTurn) -> Decision:
+    async def handle_turn(self, turn: IncomingTurn, **kwargs) -> Decision:
         self.calls.append(turn)
+        self.kwargs.append(dict(kwargs))
         if not self._decisions:
             raise RuntimeError("FakeDirector: no more enqueued decisions")
         return self._decisions.pop(0)
@@ -87,6 +90,7 @@ def build_e2e(
     clock: ImmediateClock | None = None,
     delay_policy: FixedDelayPolicy | None = None,
     behavior_override: object | None = None,
+    feature_escalation_fp_draft_enabled: bool = False,
 ) -> dict:
     turns = InMemoryTurnStore()
     approvals = InMemoryPendingApprovalStore()
@@ -95,6 +99,7 @@ def build_e2e(
     traces = InMemoryTraceReaderWriter()
     history = InMemoryMessageHistoryWriter()
     notifier = FakeOwnerNotifier()
+    owner_marks = InMemoryOwnerMarkStore()
     act = actuator or FakeTelegramActuator()
     behavior = behavior_override or BehaviorEngine(
         act, deliveries,
@@ -110,8 +115,14 @@ def build_e2e(
         owner_telegram_id=OWNER_ID,
         delivery_mode=delivery_mode,  # type: ignore[arg-type]
         feature_advanced_behavior=feature_advanced_behavior,
+        history=history,  # type: ignore[arg-type]
+        fp_marks=owner_marks,
+        feature_escalation_fp_draft_enabled=feature_escalation_fp_draft_enabled,
     )
     director = FakeDirector(director_decisions)
+    # AdminService is built before the Director; wire it so the false-positive
+    # resume can generate a draft for escalations that never produced one.
+    admin.set_director(director)
     learning = LearningService(traces)
     vips = vip_store or InMemoryVipStore()
     ams: AutonomousModeService | None = None
@@ -146,7 +157,7 @@ def build_e2e(
         "turns": turns, "approvals": approvals, "deliveries": deliveries,
         "escalations": escalations, "history": history, "traces": traces,
         "coordinator": coordinator, "vips": vips, "gray_zone": gray_zone,
-        "sessions": sessions, "ams": ams,
+        "sessions": sessions, "ams": ams, "owner_marks": owner_marks,
     }
 
 

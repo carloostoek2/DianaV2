@@ -159,7 +159,8 @@ Valores leídos de `.env` del repo (runtime). Los defaults del código en `src/d
 | `FEATURE_MOOD_ENGINE` | `true` | Motor de mood (shadow) |
 | `FEATURE_TRUST_BUDGET` | `true` | Presupuesto de confianza (shadow) |
 | `FEATURE_LINK_ENABLED` | `true` | Vínculo Lucien → Diana |
-| `FEATURE_PII_MASKING_ENABLED` | `true` | Masking de PII en el borde LLM (default seguro; única excepción a la convención de flags en false) |
+| `FEATURE_ESCALATION_FP_DRAFT_ENABLED` | `true` | Marcar una escalación como falso positivo continúa el flujo con el DM de borrador (REQ-ESC-04). **Desviación registrada:** su default en `settings.py` es `true` (no `false`), decisión de producto; el `.env` lo lleva explícito. Con la flag en `false`, esta acción vuelve a su comportamiento anterior (solo la marca de métrica); el placeholder `(texto no disponible)` del camino de zona gris es una corrección de copy independiente (§0.6) y aplica con la flag encendida o apagada |
+| `FEATURE_PII_MASKING_ENABLED` | `true` | Masking de PII en el borde LLM (default seguro; excepción a la convención de flags en false) |
 
 > **Nota — `FEATURE_AUTONOMOUS_MODE=false`:** la ruta de autoenvío SÍ está cableada tras el flag en `src/diana/application/turn_orchestrator.py` (~304 y ~2549, demote a approve) y `src/diana/application/recontact_service.py` (~209), pero deshabilitada. Los flags de evolución de agente (`*_DETECTOR`, `*_SYNTHESIS`, `*_AUTONOMY`, `*_MOOD`, `*_TRUST_BUDGET`) están `true` en **modo medición (shadow)**: miden y registran, no cambian decisiones.
 

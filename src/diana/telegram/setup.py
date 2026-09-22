@@ -141,6 +141,10 @@ def build_dispatcher(
     # Both None ⇒ today's behavior byte-for-byte (media tag without content).
     image_vision: Any | None = None,
     photo_downloader: Any | None = None,
+    # False-positive resume (AGENTS §4.21): when ON, the forbidden/J.4
+    # short-circuit remembers the VIP message so the owner's triage can later
+    # generate a draft for it. OFF ⇒ no history write at all.
+    feature_escalation_fp_draft_enabled: bool = False,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -158,6 +162,17 @@ def build_dispatcher(
         vips=vips,
         behavior=behavior,  # type: ignore[arg-type]  # engine implements deliver
         feature_general_mode_enabled=feature_general_mode_enabled,
+        # False-positive resume: the escalated message is remembered so the
+        # owner can later get a draft for it. The gate keeps sandbox chats
+        # isolated (their messages are never persisted).
+        history=(
+            history if feature_escalation_fp_draft_enabled else None
+        ),  # type: ignore[arg-type]  # history writer implements the port
+        history_gate=(
+            getattr(sandbox, "should_persist", None)
+            if sandbox is not None
+            else None
+        ),
     )
     middlewares: list[Any] = [
         ErrorHandlerMiddleware(),

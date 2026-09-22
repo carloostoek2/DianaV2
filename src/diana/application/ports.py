@@ -492,6 +492,15 @@ class TurnStore(Protocol):
         """All non-terminal turns across all chats (for zombie turn detection)."""
         ...
 
+    async def latest_turn_id(self, chat_id: int) -> UUID | None:
+        """Newest turn of the chat, whatever its status (``None`` when none).
+
+        Durable ordering source for staleness checks: ``delivered`` turns are
+        invisible to ``list_non_terminal``, and the coordinator's in-memory
+        ``last_turn_id`` dies with the process.
+        """
+        ...
+
     async def transition(
         self,
         turn_id: UUID,
@@ -500,6 +509,28 @@ class TurnStore(Protocol):
         superseded_by: UUID | None = None,
         error: str | None = None,
     ) -> TurnRecord: ...
+
+    async def reopen_from_escalated(
+        self,
+        turn_id: UUID,
+        *,
+        status: str = "pending_approval",
+    ) -> TurnRecord | None:
+        """CAS ``escalated`` → ``status`` (FP resume or owner-reply close).
+
+        The ONLY sanctioned way out of a terminal status: ``transition`` keeps
+        the terminal latch intact (``apply_terminal_latch``), while this method
+        atomically moves a turn that is *still* ``escalated``. Callers use it
+        for two owner actions:
+
+        - false-positive resume → ``pending_approval`` (live again);
+        - successful manual reply → ``delivered`` (durable terminal so a later
+          FP resume cannot reopen the answered turn after a restart).
+
+        Returns ``None`` when the turn does not exist or is not ``escalated`` —
+        ``superseded`` / ``delivered`` / ``failed`` are never reopened.
+        """
+        ...
 
 
 @runtime_checkable
@@ -1016,6 +1047,14 @@ class EscalationStore(Protocol):
 
     async def get_business_connection_id(self, turn_id: UUID) -> str | None:
         """Return the escalation's stored business_connection_id, if any."""
+        ...
+
+    async def get_motivo(self, turn_id: UUID) -> str | None:
+        """Return the escalation's stored motivo, if any.
+
+        Durable fallback for the safety fail-closed rule when the turn's trace
+        is gone (TTL purge, read fault).
+        """
         ...
 
 

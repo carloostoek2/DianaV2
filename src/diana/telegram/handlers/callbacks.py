@@ -24,6 +24,11 @@ from diana.application.draft_variants import (
     RegeneratingCallback,
     build_owner_draft_text,
 )
+from diana.application.escalation_fp_resume import (
+    FpResumeOutcome,
+    fp_resume_key,
+)
+from diana.application.escalation_labels import FP_RESUME_MESSAGES_ES
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.severity_prefill import preselect_severity
 from diana.cognitive.models import is_doctrine_relevant
@@ -63,7 +68,7 @@ ADMIN_MENU_TEXT = (
     "Botones del borrador: Aprobar / Corregir / Escalar\n"
     "/turnos — turnos recientes\n"
     "/traza <id> — detalle de traza\n"
-    "/fp <turn_id> — marcar falsa alarma\n"
+    "/fp <turn_id> — marcar falso positivo\n"
     "/resumen — métricas semanales\n"
     "/metricas — alias de /resumen\n"
     "/staging — ejemplos pendientes (promover/descartar)"
@@ -254,6 +259,26 @@ def _map_delivery_status(result: Any, *, success_token: str) -> str:
     return "deliver_failed"
 
 
+def escalation_fp_token(outcome: FpResumeOutcome) -> str:
+    """Honest token for the owner's false-positive tap (mark + resume).
+
+    Derived from ``fp_resume_key`` so a tap that does not resume says *why*:
+    a newer VIP message owns the chat, the owner already wrote there, the
+    original text could not be recovered, a fault, or the turn no longer
+    applies. ``escalation_fp_marked`` keeps its pre-flag meaning (no draft DM
+    and nothing worth telling the owner beyond the mark).
+    """
+    return f"escalation_fp_{fp_resume_key(outcome)}"
+
+
+# Owner-facing alert for the false-positive tap, per resume key. The texts come
+# from the shared label module so the DM button and /fp say the same thing.
+_ESCALATION_FP_ALERTS: dict[str, str] = {
+    f"escalation_fp_{key}": message
+    for key, message in FP_RESUME_MESSAGES_ES.items()
+}
+
+
 # Owner-facing alerts for approve/correct no-ops (product language).
 _APPROVE_NOOP_ALERTS: dict[str, str] = {
     "stale": "Ya fue resuelto o reemplazado — no se realizó ninguna acción",
@@ -406,8 +431,10 @@ async def dispatch_owner_callback(
                 else "escalation_trace_not_found"
             )
         if esc_kind == "fp":
-            ok = await admin.mark_false_positive(esc_turn_id, actor_id=actor_id)
-            return "escalation_fp_marked" if ok else "escalation_fp_failed"
+            outcome = await admin.mark_false_positive_and_resume(
+                esc_turn_id, actor_id=actor_id
+            )
+            return escalation_fp_token(outcome)
         if esc_kind == "reply":
             correct_sessions.start(actor_id, esc_turn_id, mode="escalation_reply")
             return "escalation_reply_prompted"
@@ -705,15 +732,22 @@ def build_callback_router(
                     await query.message.answer(view.text)
                 return
             if esc_kind == "fp":
-                ok = await admin.mark_false_positive(
+                # A3: clear the spinner before the resume work (which may run a
+                # whole pipeline), then send the verdict as a normal message so
+                # a slow generation never loses it to the callback window.
+                try:
+                    await query.answer()
+                except Exception:
+                    logger.debug(
+                        "escalation_fp_early_answer_failed", exc_info=True
+                    )
+                outcome = await admin.mark_false_positive_and_resume(
                     esc_turn_id, actor_id=actor_id
                 )
-                await query.answer(
-                    "Falso positivo marcado ✅"
-                    if ok
-                    else "No se pudo marcar",
-                    show_alert=True,
-                )
+                if query.message is not None:
+                    await query.message.answer(
+                        _ESCALATION_FP_ALERTS[escalation_fp_token(outcome)]
+                    )
                 return
             if esc_kind == "reply":
                 sessions.start(actor_id, esc_turn_id, mode="escalation_reply")

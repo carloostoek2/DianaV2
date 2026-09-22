@@ -295,6 +295,7 @@ class CognitiveDirector:
         turn_context: IncomingTurn,
         *,
         knowledge_overrides: Mapping[str, Any] | None = None,
+        skip_repetition_guard: bool = False,
     ) -> Decision:
         """Run the F1 cognitive pipeline for one inbound turn.
 
@@ -305,6 +306,12 @@ class CognitiveDirector:
                 retrievers + KnowledgeAugmenter (application-owned force-inject,
                 e.g. gray-zone live rule → ``knowledge.policy``). Decider still
                 owns the action after inject.
+            skip_repetition_guard: Sanctioned exception (owner false-positive
+                resume, AGENTS §4.21): the H4 repetition short-circuit is
+                bypassed so a turn the owner already triaged as a false
+                positive gets a draft instead of escalating again on the same
+                repeated intent. Default False keeps every other caller's
+                behavior byte-identical.
 
         Returns:
             ``Decision`` with ``action`` in {approve, escalate} and non-empty
@@ -332,7 +339,9 @@ class CognitiveDirector:
                 if rule is not None:
                     return await self._handle_template(turn, rule, gate)
             return await self._run_pipeline(
-                turn, knowledge_overrides=knowledge_overrides
+                turn,
+                knowledge_overrides=knowledge_overrides,
+                skip_repetition_guard=skip_repetition_guard,
             )
         except TurnSupersededError:
             raise
@@ -374,6 +383,7 @@ class CognitiveDirector:
         turn: IncomingTurn,
         *,
         knowledge_overrides: Mapping[str, Any] | None = None,
+        skip_repetition_guard: bool = False,
     ) -> Decision:
         turn_id = turn.turn_id
         timings: dict[str, float] = {}
@@ -464,7 +474,19 @@ class CognitiveDirector:
                         return decision
 
         # H4: 3+ consecutive same intent → Decision-only escalate (no Planner+).
-        if self._recent_intents is not None and self._repetition_guard is not None:
+        # Skipped only for the owner false-positive resume: she already triaged
+        # this escalation as a false positive, so the repeated intent must not
+        # escalate again (AGENTS §4.21).
+        if skip_repetition_guard:
+            logger.info(
+                "repetition_guard_skipped_by_caller",
+                extra={"turn_id": str(turn_id), "chat_id": turn.chat_id},
+            )
+        if (
+            not skip_repetition_guard
+            and self._recent_intents is not None
+            and self._repetition_guard is not None
+        ):
             recent = await self._recent_intents.get_recent_intents(
                 turn.chat_id,
                 limit=max(self._repetition_guard.threshold - 1, 0),

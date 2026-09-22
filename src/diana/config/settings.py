@@ -120,6 +120,17 @@ class Settings(BaseSettings):
     # always uses quality/vip_id columns (defaults match pre-flag behavior).
     feature_quality_feedback_enabled: bool = False
 
+    # False-positive resume (REQ-ESC-04, AGENTS §4.21): marking an escalation as
+    # a false positive also continues the supervised flow with a draft DM
+    # (reusing the draft already in the trace, or generating one when the
+    # escalation never got that far). ON by product decision; OFF restores the
+    # previous behavior of this action (metric mark only). That parity is about
+    # the resume: the §0.6 placeholder `(texto no disponible)` of the gray-zone
+    # path is a Spanish copy fix of its own and applies either way. The Settings
+    # default is deliberately True here — the .env file is the source of truth
+    # and carries it explicitly.
+    feature_escalation_fp_draft_enabled: bool = True
+
     # Fase 6 (vínculo Lucien→Diana): expulsiones del Canal VIP avisan a la dueña.
     # FEATURE_LINK_ENABLED on + LINK_CHAT_ID set activates the [LINK] middleware.
     feature_link_enabled: bool = False

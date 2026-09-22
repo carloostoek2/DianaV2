@@ -42,6 +42,7 @@ from diana.behavior.fake import (
     SequenceTurnStatusReader,
 )
 from diana.cognitive.models import (
+    TurnStatus,
     Decision,
     EvaluationProfile,
     IncomingTurn,
@@ -200,6 +201,7 @@ def _admin_graph(
     turns: InMemoryTurnStore | None = None,
     trust_budget: object | None = None,
     autonomy_readiness: object | None = None,
+    feature_escalation_fp_draft_enabled: bool = False,
 ) -> dict:
     from diana.application.memory import InMemoryVipStore
 
@@ -244,6 +246,7 @@ def _admin_graph(
         trust_budget=trust_budget,  # type: ignore[arg-type]
         feature_quality_feedback_enabled=feature_quality_feedback_enabled,
         autonomy_readiness=autonomy_readiness,  # type: ignore[arg-type]
+        feature_escalation_fp_draft_enabled=feature_escalation_fp_draft_enabled,
     )
     return {
         "admin": admin,
@@ -1335,7 +1338,7 @@ async def test_gray_zone_supervised_delivery_creates_approval_and_transitions(
 async def test_gray_zone_supervised_delivery_empty_question_fallback_text(
     admin_graph: dict,
 ) -> None:
-    """Empty/whitespace question → '(no text)' placeholder in the owner DM."""
+    """Empty/whitespace question → Spanish-neutral placeholder in the owner DM."""
     g = admin_graph
     turn_id = uuid4()
     await g["turns"].create(
@@ -1354,7 +1357,7 @@ async def test_gray_zone_supervised_delivery_empty_question_fallback_text(
     )
     assert result is True
     assert len(g["notifier"].drafts) == 1
-    assert g["notifier"].drafts[0].vip_text == "(no text)"
+    assert g["notifier"].drafts[0].vip_text == "(texto no disponible)"
 
 
 @pytest.mark.asyncio
@@ -1848,6 +1851,7 @@ async def test_handle_escalation_reply_delivers_to_chat() -> None:
     """Owner reply to an escalated turn delivers to the chat via BehaviorEngine."""
     g = _admin_graph()
     turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, TurnStatus.ESCALATED)
     await g["escalations"].create(
         turn.id, tipo="risk_high", motivo="risk", business_connection_id="bc-1"
     )
@@ -1857,6 +1861,9 @@ async def test_handle_escalation_reply_delivers_to_chat() -> None:
     assert result is not None and result.success is True
     sends = [c for c in g["actuator"].calls if c["op"] == "send_message"]
     assert any(c["chat_id"] == 42 and c["text"] == "te espero mañana" for c in sends)
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status == TurnStatus.DELIVERED.value
+    assert g["coordinator"].is_owner_intervened(42) is True
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,28 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
+Un falso positivo ya no deja el mensaje del VIP en el aire — 2026-09-22
+
+Cuando una escalación resultaba ser un falso positivo, el caso se quedaba a medias: la dueña veía la traza, marcaba el falso positivo y ahí terminaba todo. El mensaje del suscriptor nunca había recibido respuesta —eso es a propósito cuando la escalación es real— pero como la escalación estaba mal, la única salida era que la dueña escribiera la respuesta a mano. Diana había escrito un borrador antes de escalar, y ese borrador se descartaba.
+
+Ahora marcar el falso positivo continúa el flujo normal: llega el borrador a la cola de aprobación con sus botones de siempre (Aprobar, Corregir, Escalar, Regenerar) y desde ahí se responde al suscriptor como en cualquier otro turno supervisado.
+
+- Si Diana ya había escrito un borrador antes de escalar, se reutiliza tal cual: no se gasta trabajo del modelo y la respuesta sale al instante.
+- Si la escalación ocurrió antes de que hubiera borrador (pregunta repetida, o los temas que cortocircuitan sin pasar por el modelo), Diana lo escribe en ese momento.
+- El caso de pregunta repetida se fuerza: la dueña ya dijo que la escalación fue un error, así que el filtro de repetición no vuelve a bloquear el borrador.
+- Las escalaciones por seguridad se quedan como estaban: se marca el falso positivo y no se genera borrador, porque el sistema nunca propone un texto que no pasó su propio control de seguridad.
+- Si el suscriptor ya escribió algo nuevo, el mensaje viejo no revive: el nuevo manda y el falso positivo solo queda registrado. Esto vale también cuando ese mensaje nuevo ya se respondió y entregó.
+- La marca de falso positivo se guarda siempre, incluso cuando el borrador no se puede generar, para que la métrica de escalaciones siga siendo confiable. Cada caso sin borrador dice por qué (seguridad, mensaje nuevo, falta de conexión, etc.), nunca un "marcado" a secas.
+- Un segundo toque del mismo botón mientras el primero todavía está preparando el borrador no dispara un segundo intento.
+- Responder a mano con el botón del DM cierra el caso: no se genera ni se entrega después un borrador encima de esa respuesta.
+- Se activa con `FEATURE_ESCALATION_FP_DRAFT_ENABLED=true` (encendida por defecto; apagarla devuelve el comportamiento anterior de esta acción, solo la marca).
+
+Dos efectos residuales, aceptados a propósito: la métrica de escalaciones cuenta la decisión guardada del turno, así que un turno reabierto deja de contar como escalación esa semana mientras el falso positivo sí se cuenta; y el turno reabierto y entregado vuelve a pasar por el trabajo posterior al turno (extracción de memoria, registro de desenlace), sin doble conteo pero sin reabrir su ventana de reacción.
+
+Verificación: 3481 tests pasando (3430 unitarios + 51 e2e sin base). La capa con base real (testcontainers) no corre en este entorno por falta de Docker; sus pruebas nuevas quedan escritas y se ejecutan en CI.
+
+---
+
 Re-importado del historial de los VIP existentes, sin riesgo para la cuenta — 2026-08-28
 
 Cuando corregimos la importación de historial, quedó un pendiente: los VIP que ya estaban registrados nunca recibieron su historial previo, porque el bug de "ya había mensajes guardados" bloqueaba la importación el mismo día del alta. Reimportar ese historial requiere entrar al chat personal con la cuenta de Diana, y hacerlo de golpe sería un movimiento agresivo que Telegram podría sancionar. Por eso el re-importado se programa como el backfill original: un solo VIP por hora, sin excepción.

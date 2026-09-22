@@ -460,24 +460,84 @@ aplicables/faltantes en situaciones reales. El Reprender en sandbox entrega el
 texto corregido pero NO guarda la lección (aislamiento); el mensaje a la dueña
 lo aclara (`reprimand_lesson_not_saved_sandbox`).
 
-4.21 Escalaciones — manejo desde el DM de la dueña (sin flag)
+4.21 Escalaciones — manejo desde el DM de la dueña (resume tras falso positivo: FEATURE_ESCALATION_FP_DRAFT_ENABLED)
 
 ```
 Escalación (Decisor o short-circuit determinístico) → DM a la dueña con botones:
   🔍 Ver traza        → render del resumen de traza del turno (AdminTraceService)
-  ➖ Falso positivo   → AdminService.mark_false_positive (owner_marks; métricas)
+  ➖ Falso positivo   → AdminService.mark_false_positive_and_resume
+                        (owner_marks; métricas + REANUDACIÓN del flujo normal)
   ✍️ Responder al VIP → sesión de texto libre → AdminService.handle_escalation_reply
                         → BehaviorEngine.deliver() al chat escalado
+```
+
+Con la flag encendida, marcar el falso positivo NO cierra el caso: continúa el
+flujo supervisado normal (REQ-ESC-04 "forzar generación normal").
+
+```
+➖ Falso positivo (turno en 'escalated') →
+  1. marca de métrica SIEMPRE primero (owner_marks; un fallo posterior no la pierde)
+  2. origen del borrador:
+     a. REUSA el que el pipeline ya generó antes de escalar
+        (pipeline_traces.generated_text) — costo 0, sin re-correr nada
+     b. si no existe (H4 pregunta_repetida, determinísticas): Director.handle_turn
+        del MISMO turno con skip_repetition_guard=True
+        — el texto del VIP sale del historial del chat
+  3. bajo lock de chat: crear aprobación (send_draft_for_approval) y reabrir el
+     turno escalated → pending_approval (TurnStore.reopen_from_escalated, CAS atómico)
+  4. DM de borrador normal: Aprobar / Corregir / Escalar / Regenerar → entrega
 ```
 
 Reglas: la respuesta de la dueña es una acción manual (no pasa por el Decisor,
 igual que Corregir — el Decisor gobierna solo los envíos automáticos). El
 `business_connection_id` del chat escalado se persiste en
 `escalation_events.business_connection_id` al notificar (migración 032) porque
-el turno no lo guarda; sin ese dato el reply falla cerrado (nunca envía a ciegas).
+el turno no lo guarda; sin ese dato el reply falla cerrado (nunca envía a ciegas)
+y el resume también (fallback: el BC del registro de aprobación, para las
+escalaciones que hizo la propia dueña).
 La marca de falso positivo es un flag de métrica (owner_marks), NO un ejemplo:
 no entra a memories/examples/policies ni enseña nada al sistema. En sandbox,
 `mark_false_positive` NO persiste (aislamiento igual que el aprendizaje).
+
+Fallo cerrado del resume (se marca y NO se manda borrador, con aviso honesto):
+escalación por `safety_below_threshold` (nunca se encola un borrador que no pasó
+seguridad, misma regla que §4.5; el motivo se lee de la traza y, si la traza ya
+no está —purga por TTL o fallo de lectura—, del `motivo` persistido en
+`escalation_events`); el chat ya tiene otro turno vivo (un mensaje nuevo del VIP
+manda: invariante de un solo turno no terminal por chat); el chat ya siguió
+adelante con otro turno más nuevo, aunque ese turno ya esté `delivered` (un
+turno entregado no aparece en `list_non_terminal`, así que la obsolescencia se
+chequea además contra `TurnStore.latest_turn_id`); falta el business connection
+o el texto del VIP; el Decisor vuelve a pedir doctrina o el borrador sale vacío
+(los dos casos comparten el aviso "no pude preparar el borrador"); la dueña ya
+intervino en el chat, incluso por el botón "Responder al VIP" del propio DM; y
+un segundo toque del mismo botón mientras el resume anterior sigue corriendo
+(guarda de in-flight por turno en `AdminService`, proceso único).
+
+`TurnStore.reopen_from_escalated` es la ÚNICA excepción sancionada al latch
+terminal (`apply_terminal_latch`): CAS `UPDATE ... WHERE status='escalated'`, así
+que `superseded` / `delivered` / `failed` nunca se reabren. Solo la llama la
+acción de la dueña sobre un falso positivo; después el turno es un turno normal.
+Detalle conocido: al regenerar (caso b) la decisión de escalación guardada en la
+traza de ese turno se reemplaza por la nueva; la evidencia sigue en
+`escalation_events`. Efecto en la métrica: la decisión que alimenta
+`escalate_count` / `false_positive_escalation_rate` es la de la traza, así que un
+turno regenerado deja de contar como escalación en esa semana mientras el falso
+positivo sí se cuenta (el denominador baja); se acepta y se deja la métrica bajo
+el conteo actual. Efecto en el hook post-turno: el turno reabierto y entregado
+vuelve a pasar por la extracción de memoria y por `turn_outcome_log` (upsert por
+`turn_id`, sin doble conteo), y la ventana de reacción del job
+`outcome_reaction` no se reabre (solo afecta esa métrica). Límite conocido: el
+`IncomingTurn` del resume no lleva la foto del cliente salvo que exista la fila
+de aprobación (caso "la dueña escaló el borrador"), porque el turno no persiste
+el `photo_file_id`; las escalaciones del Decisor y las determinísticas reanudan
+sin imagen. Pendiente aparte: `message_history` no tiene política de retención
+propia (el texto del VIP sale del historial por decisión de producto).
+
+Los short-circuits determinísticos escriben el mensaje del VIP en el historial
+del chat (gate `sandbox.should_persist`, best-effort, nunca bloquea la
+escalación) para que ese borrador pueda generarse después. Los helpers
+determinísticos siguen sin dependencias de Director/LLM (TAC-06).
 
 4.22 Visión de imágenes con filtro local de privacidad (FEATURE_IMAGE_VISION_ENABLED)
 

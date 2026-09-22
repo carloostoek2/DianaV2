@@ -1,15 +1,26 @@
-"""SqlTurnStore — terminal latch parity with InMemoryTurnStore."""
+"""SqlTurnStore — terminal latch parity with InMemoryTurnStore.
+
+``apply_terminal_latch`` is the rule: a terminal turn refuses every different
+status. ``SqlTurnStore.reopen_from_escalated`` is the single sanctioned
+exception (FP resume → ``pending_approval``, or owner manual reply →
+``delivered``) and it is expressed as an atomic CAS so it can never clobber a
+concurrent supersede/delivery.
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.ports import TurnRecord
-from diana.cognitive.models import TERMINAL_TURN_STATUSES, TurnStatus, parse_turn_status
+from diana.cognitive.models import (
+    TERMINAL_TURN_STATUSES,
+    TurnStatus,
+    parse_turn_status,
+)
 from diana.infrastructure.db.models import Turn
 
 
@@ -94,6 +105,17 @@ class SqlTurnStore:
                 if not is_terminal_status(r.status)
             ]
 
+    async def latest_turn_id(self, chat_id: int) -> UUID | None:
+        """Newest turn of the chat (`created_at` DESC), whatever its status."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(Turn.id)
+                .where(Turn.chat_id == chat_id)
+                .order_by(Turn.created_at.desc())
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
+
     async def count_messages_since(
         self, vip_id: UUID, *, since: datetime | None
     ) -> int:
@@ -169,6 +191,33 @@ class SqlTurnStore:
             await session.commit()
             await session.refresh(row)
             return turn_orm_to_record(row)
+
+    async def reopen_from_escalated(
+        self,
+        turn_id: UUID,
+        *,
+        status: str = "pending_approval",
+    ) -> TurnRecord | None:
+        """Atomic CAS ``escalated`` → ``status`` (see ``TurnStore`` port).
+
+        Single ``UPDATE ... WHERE status = 'escalated'``: only a turn still in
+        ``escalated`` moves, so a turn superseded/delivered/failed by a
+        concurrent path is never revived. Returns ``None`` when nothing moved.
+        """
+        new_status = status.value if isinstance(status, TurnStatus) else str(status)
+        async with self._sf() as session:
+            result = await session.execute(
+                update(Turn)
+                .where(Turn.id == turn_id, Turn.status == TurnStatus.ESCALATED.value)
+                .values(status=new_status, updated_at=datetime.now(UTC))
+                .returning(Turn.id)
+            )
+            if result.scalar_one_or_none() is None:
+                return None
+            row = await session.get(Turn, turn_id)
+            record = turn_orm_to_record(row) if row is not None else None
+            await session.commit()
+            return record
 
 
 __all__ = [

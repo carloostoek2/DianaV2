@@ -76,6 +76,9 @@ APPROVAL_REASON_LABELS: dict[str, str] = {
     "frustracion_directa": "El VIP está molesto: conviene tu revisión.",
     "doctrine_not_found": "Faltaba una regla de negocio y se consultó la doctrina.",
     "gray_zone_resolved_by_doctrine": "Doctrina resuelta: borrador generado con la regla.",
+    "escalation_false_positive_resume": (
+        "Marcaste la escalación como falso positivo: el turno volvió a tu cola."
+    ),
     "startup_re_notify": "Recordatorio de un borrador pendiente de aprobación.",
 }
 

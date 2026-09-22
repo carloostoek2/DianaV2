@@ -206,3 +206,101 @@ async def test_create_roundtrips_atencion_channel_type(session_factory):
     stored_vip = await repo.get(vip_id)
     assert stored_vip is not None
     assert stored_vip.channel_type == "vip"  # default preserved (flag OFF)
+
+
+# --- latest_turn_id: durable staleness source (delivered turns included) ----
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_latest_turn_id_returns_the_newest_of_the_chat(session_factory):
+    repo = SqlTurnStore(session_factory)
+    # Fixture-local ids: shared testcontainers DB retains rows across tests.
+    chat_id = uuid4().int % 1_000_000_000
+    empty_chat_id = uuid4().int % 1_000_000_000
+    if empty_chat_id == chat_id:
+        empty_chat_id = (chat_id + 1) % 1_000_000_000
+    older = await repo.create(
+        TurnRecord(id=uuid4(), chat_id=chat_id, status="escalated")
+    )
+    newer = await repo.create(
+        TurnRecord(id=uuid4(), chat_id=chat_id, status="delivered")
+    )
+
+    latest = await repo.latest_turn_id(chat_id)
+
+    assert latest == newer.id
+    assert latest != older.id
+    assert await repo.latest_turn_id(empty_chat_id) is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_latest_turn_id_sees_a_delivered_turn(session_factory):
+    """The stale guard needs the terminal turn list_non_terminal hides."""
+    repo = SqlTurnStore(session_factory)
+    turn = await repo.create(
+        TurnRecord(id=uuid4(), chat_id=314, status="delivered")
+    )
+
+    assert await repo.list_non_terminal(314) == []
+    assert await repo.latest_turn_id(314) == turn.id
+
+
+# --- reopen_from_escalated: the only exception to the terminal latch --------
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reopen_from_escalated_moves_turn_to_pending_approval(session_factory):
+    repo = SqlTurnStore(session_factory)
+    turn_id = uuid4()
+    await repo.create(TurnRecord(id=turn_id, chat_id=310, status="escalated"))
+
+    reopened = await repo.reopen_from_escalated(turn_id)
+
+    assert reopened is not None
+    assert reopened.status == "pending_approval"
+    stored = await repo.get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    live = await repo.list_non_terminal(310)
+    assert [t.id for t in live] == [turn_id]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["superseded", "delivered", "failed", "received"])
+async def test_reopen_from_escalated_refuses_other_statuses(
+    session_factory, status
+):
+    repo = SqlTurnStore(session_factory)
+    turn_id = uuid4()
+    await repo.create(TurnRecord(id=turn_id, chat_id=311, status=status))
+
+    assert await repo.reopen_from_escalated(turn_id) is None
+
+    stored = await repo.get(turn_id)
+    assert stored is not None and stored.status == status
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_reopen_from_escalated_missing_turn_is_none(session_factory):
+    assert await SqlTurnStore(session_factory).reopen_from_escalated(uuid4()) is None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_terminal_latch_still_blocks_after_reopen(session_factory):
+    """Reopen is the exception; transition keeps refusing terminal revivals."""
+    repo = SqlTurnStore(session_factory)
+    turn_id = uuid4()
+    await repo.create(TurnRecord(id=turn_id, chat_id=312, status="escalated"))
+    await repo.reopen_from_escalated(turn_id)
+    await repo.transition(turn_id, "delivered")
+
+    blocked = await repo.transition(turn_id, "analyzing")
+
+    assert blocked.status == "delivered"
+    # And a second reopen over a delivered turn is refused too.
+    assert await repo.reopen_from_escalated(turn_id) is None

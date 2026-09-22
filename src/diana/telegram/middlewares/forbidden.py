@@ -28,6 +28,7 @@ from diana.application.j4_triggers import (
 from diana.application.ports import (
     BehaviorDeliverer,
     EscalationStore,
+    MessageHistoryWriter,
     OwnerNotifierPort,
     VipStore,
 )
@@ -94,6 +95,8 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         vips: VipStore | None = None,
         behavior: BehaviorDeliverer | None = None,
         feature_general_mode_enabled: bool = False,
+        history: MessageHistoryWriter | None = None,
+        history_gate: Callable[[int], bool] | None = None,
     ) -> None:
         self._keywords = sanitize_forbidden_keywords(list(keywords))
         self._coordinator = coordinator
@@ -102,6 +105,11 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
         self._vips = vips
         self._behavior = behavior
         self._feature_general = bool(feature_general_mode_enabled)
+        # False-positive resume support: remember the escalated VIP message so
+        # the owner's triage can generate a draft (AGENTS §4.21). ``history_gate``
+        # keeps sandbox chats isolated; the middleware itself knows no sandbox.
+        self._history = history
+        self._history_gate = history_gate
 
     def set_keywords(self, keywords: list[str]) -> None:
         """Replace keyword list in place (boot load from system_config)."""
@@ -210,6 +218,9 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
                 message_id=event.message_id,
                 keywords_hit=j4.keywords_hit,
                 tipo=j4.tipo,
+                history=self._history,
+                history_gate=self._history_gate,
+                channel_type="atencion" if is_atencion_general else "vip",
             )
             logger.info(
                 "j4_short_circuit",
@@ -232,6 +243,9 @@ class ForbiddenKeywordsMiddleware(BaseMiddleware):
             business_connection_id=str(bc),
             message_id=event.message_id,
             keywords_hit=forbidden_hits,
+            history=self._history,
+            history_gate=self._history_gate,
+            channel_type="atencion" if is_atencion_general else "vip",
         )
         logger.info(
             "forbidden_short_circuit",
