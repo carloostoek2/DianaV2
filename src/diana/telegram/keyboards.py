@@ -32,6 +32,8 @@ _ACTION_TRACE_DETAIL_FROM_DRAFT = "tdd"
 _ACTION_TRACE_BACK_TO_DRAFT = "tb"
 # Add note callback (an:<chat_id>) — ≤64 bytes
 _ACTION_ADD_NOTE = "an"
+# Temporary per-turn regen hint (tn:<turn_uuid>) — ≤64 bytes
+_ACTION_REGEN_HINT = "tn"
 # Metrics dashboard callbacks (mx:e export, mx:b back) — ≤64 bytes
 _ACTION_METRICS_EXPORT = "mx:e"
 _ACTION_METRICS_BACK = "mx:b"
@@ -85,6 +87,27 @@ def encode_add_note(chat_id: int) -> str:
     if len(data.encode("utf-8")) > 64:
         raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
     return data
+
+
+def encode_regen_hint(turn_id: UUID) -> str:
+    """Build callback_data for temporary regen-hint button: tn:<uuid>."""
+    data = f"{_ACTION_REGEN_HINT}:{turn_id}"
+    if len(data.encode("utf-8")) > 64:
+        raise ValueError(f"callback_data exceeds 64 bytes: {data!r}")
+    return data
+
+
+def parse_regen_hint(data: str) -> UUID | None:
+    """Parse tn:<uuid> → turn_id; None on malformed data."""
+    if not data or ":" not in data:
+        return None
+    code, raw_id = data.split(":", 1)
+    if code != _ACTION_REGEN_HINT:
+        return None
+    try:
+        return UUID(raw_id)
+    except ValueError:
+        return None
 
 
 def parse_callback(data: str) -> tuple[str, UUID] | None:
@@ -834,6 +857,12 @@ def draft_keyboard(
         InlineKeyboardButton(
             text="📝 Agregar nota",
             callback_data=note_cb,
+        ),
+    ])
+    base.inline_keyboard.append([
+        InlineKeyboardButton(
+            text="💡 Contexto para regen",
+            callback_data=encode_regen_hint(turn_id),
         ),
     ])
     return base
@@ -2006,7 +2035,9 @@ __all__ = [
     "doctrine_keyboard",
     "draft_keyboard",
     "encode_add_note",
+    "encode_regen_hint",
     "encode_callback",
+    "parse_regen_hint",
     "encode_doctrine_callback",
     "encode_doctrine_proposal_callback",
     "encode_doctrine_resolve_callback",

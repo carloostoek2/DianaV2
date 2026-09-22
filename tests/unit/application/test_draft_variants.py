@@ -59,9 +59,11 @@ class FakeDirector:
     def __init__(self, drafts: list[str]) -> None:
         self._drafts = list(drafts)
         self.calls = 0
+        self.last_overrides = None
 
-    async def handle_turn(self, turn: IncomingTurn) -> Decision:
+    async def handle_turn(self, turn: IncomingTurn, **kwargs) -> Decision:
         self.calls += 1
+        self.last_overrides = kwargs.get("knowledge_overrides")
         text = self._drafts.pop(0) if self._drafts else "fallback"
         return Decision(
             action="approve",
@@ -269,7 +271,7 @@ async def test_regenerate_cancelled_mid_llm_does_not_revive_ui() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def handle_turn(self, turn: IncomingTurn) -> Decision:
+        async def handle_turn(self, turn: IncomingTurn, **kwargs) -> Decision:
             self.calls += 1
             await approvals.mark_status(turn.turn_id, "cancelled")
             await turns.transition(turn.turn_id, "superseded")
@@ -774,3 +776,145 @@ def test_render_uses_selected_versions_own_dims() -> None:
     eval_dict["_draft_versions"]["selected"] = 1
     body = build_owner_draft_text(_owner_rec(eval_dict))
     assert "<b>Naturalidad:</b> 0.90" in body
+
+
+# ---------------------------------------------------------------------------
+# Temporary per-turn regen hint (_regen_hint)
+# ---------------------------------------------------------------------------
+
+
+def test_regen_hint_helpers_roundtrip() -> None:
+    from diana.application.draft_variants import (
+        REGEN_HINT_KEY,
+        read_regen_hint,
+        truncate_regen_hint,
+        with_regen_hint,
+        without_regen_hint,
+        build_regen_hint_knowledge,
+        MAX_REGEN_HINT_CHARS,
+    )
+
+    e = with_regen_hint({}, "hola contexto", at="2026-01-01T00:00:00+00:00")
+    assert REGEN_HINT_KEY in e
+    assert read_regen_hint(e) == "hola contexto"
+    assert read_regen_hint(with_regen_hint({}, "  plain  ")) == "plain"
+    cleared = without_regen_hint(e)
+    assert REGEN_HINT_KEY not in cleared
+    assert read_regen_hint(cleared) is None
+
+    short, trunc = truncate_regen_hint("abc")
+    assert short == "abc" and not trunc
+    long_text = "x" * (MAX_REGEN_HINT_CHARS + 50)
+    clipped, trunc = truncate_regen_hint(long_text)
+    assert trunc and len(clipped) == MAX_REGEN_HINT_CHARS
+
+    knowledge = build_regen_hint_knowledge("sé más cálida")
+    assert "owner_regen_context" in knowledge
+    assert knowledge["owner_regen_context"] == "sé más cálida"
+    assert "one-shot" in knowledge["owner_regen_context_meta"].lower() or (
+        "ONE-SHOT" in knowledge["owner_regen_context_meta"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_regen_hint_triggers_regen_and_clears() -> None:
+    from diana.application.draft_variants import (
+        REGEN_HINT_KEY,
+        read_regen_hint,
+        with_regen_hint,
+    )
+
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    director = FakeDirector(["con hint"])
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+    )
+    r = await svc.persist_regen_hint_and_regenerate(
+        turn_id, "sé más directa", actor_id=OWNER
+    )
+    assert r.ok and r.token == "regen_ok"
+    assert r.approval is not None
+    assert r.approval.draft_text == "con hint"
+    assert REGEN_HINT_KEY not in (r.approval.evaluation or {})
+    assert read_regen_hint(r.approval.evaluation) is None
+    assert director.calls == 1
+    assert director.last_overrides is not None
+    ephemeral = director.last_overrides["knowledge.ephemeral"]
+    assert ephemeral["owner_regen_context"] == "sé más directa"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_injects_existing_hint_and_clears() -> None:
+    from diana.application.draft_variants import REGEN_HINT_KEY, with_regen_hint
+
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    live = await approvals.get_by_turn(turn_id)
+    assert live is not None
+    eval_dict = with_regen_hint(live.evaluation, "tono suave")
+    await approvals.update_draft(
+        turn_id, draft_text=live.draft_text, evaluation=eval_dict
+    )
+    director = FakeDirector(["v2"])
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=FakeOwnerNotifier(),
+        owner_telegram_id=OWNER,
+    )
+    r = await svc.regenerate(turn_id, actor_id=OWNER)
+    assert r.ok
+    assert director.last_overrides is not None
+    assert (
+        director.last_overrides["knowledge.ephemeral"]["owner_regen_context"]
+        == "tono suave"
+    )
+    assert REGEN_HINT_KEY not in (r.approval.evaluation or {})
+
+
+@pytest.mark.asyncio
+async def test_mark_status_clears_regen_hint_on_cancel() -> None:
+    from diana.application.draft_variants import REGEN_HINT_KEY, with_regen_hint
+
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    live = await approvals.get_by_turn(turn_id)
+    assert live is not None
+    await approvals.update_draft(
+        turn_id,
+        draft_text=live.draft_text,
+        evaluation=with_regen_hint(live.evaluation, "hint"),
+    )
+    await approvals.mark_status(turn_id, "cancelled")
+    gone = await approvals.get_by_turn(turn_id)
+    assert gone is not None
+    assert gone.status == "cancelled"
+    assert REGEN_HINT_KEY not in (gone.evaluation or {})
+
+
+@pytest.mark.asyncio
+async def test_persist_truncates_long_hint() -> None:
+    from diana.application.draft_variants import MAX_REGEN_HINT_CHARS
+
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    director = FakeDirector(["ok"])
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=FakeOwnerNotifier(),
+        owner_telegram_id=OWNER,
+    )
+    long_hint = "á" * (MAX_REGEN_HINT_CHARS + 100)
+    r = await svc.persist_regen_hint_and_regenerate(
+        turn_id, long_hint, actor_id=OWNER
+    )
+    assert r.ok
+    assert "truncado" in (r.toast or "").lower()
+    assert director.last_overrides is not None
+    injected = director.last_overrides["knowledge.ephemeral"]["owner_regen_context"]
+    assert len(injected) == MAX_REGEN_HINT_CHARS

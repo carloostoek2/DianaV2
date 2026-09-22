@@ -77,10 +77,26 @@ class SqlPendingApprovalStore:
 
     async def mark_status(self, turn_id: UUID, status: str) -> None:
         async with self._sf() as session:
+            values: dict = {"status": status}
+            # Clear one-shot regen hint on approve/void/cancel terminal statuses.
+            if status in {"cancelled", "approved", "corrected"}:
+                row = (
+                    await session.execute(
+                        select(PendingApproval).where(
+                            PendingApproval.turn_id == turn_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if row is None:
+                    raise KeyError(f"approval not found for turn: {turn_id}")
+                if isinstance(row.evaluation, dict) and "_regen_hint" in row.evaluation:
+                    eval_dict = dict(row.evaluation)
+                    eval_dict.pop("_regen_hint", None)
+                    values["evaluation"] = eval_dict
             result = await session.execute(
                 update(PendingApproval)
                 .where(PendingApproval.turn_id == turn_id)
-                .values(status=status)
+                .values(**values)
                 .returning(PendingApproval.id)
             )
             if result.scalar_one_or_none() is None:
@@ -153,18 +169,25 @@ class SqlPendingApprovalStore:
 
     async def cancel_waiting_for_chat(self, chat_id: int) -> int:
         async with self._sf() as session:
-            result = await session.execute(
-                update(PendingApproval)
-                .where(
-                    PendingApproval.chat_id == chat_id,
-                    PendingApproval.status.in_(tuple(OPEN_APPROVAL_STATUSES)),
+            # Load open rows so we can strip one-shot _regen_hint on void.
+            rows = (
+                await session.execute(
+                    select(PendingApproval).where(
+                        PendingApproval.chat_id == chat_id,
+                        PendingApproval.status.in_(tuple(OPEN_APPROVAL_STATUSES)),
+                    )
                 )
-                .values(status="cancelled")
-                .returning(PendingApproval.id)
-            )
-            ids = result.scalars().all()
+            ).scalars().all()
+            if not rows:
+                return 0
+            for row in rows:
+                row.status = "cancelled"
+                if isinstance(row.evaluation, dict) and "_regen_hint" in row.evaluation:
+                    eval_dict = dict(row.evaluation)
+                    eval_dict.pop("_regen_hint", None)
+                    row.evaluation = eval_dict
             await session.commit()
-            return len(ids)
+            return len(rows)
 
     async def list_waiting(self) -> list[ApprovalRecord]:
         async with self._sf() as session:
