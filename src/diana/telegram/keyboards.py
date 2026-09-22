@@ -1082,7 +1082,7 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
         "💬 Revisar mensajes\n\n"
         "Aprobar, corregir o escalar un mensaje de Diana se hace con los botones "
         "que aparecen debajo de cada mensaje propuesto — no hace falta ningún comando.\n\n"
-        "Aquí abajo solo está la opción para cuando una escalación fue una falsa alarma."
+        "Aquí abajo solo está la opción para cuando una escalación fue un falso positivo."
     ),
     "sandbox": "🧪 Modo de prueba\nPrueba cómo responde Diana sin avisar a nadie real.",
     "metrics": "📊 Métricas y aprendizaje\nCómo está funcionando Diana esta semana.",
@@ -1855,7 +1855,7 @@ def menu_persona_confirm_restore_keyboard(version_id: str) -> InlineKeyboardMark
 def menu_review_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🚩 Marcar falsa alarma", callback_data=encode_menu("review", "fp"))],
+            [InlineKeyboardButton(text="🚩 Marcar falso positivo", callback_data=encode_menu("review", "fp"))],
             _menu_back_row(),
         ]
     )

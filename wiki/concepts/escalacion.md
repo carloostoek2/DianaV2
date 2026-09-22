@@ -23,6 +23,13 @@ El Analista puede señalar `risk=alto`, o el Evaluador/[[decisor]] escalan a par
 ## Ciclo de vida
 
 - La dueña **tria** la escalación: válida, falso positivo, o forzar generación normal (REQ-ESC-04).
+  Marcar **falso positivo** reanuda el flujo supervisado: se reutiliza el borrador que el
+  pipeline ya había generado (para las escalaciones semánticas y de frustración queda en
+  `pipeline_traces.generated_text`) y, si la escalación ocurrió antes de generar (pregunta
+  repetida, determinísticas), se genera corriendo el pipeline del mismo turno. El turno
+  vuelve de `escalated` a `pending_approval` y la dueña aprueba/corrige/escala como siempre.
+  Excepción: la escalación por **seguridad** mantiene el fallo cerrado (solo marca, sin
+  borrador), porque nunca se encola un borrador que no pasó el control de seguridad.
 - Los falsos positivos se registran para reducir repeticiones indebidas (REQ-ESC-05).
 - Queda traza auditable: quién, por qué, veredicto, incluidos los objetos del pipeline (REQ-ESC-06).
 - Métrica asociada: tasa de falsos positivos de escalación (REQ-MET-03).

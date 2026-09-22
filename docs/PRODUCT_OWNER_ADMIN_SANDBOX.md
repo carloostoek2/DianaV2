@@ -178,7 +178,7 @@ One owner-facing **admin system**. The menu is live; commands are aliases.
 Owner DM (Telegram)
   └── /start | /menu  →  🌸 Panel de Diana
         ├── 👥 Mis VIPs — register / list / ficha (facts+notes+per-item delete) / rename / pause / deactivate
-        ├── 💬 Revisar mensajes — pointer to draft buttons; 🚩 marcar falsa alarma
+        ├── 💬 Revisar mensajes — pointer to draft buttons; 🚩 marcar falso positivo
         ├── 🧪 Modo de prueba — on / off / perfiles / estado / reset  (FEATURE_SANDBOX_ENABLED)
         ├── 📊 Métricas y aprendizaje — weekly summary + JSON document export; staging queue
         ├── 🔍 Historial y diagnóstico — recent turns + trace detail (back-to-draft from the approval DM)

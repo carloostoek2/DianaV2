@@ -569,6 +569,30 @@ async def test_fp_unavailable_without_store(admin_ctx: dict) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fp_router_replies_with_the_shared_message(admin_ctx: dict) -> None:
+    """/fp and the escalation DM button share one wording (label module)."""
+    from diana.application.escalation_labels import FP_RESUME_MESSAGES_ES
+    from diana.telegram.handlers.admin import build_admin_router
+
+    g = admin_ctx
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, "escalated")
+    router = build_admin_router(
+        owner_telegram_id=OWNER,
+        vips=g["vips"],
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        profile_admin=g["profile_admin"],
+    )
+    on_fp = _router_handler(router, "on_fp")
+    msg = _admin_message(f"/fp {turn.id}")
+
+    await on_fp(msg)
+
+    msg.answer.assert_awaited_once_with(FP_RESUME_MESSAGES_ES["marked"])
+
+
+@pytest.mark.asyncio
 async def test_fp_bot_suffix(admin_ctx: dict) -> None:
     g = admin_ctx
     turn_id = uuid4()
@@ -582,6 +606,47 @@ async def test_fp_idempotent_remark(admin_ctx: dict) -> None:
     turn_id = uuid4()
     assert await _dispatch(g, f"/fp {turn_id}") == "fp_marked"
     assert await _dispatch(g, f"/fp {turn_id}") == "fp_marked"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 1
+
+
+@pytest.mark.asyncio
+async def test_fp_command_reports_the_resumed_draft(admin_ctx: dict) -> None:
+    """Flag ON + persisted draft: /fp continues the flow and says so."""
+    g = admin_ctx
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, "escalated")
+    await g["admin"]._escalations.create(  # noqa: SLF001
+        turn.id, tipo="semantica", motivo="risk_high", business_connection_id="bc-1"
+    )
+    g["admin"]._traces.data[turn.id] = {  # noqa: SLF001
+        "generated_text": "borrador reusado",
+        "decision": {"reason": "risk_high"},
+    }
+    g["admin"]._feature_escalation_fp_draft_enabled = True  # noqa: SLF001
+
+    assert await _dispatch(g, f"/fp {turn.id}") == "fp_draft_sent"
+    approval = await g["admin"]._approvals.get_by_turn(turn.id)  # noqa: SLF001
+    assert approval is not None and approval.status == "waiting"
+    assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 1
+
+
+@pytest.mark.asyncio
+async def test_fp_command_reports_the_safety_block(admin_ctx: dict) -> None:
+    """A safety escalation keeps fail-closed on the command path too."""
+    g = admin_ctx
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, "escalated")
+    await g["admin"]._escalations.create(  # noqa: SLF001
+        turn.id, tipo="semantica", motivo="safety", business_connection_id="bc-1"
+    )
+    g["admin"]._traces.data[turn.id] = {  # noqa: SLF001
+        "generated_text": "borrador inseguro",
+        "decision": {"reason": "safety_below_threshold"},
+    }
+    g["admin"]._feature_escalation_fp_draft_enabled = True  # noqa: SLF001
+
+    assert await _dispatch(g, f"/fp {turn.id}") == "fp_blocked_safety"
+    assert await g["admin"]._approvals.get_by_turn(turn.id) is None  # noqa: SLF001
     assert await g["fp_marks"].count_in_range(_WIDE_START, _WIDE_END) == 1
 
 

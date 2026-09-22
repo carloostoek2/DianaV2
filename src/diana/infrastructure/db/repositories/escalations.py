@@ -53,5 +53,14 @@ class SqlEscalationStore:
             )
             return result.scalar_one_or_none()
 
+    async def get_motivo(self, turn_id: UUID) -> str | None:
+        async with self._sf() as session:
+            result = await session.execute(
+                select(EscalationEvent.motivo).where(
+                    EscalationEvent.turn_id == turn_id
+                )
+            )
+            return result.scalar_one_or_none()
+
 
 __all__ = ["SqlEscalationStore"]

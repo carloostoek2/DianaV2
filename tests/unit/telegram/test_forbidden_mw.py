@@ -658,3 +658,90 @@ async def test_vip_pago_still_escalates() -> None:
     assert result is None
     handler.assert_not_awaited()
     assert g["escalations"].events
+
+
+# --- false-positive resume: remember the escalated VIP message --------------
+
+
+def _forbidden_event(text: str = "quiero un encuentro"):
+    from aiogram.types import Chat, Message, User
+
+    return Message(
+        message_id=77,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="V"),
+        text=text,
+        business_connection_id="bc-1",
+    )
+
+
+async def _run_forbidden(g: dict, mw: ForbiddenKeywordsMiddleware) -> None:
+    handler = AsyncMock(return_value="orchestrator")
+    result = await mw(handler, _forbidden_event(), {"business_connection_id": "bc-1"})
+    assert result is None
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_forbidden_escalation_remembers_vip_message() -> None:
+    from diana.application.memory import InMemoryMessageHistoryWriter
+
+    g = _graph()
+    await g["vips"].add(100, display_name="Vip")
+    history = InMemoryMessageHistoryWriter()
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["encuentro"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        history=history,
+    )
+
+    await _run_forbidden(g, mw)
+
+    recent = await history.get_recent(42, limit=5)
+    assert [r["text"] for r in recent] == ["quiero un encuentro"]
+    assert recent[0]["telegram_message_id"] == 77
+
+
+@pytest.mark.asyncio
+async def test_forbidden_escalation_history_gate_blocks_sandbox() -> None:
+    from diana.application.memory import InMemoryMessageHistoryWriter
+
+    g = _graph()
+    await g["vips"].add(100, display_name="Vip")
+    history = InMemoryMessageHistoryWriter()
+    seen: list[int] = []
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["encuentro"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+        history=history,
+        history_gate=lambda chat_id: seen.append(chat_id) or False,
+    )
+
+    await _run_forbidden(g, mw)
+
+    assert seen == [42]
+    assert await history.get_recent(42, limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_forbidden_escalation_without_history_is_unchanged() -> None:
+    g = _graph()
+    await g["vips"].add(100, display_name="Vip")
+    mw = ForbiddenKeywordsMiddleware(
+        keywords=["encuentro"],
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        vips=g["vips"],
+    )
+
+    await _run_forbidden(g, mw)
+
+    assert g["notifier"].escalations

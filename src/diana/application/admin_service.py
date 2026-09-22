@@ -27,6 +27,8 @@ from diana.application.ports import (
     MessageHistoryWriter,
     OwnerNotifierPort,
     PendingApprovalStore,
+    TraceReader,
+    TurnRecord,
     TurnStore,
     VipStore,
 )
@@ -36,6 +38,18 @@ from diana.application.draft_variants import (
     DOCTRINE_RELEVANT_KEY,
     ensure_versions,
     resolve_vip_display_name,
+)
+from diana.application.escalation_fp_resume import (
+    FP_RESUME_REASON,
+    RESUME_BLOCKED_SAFETY,
+    RESUME_MARKED_ONLY,
+    RESUME_RESUMED,
+    SAFETY_ESCALATION_REASON,
+    FpResumeOutcome,
+    FpResumePlan,
+    evaluation_from_trace,
+    plan_fp_resume,
+    plan_from_generated_decision,
 )
 from diana.application.escalation_labels import tipo_from_reason
 from diana.behavior.ports import DeliveryProgressCallback
@@ -69,6 +83,11 @@ _ESCALATION_LOG_PATH = os.environ.get(
 _ESCALATION_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB per file
 _ESCALATION_LOG_BACKUP_COUNT = 5
 _escalation_file_handler_attached = False
+
+# Owner-facing placeholder when the VIP's original text cannot be recovered
+# (bounded history window / gray zone row without a question). Spanish neutral
+# per AGENTS §0.6 — never show the owner an English token.
+_NO_VIP_TEXT_PLACEHOLDER = "(texto no disponible)"
 
 
 def _ensure_escalation_file_handler() -> None:
@@ -191,6 +210,10 @@ class AdminService:
         # Fila 4 draft DM: readiness snapshot provider for the "Autonomía"
         # section (None → section omitted, byte-compatible with flag OFF).
         autonomy_readiness: Any | None = None,
+        # False-positive resume (AGENTS §4.21): when ON, marking an escalation
+        # as a false positive continues the supervised flow with a draft DM.
+        # OFF ⇒ byte-identical pre-flag behavior (mark only).
+        feature_escalation_fp_draft_enabled: bool = False,
     ) -> None:
         self._notifier = notifier
         self._approvals = approvals
@@ -220,6 +243,15 @@ class AdminService:
         self._director = director
         self._gray_zone = gray_zone
         self._autonomy_readiness_svc = autonomy_readiness
+        self._feature_escalation_fp_draft_enabled = bool(
+            feature_escalation_fp_draft_enabled
+        )
+        # In-flight false-positive resumes, keyed by turn: aiogram runs each
+        # callback update as its own task, so a double tap would otherwise run
+        # two pipelines for the same turn (the loser's status transitions land
+        # after the winner reopened it, and the terminal latch no longer holds).
+        # Process-local on purpose: single-instance deployment (OPS_SINGLE_INSTANCE).
+        self._fp_resume_inflight: set[UUID] = set()
 
     def set_director(self, director: Any) -> None:
         """Wire CognitiveDirector after composition builds it (draft regen / doctrine)."""
@@ -515,7 +547,8 @@ class AdminService:
                 turn_id=turn_id,
                 chat_id=fresh.chat_id,
                 vip_id=fresh.vip_id,
-                text=(getattr(query, "question", "") or "").strip() or "(no text)",
+                text=(getattr(query, "question", "") or "").strip()
+                or _NO_VIP_TEXT_PLACEHOLDER,
                 telegram_message_id=fresh.trigger_message_id,
                 business_connection_id=bc,
                 channel_type=fresh.channel_type,
@@ -1087,6 +1120,422 @@ class AdminService:
         )
         return True
 
+    async def mark_false_positive_and_resume(
+        self,
+        turn_id: UUID,
+        *,
+        actor_id: int | None = None,
+    ) -> FpResumeOutcome:
+        """Owner triage: mark the escalation as false positive and continue.
+
+        AGENTS §4.21 / REQ-ESC-04. The metric mark is always recorded first, so
+        a resume fault never loses the owner's triage. When the feature flag is
+        ON and the turn is still ``escalated``, the normal supervised flow
+        continues: the draft the pipeline already generated is reused
+        (zero LLM cost, the common semantic case) and, when there is none (H4
+        ``pregunta_repetida``, deterministic escalations), the pipeline runs
+        again for the same turn.
+
+        Fail-closed cases never produce a draft DM: an escalation by
+        ``safety_below_threshold`` (an unsafe draft is never enqueued — same
+        rule as the doctrine regen), a chat whose newer VIP message already owns
+        the flow, a second tap while this turn's resume is still running, a
+        missing business connection or missing VIP text.
+
+        Fail-soft: resume faults return an honest status and are logged, never
+        raised. The mark store failing keeps ``mark_false_positive``'s contract
+        (``marked=False``) so the caller can report a real triage error.
+        """
+        self._assert_owner(actor_id)
+        marked = await self.mark_false_positive(turn_id, actor_id=actor_id)
+        if not marked:
+            return FpResumeOutcome(
+                marked=False, status=RESUME_MARKED_ONLY, detail="mark_unavailable"
+            )
+        if not self._feature_escalation_fp_draft_enabled:
+            return FpResumeOutcome(
+                marked=True, status=RESUME_MARKED_ONLY, detail="flag_off"
+            )
+
+        try:
+            turn = await self._turns.get(turn_id)
+            if turn is None:
+                return self._fp_not_resumed("missing_turn", turn_id=turn_id)
+            if turn.status != TurnStatus.ESCALATED.value:
+                return self._fp_not_resumed(
+                    "not_escalated", turn_id=turn_id, chat_id=turn.chat_id
+                )
+            if self._coordinator.is_owner_intervened(turn.chat_id):
+                # She already wrote in that VIP chat after this escalation: the
+                # case is hers, so a draft would only duplicate her reply.
+                return self._fp_not_resumed(
+                    "owner_intervened", turn_id=turn_id, chat_id=turn.chat_id
+                )
+            if turn_id in self._fp_resume_inflight:
+                return self._fp_not_resumed(
+                    "already_running", turn_id=turn_id, chat_id=turn.chat_id
+                )
+            self._fp_resume_inflight.add(turn_id)
+            try:
+                return await self._resume_escalation(turn)
+            finally:
+                self._fp_resume_inflight.discard(turn_id)
+        except Exception:
+            logger.exception(
+                "escalation_fp_resume_failed",
+                extra={"turn_id": str(turn_id)},
+            )
+            return FpResumeOutcome(
+                marked=True, status=RESUME_MARKED_ONLY, detail="error"
+            )
+
+    def _fp_not_resumed(
+        self,
+        detail: str,
+        *,
+        turn_id: UUID,
+        chat_id: int | None = None,
+        status: str = RESUME_MARKED_ONLY,
+        extra: Mapping[str, Any] | None = None,
+    ) -> FpResumeOutcome:
+        """Fail-closed outcome + log: a mark the owner made never ends silently.
+
+        Returns ``marked=True`` for every reason except a mark-store fault
+        (built by the caller) — the triage mark is already recorded.
+        ``extra`` carries the underlying machine reason when the owner-facing
+        detail is a normalized token.
+        """
+        log_extra: dict[str, Any] = {
+            "turn_id": str(turn_id),
+            "chat_id": chat_id,
+            "reason": detail,
+            "status": status,
+        }
+        if extra:
+            log_extra.update(extra)
+        logger.info("escalation_fp_not_resumed", extra=log_extra)
+        return FpResumeOutcome(marked=True, status=status, detail=detail)
+
+    async def _read_resume_trace(self, turn_id: UUID) -> dict[str, Any] | None:
+        """Best-effort trace read for the resume (never raises).
+
+        The injected trace store is the delivery writer (``SqlTraceStore``
+        implements TraceReader too), so no extra dependency is needed.
+        """
+        if not isinstance(self._traces, TraceReader):
+            return None
+        try:
+            return await self._traces.get_full_trace(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "escalation_fp_resume_trace_failed", turn_id=str(turn_id)
+            )
+            return None
+
+    async def _resume_business_connection(
+        self, turn_id: UUID, approval: Any | None = None
+    ) -> str | None:
+        """BC for the resumed draft: escalation ledger, then approval row.
+
+        The escalation that notified the owner persists the BC (migration 032);
+        an owner-escalated draft never writes an escalation event, but its
+        approval row carries the BC the draft was created with.
+        """
+        try:
+            bc = await self._escalations.get_business_connection_id(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "escalation_fp_resume_bc_failed", turn_id=str(turn_id)
+            )
+            bc = None
+        if isinstance(bc, str) and bc.strip():
+            return bc.strip()
+        if approval is None:
+            approval = await self._resume_approval_row(turn_id)
+        fallback = getattr(approval, "business_connection_id", None)
+        if isinstance(fallback, str) and fallback.strip():
+            return fallback.strip()
+        return None
+
+    async def _resume_approval_row(self, turn_id: UUID) -> Any | None:
+        """Approval row of the turn, when there is one (best-effort)."""
+        try:
+            return await self._approvals.get_by_turn(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "escalation_fp_resume_approval_failed", turn_id=str(turn_id)
+            )
+            return None
+
+    async def _resume_escalation_motivo(self, turn_id: UUID) -> str | None:
+        """Persisted escalation motivo (durable safety fallback, best-effort)."""
+        try:
+            motivo = await self._escalations.get_motivo(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "escalation_fp_resume_motivo_failed", turn_id=str(turn_id)
+            )
+            return None
+        return motivo.strip() if isinstance(motivo, str) else None
+
+    async def _resume_escalation(self, turn: TurnRecord) -> FpResumeOutcome:
+        """Resolve the resumed draft and enqueue it (never called unguarded)."""
+        turn_id = turn.id
+        chat_id = turn.chat_id
+        approval = await self._resume_approval_row(turn_id)
+        bc = await self._resume_business_connection(turn_id, approval)
+        if bc is None:
+            return self._fp_not_resumed(
+                "no_business_connection", turn_id=turn_id, chat_id=chat_id
+            )
+
+        trace = await self._read_resume_trace(turn_id)
+        plan = plan_fp_resume(
+            trace=trace,
+            escalation_motivo=await self._resume_escalation_motivo(turn_id),
+        )
+        if plan.action == "blocked_safety":
+            return self._fp_not_resumed(
+                plan.reason or "safety_below_threshold",
+                turn_id=turn_id,
+                chat_id=chat_id,
+                status=RESUME_BLOCKED_SAFETY,
+            )
+
+        vip_text = await self._resolve_trigger_text(chat_id, turn.trigger_message_id)
+        incoming = IncomingTurn(
+            turn_id=turn_id,
+            chat_id=chat_id,
+            vip_id=turn.vip_id,
+            text=(vip_text or "").strip() or _NO_VIP_TEXT_PLACEHOLDER,
+            telegram_message_id=turn.trigger_message_id,
+            business_connection_id=bc,
+            channel_type=(
+                "atencion" if turn.channel_type == "atencion" else "vip"
+            ),
+            # The turn does not persist the image; an owner-escalated draft left
+            # it in its approval row, so the resumed DM can still attach it.
+            photo_file_id=getattr(approval, "photo_file_id", None),
+        )
+        if plan.action == "reuse_trace_draft":
+            return await self._enqueue_resumed_draft(
+                turn=turn,
+                incoming=incoming,
+                decision=self._reuse_trace_decision(plan=plan, trace=trace),
+                comprehension=plan.comprehension,
+                retrieved=plan.retrieved,
+            )
+        generated = await self._generate_resume_decision(
+            incoming, plan=plan, vip_text=vip_text, trace=trace
+        )
+        if isinstance(generated, FpResumeOutcome):
+            return generated
+        decision, comprehension, retrieved = generated
+        return await self._enqueue_resumed_draft(
+            turn=turn,
+            incoming=incoming,
+            decision=decision,
+            comprehension=comprehension,
+            retrieved=retrieved,
+        )
+
+    def _reuse_trace_decision(
+        self, *, plan: FpResumePlan, trace: Mapping[str, Any] | None
+    ) -> Decision:
+        """Supervised decision from the draft the pipeline already generated."""
+        return Decision(
+            action="approve",
+            reason=FP_RESUME_REASON,
+            evaluation=plan.evaluation or evaluation_from_trace(trace),
+            draft_text=plan.draft_text,
+        )
+
+    async def _generate_resume_decision(
+        self,
+        incoming: IncomingTurn,
+        *,
+        plan: FpResumePlan,
+        vip_text: str,
+        trace: Mapping[str, Any] | None,
+    ) -> tuple[Decision, Mapping[str, Any] | None, Mapping[str, Any] | None] | FpResumeOutcome:
+        """Run the pipeline for this turn, or a fail-closed outcome.
+
+        Generation happens OUTSIDE the chat lock (same as the doctrine regen) so
+        a slow model call never blocks the VIP's next message from minting.
+        """
+        if plan.action != "generate":
+            # Defensive: the caller only routes "generate" here. Any other plan
+            # means this turn has no draft to show, never a fabricated one.
+            return self._fp_not_resumed(
+                "no_draft_generated",
+                turn_id=incoming.turn_id,
+                chat_id=incoming.chat_id,
+            )
+        if not (vip_text or "").strip():
+            # Generation uses the VIP message as pipeline input; without it we
+            # fail closed rather than fabricate one (bounded history window).
+            return self._fp_not_resumed(
+                "no_vip_text", turn_id=incoming.turn_id, chat_id=incoming.chat_id
+            )
+        if self._director is None:
+            return self._fp_not_resumed(
+                "no_director", turn_id=incoming.turn_id, chat_id=incoming.chat_id
+            )
+        if trace is not None:
+            # The regeneration overwrites this turn's persisted decision, so the
+            # escalation's own reason is recorded first (audit trail).
+            logger.info(
+                "escalation_fp_resume_regenerating",
+                extra={
+                    "turn_id": str(incoming.turn_id),
+                    "chat_id": incoming.chat_id,
+                    "escalation_reason": plan.reason,
+                },
+            )
+        try:
+            generated = await self._director.handle_turn(
+                incoming, skip_repetition_guard=True
+            )
+        except TurnSupersededError:
+            return self._fp_not_resumed(
+                "superseded", turn_id=incoming.turn_id, chat_id=incoming.chat_id
+            )
+        generated_plan = plan_from_generated_decision(
+            action=str(getattr(generated, "action", "") or ""),
+            reason=str(getattr(generated, "reason", "") or ""),
+            draft_text=str(getattr(generated, "draft_text", "") or ""),
+        )
+        if generated_plan.action != "reuse_trace_draft":
+            # The owner gets one honest token ("no draft was prepared"); the raw
+            # decision reason stays in the log for diagnosis. The safety status
+            # comes from the reason, not the action: an empty draft blocks the
+            # action first, and a safety escalation must not lose that label.
+            status = (
+                RESUME_BLOCKED_SAFETY
+                if generated_plan.reason == SAFETY_ESCALATION_REASON
+                else RESUME_MARKED_ONLY
+            )
+            return self._fp_not_resumed(
+                "no_draft_generated",
+                turn_id=incoming.turn_id,
+                chat_id=incoming.chat_id,
+                status=status,
+                extra={
+                    "decision_action": generated_plan.action,
+                    "decision_reason": generated_plan.reason,
+                },
+            )
+        evaluation = getattr(generated, "evaluation", None)
+        fresh_trace = await self._read_resume_trace(incoming.turn_id)
+        return (
+            Decision(
+                action="approve",
+                reason=FP_RESUME_REASON,
+                evaluation=(
+                    evaluation
+                    if isinstance(evaluation, EvaluationProfile)
+                    else evaluation_from_trace(fresh_trace or trace)
+                ),
+                draft_text=generated_plan.draft_text,
+            ),
+            (fresh_trace or {}).get("comprehension") or plan.comprehension,
+            (fresh_trace or {}).get("retrieved") or plan.retrieved,
+        )
+
+    async def _enqueue_resumed_draft(
+        self,
+        *,
+        turn: TurnRecord,
+        incoming: IncomingTurn,
+        decision: Decision,
+        comprehension: Mapping[str, Any] | None,
+        retrieved: Mapping[str, Any] | None,
+    ) -> FpResumeOutcome:
+        """Create the waiting approval and reopen the escalated turn (locked).
+
+        Mirrors ``create_supervised_delivery_from_gray_zone``: approval creation
+        and the status change run under the per-chat lock, and a failure after
+        persisting cancels the just-created approval so no orphan stays behind.
+        """
+        turn_id = turn.id
+        chat_id = turn.chat_id
+        async with self._coordinator.chat_scope(chat_id):
+            fresh = await self._turns.get(turn_id)
+            if fresh is None or fresh.status != TurnStatus.ESCALATED.value:
+                return self._fp_not_resumed(
+                    "stale", turn_id=turn_id, chat_id=chat_id
+                )
+            live = await self._turns.list_non_terminal(chat_id)
+            if live:
+                # One live turn per chat is non-negotiable: a newer VIP message
+                # owns the chat, so this escalation stays closed.
+                return self._fp_not_resumed(
+                    "chat_busy", turn_id=turn_id, chat_id=chat_id
+                )
+            latest = await self._turns.latest_turn_id(chat_id)
+            if latest is not None and latest != turn_id:
+                # A newer message of this chat was already attended and maybe
+                # delivered — delivered turns are invisible to
+                # ``list_non_terminal``, so this is the only place that stops an
+                # old escalation from answering *after* the newer one.
+                return self._fp_not_resumed(
+                    "stale", turn_id=turn_id, chat_id=chat_id
+                )
+            existing = await self._approvals.get_by_turn(turn_id)
+            if existing is not None and existing.status != "waiting":
+                if existing.status != "cancelled":
+                    return self._fp_not_resumed(
+                        "approval_exists", turn_id=turn_id, chat_id=chat_id
+                    )
+                # Clear unique(turn_id) so a retry can recreate the approval.
+                deleted = False
+                delete_for_turn = getattr(self._approvals, "delete_for_turn", None)
+                if callable(delete_for_turn):
+                    try:
+                        deleted = await delete_for_turn(turn_id)
+                    except Exception:
+                        logger.exception(
+                            "escalation_fp_resume_delete_cancelled_error",
+                            extra={"turn_id": str(turn_id)},
+                        )
+                if not deleted:
+                    return self._fp_not_resumed(
+                        "cancelled_not_deleted", turn_id=turn_id, chat_id=chat_id
+                    )
+            if existing is None or existing.status != "waiting":
+                try:
+                    await self.send_draft_for_approval(
+                        incoming,
+                        decision,
+                        turn_id,
+                        comprehension=comprehension,
+                        retrieved=retrieved,
+                    )
+                except Exception:
+                    await self._cancel_waiting_approval(turn_id)
+                    raise
+            try:
+                reopened = await self._turns.reopen_from_escalated(turn_id)
+            except Exception:
+                # A fault moving the status must not leave a waiting approval
+                # that no live turn backs (mirror the gray-zone compensation).
+                await self._cancel_waiting_approval(turn_id)
+                raise
+            if reopened is None:
+                await self._cancel_waiting_approval(turn_id)
+                return self._fp_not_resumed(
+                    "reopen_lost", turn_id=turn_id, chat_id=chat_id
+                )
+        logger.info(
+            "escalation_fp_resumed",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": chat_id,
+                "draft_chars": len(decision.draft_text or ""),
+            },
+        )
+        return FpResumeOutcome(marked=True, status=RESUME_RESUMED)
+
     async def handle_escalation_reply(
         self,
         turn_id: UUID,
@@ -1099,6 +1548,9 @@ class AdminService:
         The escalation means Diana did NOT answer; the owner takes over by
         writing the response and this method delivers it to the VIP chat
         through the BehaviorEngine (same delivery path as an approved draft).
+        A successful delivery is the owner's answer for this turn: it marks her
+        intervention and cancels a draft still waiting here, so a later
+        false-positive tap or an approval never reaches the VIP twice.
         Returns None when the turn is missing.
         """
         self._assert_owner(actor_id)
@@ -1159,7 +1611,15 @@ class AdminService:
                 "vip_id": str(turn.vip_id) if turn.vip_id else None,
             },
         )
-        return await self._behavior.deliver([stripped], ctx, turn_id)
+        result = await self._behavior.deliver([stripped], ctx, turn_id)
+        if getattr(result, "success", False):
+            # The manual reply is the owner's answer for this turn: a later
+            # false-positive tap must see it (the flag is cleared on the next
+            # ``begin_turn``, the semantics the rest of the system uses) and a
+            # draft she left waiting must not be delivered on top of it.
+            self._coordinator.mark_owner_intervened(turn.chat_id)
+            await self._cancel_waiting_approval(turn_id)
+        return result
 
     async def handle_owner_escalate(
         self,
@@ -1780,7 +2240,10 @@ class AdminService:
             )
             return "error"
 
-        vip_text = (getattr(query, "question", "") or "").strip() or "(no text)"
+        vip_text = (
+            (getattr(query, "question", "") or "").strip()
+            or _NO_VIP_TEXT_PLACEHOLDER
+        )
         incoming = IncomingTurn(
             turn_id=turn_id,
             chat_id=turn.chat_id,

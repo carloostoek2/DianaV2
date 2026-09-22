@@ -200,6 +200,7 @@ def _admin_graph(
     turns: InMemoryTurnStore | None = None,
     trust_budget: object | None = None,
     autonomy_readiness: object | None = None,
+    feature_escalation_fp_draft_enabled: bool = False,
 ) -> dict:
     from diana.application.memory import InMemoryVipStore
 
@@ -244,6 +245,7 @@ def _admin_graph(
         trust_budget=trust_budget,  # type: ignore[arg-type]
         feature_quality_feedback_enabled=feature_quality_feedback_enabled,
         autonomy_readiness=autonomy_readiness,  # type: ignore[arg-type]
+        feature_escalation_fp_draft_enabled=feature_escalation_fp_draft_enabled,
     )
     return {
         "admin": admin,
@@ -1335,7 +1337,7 @@ async def test_gray_zone_supervised_delivery_creates_approval_and_transitions(
 async def test_gray_zone_supervised_delivery_empty_question_fallback_text(
     admin_graph: dict,
 ) -> None:
-    """Empty/whitespace question → '(no text)' placeholder in the owner DM."""
+    """Empty/whitespace question → Spanish-neutral placeholder in the owner DM."""
     g = admin_graph
     turn_id = uuid4()
     await g["turns"].create(
@@ -1354,7 +1356,7 @@ async def test_gray_zone_supervised_delivery_empty_question_fallback_text(
     )
     assert result is True
     assert len(g["notifier"].drafts) == 1
-    assert g["notifier"].drafts[0].vip_text == "(no text)"
+    assert g["notifier"].drafts[0].vip_text == "(texto no disponible)"
 
 
 @pytest.mark.asyncio

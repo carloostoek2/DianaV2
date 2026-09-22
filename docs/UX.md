@@ -81,7 +81,7 @@ Si el bot no puede avisar a la dueña en un turno **VIP** (`send_doctrine_query`
 | Categoría | Qué hay |
 |---|---|
 | 👥 Mis VIPs | Lista, registrar (reenvío + confirmación con TTL), ficha, nota/dato, renombrar, pausar (1 día / 3 días / 1 semana / 1 mes / indefinido), desactivar con confirmación. Ficha: un 🗑 por nota/dato. VIP desactivado desde un botón viejo → aviso + vuelta a la lista (A13). |
-| 💬 Revisar mensajes | Recuerda que Aprobar/Corregir/Escalar viven en el borrador. Aquí solo **🚩 Marcar falsa alarma**. |
+| 💬 Revisar mensajes | Recuerda que Aprobar/Corregir/Escalar viven en el borrador. Aquí solo **🚩 Marcar falso positivo**. |
 | 🧪 Modo de prueba | Activar (reenvío + perfil), desactivar, perfiles, estado, reiniciar. Flag `FEATURE_SANDBOX_ENABLED` (default OFF). |
 | 📊 Métricas y aprendizaje | Resumen semanal + export JSON como **documento** (`metricas_semanales.json`, sin tope 4096). Ejemplos pendientes (staging: promover / descartar en **dos pasos**). |
 | 🔍 Historial y diagnóstico | Turnos recientes + detalle de traza + export JSON. |
@@ -144,7 +144,7 @@ Los hallazgos de la auditoría UX ya no están abiertos. Comportamiento vigente:
 | A8 | Export métricas como texto (rompe >4096) | Documento JSON completo |
 | A9 | No se podían borrar notas/datos del menú | 🗑 por item en la ficha |
 | A10 | Back de métricas apilaba paneles; traza iba a página 0; `/turnos` sin salida | Edit in-place; página en el callback; Volver al menú |
-| A11 | Copy sin tildes, typo “marar”, botón de 37 chars | Acentuación alineada; “🔄 Reiniciar prueba”; “marcar falsa alarma” |
+| A11 | Copy sin tildes, typo “marar”, botón de 37 chars | Acentuación alineada; “🔄 Reiniciar prueba”; “marcar falso positivo” |
 | A12 | `/start` duplicado (texto legacy) | Solo el router de `menu.py` |
 | A13 | `m:vip` de un VIP desactivado seguía mostrando acciones | Redirect a la lista con aviso |
 

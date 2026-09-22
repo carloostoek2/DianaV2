@@ -24,6 +24,8 @@ from aiogram.types import (
 from diana.application.admin_metrics_service import AdminMetricsService
 from diana.application.admin_service import AdminService, OwnerAuthError
 from diana.application.admin_trace_service import AdminTraceService
+from diana.application.escalation_fp_resume import fp_resume_key
+from diana.application.escalation_labels import FP_RESUME_MESSAGES_ES
 from diana.application.ports import GrayZoneServicePort, VipRecord, VipStore
 from diana.application.profile_admin_service import ProfileAdminService
 from diana.application.sandbox import SandboxService
@@ -576,7 +578,9 @@ async def handle_admin_text(
         except ValueError:
             return "fp_usage"
         try:
-            ok = await admin.mark_false_positive(turn_id, actor_id=actor_id)
+            outcome = await admin.mark_false_positive_and_resume(
+                turn_id, actor_id=actor_id
+            )
         except OwnerAuthError:
             return "forbidden"
         except Exception:
@@ -586,7 +590,9 @@ async def handle_admin_text(
                 extra={"turn_id": str(turn_id)},
             )
             return "fp_error"
-        return "fp_marked" if ok else "fp_unavailable"
+        if not outcome.marked:
+            return "fp_unavailable"
+        return f"fp_{fp_resume_key(outcome)}"
 
     return "ignored"
 
@@ -817,19 +823,20 @@ def build_admin_router(
             admin=admin,
             correct_sessions=sessions,
         )
-        if status == "fp_marked":
-            await message.answer("Falsa alarma marcada")
-        elif status == "fp_unavailable":
-            await message.answer("Almacén de falsas alarmas no disponible.")
+        if status == "fp_unavailable":
+            await message.answer("Almacén de falsos positivos no disponible.")
         elif status == "fp_error":
             await message.answer(
-                "Error del sistema al marcar falsa alarma. Inténtalo más tarde."
+                "Error del sistema al marcar el falso positivo. Inténtalo más tarde."
             )
         elif status == "forbidden":
             return  # fail-closed silent
-        else:
-            # fp_usage and any unexpected
+        elif status == "fp_usage":
             await message.answer("Uso: /fp <id_turno>")
+        elif status.startswith("fp_"):
+            # Same texts as the escalation DM button (shared label module).
+            body = FP_RESUME_MESSAGES_ES.get(status[3:])
+            await message.answer(body or "Uso: /fp <id_turno>")
 
     @router.message(Command("vip_profile"))
     async def on_vip_profile(message: Message, **_: Any) -> None:

@@ -789,6 +789,12 @@ def build_app(
             if settings.feature_autonomy_recommendation_enabled
             else None
         ),
+        # False-positive resume: marking an escalation as FP continues the flow
+        # with a draft DM (AGENTS §4.21). Trace reading reuses the injected
+        # trace store (SqlTraceStore implements TraceReader).
+        feature_escalation_fp_draft_enabled=(
+            settings.feature_escalation_fp_draft_enabled
+        ),
     )
 
     catalog = get_persona_catalog()
@@ -1457,6 +1463,11 @@ def build_app(
         feature_link_enabled=settings.feature_link_enabled,
         image_vision=image_vision,
         photo_downloader=photo_downloader,
+        # False-positive resume: the forbidden/J.4 short-circuit remembers the
+        # VIP message so the owner's triage can generate a draft for it.
+        feature_escalation_fp_draft_enabled=(
+            settings.feature_escalation_fp_draft_enabled
+        ),
     )
 
     return AppContainer(

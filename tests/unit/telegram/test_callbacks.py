@@ -79,6 +79,9 @@ def graph() -> dict:
         "approvals": approvals,
         "coordinator": coordinator,
         "actuator": actuator,
+        "traces": traces,
+        "escalations": escalations,
+        "notifier": notifier,
         "sessions": CorrectSessionStore(),
     }
 
@@ -840,6 +843,206 @@ async def test_escalation_fp_callback_marks_false_positive(graph: dict) -> None:
     )
     assert status == "escalation_fp_marked"
     assert await marks.count_in_range(date(2000, 1, 1), date(2100, 1, 1)) == 1
+
+
+@pytest.mark.asyncio
+async def test_escalation_fp_callback_sends_draft_when_one_exists(graph: dict) -> None:
+    """With the resume flag ON and a persisted draft, the flow continues."""
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    g["admin"]._fp_marks = InMemoryOwnerMarkStore()  # noqa: SLF001
+    g["admin"]._feature_escalation_fp_draft_enabled = True  # noqa: SLF001
+    g["traces"].data[turn_id] = {
+        "generated_text": "borrador reusado",
+        "decision": {"reason": "risk_high"},
+    }
+
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_escalation_callback("fp", turn_id),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
+
+    assert status == "escalation_fp_draft_sent"
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None and approval.draft_text == "borrador reusado"
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_escalation_fp_callback_reports_safety_block(graph: dict) -> None:
+    """A safety escalation keeps the fail-closed rule: mark only, no draft DM."""
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    g["admin"]._fp_marks = InMemoryOwnerMarkStore()  # noqa: SLF001
+    g["admin"]._feature_escalation_fp_draft_enabled = True  # noqa: SLF001
+    g["traces"].data[turn_id] = {
+        "generated_text": "borrador inseguro",
+        "decision": {"reason": "safety_below_threshold"},
+    }
+
+    status = await dispatch_owner_callback(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        callback_data=encode_escalation_callback("fp", turn_id),
+        actor_id=OWNER,
+        owner_telegram_id=OWNER,
+    )
+
+    assert status == "escalation_fp_blocked_safety"
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert g["notifier"].drafts == []
+
+
+def test_escalation_fp_token_table_is_complete() -> None:
+    """Every token ``escalation_fp_token`` can emit has an owner-facing alert."""
+    from diana.application.escalation_fp_resume import (
+        RESUME_BLOCKED_SAFETY,
+        RESUME_MARKED_ONLY,
+        RESUME_RESUMED,
+        FpResumeOutcome,
+    )
+    from diana.telegram.handlers.callbacks import (
+        _ESCALATION_FP_ALERTS,
+        escalation_fp_token,
+    )
+
+    tokens = {
+        escalation_fp_token(FpResumeOutcome(marked=False, status=RESUME_MARKED_ONLY)),
+        escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_RESUMED)),
+        escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_BLOCKED_SAFETY)),
+        escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_MARKED_ONLY)),
+    }
+
+    assert tokens == {
+        "escalation_fp_failed",
+        "escalation_fp_draft_sent",
+        "escalation_fp_blocked_safety",
+        "escalation_fp_marked",
+    }
+    assert tokens <= set(_ESCALATION_FP_ALERTS)
+
+
+def test_escalation_fp_skip_reasons_have_their_own_alert() -> None:
+    """Each fail-closed reason tells the owner *why* there is no draft."""
+    from diana.application.escalation_fp_resume import (
+        RESUME_MARKED_ONLY,
+        FpResumeOutcome,
+    )
+    from diana.telegram.handlers.callbacks import (
+        _ESCALATION_FP_ALERTS,
+        escalation_fp_token,
+    )
+
+    def _token(detail: str) -> str:
+        return escalation_fp_token(
+            FpResumeOutcome(
+                marked=True, status=RESUME_MARKED_ONLY, detail=detail
+            )
+        )
+
+    expected = {
+        "chat_busy": "escalation_fp_skipped_new_turn",
+        "owner_intervened": "escalation_fp_skipped_owner_wrote",
+        "no_vip_text": "escalation_fp_skipped_no_draft",
+        "no_draft_generated": "escalation_fp_skipped_no_draft",
+        "no_business_connection": "escalation_fp_skipped_no_connection",
+        "no_director": "escalation_fp_skipped_unavailable",
+        "already_running": "escalation_fp_skipped_in_progress",
+        "error": "escalation_fp_skipped_error",
+        "superseded": "escalation_fp_skipped_error",
+        "not_escalated": "escalation_fp_stale",
+        "missing_turn": "escalation_fp_stale",
+        "stale": "escalation_fp_stale",
+        "flag_off": "escalation_fp_marked",
+        "detalle_desconocido": "escalation_fp_marked",
+    }
+    for detail, token in expected.items():
+        assert _token(detail) == token, detail
+        assert token in _ESCALATION_FP_ALERTS, detail
+        # Every skip alert explains the situation instead of a bare "marcado".
+        if token != "escalation_fp_marked":
+            assert len(_ESCALATION_FP_ALERTS[token]) > len(
+                _ESCALATION_FP_ALERTS["escalation_fp_marked"]
+            )
+
+
+def test_every_resume_key_has_its_own_owner_message() -> None:
+    """The owner message map covers the whole ``FpResumeKey`` vocabulary."""
+    from typing import get_args
+
+    from diana.application.escalation_fp_resume import FpResumeKey
+    from diana.application.escalation_labels import FP_RESUME_MESSAGES_ES
+
+    assert set(get_args(FpResumeKey)) == set(FP_RESUME_MESSAGES_ES)
+
+    # Each fail-closed key says *why*, not just "marcado".
+    marked = FP_RESUME_MESSAGES_ES["marked"]
+    for key, message in FP_RESUME_MESSAGES_ES.items():
+        if key not in {"marked", "failed"}:
+            assert len(message) > len(marked), key
+
+
+@pytest.mark.asyncio
+async def test_escalation_fp_button_shows_the_honest_alert(graph: dict) -> None:
+    """The escalation DM button answers early and sends the verdict as text."""
+    from aiogram.types import CallbackQuery, Chat, Message, User
+
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+    from diana.telegram.handlers.callbacks import build_callback_router
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    g["admin"]._fp_marks = InMemoryOwnerMarkStore()  # noqa: SLF001
+    g["admin"]._feature_escalation_fp_draft_enabled = True  # noqa: SLF001
+    g["traces"].data[turn_id] = {
+        "generated_text": "borrador reusado",
+        "decision": {"reason": "risk_high"},
+    }
+    router = build_callback_router(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+
+    msg = Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="escalación",
+    )
+    verdict = AsyncMock(return_value=True)
+    object.__setattr__(msg, "answer", verdict)
+    query = CallbackQuery(
+        id="cq-esfp",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_escalation_callback("fp", turn_id),
+        message=msg,
+    )
+    answer = AsyncMock(return_value=True)
+    object.__setattr__(query, "answer", answer)
+
+    await on_callback(query)
+
+    # The spinner clears before the pipeline runs, so a slow generation cannot
+    # push the verdict outside the callback window.
+    answer.assert_awaited_once_with()
+    verdict.assert_awaited_once_with(
+        "Falso positivo marcado ✅\nTe envié el borrador para aprobar."
+    )
+    assert len(g["notifier"].drafts) == 1
 
 
 @pytest.mark.asyncio

@@ -69,6 +69,18 @@ class InMemoryTurnStore:
             if not _is_terminal(t.status)
         ]
 
+    async def latest_turn_id(self, chat_id: int) -> UUID | None:
+        """Newest turn of the chat by insertion order (port parity).
+
+        ``TurnRecord`` carries no ``created_at``, so the dict's insertion order
+        stands in for the SQL ``ORDER BY created_at DESC``: a re-created turn
+        keeps its original slot, which is the same order the tests build.
+        """
+        for turn_id, rec in reversed(list(self._turns.items())):
+            if rec.chat_id == chat_id:
+                return turn_id
+        return None
+
     async def transition(
         self,
         turn_id: UUID,
@@ -95,6 +107,28 @@ class InMemoryTurnStore:
             data["superseded_by"] = superseded_by
         if error is not None:
             data["error"] = error
+        updated = TurnRecord(**data)
+        self._turns[turn_id] = updated
+        return updated.model_copy(deep=True)
+
+    async def reopen_from_escalated(
+        self,
+        turn_id: UUID,
+        *,
+        status: str = "pending_approval",
+    ) -> TurnRecord | None:
+        """CAS ``escalated`` → ``status``; None when not escalated (port parity).
+
+        Mirrors ``SqlTurnStore.reopen_from_escalated``: the terminal latch is
+        untouched and only an ``escalated`` turn can be reopened.
+        """
+        rec = self._turns.get(turn_id)
+        if rec is None or rec.status != TurnStatus.ESCALATED.value:
+            return None
+        new_status = status.value if isinstance(status, TurnStatus) else str(status)
+        data = rec.model_dump()
+        data["status"] = new_status
+        data["updated_at"] = datetime.now(UTC)
         updated = TurnRecord(**data)
         self._turns[turn_id] = updated
         return updated.model_copy(deep=True)
@@ -361,6 +395,12 @@ class InMemoryEscalationStore:
         for ev in self.events:
             if ev["turn_id"] == turn_id:
                 return ev.get("business_connection_id")
+        return None
+
+    async def get_motivo(self, turn_id: UUID) -> str | None:
+        for ev in self.events:
+            if ev["turn_id"] == turn_id:
+                return ev.get("motivo")
         return None
 
 
