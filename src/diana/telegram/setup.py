@@ -263,6 +263,7 @@ def build_dispatcher(
             staging=staging,
             coordinator=coordinator,
             profile_admin=profile_admin,
+            draft_variants=draft_variants,
             persona_admin=persona_admin,
             feature_persona_admin_enabled=feature_persona_admin_enabled,
             menu_sessions=menu_sessions,

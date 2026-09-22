@@ -6,6 +6,17 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
+Contexto temporal para regenerar un borrador — 2026-09-22
+
+A veces el borrador está casi bien, pero falta un empujón: "sé más corta", "menciona que estamos cerrados el domingo". Eso no es una nota permanente del VIP; es contexto de una sola regeneración.
+
+Ahora el teclado del borrador tiene **💡 Contexto para regen**. La dueña escribe el texto, Diana lo guarda solo en ese turno, regenera sola (sin pedir que pulses 🔄) y el contexto entra al prompt como bloque efímero one-shot. Cuando la regeneración termina bien —o si apruebas / anulas / cancelas— el hint desaparece. La nota permanente (📝 Agregar nota) no cambia.
+
+- Límite ~800 caracteres; si se pasa, se trunca y se avisa.
+- No sale en el mensaje al VIP (solo alimenta la regeneración).
+
+---
+
 Un falso positivo ya no deja el mensaje del VIP en el aire — 2026-09-22
 
 Cuando una escalación resultaba ser un falso positivo, el caso se quedaba a medias: la dueña veía la traza, marcaba el falso positivo y ahí terminaba todo. El mensaje del suscriptor nunca había recibido respuesta —eso es a propósito cuando la escalación es real— pero como la escalación estaba mal, la única salida era que la dueña escribiera la respuesta a mano. Diana había escrito un borrador antes de escalar, y ese borrador se descartaba.

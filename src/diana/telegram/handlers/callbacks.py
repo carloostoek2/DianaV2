@@ -43,6 +43,7 @@ from diana.telegram.keyboards import (
     parse_escalation_callback,
     parse_gold_confirm,
     parse_metrics_callback,
+    parse_regen_hint,
     parse_reprimand_confirm,
     parse_severity,
     parse_trace_callback,
@@ -699,6 +700,8 @@ def build_callback_router(
     an import cycle through menu.py). The add-note-from-draft flow (``an:``)
     reuses its TTL-bound "note" session so the pending note expires and is
     cancellable with /cancelar (A1), instead of a permanent in-memory dict.
+    The temporary regen-hint flow (``tn:``) uses a TTL-bound "regen_hint"
+    session; on persist it auto-calls regenerate (no "pulsa 🔄" toast).
 
     SPEC-EA-07: ``gray_zone`` (Señal C) and ``forbidden_keywords`` (Señal B)
     feed the deterministic correction-severity prefill; both optional (None →
@@ -840,6 +843,42 @@ def build_callback_router(
                 )
                 # Point the note session at the prompt so the confirmation
                 # edits it in place (draft message stays untouched).
+                sess = menu_sessions.get(actor_id)
+                if sess is not None:
+                    sess.last_bot_message_id = prompt.message_id
+            return
+
+        # ---- Regen-hint callback (tn:<turn_uuid>) ----
+        if data.startswith("tn:"):
+            if menu_sessions is None or draft_variants is None:
+                await query.answer(
+                    "Contexto para regen no disponible", show_alert=True
+                )
+                return
+            if actor_id is None:
+                await query.answer("No autorizado", show_alert=True)
+                return
+            if owner_telegram_id is not None and actor_id != owner_telegram_id:
+                await query.answer("No autorizado", show_alert=True)
+                return
+            turn_uuid = parse_regen_hint(data)
+            if turn_uuid is None:
+                await query.answer("Dato inválido")
+                return
+            menu_sessions.start(
+                actor_id,
+                "regen_hint",
+                turn_id=turn_uuid,
+                draft_message_id=query.message.message_id if query.message else None,
+                last_chat_id=query.message.chat.id if query.message else None,
+            )
+            await query.answer()
+            if query.message:
+                prompt = await query.message.answer(
+                    "💡 Envía el contexto temporal para esta regeneración "
+                    "(no se guarda como nota permanente):\n\n"
+                    "Usa /cancelar para abortar."
+                )
                 sess = menu_sessions.get(actor_id)
                 if sess is not None:
                     sess.last_bot_message_id = prompt.message_id

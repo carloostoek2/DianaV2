@@ -122,6 +122,9 @@ def _merge_knowledge_overrides(
 
     For ``knowledge.policy``: if existing value is a list, prepend override
     entry/entries; otherwise replace with the override list/dict.
+    For ``knowledge.ephemeral``: shallow-merge dicts so a regen hint does not
+    wipe active ephemeral events (and vice versa); ``eventos`` lists concat
+    with override entries first.
     Other keys: replace when override is present and non-empty.
     """
     out: dict[str, Any | None] = dict(retrieved)
@@ -135,6 +138,20 @@ def _merge_knowledge_overrides(
                 out[key] = list(override_list) + list(existing)
             else:
                 out[key] = list(override_list)
+        elif key == "knowledge.ephemeral":
+            existing = out.get(key)
+            if isinstance(existing, dict) and isinstance(value, dict):
+                merged = dict(existing)
+                merged.update(value)
+                ex_ev = existing.get("eventos")
+                ov_ev = value.get("eventos")
+                if isinstance(ex_ev, list) or isinstance(ov_ev, list):
+                    left = list(ov_ev) if isinstance(ov_ev, list) else []
+                    right = list(ex_ev) if isinstance(ex_ev, list) else []
+                    merged["eventos"] = left + right
+                out[key] = merged
+            else:
+                out[key] = value
         else:
             out[key] = value
     return out

@@ -114,6 +114,7 @@ MenuSessionKind = Literal[
     "persona_edit",
     "event_body", "event_duration", "event_custom_start", "event_custom_end",
     "event_edit_body",
+    "regen_hint",
 ]
 
 
@@ -131,6 +132,8 @@ class MenuSession:
     event_start_at: datetime | None = None
     event_end_at: datetime | None = None
     event_id: UUID | None = None
+    turn_id: UUID | None = None
+    draft_message_id: int | None = None
     last_bot_message_id: int | None = None
     last_chat_id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -554,6 +557,7 @@ def build_menu_router(
     staging: StagingService | None = None,
     coordinator: TurnCoordinator | None = None,
     profile_admin: ProfileAdminService | None = None,
+    draft_variants: Any | None = None,
     persona_admin: PersonaAdminService | None = None,
     feature_persona_admin_enabled: bool = False,
     menu_sessions: MenuSessionStore | None = None,
@@ -788,6 +792,10 @@ def build_menu_router(
             await _handle_register_forward(message, bot, session, vips, sessions)
         elif session.kind == "note":
             await _handle_note_text(message, bot, session, profile_admin, sessions)
+        elif session.kind == "regen_hint":
+            await _handle_regen_hint_text(
+                message, bot, session, draft_variants, sessions
+            )
         elif session.kind == "fact":
             await _handle_fact_text(message, bot, session, profile_admin, sessions)
         elif session.kind == "rename":
@@ -1934,6 +1942,102 @@ async def _handle_note_text(
             session=session, fallback=message, keyboard=back_kb,
         )
 
+
+
+
+async def _handle_regen_hint_text(
+    message: Message,
+    bot: Bot,
+    session: MenuSession,
+    draft_variants: Any | None,
+    sessions: MenuSessionStore,
+) -> None:
+    """Capture owner one-shot regen context, persist, and auto-regenerate."""
+
+    def _restart() -> None:
+        sessions.start(
+            message.from_user.id,  # type: ignore[union-attr]
+            "regen_hint",
+            turn_id=session.turn_id,
+            draft_message_id=session.draft_message_id,
+            last_bot_message_id=session.last_bot_message_id,
+            last_chat_id=session.last_chat_id,
+        )
+
+    if draft_variants is None or session.turn_id is None:
+        await _edit_or_answer(
+            bot,
+            "Contexto para regen no disponible.",
+            session=session,
+            fallback=message,
+        )
+        return
+    text = (message.text or "").strip()
+    if not text:
+        _restart()
+        await _edit_or_answer(
+            bot,
+            "El contexto no puede estar vacío. Envíalo de nuevo o usa /cancelar.",
+            session=session,
+            fallback=message,
+        )
+        return
+
+    # Soft-lock UX: edit the draft message to "Regenerando…" when the run starts.
+    draft_message_id = session.draft_message_id
+    draft_chat_id = session.last_chat_id
+
+    async def _on_start() -> None:
+        if draft_message_id is None or draft_chat_id is None:
+            return
+        try:
+            # Best-effort soft-lock UX; body restored by
+            # DraftVariantService._refresh_owner_message on success.
+            await bot.edit_message_text(
+                chat_id=draft_chat_id,
+                message_id=draft_message_id,
+                text="♻️ Regenerando…",
+            )
+        except Exception:
+            logger.debug("regen_hint_draft_edit_failed", exc_info=True)
+
+    actor_id = message.from_user.id  # type: ignore[union-attr]
+    try:
+        result = await draft_variants.persist_regen_hint_and_regenerate(
+            session.turn_id,
+            text,
+            actor_id=actor_id,
+            on_start=_on_start,
+        )
+    except Exception:
+        logger.exception("regen_hint_persist_failed")
+        _restart()
+        await _edit_or_answer(
+            bot,
+            "No se pudo guardar el contexto. Reinténtalo o usa /cancelar.",
+            session=session,
+            fallback=message,
+        )
+        return
+
+    toast = getattr(result, "toast", None) or ""
+    ok = bool(getattr(result, "ok", False))
+    token = getattr(result, "token", "") or ""
+    if ok:
+        msg = toast or "Nueva versión lista"
+        await _edit_or_answer(bot, f"💡 {msg}", session=session, fallback=message)
+        return
+
+    # Keep session only for empty/validation; other failures close it.
+    if token == "empty_hint":
+        _restart()
+    feedback = {
+        "blocked_regenerating": "Espera a que termine la regeneración",
+        "stale": "Borrador no disponible",
+        "blocked_max": toast or "Máximo de versiones alcanzado",
+        "error": toast or "No se pudo regenerar — inténtalo",
+    }.get(token, toast or "No se pudo aplicar el contexto")
+    await _edit_or_answer(bot, feedback, session=session, fallback=message)
 
 async def _handle_fact_text(
     message: Message,

@@ -240,7 +240,15 @@ class InMemoryPendingApprovalStore:
         rec = self._by_turn.get(turn_id)
         if rec is None:
             raise KeyError(f"approval not found for turn: {turn_id}")
-        self._by_turn[turn_id] = rec.model_copy(update={"status": status})
+        data: dict[str, Any] = {"status": status}
+        # Clear one-shot regen hint on approve/void/cancel terminal statuses.
+        if status in {"cancelled", "approved", "corrected"} and isinstance(
+            rec.evaluation, dict
+        ) and "_regen_hint" in rec.evaluation:
+            eval_dict = dict(rec.evaluation)
+            eval_dict.pop("_regen_hint", None)
+            data["evaluation"] = eval_dict
+        self._by_turn[turn_id] = rec.model_copy(update=data)
 
     async def claim_waiting(self, turn_id: UUID) -> ApprovalRecord | None:
         rec = self._by_turn.get(turn_id)
@@ -281,7 +289,12 @@ class InMemoryPendingApprovalStore:
         count = 0
         for turn_id, rec in list(self._by_turn.items()):
             if rec.chat_id == chat_id and rec.status in _OPEN_APPROVAL_STATUSES:
-                self._by_turn[turn_id] = rec.model_copy(update={"status": "cancelled"})
+                data: dict[str, Any] = {"status": "cancelled"}
+                if isinstance(rec.evaluation, dict) and "_regen_hint" in rec.evaluation:
+                    eval_dict = dict(rec.evaluation)
+                    eval_dict.pop("_regen_hint", None)
+                    data["evaluation"] = eval_dict
+                self._by_turn[turn_id] = rec.model_copy(update=data)
                 count += 1
         return count
 

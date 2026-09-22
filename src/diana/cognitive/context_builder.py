@@ -214,6 +214,26 @@ def _format_schedule_body(value: dict[str, Any]) -> str | None:
     return None
 
 
+def _format_ephemeral_body(value: dict[str, Any]) -> str | None:
+    """Render ephemeral knowledge with a clear one-shot regen-hint label."""
+    hint = value.get("owner_regen_context")
+    if not hint:
+        return None
+    parts = [
+        "ONE-SHOT OWNER REGEN CONTEXT (temporary; not permanent notes; "
+        "not severity; apply only to this regeneration; never echo to VIP):",
+        str(hint),
+    ]
+    meta = value.get("owner_regen_context_meta")
+    if meta:
+        parts.append(str(meta))
+    eventos = value.get("eventos")
+    if isinstance(eventos, list) and eventos:
+        parts.append("Active ephemeral events:")
+        parts.extend(f"- {e}" for e in eventos if e)
+    return "\n".join(parts)
+
+
 def _format_knowledge_body(name: str, value: Any) -> str:
     """Format a knowledge section body; fence owner profile as non-instruction data.
 
@@ -225,7 +245,14 @@ def _format_knowledge_body(name: str, value: Any) -> str:
         typed = _format_schedule_body(value)
         if typed is not None:
             return typed
-    body = _format_value(value)
+    if name == _EPHEMERAL_KNOWLEDGE and isinstance(value, dict):
+        typed_ephemeral = _format_ephemeral_body(value)
+        if typed_ephemeral is not None:
+            body = typed_ephemeral
+        else:
+            body = _format_value(value)
+    else:
+        body = _format_value(value)
     if name == _PROFILE_KNOWLEDGE:
         return "\n".join(
             (
@@ -263,7 +290,10 @@ _USER_FENCES: dict[str, dict[str, str]] = {
         "tag": "KNOWLEDGE_EXAMPLES_DATA",
     },
     _EPHEMERAL_KNOWLEDGE: {
-        "label": "Time-bounded ephemeral events active this turn",
+        "label": (
+            "Ephemeral context for this turn (active events and/or one-shot "
+            "owner regen hint — not permanent notes, not severity)"
+        ),
         "tag": "KNOWLEDGE_EPHEMERAL_DATA",
     },
 }

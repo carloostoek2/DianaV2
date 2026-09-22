@@ -32,6 +32,8 @@ from diana.cognitive.thresholds import DEFAULT_AUTONOMOUS_THRESHOLDS
 logger = logging.getLogger("diana.application")
 
 VERSIONS_KEY = "_draft_versions"
+REGEN_HINT_KEY = "_regen_hint"
+MAX_REGEN_HINT_CHARS = 800
 DOCTRINE_RELEVANT_KEY = "_doctrine_relevant"
 DOCTRINE_NA_LABEL = "no aplica"
 AUTONOMY_KEY = "_autonomy"
@@ -472,6 +474,68 @@ def _selected_reason(evaluation: dict[str, Any] | None) -> str:
     return str(items[v["selected"]].get("reason") or "")
 
 
+
+
+def read_regen_hint(evaluation: dict[str, Any] | None) -> str | None:
+    """Return the temporary owner regen hint text, if any."""
+    raw = (evaluation or {}).get(REGEN_HINT_KEY)
+    if isinstance(raw, str):
+        text = raw.strip()
+        return text or None
+    if isinstance(raw, dict):
+        text = str(raw.get("text") or "").strip()
+        return text or None
+    return None
+
+
+def truncate_regen_hint(text: str, *, limit: int = MAX_REGEN_HINT_CHARS) -> tuple[str, bool]:
+    """Return (possibly truncated text, was_truncated)."""
+    stripped = (text or "").strip()
+    if len(stripped) <= limit:
+        return stripped, False
+    return stripped[:limit].rstrip(), True
+
+
+def with_regen_hint(
+    evaluation: dict[str, Any] | None,
+    text: str,
+    *,
+    at: str | None = None,
+) -> dict[str, Any]:
+    """Return evaluation copy with ``_regen_hint`` set (string or {text, at})."""
+    out = dict(evaluation or {})
+    payload: str | dict[str, str]
+    if at:
+        payload = {"text": text, "at": at}
+    else:
+        payload = text
+    out[REGEN_HINT_KEY] = payload
+    return out
+
+
+def without_regen_hint(evaluation: dict[str, Any] | None) -> dict[str, Any]:
+    """Return evaluation copy without ``_regen_hint``."""
+    out = dict(evaluation or {})
+    out.pop(REGEN_HINT_KEY, None)
+    return out
+
+
+def build_regen_hint_knowledge(hint: str) -> dict[str, Any]:
+    """Shape injected into ``knowledge.ephemeral`` for ContextBuilder.
+
+    Clear one-shot owner-context label — not permanent notes, not severity.
+    Independent of ``needs_profile`` (force-injected via knowledge_overrides).
+    """
+    return {
+        "owner_regen_context": hint,
+        "owner_regen_context_meta": (
+            "ONE-SHOT owner context for this regeneration only. "
+            "Not a permanent profile note. Not a severity signal. "
+            "Do not echo this block to the VIP."
+        ),
+    }
+
+
 class DraftVariantService:
     """Regenerate and navigate approval draft variants; edits owner message in place."""
 
@@ -537,6 +601,86 @@ class DraftVariantService:
         await self._refresh_owner_message(updated)
         return VariantNavResult(ok=True, token="nav_ok", approval=updated, toast="")
 
+
+    async def persist_regen_hint_and_regenerate(
+        self,
+        turn_id: UUID,
+        hint_text: str,
+        *,
+        actor_id: int | None,
+        on_start: RegeneratingCallback | None = None,
+    ) -> VariantNavResult:
+        """Store a temporary regen hint on the waiting approval, then regenerate.
+
+        Truncates long hints (MAX_REGEN_HINT_CHARS). Auto-calls regenerate —
+        does not toast "pulsa 🔄". Uses the existing regenerating soft-lock.
+        """
+        self._assert_owner(actor_id)
+        approval = await self._approvals.get_by_turn(turn_id)
+        if approval is None or approval.status != "waiting":
+            return VariantNavResult(
+                ok=False, token="stale", toast="Borrador no disponible"
+            )
+        turn = await self._turns.get(turn_id)
+        if turn is None or is_turn_status_terminal(turn.status):
+            return VariantNavResult(
+                ok=False, token="stale", toast="Borrador no disponible"
+            )
+        versions = read_versions(approval.evaluation)
+        if versions["regenerating"]:
+            return VariantNavResult(
+                ok=False,
+                token="blocked_regenerating",
+                toast="Espera a que termine la regeneración",
+            )
+        truncated_text, was_truncated = truncate_regen_hint(hint_text)
+        if not truncated_text:
+            return VariantNavResult(
+                ok=False, token="empty_hint", toast="El contexto no puede estar vacío"
+            )
+        from datetime import UTC, datetime
+
+        eval_dict = with_regen_hint(
+            approval.evaluation,
+            truncated_text,
+            at=datetime.now(UTC).isoformat(),
+        )
+        saved = await self._approvals.update_draft(
+            turn_id,
+            draft_text=approval.draft_text,
+            evaluation=eval_dict,
+            cognitive_summary=approval.cognitive_summary,
+        )
+        if saved is None:
+            return VariantNavResult(
+                ok=False, token="stale", toast="Borrador no disponible"
+            )
+        result = await self.regenerate(
+            turn_id, actor_id=actor_id, on_start=on_start
+        )
+        if was_truncated and result.ok:
+            # Surface truncation without blocking the regen success path.
+            result = VariantNavResult(
+                ok=result.ok,
+                token=result.token,
+                toast=(
+                    f"Contexto truncado a {MAX_REGEN_HINT_CHARS} caracteres. "
+                    + (result.toast or "Nueva versión lista")
+                ),
+                approval=result.approval,
+            )
+        elif was_truncated and not result.ok:
+            result = VariantNavResult(
+                ok=result.ok,
+                token=result.token,
+                toast=(
+                    f"Contexto truncado a {MAX_REGEN_HINT_CHARS} caracteres. "
+                    + (result.toast or "")
+                ).strip(),
+                approval=result.approval,
+            )
+        return result
+
     async def regenerate(
         self,
         turn_id: UUID,
@@ -598,7 +742,15 @@ class DraftVariantService:
                 telegram_message_id=locked.trigger_message_id,
                 business_connection_id=locked.business_connection_id,
             )
-            decision = await self._director.handle_turn(ctx)
+            hint = read_regen_hint(locked.evaluation)
+            knowledge_overrides = (
+                {"knowledge.ephemeral": build_regen_hint_knowledge(hint)}
+                if hint
+                else None
+            )
+            decision = await self._director.handle_turn(
+                ctx, knowledge_overrides=knowledge_overrides
+            )
             draft = (decision.draft_text or "").strip()
             if not draft:
                 return VariantNavResult(
@@ -650,11 +802,13 @@ class DraftVariantService:
                     new_item["evaluation"] = per_version
             items.append(new_item)
             selected = len(items) - 1
-            eval_dict = dict(live.evaluation or {})
+            eval_dict = without_regen_hint(live.evaluation)
             # Keep latest evaluation dims when present
             if decision.evaluation is not None:
                 dims = decision.evaluation.model_dump(mode="json")
                 eval_dict.update(dims)
+            # without_regen_hint again in case dims somehow reintroduced it
+            eval_dict.pop(REGEN_HINT_KEY, None)
             eval_dict[VERSIONS_KEY] = {
                 "items": items,
                 "selected": selected,
@@ -846,6 +1000,13 @@ __all__ = [
     "DIMENSION_LABELS_ES",
     "MAX_DRAFT_VARIANTS",
     "VERSIONS_KEY",
+    "REGEN_HINT_KEY",
+    "MAX_REGEN_HINT_CHARS",
+    "build_regen_hint_knowledge",
+    "read_regen_hint",
+    "truncate_regen_hint",
+    "with_regen_hint",
+    "without_regen_hint",
     "DraftVariantService",
     "RegeneratingCallback",
     "VariantNavResult",
