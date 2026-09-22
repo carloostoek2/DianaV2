@@ -34,7 +34,7 @@ Por eso hoy Diana cuenta con:
 - Métricas y trazabilidad — la dueña puede revisar qué ocurrió durante un turno y cómo está evolucionando el sistema.
 - Aprendizaje mediante feedback — una respuesta correcta puede convertirse en ejemplo y una respuesta incorrecta puede transformarse en una lección reutilizable.
 - Contexto temporal — podemos introducir acontecimientos que solo deben influir durante una ventana de tiempo determinada.
-- Contexto de una sola regeneración — cuando un borrador está casi bien, la dueña puede dar un empujón puntual (💡 Contexto para regen) que solo alimenta esa regeneración y no se guarda como nota del VIP.
+- Contexto de una sola regeneración — si el borrador falló por falta de información, la dueña puede aportar ese contexto (💡 Contexto para regen), regenerar sin calificar al modelo y no ensuciar la confianza.
 - Integración con otros bots — Diana puede recibir eventos de otros componentes del ecosistema, como Lucien, y pedir a la dueña que decida qué hacer.
 - Visión de imágenes — desde el 26 de agosto de 2026, Diana también puede interpretar determinadas fotos entrantes, siempre pasando primero por nuestro filtro local de privacidad.
 
@@ -214,21 +214,23 @@ Así vamos construyendo un banco de referencias basado en lo que realmente funci
 
 ---
 
-A veces el borrador solo necesita un empujón
+Cuando el fallo es del contexto, no del modelo
 
-No todo ajuste merece convertirse en una nota permanente del VIP.
+Había un caso que me parecía injusto en la supervisión.
 
-A veces el borrador está casi bien y solo hace falta un empujón de una vez: «sé más corta», «menciona que estamos cerrados el domingo». Eso no es memoria del VIP; es contexto de una sola regeneración.
+A veces el borrador sale mal no porque Diana haya razonado mal, sino porque al modelo le faltaba información que la dueña sí tenía: un horario, un cierre, un detalle concreto del negocio. Si en ese momento usabas los botones de corrección (🎨 Tono, 📋 Contenido, ⚠️ Doctrina/Seguridad), el sistema restaba confianza al modelo por un error que no era suyo —era del contexto que se le había dado.
+
+No quería ensuciar la calificación por eso.
 
 Por eso el teclado del borrador tiene **💡 Contexto para regen**, aparte de **📝 Agregar nota**.
 
-La dueña escribe el texto, Diana lo guarda solo en ese turno, regenera sola —sin pedir que pulses 🔄— y el contexto entra al prompt como bloque efímero de un solo uso. Cuando la regeneración termina bien —o si apruebas, anulas o cancelas— el hint desaparece.
+Si la dueña identifica que faltó información, escribe lo que el modelo necesitaba saber. Diana lo guarda solo en ese turno, regenera sola —sin pedir que pulses 🔄— y el contexto entra al prompt como bloque efímero de un solo uso. No hay calificación ni castigo de confianza: se rehace el turno con la información que el borrador debería haber tenido. Cuando la regeneración termina bien —o si apruebas, anulas o cancelas— el hint desaparece.
 
 - El límite es de unos 800 caracteres; si se pasa, se trunca y se avisa.
 - Ese texto no sale en el mensaje al VIP: solo alimenta la regeneración.
-- La nota permanente del VIP no cambia.
+- La nota permanente del VIP no cambia; tampoco los eventos temporales del panel.
 
-Así la dueña puede afilar un borrador sin contaminar el perfil ni los eventos temporales del panel.
+Así se separa «el modelo se equivocó» de «al modelo le faltó contexto» —y solo el primero afecta la confianza.
 
 Ahora Diana también puede ver imágenes
 

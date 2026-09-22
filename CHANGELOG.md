@@ -8,13 +8,13 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 Contexto de una sola regeneración — 2026-09-22
 
-A veces el borrador está casi bien, pero falta un empujón: "sé más corta", "menciona que estamos cerrados el domingo". Eso no es una nota permanente del VIP; es contexto de una sola regeneración.
+Había un caso injusto en la supervisión: el borrador salía mal no porque Diana hubiera razonado mal, sino porque al modelo le faltaba información que la dueña sí tenía —un horario, un cierre, un detalle concreto—. Corregir ese borrador con los botones de corrección ya existentes (🎨 Tono, 📋 Contenido, ⚠️ Doctrina/Seguridad) habría restado confianza al modelo por un fallo que no era suyo: era del contexto que se le dio.
 
-Ahora el teclado del borrador tiene **💡 Contexto para regen**. La dueña escribe el texto, Diana lo guarda solo en ese turno, regenera sola (sin pedir que pulses 🔄) y el contexto entra al prompt como bloque efímero one-shot. Cuando la regeneración termina bien —o si apruebas / anulas / cancelas— el hint desaparece. La nota permanente (📝 Agregar nota) no cambia.
+Ahora el teclado del borrador tiene **💡 Contexto para regen**. Si la dueña identifica ese problema, escribe la información que faltaba, Diana la guarda solo en ese turno, regenera sola (sin pedir que pulses 🔄) y el contexto entra al prompt como bloque efímero de un solo uso. No hay calificación ni castigo de confianza: se rehace el turno con la información que el borrador debería haber tenido. Cuando la regeneración termina bien —o si apruebas / anulas / cancelas— el hint desaparece. La nota permanente (📝 Agregar nota) no cambia.
 
 - Límite ~800 caracteres; si se pasa, se trunca y se avisa.
 - No sale en el mensaje al VIP (solo alimenta la regeneración).
-- No se confunde con los eventos temporales del panel ni con la nota permanente (📝 Agregar nota): es un empujón de un solo uso en el teclado del borrador.
+- No se confunde con los eventos temporales del panel ni con la nota permanente: es contexto de un solo uso para no ensuciar la calificación cuando el fallo fue de información, no del modelo.
 
 ---
 
