@@ -6,7 +6,7 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
-Contexto temporal para regenerar un borrador — 2026-09-22
+Contexto de una sola regeneración — 2026-09-22
 
 A veces el borrador está casi bien, pero falta un empujón: "sé más corta", "menciona que estamos cerrados el domingo". Eso no es una nota permanente del VIP; es contexto de una sola regeneración.
 
@@ -14,6 +14,7 @@ Ahora el teclado del borrador tiene **💡 Contexto para regen**. La dueña escr
 
 - Límite ~800 caracteres; si se pasa, se trunca y se avisa.
 - No sale en el mensaje al VIP (solo alimenta la regeneración).
+- No se confunde con los eventos temporales del panel ni con la nota permanente (📝 Agregar nota): es un empujón de un solo uso en el teclado del borrador.
 
 ---
 

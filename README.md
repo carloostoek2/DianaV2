@@ -34,6 +34,7 @@ Por eso hoy Diana cuenta con:
 - Métricas y trazabilidad — la dueña puede revisar qué ocurrió durante un turno y cómo está evolucionando el sistema.
 - Aprendizaje mediante feedback — una respuesta correcta puede convertirse en ejemplo y una respuesta incorrecta puede transformarse en una lección reutilizable.
 - Contexto temporal — podemos introducir acontecimientos que solo deben influir durante una ventana de tiempo determinada.
+- Contexto de una sola regeneración — cuando un borrador está casi bien, la dueña puede dar un empujón puntual (💡 Contexto para regen) que solo alimenta esa regeneración y no se guarda como nota del VIP.
 - Integración con otros bots — Diana puede recibir eventos de otros componentes del ecosistema, como Lucien, y pedir a la dueña que decida qué hacer.
 - Visión de imágenes — desde el 26 de agosto de 2026, Diana también puede interpretar determinadas fotos entrantes, siempre pasando primero por nuestro filtro local de privacidad.
 
@@ -213,11 +214,25 @@ Así vamos construyendo un banco de referencias basado en lo que realmente funci
 
 ---
 
+A veces el borrador solo necesita un empujón
+
+No todo ajuste merece convertirse en una nota permanente del VIP.
+
+A veces el borrador está casi bien y solo hace falta un empujón de una vez: «sé más corta», «menciona que estamos cerrados el domingo». Eso no es memoria del VIP; es contexto de una sola regeneración.
+
+Por eso el teclado del borrador tiene **💡 Contexto para regen**, aparte de **📝 Agregar nota**.
+
+La dueña escribe el texto, Diana lo guarda solo en ese turno, regenera sola —sin pedir que pulses 🔄— y el contexto entra al prompt como bloque efímero de un solo uso. Cuando la regeneración termina bien —o si apruebas, anulas o cancelas— el hint desaparece.
+
+- El límite es de unos 800 caracteres; si se pasa, se trunca y se avisa.
+- Ese texto no sale en el mensaje al VIP: solo alimenta la regeneración.
+- La nota permanente del VIP no cambia.
+
+Así la dueña puede afilar un borrador sin contaminar el perfil ni los eventos temporales del panel.
+
 Ahora Diana también puede ver imágenes
 
-Esta es la capacidad más reciente que incorporamos.
-
-A partir del 26 de agosto de 2026, Diana puede recibir una foto enviada por un VIP y entender, cuando la imagen es segura para analizar, qué aparece en ella para poder responder en función de ese contenido.
+Otra capacidad que incorporamos, a partir del 26 de agosto de 2026, Diana puede recibir una foto enviada por un VIP y entender, cuando la imagen es segura para analizar, qué aparece en ella para poder responder en función de ese contenido.
 
 Pero aquí decidí que la visión no podía implementarse simplemente conectando la foto directamente a un modelo externo.
 
