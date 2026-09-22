@@ -6,15 +6,21 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
-Contexto temporal para regenerar un borrador — 2026-09-22
+Contexto adicional para rehacer un borrador sin penalizar la evaluación — 2026-09-22
 
-A veces el borrador está casi bien, pero falta un empujón: "sé más corta", "menciona que estamos cerrados el domingo". Eso no es una nota permanente del VIP; es contexto de una sola regeneración.
+A veces un borrador es incorrecto, pero no porque Diana haya interpretado mal la información que tenía, sino porque esa información estaba incompleta. En esos casos, utilizar los botones habituales de Corrección haría que la equivocación se contabilizara como un fallo del modelo, aunque el problema real estuviera en el contexto que recibió. No quería que una falta de información se convirtiera injustamente en una penalización de confianza.
 
-Ahora el teclado del borrador tiene **💡 Contexto para regen**. La dueña escribe el texto, Diana lo guarda solo en ese turno, regenera sola (sin pedir que pulses 🔄) y el contexto entra al prompt como bloque efímero one-shot. Cuando la regeneración termina bien —o si apruebas / anulas / cancelas— el hint desaparece. La nota permanente (📝 Agregar nota) no cambia.
+Ahora la dueña puede identificar ese caso y proporcionar directamente el contexto que faltaba. Diana rehace el borrador desde cero utilizando esa información adicional, sin registrar el turno como una corrección ni modificar las métricas de calidad o confianza. El objetivo no es enseñar al modelo que su respuesta estaba mal, sino darle las condiciones que debería haber tenido para generar el borrador original.
 
-- Límite ~800 caracteres; si se pasa, se trunca y se avisa.
-- No sale en el mensaje al VIP (solo alimenta la regeneración).
+Técnicamente, esto representa: separar un error de generación de un error de contexto de entrada. La regeneración ordinaria sigue sirviendo para mejorar un borrador que ya tenía el contexto necesario; este nuevo flujo sirve cuando la dueña determina que el borrador no debe evaluarse porque le faltaba información relevante.
 
+- La dueña puede indicar el contexto que faltaba directamente desde el borrador.
+- Ese contexto se utiliza únicamente para rehacer ese turno y no se convierte automáticamente en memoria permanente ni en una corrección del modelo.
+- El borrador anterior no se marca como incorrecto y no modifica la confianza, las métricas de correcciones ni el historial de calidad.
+- Diana vuelve a ejecutar la generación con el contexto completo, como si esa información hubiera estado disponible desde el principio.
+- El nuevo borrador vuelve a la cola normal de aprobación para que la dueña decida qué hacer con él.
+- Si el nuevo borrador sigue siendo incorrecto pese a haber recibido el contexto necesario, entonces sí puede utilizarse el flujo habitual de Corrección y la evaluación correspondiente.
+- El contexto adicional es temporal y pertenece únicamente a esa regeneración; no altera por sí mismo las reglas, la personalidad ni la memoria del VIP.
 ---
 
 Un falso positivo ya no deja el mensaje del VIP en el aire — 2026-09-22
