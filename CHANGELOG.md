@@ -6,6 +6,7 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 
 ---
 
+
 Contexto adicional para rehacer un borrador sin penalizar la evaluación — 2026-09-22
 
 A veces un borrador es incorrecto, pero no porque Diana haya interpretado mal la información que tenía, sino porque esa información estaba incompleta. En esos casos, utilizar los botones habituales de Corrección haría que la equivocación se contabilizara como un fallo del modelo, aunque el problema real estuviera en el contexto que recibió. No quería que una falta de información se convirtiera injustamente en una penalización de confianza.
