@@ -1004,6 +1004,22 @@ def test_every_resume_key_has_its_own_owner_message() -> None:
     assert "borrador usable" in FP_RESUME_MESSAGES_ES["skipped_no_draft_generated"]
 
 
+def test_format_escalation_resolved_text_prepends_banner() -> None:
+    """Resolved banner sits above the title, draft-Enviado style, HTML-safe."""
+    from diana.telegram.handlers.callbacks import format_escalation_resolved_text
+
+    body = "Escalación: Riesgo alto [risk_high] turn=abc\nchat=42"
+    out = format_escalation_resolved_text(body)
+    assert out.startswith("✅ <b>Resuelto</b>\n\n")
+    assert out.endswith(body)
+    # Escapes plain-text body so parse_mode=HTML cannot break on VIP text.
+    assert "&lt;" in format_escalation_resolved_text("VIP: a < b")
+    # Idempotent for both HTML source and Telegram display form.
+    assert format_escalation_resolved_text(out) == out
+    display = "✅ Resuelto\n\n" + body
+    assert format_escalation_resolved_text(display) == display
+
+
 @pytest.mark.asyncio
 async def test_escalation_fp_button_shows_the_honest_alert(graph: dict) -> None:
     """The escalation DM button answers early and sends the verdict as text."""
@@ -1028,15 +1044,18 @@ async def test_escalation_fp_button_shows_the_honest_alert(graph: dict) -> None:
     )
     on_callback = router.callback_query.handlers[0].callback
 
+    original = "Escalación: Riesgo alto [risk_high] turn=x\nchat=42"
     msg = Message(
         message_id=9,
         date=0,
         chat=Chat(id=OWNER, type="private"),
         from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
-        text="escalación",
+        text=original,
     )
     verdict = AsyncMock(return_value=True)
+    edit_text = AsyncMock(return_value=True)
     object.__setattr__(msg, "answer", verdict)
+    object.__setattr__(msg, "edit_text", edit_text)
     query = CallbackQuery(
         id="cq-esfp",
         from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
@@ -1056,6 +1075,159 @@ async def test_escalation_fp_button_shows_the_honest_alert(graph: dict) -> None:
         "Falso positivo marcado ✅\nTe envié el borrador para aprobar."
     )
     assert len(g["notifier"].drafts) == 1
+    # UX: resolved banner above the title + action buttons stripped (draft Enviado).
+    edit_text.assert_awaited_once()
+    edited, kwargs = edit_text.await_args.args[0], edit_text.await_args.kwargs
+    assert edited.startswith("✅ <b>Resuelto</b>\n\n")
+    assert original in edited
+    assert kwargs.get("reply_markup") is None
+    assert kwargs.get("parse_mode") == "HTML"
+
+
+@pytest.mark.asyncio
+async def test_escalation_reply_button_marks_message_resolved(graph: dict) -> None:
+    """Responder al VIP: same resolved banner + strip buttons; prompt still sent."""
+    from aiogram.types import CallbackQuery, Chat, Message, User
+
+    from diana.telegram.handlers.callbacks import build_callback_router
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    router = build_callback_router(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+
+    original = "Escalación: Riesgo alto [risk_high] turn=y\nchat=42"
+    msg = Message(
+        message_id=10,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text=original,
+    )
+    prompt = AsyncMock(return_value=True)
+    edit_text = AsyncMock(return_value=True)
+    object.__setattr__(msg, "answer", prompt)
+    object.__setattr__(msg, "edit_text", edit_text)
+    query = CallbackQuery(
+        id="cq-esr",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_escalation_callback("reply", turn_id),
+        message=msg,
+    )
+    object.__setattr__(query, "answer", AsyncMock(return_value=True))
+
+    await on_callback(query)
+
+    edit_text.assert_awaited_once()
+    edited, kwargs = edit_text.await_args.args[0], edit_text.await_args.kwargs
+    assert edited.startswith("✅ <b>Resuelto</b>\n\n")
+    assert original in edited
+    assert kwargs.get("reply_markup") is None
+    assert kwargs.get("parse_mode") == "HTML"
+    prompt.assert_awaited()
+    assert "Escribe la respuesta" in prompt.await_args.args[0]
+    sess = g["sessions"].get_session(OWNER)
+    assert sess is not None and sess.mode == "escalation_reply"
+
+
+@pytest.mark.asyncio
+async def test_escalation_trace_button_leaves_message_unchanged(graph: dict) -> None:
+    """Ver traza navigates without resolving or stripping the escalation buttons."""
+    from types import SimpleNamespace
+
+    from aiogram.types import CallbackQuery, Chat, Message, User
+
+    from diana.telegram.handlers.callbacks import build_callback_router
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    fake_trace = SimpleNamespace(
+        render_trace_summary=AsyncMock(
+            return_value=SimpleNamespace(text="traza resumen")
+        )
+    )
+    router = build_callback_router(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        owner_telegram_id=OWNER,
+        admin_trace=fake_trace,  # type: ignore[arg-type]
+    )
+    on_callback = router.callback_query.handlers[0].callback
+
+    msg = Message(
+        message_id=11,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="Escalación: intacta",
+    )
+    followup = AsyncMock(return_value=True)
+    edit_text = AsyncMock(return_value=True)
+    object.__setattr__(msg, "answer", followup)
+    object.__setattr__(msg, "edit_text", edit_text)
+    query = CallbackQuery(
+        id="cq-est",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_escalation_callback("trace", turn_id),
+        message=msg,
+    )
+    object.__setattr__(query, "answer", AsyncMock(return_value=True))
+
+    await on_callback(query)
+
+    edit_text.assert_not_awaited()
+    followup.assert_awaited_once_with("traza resumen")
+
+
+@pytest.mark.asyncio
+async def test_escalation_fp_failed_keeps_action_buttons(graph: dict) -> None:
+    """A failed FP mark must not strip buttons so the owner can retry."""
+    from aiogram.types import CallbackQuery, Chat, Message, User
+
+    from diana.telegram.handlers.callbacks import build_callback_router
+    from diana.telegram.keyboards import encode_escalation_callback
+
+    g = graph
+    turn_id = await _escalated_turn(g)
+    # No fp_marks store → mark fails (marked=False).
+    g["admin"]._fp_marks = None  # noqa: SLF001
+    router = build_callback_router(
+        admin=g["admin"],
+        correct_sessions=g["sessions"],
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+
+    msg = Message(
+        message_id=12,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="Escalación: sigue abierta",
+    )
+    edit_text = AsyncMock(return_value=True)
+    object.__setattr__(msg, "answer", AsyncMock(return_value=True))
+    object.__setattr__(msg, "edit_text", edit_text)
+    query = CallbackQuery(
+        id="cq-esfp-fail",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_escalation_callback("fp", turn_id),
+        message=msg,
+    )
+    object.__setattr__(query, "answer", AsyncMock(return_value=True))
+
+    await on_callback(query)
+
+    edit_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio
