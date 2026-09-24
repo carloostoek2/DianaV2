@@ -1265,7 +1265,8 @@ class PromoTriggerRecord(BaseModel):
 class PromoExecutionRecord(BaseModel):
     """promo_executions row shape.
 
-    Status domain: sent | failed.
+    Status domain: pending | sent | failed.
+    ``pending`` is an early claim reserved before BehaviorEngine delivery.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1322,7 +1323,7 @@ class PromoTriggerStore(Protocol):
 
 @runtime_checkable
 class PromoExecutionStore(Protocol):
-    """Promo delivery history (thin insert/query only)."""
+    """Promo delivery history (thin insert/query + early claim)."""
 
     async def insert(
         self,
@@ -1340,6 +1341,39 @@ class PromoExecutionStore(Protocol):
         self, chat_id: int, trigger_id: UUID, since: datetime
     ) -> bool:
         """True if a status=sent execution exists with sent_at >= since."""
+        ...
+
+    async def has_claim_since(
+        self, chat_id: int, trigger_id: UUID, since: datetime
+    ) -> bool:
+        """True if status in (sent, pending) with sent_at >= since.
+
+        Used for the promo cooldown / in-flight silence window.
+        """
+        ...
+
+    async def try_claim(
+        self,
+        chat_id: int,
+        trigger_id: UUID,
+        sequence_sent: list[str] | None,
+        since: datetime,
+    ) -> PromoExecutionRecord | None:
+        """Insert status=pending if no sent/pending claim since ``since``.
+
+        Returns the new row, or None when the slot is already taken (race /
+        cooldown). Callers update the claim to sent/failed after delivery.
+        """
+        ...
+
+    async def update_execution(
+        self,
+        execution_id: UUID,
+        *,
+        status: str,
+        sequence_sent: list[str] | None = None,
+    ) -> PromoExecutionRecord | None:
+        """Update an existing execution (pending → sent/failed). None if missing."""
         ...
 
 

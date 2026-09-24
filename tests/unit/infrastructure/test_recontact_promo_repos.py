@@ -126,7 +126,7 @@ def test_promo_execution_repo_method_surface() -> None:
         PromoExecutionRepo,
     )
 
-    for name in ("insert", "latest_for_chat_trigger", "was_sent_since"):
+    for name in ("insert", "latest_for_chat_trigger", "was_sent_since", "has_claim_since", "try_claim", "update_execution"):
         assert hasattr(PromoExecutionRepo, name), name
         assert inspect.iscoroutinefunction(getattr(PromoExecutionRepo, name))
 
@@ -177,6 +177,9 @@ def test_protocol_method_names_match_repos() -> None:
                 "insert",
                 "latest_for_chat_trigger",
                 "was_sent_since",
+                "has_claim_since",
+                "try_claim",
+                "update_execution",
             },
         }[proto]
         for name in contract:

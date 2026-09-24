@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.ports import PromoExecutionRecord
 from diana.infrastructure.db.models import PromoExecution
+
+_CLAIM_STATUSES = ("sent", "pending")
 
 
 def promo_execution_orm_to_record(row: PromoExecution) -> PromoExecutionRecord:
@@ -87,6 +89,79 @@ class PromoExecutionRepo:
                 .limit(1)
             )
             return result.scalar_one_or_none() is not None
+
+    async def has_claim_since(
+        self, chat_id: int, trigger_id: UUID, since: datetime
+    ) -> bool:
+        async with self._sf() as session:
+            result = await session.execute(
+                select(PromoExecution.id)
+                .where(
+                    PromoExecution.chat_id == chat_id,
+                    PromoExecution.trigger_id == trigger_id,
+                    PromoExecution.status.in_(_CLAIM_STATUSES),
+                    PromoExecution.sent_at >= since,
+                )
+                .limit(1)
+            )
+            return result.scalar_one_or_none() is not None
+
+    async def try_claim(
+        self,
+        chat_id: int,
+        trigger_id: UUID,
+        sequence_sent: list[str] | None,
+        since: datetime,
+    ) -> PromoExecutionRecord | None:
+        """Insert pending if no sent/pending claim since ``since`` (one txn)."""
+        async with self._sf() as session:
+            async with session.begin():
+                existing = await session.execute(
+                    select(PromoExecution.id)
+                    .where(
+                        PromoExecution.chat_id == chat_id,
+                        PromoExecution.trigger_id == trigger_id,
+                        PromoExecution.status.in_(_CLAIM_STATUSES),
+                        PromoExecution.sent_at >= since,
+                    )
+                    .limit(1)
+                )
+                if existing.scalar_one_or_none() is not None:
+                    return None
+                row = PromoExecution(
+                    chat_id=chat_id,
+                    trigger_id=trigger_id,
+                    sequence_sent=sequence_sent,
+                    status="pending",
+                )
+                session.add(row)
+                await session.flush()
+                await session.refresh(row)
+                return promo_execution_orm_to_record(row)
+
+    async def update_execution(
+        self,
+        execution_id: UUID,
+        *,
+        status: str,
+        sequence_sent: list[str] | None = None,
+    ) -> PromoExecutionRecord | None:
+        async with self._sf() as session:
+            values: dict = {"status": status}
+            if sequence_sent is not None:
+                values["sequence_sent"] = sequence_sent
+            result = await session.execute(
+                update(PromoExecution)
+                .where(PromoExecution.id == execution_id)
+                .values(**values)
+                .returning(PromoExecution)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                await session.rollback()
+                return None
+            await session.commit()
+            return promo_execution_orm_to_record(row)
 
 
 __all__ = ["PromoExecutionRepo", "promo_execution_orm_to_record"]
