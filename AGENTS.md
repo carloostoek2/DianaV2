@@ -735,12 +735,17 @@ async def execute_recontact(vip_id: UUID) -> None
 
 ```python
 async def match_trigger(text: str) -> Optional[PromoTrigger]
-async def execute_promo(chat_id: int, trigger: PromoTrigger) -> None
+async def execute_promo(chat_id: int, trigger: PromoTrigger) -> str
 ```
 
 · Nunca usa LLM.
 · Solo dispara por texto exacto (no semántico).
 · La secuencia se define en system_config o tabla promo_triggers.
+· Contrato de repetición (REQ-PRO / product option A):
+  - Dentro de `promo.cooldown_hours` (default 24) tras un `sent` o con claim `pending` en vuelo → silencio (`suppressed`), sin entrega.
+  - Tras el cooldown y aún dentro de `promo.repeat_days` (default 30) → variante con `repeat_first_message`.
+  - Fuera de `repeat_days` → secuencia completa de primer envío.
+  - Claim temprano: se reserva `pending` antes de `deliver_with_sequence` (antes/durante delays del BehaviorEngine) para que un segundo disparo idéntico ya esté silenciado; al fallar el delivery el claim pasa a `failed` y se puede reintentar.
 
 4.5 CalibrationService
 
@@ -774,6 +779,7 @@ async def detect_drift() -> Dict[str, float]
 1. La coincidencia debe ser exacta (case-insensitive, pero sin fuzzy matching).
 2. La secuencia se envía con delays entre mensajes (BehaviorEngine ya lo soporta).
 3. No se debe guardar en pipeline_traces.
+4. Respetar cooldown (`promo.cooldown_hours`) con claim temprano `pending`; no silenciar de forma permanente tras `failed`.
 
 5.4 Al modificar calibración
 

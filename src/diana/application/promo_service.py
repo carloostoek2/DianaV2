@@ -3,8 +3,14 @@
 F3 proactivity: match trigger → assemble first-send or re-intro sequence →
 deliver via BehaviorEngine.deliver_with_sequence → always record promo_executions.
 
-CLARIFY: recent execution never silences; it only swaps the first message
-when ``repeat_first_message`` is set.
+Cooldown (``promo.cooldown_hours``, default 24): a successful ``sent`` or
+in-flight ``pending`` claim within the window silences delivery (return
+``suppressed``). Early claim reserves the slot before BehaviorEngine delays
+so a second identical trigger cannot race a duplicate send.
+
+After cooldown, still within ``promo.repeat_days`` (default 30): variant
+path swaps the first message via ``repeat_first_message`` when set.
+Outside ``repeat_days``: full first-send sequence.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from diana.application.ports import (
 logger = logging.getLogger("diana.application")
 
 _DEFAULT_REPEAT_DAYS = 30
+_DEFAULT_COOLDOWN_HOURS = 24
 # Stored on pending_deliveries.decision so restart recovery can resume promos.
 PROMO_DECISION_KIND = "promo"
 
@@ -87,6 +94,24 @@ class PromoService:
             return None
         return await self._triggers.get_active_by_trigger_text(stripped)
 
+    async def _repeat_days(self) -> int:
+        cfg = await self._config.get_promo_config()
+        raw = cfg.get("repeat_days", _DEFAULT_REPEAT_DAYS)
+        try:
+            window = int(raw)
+        except (TypeError, ValueError):
+            window = _DEFAULT_REPEAT_DAYS
+        return max(0, window)
+
+    async def _cooldown_hours(self) -> int:
+        cfg = await self._config.get_promo_config()
+        raw = cfg.get("cooldown_hours", _DEFAULT_COOLDOWN_HOURS)
+        try:
+            hours = int(raw)
+        except (TypeError, ValueError):
+            hours = _DEFAULT_COOLDOWN_HOURS
+        return max(0, hours)
+
     async def has_recent_execution(
         self,
         chat_id: int,
@@ -94,21 +119,13 @@ class PromoService:
         *,
         days: int | None = None,
     ) -> bool:
-        """True if a status=sent execution exists within the silence window.
+        """True if a status=sent execution exists within the repeat window.
 
         Window size comes from ``days`` override or ``promo.repeat_days``
-        (default 30). Does **not** block delivery — only sequence assembly.
+        (default 30). Used only for sequence assembly (re-intro variant),
+        not for silence — see cooldown / ``has_claim_since``.
         """
-        window = days
-        if window is None:
-            cfg = await self._config.get_promo_config()
-            raw = cfg.get("repeat_days", _DEFAULT_REPEAT_DAYS)
-            try:
-                window = int(raw)
-            except (TypeError, ValueError):
-                window = _DEFAULT_REPEAT_DAYS
-        if window < 0:
-            window = 0
+        window = days if days is not None else await self._repeat_days()
         since = self._clock.now() - timedelta(days=window)
         return await self._executions.was_sent_since(chat_id, trigger_id, since)
 
@@ -143,7 +160,10 @@ class PromoService:
         ``telegram_message_id`` marks the triggering user message as read via
         the engine's read gate (skipped when None).
 
-        Returns: disabled | empty_sequence | sent | failed
+        Returns: disabled | empty_sequence | suppressed | sent | failed
+
+        ``suppressed`` = within ``promo.cooldown_hours`` of a sent or
+        in-flight pending claim (including concurrent double-tap).
         """
         if not self._feature_promo_enabled:
             return "disabled"
@@ -155,6 +175,22 @@ class PromoService:
                 extra={"chat_id": chat_id, "reason": "missing_business_connection"},
             )
             return "failed"
+
+        cooldown_h = await self._cooldown_hours()
+        since_cooldown = self._clock.now() - timedelta(hours=cooldown_h)
+        if await self._executions.has_claim_since(
+            chat_id, trigger.id, since_cooldown
+        ):
+            logger.info(
+                "promo_suppressed",
+                extra={
+                    "chat_id": chat_id,
+                    "trigger_id": str(trigger.id),
+                    "reason": "cooldown",
+                    "cooldown_hours": cooldown_h,
+                },
+            )
+            return "suppressed"
 
         recent = await self.has_recent_execution(chat_id, trigger.id)
         texts = self.build_sequence(trigger, recent=recent)
@@ -181,6 +217,27 @@ class PromoService:
                 channel_type="atencion" if self._feature_general_mode_enabled else "vip",
             )
         )
+
+        # Early claim: reserve before BehaviorEngine delays so a second
+        # identical trigger is already suppressed.
+        claim = await self._executions.try_claim(
+            chat_id, trigger.id, texts, since_cooldown
+        )
+        if claim is None:
+            logger.info(
+                "promo_suppressed",
+                extra={
+                    "chat_id": chat_id,
+                    "trigger_id": str(trigger.id),
+                    "turn_id": str(turn.id),
+                    "reason": "claim_lost",
+                },
+            )
+            await self._turns.transition(
+                turn.id, "failed", error="promo_suppressed"
+            )
+            return "suppressed"
+
         ctx = DeliveryContext(
             chat_id=chat_id,
             business_connection_id=bc,
@@ -194,6 +251,7 @@ class PromoService:
             "kind": PROMO_DECISION_KIND,
             "trigger_id": str(trigger.id),
             "recent": recent,
+            "execution_id": str(claim.id),
         }
 
         try:
@@ -216,6 +274,7 @@ class PromoService:
                 turn_id=turn.id,
                 success=False,
                 error=str(exc),
+                execution_id=claim.id,
             )
             return "failed"
 
@@ -227,6 +286,7 @@ class PromoService:
             success=result.success,
             error=result.error,
             recent=recent,
+            execution_id=claim.id,
         )
         return "sent" if result.success else "failed"
 
@@ -256,6 +316,13 @@ class PromoService:
                 error=result.error or "promo_recovery_missing_trigger_id",
             )
             return
+        execution_id: UUID | None = None
+        raw_eid = decision.get("execution_id")
+        if raw_eid is not None:
+            try:
+                execution_id = UUID(str(raw_eid))
+            except (TypeError, ValueError):
+                execution_id = None
         await self._record_outcome(
             chat_id=chat_id,
             trigger_id=trigger_id,
@@ -265,6 +332,7 @@ class PromoService:
             error=result.error,
             recent=bool(decision.get("recent")),
             recovered=True,
+            execution_id=execution_id,
         )
 
     async def _record_outcome(
@@ -278,9 +346,22 @@ class PromoService:
         error: str | None = None,
         recent: bool = False,
         recovered: bool = False,
+        execution_id: UUID | None = None,
     ) -> None:
         status = "sent" if success else "failed"
-        await self._executions.insert(chat_id, trigger_id, texts, status=status)
+        if execution_id is not None:
+            updated = await self._executions.update_execution(
+                execution_id, status=status, sequence_sent=texts
+            )
+            if updated is None:
+                # Claim row missing (legacy / wiped) — fall back to insert.
+                await self._executions.insert(
+                    chat_id, trigger_id, texts, status=status
+                )
+        else:
+            await self._executions.insert(
+                chat_id, trigger_id, texts, status=status
+            )
         await self._turns.transition(
             turn_id,
             "delivered" if success else "failed",
@@ -296,6 +377,8 @@ class PromoService:
             "n_texts": len(texts),
             "recent": recent,
         }
+        if execution_id is not None:
+            extra["execution_id"] = str(execution_id)
         if not success:
             extra["error"] = error
         logger.info(event, extra=extra)

@@ -55,6 +55,14 @@ class FakeExecutionStore:
 
     def __init__(self) -> None:
         self.rows: list[PromoExecutionRecord] = []
+        self._now: datetime | None = None
+
+    def set_clock(self, now: datetime) -> None:
+        """Optional: stamp insert/try_claim sent_at from test clock."""
+        self._now = now
+
+    def _stamp(self) -> datetime:
+        return self._now if self._now is not None else datetime.now(UTC)
 
     async def insert(
         self,
@@ -67,7 +75,7 @@ class FakeExecutionStore:
             id=uuid4(),
             chat_id=chat_id,
             trigger_id=trigger_id,
-            sent_at=datetime.now(UTC),
+            sent_at=self._stamp(),
             sequence_sent=sequence_sent,
             status=status,
         )
@@ -98,10 +106,54 @@ class FakeExecutionStore:
                 return True
         return False
 
+    async def has_claim_since(
+        self, chat_id: int, trigger_id: UUID, since: datetime
+    ) -> bool:
+        since_cmp = since if since.tzinfo else since.replace(tzinfo=UTC)
+        for r in self.rows:
+            if (
+                r.chat_id == chat_id
+                and r.trigger_id == trigger_id
+                and r.status in ("sent", "pending")
+                and r.sent_at >= since_cmp
+            ):
+                return True
+        return False
+
+    async def try_claim(
+        self,
+        chat_id: int,
+        trigger_id: UUID,
+        sequence_sent: list[str] | None,
+        since: datetime,
+    ) -> PromoExecutionRecord | None:
+        if await self.has_claim_since(chat_id, trigger_id, since):
+            return None
+        return await self.insert(
+            chat_id, trigger_id, sequence_sent, status="pending"
+        )
+
+    async def update_execution(
+        self,
+        execution_id: UUID,
+        *,
+        status: str,
+        sequence_sent: list[str] | None = None,
+    ) -> PromoExecutionRecord | None:
+        for i, r in enumerate(self.rows):
+            if r.id == execution_id:
+                updates: dict[str, Any] = {"status": status}
+                if sequence_sent is not None:
+                    updates["sequence_sent"] = sequence_sent
+                new = r.model_copy(update=updates)
+                self.rows[i] = new
+                return new
+        return None
+
 
 class FakePromoConfig:
     def __init__(self, data: dict[str, Any] | None = None) -> None:
-        self._data = dict(data or {"repeat_days": 30})
+        self._data = dict(data or {"repeat_days": 30, "cooldown_hours": 24})
 
     async def get_promo_config(self) -> dict[str, Any]:
         return dict(self._data)
@@ -557,6 +609,195 @@ async def test_execute_does_not_write_pipeline_traces() -> None:
     assert len(beh.calls) == 1
     assert len(estore.rows) == 1
     assert len(turns._turns) == 1  # noqa: SLF001
+
+
+
+# ---------------------------------------------------------------------------
+# cooldown + early claim
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_within_cooldown_after_sent_suppressed() -> None:
+    """Silence within promo.cooldown_hours (default 24) after a successful send."""
+    trig = _trigger(sequence=["a", "b"], repeat="reintro")
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    estore = FakeExecutionStore()
+    estore.rows.append(
+        PromoExecutionRecord(
+            id=uuid4(),
+            chat_id=42,
+            trigger_id=trig.id,
+            sent_at=now - timedelta(hours=6),
+            sequence_sent=["a"],
+            status="sent",
+        )
+    )
+    beh = FakeSequenceDeliverer()
+    svc, *_ = _svc(
+        triggers=FakeTriggerStore([trig]),
+        executions=estore,
+        behavior=beh,
+        clock=ImmediateClock(now=now),
+        config=FakePromoConfig({"repeat_days": 30, "cooldown_hours": 24}),
+    )
+    status = await svc.execute_promo(42, trig, business_connection_id="bc-1")
+    assert status == "suppressed"
+    assert beh.calls == []
+    assert len(estore.rows) == 1  # no new claim
+
+
+@pytest.mark.asyncio
+async def test_execute_after_cooldown_within_repeat_uses_variant() -> None:
+    """After cooldown but within repeat_days → reintro first message."""
+    trig = _trigger(sequence=["a", "b", "c"], repeat="reintro holis")
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    estore = FakeExecutionStore()
+    estore.set_clock(now)
+    estore.rows.append(
+        PromoExecutionRecord(
+            id=uuid4(),
+            chat_id=42,
+            trigger_id=trig.id,
+            sent_at=now - timedelta(hours=25),
+            sequence_sent=["a"],
+            status="sent",
+        )
+    )
+    svc, _, new_estore, beh, _, _ = _svc(
+        triggers=FakeTriggerStore([trig]),
+        executions=estore,
+        clock=ImmediateClock(now=now),
+        config=FakePromoConfig({"repeat_days": 30, "cooldown_hours": 24}),
+    )
+    status = await svc.execute_promo(42, trig, business_connection_id="bc-1")
+    assert status == "sent"
+    assert beh.calls[0]["texts"] == ["reintro holis", "b", "c"]
+    assert len(new_estore.rows) == 2
+    assert new_estore.rows[-1].status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_execute_outside_repeat_days_full_sequence() -> None:
+    """Outside repeat_days → full first-send sequence + new claim."""
+    trig = _trigger(sequence=["a", "b", "c"], repeat="reintro")
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    estore = FakeExecutionStore()
+    estore.set_clock(now)
+    estore.rows.append(
+        PromoExecutionRecord(
+            id=uuid4(),
+            chat_id=42,
+            trigger_id=trig.id,
+            sent_at=now - timedelta(days=45),
+            sequence_sent=["a"],
+            status="sent",
+        )
+    )
+    svc, _, _, beh, _, _ = _svc(
+        triggers=FakeTriggerStore([trig]),
+        executions=estore,
+        clock=ImmediateClock(now=now),
+        config=FakePromoConfig({"repeat_days": 30, "cooldown_hours": 24}),
+    )
+    status = await svc.execute_promo(42, trig, business_connection_id="bc-1")
+    assert status == "sent"
+    assert beh.calls[0]["texts"] == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_execute_pending_claim_suppresses_second_call() -> None:
+    """In-flight pending claim within cooldown → second trigger suppressed."""
+    trig = _trigger(sequence=["a", "b"], repeat=None)
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    estore = FakeExecutionStore()
+    estore.rows.append(
+        PromoExecutionRecord(
+            id=uuid4(),
+            chat_id=42,
+            trigger_id=trig.id,
+            sent_at=now - timedelta(minutes=1),
+            sequence_sent=["a", "b"],
+            status="pending",
+        )
+    )
+    beh = FakeSequenceDeliverer()
+    svc, *_ = _svc(
+        triggers=FakeTriggerStore([trig]),
+        executions=estore,
+        behavior=beh,
+        clock=ImmediateClock(now=now),
+    )
+    status = await svc.execute_promo(42, trig, business_connection_id="bc-1")
+    assert status == "suppressed"
+    assert beh.calls == []
+
+
+@pytest.mark.asyncio
+async def test_execute_failed_pending_releases_for_retry() -> None:
+    """Failed delivery marks claim failed so the user can retry."""
+    trig = _trigger(sequence=["a", "b"], repeat=None)
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    estore = FakeExecutionStore()
+    estore.set_clock(now)
+    beh = FakeSequenceDeliverer(success=False)
+    svc, *_ = _svc(
+        triggers=FakeTriggerStore([trig]),
+        executions=estore,
+        behavior=beh,
+        clock=ImmediateClock(now=now),
+    )
+    status = await svc.execute_promo(7, trig, business_connection_id="bc-1")
+    assert status == "failed"
+    assert len(estore.rows) == 1
+    assert estore.rows[0].status == "failed"
+
+    # Retry after failure must not be silenced by the failed row.
+    beh2 = FakeSequenceDeliverer(success=True)
+    svc2, *_ = _svc(
+        triggers=FakeTriggerStore([trig]),
+        executions=estore,
+        behavior=beh2,
+        clock=ImmediateClock(now=now),
+    )
+    status2 = await svc2.execute_promo(7, trig, business_connection_id="bc-1")
+    assert status2 == "sent"
+    assert len(beh2.calls) == 1
+    assert len(estore.rows) == 2
+    assert estore.rows[-1].status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_execute_claims_before_deliver() -> None:
+    """Early claim: pending row exists before deliver_with_sequence runs."""
+    trig = _trigger(sequence=["a"], repeat=None)
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    estore = FakeExecutionStore()
+    estore.set_clock(now)
+    seen: dict[str, Any] = {}
+
+    class ClaimingDeliverer(FakeSequenceDeliverer):
+        async def deliver_with_sequence(self, texts, ctx, turn_id, decision=None):
+            # During deliver the claim must already be pending.
+            pending = [r for r in estore.rows if r.status == "pending"]
+            seen["pending_during_deliver"] = len(pending)
+            seen["decision"] = decision
+            return await super().deliver_with_sequence(
+                texts, ctx, turn_id, decision=decision
+            )
+
+    beh = ClaimingDeliverer()
+    svc, *_ = _svc(
+        triggers=FakeTriggerStore([trig]),
+        executions=estore,
+        behavior=beh,
+        clock=ImmediateClock(now=now),
+    )
+    status = await svc.execute_promo(1, trig, business_connection_id="bc")
+    assert status == "sent"
+    assert seen["pending_during_deliver"] == 1
+    assert seen["decision"]["execution_id"]
+    assert estore.rows[0].status == "sent"
 
 
 def test_promo_service_module_has_no_llm_imports() -> None:
