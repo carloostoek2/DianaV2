@@ -1114,23 +1114,28 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
         "Aquí abajo solo está la opción para cuando una escalación fue un falso positivo."
     ),
     "sandbox": "🧪 Modo de prueba\nPrueba cómo responde Diana sin avisar a nadie real.",
-    "metrics": "📊 Métricas y aprendizaje\nCómo está funcionando Diana esta semana.",
+    "metrics": (
+        "📊 Métricas y aprendizaje\n"
+        "Resumen de la semana completa anterior (lun–dom) y aprendizaje."
+    ),
     "history": "🔍 Historial y diagnóstico\nPara entender qué hizo Diana en un caso puntual.",
     "sombra": (
         "🤖 Modo sombra\n\n"
         "Aquí puedes revisar lo que Diana está aprendiendo en silencio: "
-        "cuántas veces habría enviado sola, la confianza por VIP comparada "
-        "con los umbrales y el mensaje que habría mandado. Es solo "
-        "información — nada de esto cambia cómo responde hoy."
+        "vía rápida (fático+confianza), simulación del Decisor, "
+        "confianza por VIP y borradores. Ventana típica: últimos 7 días / "
+        "últimas 30 decisiones. Es solo información — nada de esto cambia "
+        "cómo responde hoy.\n\n"
+        "No comparar estos tres números entre sí."
     ),
     "autonomia": (
         "🧭 Camino a la autonomía\n\n"
-        "Aquí ves la evidencia para decidir si Diana puede empezar a "
-        "responder sola con cada VIP: la coincidencia entre lo que habría "
-        "enviado y lo que tú aprobaste, la confianza por VIP y el botón "
-        "para activar el envío autónomo cuando se cumplen las condiciones. "
-        "El interruptor maestro sigue apagado — activar solo recomienda y "
-        "habilita por VIP."
+        "Aquí ves la evidencia (ventana de N días) para decidir si Diana "
+        "puede empezar a responder sola con cada VIP: la coincidencia entre "
+        "la simulación del Decisor y lo que tú aprobaste, la confianza por "
+        "VIP y el botón para activar el envío autónomo cuando se cumplen "
+        "las condiciones. El interruptor maestro sigue apagado — activar "
+        "solo recomienda y habilita por VIP."
     ),
     "config": "⚙️ Configuración\n\nControla el comportamiento del bot. Por ahora solo está disponible el Modo Entrenamiento.",
     "personalidad": (
