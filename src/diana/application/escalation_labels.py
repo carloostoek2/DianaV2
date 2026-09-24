@@ -36,6 +36,9 @@ FP_RESUME_MESSAGES_ES: dict[str, str] = {
     "draft_sent": (
         "Falso positivo marcado ✅\nTe envié el borrador para aprobar."
     ),
+    "opened_gray_zone": (
+        "Falso positivo marcado ✅\nTe envié la consulta de doctrina (zona gris) para que definas la regla."
+    ),
     "blocked_safety": (
         "Falso positivo marcado ✅\nNo generé borrador: ese turno se frenó por "
         "seguridad. Puedes responder manualmente al suscriptor."
@@ -48,9 +51,13 @@ FP_RESUME_MESSAGES_ES: dict[str, str] = {
         "Falso positivo marcado ✅\nYa escribiste tú en ese chat después de la "
         "escalación, así que no generé borrador para no duplicar tu respuesta."
     ),
-    "skipped_no_draft": (
+    "skipped_no_vip_text": (
         "Falso positivo marcado ✅\nNo pude recuperar el mensaje original para "
         "generar el borrador. Puedes responderle a mano."
+    ),
+    "skipped_no_draft_generated": (
+        "Falso positivo marcado ✅\nNo pude preparar un borrador usable para "
+        "ese turno. Puedes responderle a mano."
     ),
     "skipped_no_connection": (
         "Falso positivo marcado ✅\nNo pude preparar el borrador: falta la "

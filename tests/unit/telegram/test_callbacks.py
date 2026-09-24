@@ -907,6 +907,7 @@ def test_escalation_fp_token_table_is_complete() -> None:
     from diana.application.escalation_fp_resume import (
         RESUME_BLOCKED_SAFETY,
         RESUME_MARKED_ONLY,
+        RESUME_OPENED_GRAY_ZONE,
         RESUME_RESUMED,
         FpResumeOutcome,
     )
@@ -918,6 +919,9 @@ def test_escalation_fp_token_table_is_complete() -> None:
     tokens = {
         escalation_fp_token(FpResumeOutcome(marked=False, status=RESUME_MARKED_ONLY)),
         escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_RESUMED)),
+        escalation_fp_token(
+            FpResumeOutcome(marked=True, status=RESUME_OPENED_GRAY_ZONE)
+        ),
         escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_BLOCKED_SAFETY)),
         escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_MARKED_ONLY)),
     }
@@ -925,6 +929,7 @@ def test_escalation_fp_token_table_is_complete() -> None:
     assert tokens == {
         "escalation_fp_failed",
         "escalation_fp_draft_sent",
+        "escalation_fp_opened_gray_zone",
         "escalation_fp_blocked_safety",
         "escalation_fp_marked",
     }
@@ -952,8 +957,8 @@ def test_escalation_fp_skip_reasons_have_their_own_alert() -> None:
     expected = {
         "chat_busy": "escalation_fp_skipped_new_turn",
         "owner_intervened": "escalation_fp_skipped_owner_wrote",
-        "no_vip_text": "escalation_fp_skipped_no_draft",
-        "no_draft_generated": "escalation_fp_skipped_no_draft",
+        "no_vip_text": "escalation_fp_skipped_no_vip_text",
+        "no_draft_generated": "escalation_fp_skipped_no_draft_generated",
         "no_business_connection": "escalation_fp_skipped_no_connection",
         "no_director": "escalation_fp_skipped_unavailable",
         "already_running": "escalation_fp_skipped_in_progress",
@@ -989,6 +994,14 @@ def test_every_resume_key_has_its_own_owner_message() -> None:
     for key, message in FP_RESUME_MESSAGES_ES.items():
         if key not in {"marked", "failed"}:
             assert len(message) > len(marked), key
+
+    # Missing VIP text vs empty/unusable draft must not share wording.
+    assert (
+        FP_RESUME_MESSAGES_ES["skipped_no_vip_text"]
+        != FP_RESUME_MESSAGES_ES["skipped_no_draft_generated"]
+    )
+    assert "mensaje original" in FP_RESUME_MESSAGES_ES["skipped_no_vip_text"]
+    assert "borrador usable" in FP_RESUME_MESSAGES_ES["skipped_no_draft_generated"]
 
 
 @pytest.mark.asyncio

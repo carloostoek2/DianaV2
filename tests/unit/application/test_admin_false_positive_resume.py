@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,6 +12,7 @@ from diana.application.admin_service import OwnerAuthError
 from diana.application.escalation_fp_resume import (
     RESUME_BLOCKED_SAFETY,
     RESUME_MARKED_ONLY,
+    RESUME_OPENED_GRAY_ZONE,
     RESUME_RESUMED,
     fp_resume_key,
 )
@@ -40,6 +42,37 @@ class FakeDirector:
     async def handle_turn(self, incoming, **kwargs):  # noqa: ANN001, ANN003
         self.calls.append((incoming, kwargs))
         return self.decision
+
+
+class FakeGrayZone:
+    """Minimal gray-zone port for FP → consult_doctrine tests."""
+
+    def __init__(self) -> None:
+        self.queries: list[dict] = []
+        self.discarded: list[UUID] = []
+        self.open_by_chat: dict[int, object] = {}
+        self._next_id = uuid4()
+        self.fail_create = False
+
+    async def create_query(self, vip_id, turn_id, question, draft, **kwargs):  # noqa: ANN001, ANN003
+        if self.fail_create:
+            raise RuntimeError("create_query failed")
+        row = {
+            "vip_id": vip_id,
+            "turn_id": turn_id,
+            "question": question,
+            "draft": draft,
+            **kwargs,
+        }
+        self.queries.append(row)
+        return SimpleNamespace(id=self._next_id, vip_id=vip_id, turn_id=turn_id)
+
+    async def get_open_query_by_chat_id(self, chat_id: int) -> object | None:
+        return self.open_by_chat.get(chat_id)
+
+    async def discard_and_close(self, query_id: UUID) -> object:
+        self.discarded.append(query_id)
+        return SimpleNamespace(id=query_id)
 
 
 def _graph(**kwargs) -> dict:
@@ -180,6 +213,7 @@ async def test_resume_without_vip_text_stays_marked_only() -> None:
 
     assert outcome.status == RESUME_MARKED_ONLY
     assert outcome.detail == "no_vip_text"
+    assert fp_resume_key(outcome) == "skipped_no_vip_text"
     # Fail-closed before the LLM: the text is pipeline input, never fabricated.
     assert director.calls == []
     assert await _no_approval(g, turn_id)
@@ -286,10 +320,12 @@ async def test_resume_generates_with_the_atencion_channel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_generation_blocked_by_doctrine_sends_no_draft() -> None:
-    """The Director re-attaches the generated draft; consult_doctrine still blocks."""
+async def test_resume_generation_consult_doctrine_opens_gray_zone() -> None:
+    """consult_doctrine after FP opens gray zone + doctrine DM (no approval)."""
     g = _graph(history=InMemoryMessageHistoryWriter())
     turn_id = await _escalated_turn(g, vip_text="¿tienen garantía?")
+    gz = FakeGrayZone()
+    g["admin"]._gray_zone = gz  # noqa: SLF001
     g["admin"]._director = FakeDirector(  # noqa: SLF001
         _decision(
             action="consult_doctrine",
@@ -302,11 +338,75 @@ async def test_resume_generation_blocked_by_doctrine_sends_no_draft() -> None:
         turn_id, actor_id=OWNER_ID
     )
 
-    assert outcome.status == RESUME_MARKED_ONLY
-    assert outcome.detail == "no_draft_generated"
-    assert fp_resume_key(outcome) == "skipped_no_draft"
+    assert outcome.status == RESUME_OPENED_GRAY_ZONE
+    assert fp_resume_key(outcome) == "opened_gray_zone"
     assert await _no_approval(g, turn_id)
     assert g["notifier"].drafts == []
+    assert len(g["notifier"].doctrines) == 1
+    assert g["notifier"].doctrines[0].draft_text == "borrador que la regla no respalda"
+    assert len(gz.queries) == 1
+    assert gz.queries[0]["question"] == "¿tienen garantía?"
+    assert gz.discarded == []
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == TurnStatus.GRAY_ZONE
+
+
+@pytest.mark.asyncio
+async def test_resume_consult_doctrine_without_gray_zone_fails_closed() -> None:
+    """Gray zone not wired → honest mark-only, no crash."""
+    g = _graph(history=InMemoryMessageHistoryWriter())
+    turn_id = await _escalated_turn(g, vip_text="¿tienen garantía?")
+    g["admin"]._gray_zone = None  # noqa: SLF001
+    g["admin"]._director = FakeDirector(  # noqa: SLF001
+        _decision(
+            action="consult_doctrine",
+            draft="borrador doctrinal",
+            reason="doctrine_not_found",
+        )
+    )
+
+    outcome = await g["admin"].mark_false_positive_and_resume(
+        turn_id, actor_id=OWNER_ID
+    )
+
+    assert outcome.status == RESUME_MARKED_ONLY
+    assert outcome.detail == "gray_zone_unavailable"
+    assert fp_resume_key(outcome) == "skipped_unavailable"
+    assert await _no_approval(g, turn_id)
+    assert g["notifier"].doctrines == []
+    assert (await g["turns"].get(turn_id)).status == TurnStatus.ESCALATED
+
+
+@pytest.mark.asyncio
+async def test_resume_consult_doctrine_notify_failure_discards_query() -> None:
+    """Notify failure must not leave an orphan freeze / half-open gray_zone."""
+    g = _graph(history=InMemoryMessageHistoryWriter())
+    turn_id = await _escalated_turn(g, vip_text="¿tienen garantía?")
+    gz = FakeGrayZone()
+    g["admin"]._gray_zone = gz  # noqa: SLF001
+    g["admin"]._director = FakeDirector(  # noqa: SLF001
+        _decision(
+            action="consult_doctrine",
+            draft="borrador doctrinal",
+            reason="doctrine_not_found",
+        )
+    )
+
+    async def _boom(*_a, **_k):  # noqa: ANN001, ANN002
+        raise RuntimeError("telegram down")
+
+    g["admin"].send_doctrine_query = _boom  # type: ignore[method-assign]
+
+    outcome = await g["admin"].mark_false_positive_and_resume(
+        turn_id, actor_id=OWNER_ID
+    )
+
+    assert outcome.status == RESUME_MARKED_ONLY
+    assert outcome.detail == "doctrine_notify_failed"
+    assert len(gz.queries) == 1
+    assert gz.discarded == [gz._next_id]  # noqa: SLF001
+    assert (await g["turns"].get(turn_id)).status == TurnStatus.ESCALATED
+    assert g["notifier"].doctrines == []
 
 
 @pytest.mark.asyncio
@@ -323,7 +423,7 @@ async def test_resume_generation_with_empty_draft_sends_no_draft() -> None:
 
     assert outcome.status == RESUME_MARKED_ONLY
     assert outcome.detail == "no_draft_generated"
-    assert fp_resume_key(outcome) == "skipped_no_draft"
+    assert fp_resume_key(outcome) == "skipped_no_draft_generated"
     assert await _no_approval(g, turn_id)
     assert g["notifier"].drafts == []
 

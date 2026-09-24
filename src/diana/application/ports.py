@@ -215,6 +215,21 @@ class GrayZoneServicePort(Protocol):
     can depend on the protocol instead of ``Any``.
     """
 
+    async def create_query(
+        self,
+        vip_id: UUID | None,
+        turn_id: UUID,
+        question: str,
+        draft: str,
+        *,
+        freeze_duration_hours: int | None = None,
+        chat_id: int | None = None,
+        business_connection_id: str | None = None,
+        proposed_rule: str | None = None,
+        proposed_reply: str | None = None,
+        proposal_source: str | None = None,
+    ) -> object: ...
+
     async def get_open_query_by_turn_id(self, turn_id: UUID) -> GrayZoneQueryView | None: ...
 
     async def get_open_query_by_vip_id(self, vip_id: UUID) -> GrayZoneQueryView | None: ...
@@ -523,7 +538,8 @@ class TurnStore(Protocol):
         atomically moves a turn that is *still* ``escalated``. Callers use it
         for two owner actions:
 
-        - false-positive resume → ``pending_approval`` (live again);
+        - false-positive resume → ``pending_approval`` (live again) or
+          ``gray_zone`` when the regenerated decision asks for doctrine;
         - successful manual reply → ``delivered`` (durable terminal so a later
           FP resume cannot reopen the answered turn after a restart).
 

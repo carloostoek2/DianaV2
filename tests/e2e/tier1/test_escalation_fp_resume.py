@@ -14,7 +14,7 @@ from diana.cognitive.models import Decision, TurnStatus
 from diana.telegram.handlers.callbacks import dispatch_owner_callback
 from diana.telegram.keyboards import encode_escalation_callback
 from tests.e2e.conftest import make_eval
-from tests.e2e.tier1.conftest import OWNER_ID, build_e2e, dispatch
+from tests.e2e.tier1.conftest import OWNER_ID, FakeGrayZone, build_e2e, dispatch
 
 CHAT_ID = 100
 BC = "bc-vip"
@@ -222,3 +222,46 @@ async def test_fp_reply_then_false_positive_does_not_duplicate() -> None:
 
     assert g["notifier"].drafts == []
     assert g["actuator"].send_count() == 1
+
+
+@pytest.mark.asyncio
+async def test_fp_consult_doctrine_opens_gray_zone() -> None:
+    """Regen that asks for doctrine opens gray zone + doctrine DM (no approval)."""
+    gz = FakeGrayZone()
+    g = build_e2e(
+        [
+            _decision(
+                action="consult_doctrine",
+                reason="doctrine_not_found",
+                draft_text="borrador sin regla",
+            )
+        ],
+        feature_escalation_fp_draft_enabled=True,
+        feature_gray_zone_enabled=True,
+        gray_zone=gz,
+    )
+    turn_id = await handle_deterministic_escalation(
+        coordinator=g["coordinator"],
+        escalations=g["escalations"],
+        notifier=g["notifier"],
+        chat_id=CHAT_ID,
+        text="¿tienen garantía extendida?",
+        vip_id=None,
+        business_connection_id=BC,
+        message_id=11,
+        keywords_hit=["garantía"],
+        history=g["history"],
+    )
+
+    assert await _tap_false_positive(g, turn_id) == "escalation_fp_opened_gray_zone"
+
+    assert g["notifier"].drafts == []
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    assert len(g["notifier"].doctrines) == 1
+    assert g["notifier"].doctrines[0].draft_text == "borrador sin regla"
+    assert len(gz.queries) == 1
+    assert gz.queries[0]["question"] == "¿tienen garantía extendida?"
+    assert gz.discarded == []
+    assert (await g["turns"].get(turn_id)).status == TurnStatus.GRAY_ZONE
+    # H4 repetition guard still skipped on the regen path.
+    assert g["director"].kwargs == [{"skip_repetition_guard": True}]  # noqa: SLF001

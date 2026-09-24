@@ -60,16 +60,25 @@ class FakeDirector:
 class FakeGrayZone:
     def __init__(self) -> None:
         self.queries: list[dict] = []
+        self.discarded: list[UUID] = []
+        self.open_by_chat: dict[int, object] = {}
         self._next_id = uuid4()
 
     async def create_query(
-        self, vip_id: UUID, turn_id: UUID, question: str, draft: str, **kwargs
+        self, vip_id: UUID | None, turn_id: UUID, question: str, draft: str, **kwargs
     ) -> object:
         self.queries.append({
             "vip_id": vip_id, "turn_id": turn_id,
-            "question": question, "draft": draft,
+            "question": question, "draft": draft, **kwargs,
         })
         return type("_Query", (), {"id": self._next_id})()
+
+    async def get_open_query_by_chat_id(self, chat_id: int) -> object | None:
+        return self.open_by_chat.get(chat_id)
+
+    async def discard_and_close(self, query_id: UUID) -> object:
+        self.discarded.append(query_id)
+        return type("_Query", (), {"id": query_id})()
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +127,7 @@ def build_e2e(
         history=history,  # type: ignore[arg-type]
         fp_marks=owner_marks,
         feature_escalation_fp_draft_enabled=feature_escalation_fp_draft_enabled,
+        gray_zone=gray_zone,  # type: ignore[arg-type]
     )
     director = FakeDirector(director_decisions)
     # AdminService is built before the Director; wire it so the false-positive

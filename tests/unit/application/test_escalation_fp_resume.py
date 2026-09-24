@@ -147,13 +147,23 @@ def test_empty_generated_draft_blocks(action: str) -> None:
     )
 
 
-def test_consult_doctrine_blocks() -> None:
+def test_consult_doctrine_opens_gray_zone() -> None:
     plan = plan_from_generated_decision(
         action="consult_doctrine", reason="doctrine_not_found", draft_text="texto"
     )
 
-    assert plan.action == "blocked_no_text"
+    assert plan.action == "open_gray_zone"
     assert plan.reason == "doctrine_not_found"
+    assert plan.draft_text == "texto"
+
+
+def test_consult_doctrine_with_empty_draft_still_blocks() -> None:
+    """Empty draft is checked before the consult branch (no fabricated GZ)."""
+    plan = plan_from_generated_decision(
+        action="consult_doctrine", reason="doctrine_not_found", draft_text="  "
+    )
+
+    assert plan.action == "blocked_no_text"
 
 
 def test_empty_draft_keeps_the_safety_reason() -> None:
