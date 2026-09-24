@@ -43,6 +43,7 @@ from diana.application.escalation_fp_resume import (
     FP_RESUME_REASON,
     RESUME_BLOCKED_SAFETY,
     RESUME_MARKED_ONLY,
+    RESUME_OPENED_GRAY_ZONE,
     RESUME_RESUMED,
     SAFETY_ESCALATION_REASON,
     FpResumeOutcome,
@@ -242,6 +243,9 @@ class AdminService:
         # Doctrine rule→regen: Director + GrayZone (wired post-construct when needed).
         self._director = director
         self._gray_zone = gray_zone
+        # Gray-zone RULE proposal for FP→consult (mirrors TurnOrchestrator; optional).
+        self._gray_zone_proposal: Any | None = None
+        self._feature_gray_zone_proposal_enabled = False
         self._autonomy_readiness_svc = autonomy_readiness
         self._feature_escalation_fp_draft_enabled = bool(
             feature_escalation_fp_draft_enabled
@@ -260,6 +264,16 @@ class AdminService:
     def set_gray_zone(self, gray_zone: GrayZoneServicePort | None) -> None:
         """Wire GrayZoneService for doctrine hold lookups on owner deliver."""
         self._gray_zone = gray_zone
+
+    def set_gray_zone_proposal(
+        self,
+        proposal: Any | None,
+        *,
+        enabled: bool = False,
+    ) -> None:
+        """Wire optional gray-zone RULE proposal (FEATURE_GRAY_ZONE_PROPOSAL_ENABLED)."""
+        self._gray_zone_proposal = proposal
+        self._feature_gray_zone_proposal_enabled = bool(enabled)
 
     @property
     def quality_feedback_enabled(self) -> bool:
@@ -1140,7 +1154,9 @@ class AdminService:
         ``safety_below_threshold`` (an unsafe draft is never enqueued — same
         rule as the doctrine regen), a chat whose newer VIP message already owns
         the flow, a second tap while this turn's resume is still running, a
-        missing business connection or missing VIP text.
+        missing business connection or missing VIP text. When the regenerated
+        decision asks for doctrine, the resume opens the gray zone (query +
+        doctrine DM) instead of fail-closing like §4.5 doctrine regen.
 
         Fail-soft: resume faults return an honest status and are logged, never
         raised. The mark store failing keeps ``mark_false_positive``'s contract
@@ -1339,7 +1355,15 @@ class AdminService:
         )
         if isinstance(generated, FpResumeOutcome):
             return generated
-        decision, comprehension, retrieved = generated
+        decision, comprehension, retrieved, open_gray_zone = generated
+        if open_gray_zone:
+            return await self._open_gray_zone_from_fp_resume(
+                turn=turn,
+                incoming=incoming,
+                decision=decision,
+                comprehension=comprehension,
+                retrieved=retrieved,
+            )
         return await self._enqueue_resumed_draft(
             turn=turn,
             incoming=incoming,
@@ -1366,11 +1390,16 @@ class AdminService:
         plan: FpResumePlan,
         vip_text: str,
         trace: Mapping[str, Any] | None,
-    ) -> tuple[Decision, Mapping[str, Any] | None, Mapping[str, Any] | None] | FpResumeOutcome:
+    ) -> (
+        tuple[Decision, Mapping[str, Any] | None, Mapping[str, Any] | None, bool]
+        | FpResumeOutcome
+    ):
         """Run the pipeline for this turn, or a fail-closed outcome.
 
         Generation happens OUTSIDE the chat lock (same as the doctrine regen) so
         a slow model call never blocks the VIP's next message from minting.
+        The trailing bool is True when the regenerated decision must open the
+        gray zone (``consult_doctrine``) instead of the approval queue.
         """
         if plan.action != "generate":
             # Defensive: the caller only routes "generate" here. Any other plan
@@ -1414,11 +1443,32 @@ class AdminService:
             reason=str(getattr(generated, "reason", "") or ""),
             draft_text=str(getattr(generated, "draft_text", "") or ""),
         )
+        evaluation = getattr(generated, "evaluation", None)
+        fresh_trace = await self._read_resume_trace(incoming.turn_id)
+        comprehension = (fresh_trace or {}).get("comprehension") or plan.comprehension
+        retrieved = (fresh_trace or {}).get("retrieved") or plan.retrieved
+        eval_profile = (
+            evaluation
+            if isinstance(evaluation, EvaluationProfile)
+            else evaluation_from_trace(fresh_trace or trace)
+        )
+        if generated_plan.action == "open_gray_zone":
+            # Keep consult_doctrine on the Decision so the doctrine DM shows the
+            # real reason; do not rewrite to the FP-resume display token.
+            return (
+                Decision(
+                    action="consult_doctrine",
+                    reason=generated_plan.reason or "doctrine_not_found",
+                    evaluation=eval_profile,
+                    draft_text=generated_plan.draft_text,
+                ),
+                comprehension,
+                retrieved,
+                True,
+            )
         if generated_plan.action != "reuse_trace_draft":
-            # The owner gets one honest token ("no draft was prepared"); the raw
-            # decision reason stays in the log for diagnosis. The safety status
-            # comes from the reason, not the action: an empty draft blocks the
-            # action first, and a safety escalation must not lose that label.
+            # Empty draft / safety: honest token; raw reason stays in the log.
+            # Safety status comes from the reason (empty draft blocks action first).
             status = (
                 RESUME_BLOCKED_SAFETY
                 if generated_plan.reason == SAFETY_ESCALATION_REASON
@@ -1434,21 +1484,228 @@ class AdminService:
                     "decision_reason": generated_plan.reason,
                 },
             )
-        evaluation = getattr(generated, "evaluation", None)
-        fresh_trace = await self._read_resume_trace(incoming.turn_id)
         return (
             Decision(
                 action="approve",
                 reason=FP_RESUME_REASON,
-                evaluation=(
-                    evaluation
-                    if isinstance(evaluation, EvaluationProfile)
-                    else evaluation_from_trace(fresh_trace or trace)
-                ),
+                evaluation=eval_profile,
                 draft_text=generated_plan.draft_text,
             ),
-            (fresh_trace or {}).get("comprehension") or plan.comprehension,
-            (fresh_trace or {}).get("retrieved") or plan.retrieved,
+            comprehension,
+            retrieved,
+            False,
+        )
+
+    async def _fp_resume_chat_ready(
+        self, turn_id: UUID, chat_id: int
+    ) -> FpResumeOutcome | None:
+        """Busy/stale guards shared by draft enqueue and gray-zone open.
+
+        Must run under ``chat_scope``. Returns a fail-closed outcome when the
+        chat is not ready to resume this escalation; ``None`` means proceed.
+        """
+        fresh = await self._turns.get(turn_id)
+        if fresh is None or fresh.status != TurnStatus.ESCALATED.value:
+            return self._fp_not_resumed(
+                "stale", turn_id=turn_id, chat_id=chat_id
+            )
+        live = await self._turns.list_non_terminal(chat_id)
+        if live:
+            # One live turn per chat is non-negotiable: a newer VIP message
+            # owns the chat, so this escalation stays closed.
+            return self._fp_not_resumed(
+                "chat_busy", turn_id=turn_id, chat_id=chat_id
+            )
+        latest = await self._turns.latest_turn_id(chat_id)
+        if latest is not None and latest != turn_id:
+            # A newer message of this chat was already attended and maybe
+            # delivered — delivered turns are invisible to
+            # ``list_non_terminal``, so this is the only place that stops an
+            # old escalation from answering *after* the newer one.
+            return self._fp_not_resumed(
+                "stale", turn_id=turn_id, chat_id=chat_id
+            )
+        return None
+
+    async def _maybe_fp_gray_zone_proposal(
+        self,
+        *,
+        question: str,
+        draft: str,
+        channel_type: str,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Optional RULE proposal for FP→gray-zone (fail-open; mirrors orch)."""
+        if (
+            not self._feature_gray_zone_proposal_enabled
+            or self._gray_zone_proposal is None
+        ):
+            return (None, None, None)
+        try:
+            proposal = await self._gray_zone_proposal.generate(  # type: ignore[union-attr]
+                question=question,
+                draft=draft,
+                channel_type=channel_type,
+            )
+        except Exception:
+            logger.exception(
+                "fp_gray_zone_proposal_generate_error",
+                extra={"channel_type": channel_type},
+            )
+            return (None, None, None)
+        if proposal is None:
+            return (None, None, None)
+        rule = (getattr(proposal, "proposed_rule", "") or "").strip()
+        if not rule:
+            return (None, None, None)
+        return (
+            rule,
+            (getattr(proposal, "proposed_reply", "") or "").strip() or None,
+            "gray_zone_proposal",
+        )
+
+    async def _open_gray_zone_from_fp_resume(
+        self,
+        *,
+        turn: TurnRecord,
+        incoming: IncomingTurn,
+        decision: Decision,
+        comprehension: Mapping[str, Any] | None,
+        retrieved: Mapping[str, Any] | None,
+    ) -> FpResumeOutcome:
+        """Open a gray-zone consult after FP regen returned ``consult_doctrine``.
+
+        BUG-3 order: create_query + notify doctrine BEFORE CAS to ``gray_zone``.
+        Never uses ``coordinator.transition`` from ``escalated`` (terminal latch).
+        On notify failure: discard the query and leave the turn escalated.
+        """
+        turn_id = turn.id
+        chat_id = turn.chat_id
+        gz = self._gray_zone
+        if gz is None:
+            return self._fp_not_resumed(
+                "gray_zone_unavailable",
+                turn_id=turn_id,
+                chat_id=chat_id,
+            )
+        # Sandbox without vip_id: orchestrator demotes consult; FP must not open
+        # a VIP-less query in sandbox either (mark isolation already handled).
+        sandbox_active = (
+            self._sandbox is not None
+            and bool(getattr(self._sandbox, "is_active", lambda _c: False)(chat_id))
+        )
+        if sandbox_active and incoming.vip_id is None:
+            return self._fp_not_resumed(
+                "gray_zone_unavailable",
+                turn_id=turn_id,
+                chat_id=chat_id,
+                extra={"reason": "sandbox_no_vip_doctrine"},
+            )
+
+        prop_rule, prop_reply, prop_source = await self._maybe_fp_gray_zone_proposal(
+            question=incoming.text or "",
+            draft=decision.draft_text or "",
+            channel_type=incoming.channel_type or "vip",
+        )
+
+        async with self._coordinator.chat_scope(chat_id):
+            blocked = await self._fp_resume_chat_ready(turn_id, chat_id)
+            if blocked is not None:
+                return blocked
+            # F20-ish: do not mint a second open query for the same chat.
+            try:
+                already = await gz.get_open_query_by_chat_id(chat_id)
+            except Exception:
+                log_swallowed(
+                    logger,
+                    "fp_gray_zone_recheck_failed",
+                    turn_id=str(turn_id),
+                    chat_id=chat_id,
+                )
+                already = None
+            if already is not None:
+                return self._fp_not_resumed(
+                    "chat_busy", turn_id=turn_id, chat_id=chat_id
+                )
+
+            query = await gz.create_query(
+                vip_id=incoming.vip_id,
+                turn_id=turn_id,
+                question=incoming.text or "",
+                draft=decision.draft_text or "",
+                chat_id=chat_id,
+                business_connection_id=incoming.business_connection_id,
+                proposed_rule=prop_rule,
+                proposed_reply=prop_reply,
+                proposal_source=prop_source,
+            )
+            try:
+                await self.send_doctrine_query(
+                    incoming,
+                    decision,
+                    turn_id,
+                    query,  # type: ignore[arg-type]
+                    proposed_rule=prop_rule,
+                    proposed_reply=prop_reply,
+                    proposal_source=prop_source,
+                    comprehension=comprehension,
+                    retrieved=retrieved,
+                )
+            except Exception:
+                try:
+                    await gz.discard_and_close(query.id)  # type: ignore[union-attr]
+                except Exception:
+                    log_swallowed(
+                        logger,
+                        "fp_doctrine_discard_failed",
+                        turn_id=str(turn_id),
+                        chat_id=chat_id,
+                        query_id=str(getattr(query, "id", None)),
+                    )
+                return self._fp_not_resumed(
+                    "doctrine_notify_failed",
+                    turn_id=turn_id,
+                    chat_id=chat_id,
+                )
+            try:
+                reopened = await self._turns.reopen_from_escalated(
+                    turn_id, status=TurnStatus.GRAY_ZONE.value
+                )
+            except Exception:
+                try:
+                    await gz.discard_and_close(query.id)  # type: ignore[union-attr]
+                except Exception:
+                    log_swallowed(
+                        logger,
+                        "fp_gray_zone_reopen_discard_failed",
+                        turn_id=str(turn_id),
+                        chat_id=chat_id,
+                        query_id=str(getattr(query, "id", None)),
+                    )
+                raise
+            if reopened is None:
+                try:
+                    await gz.discard_and_close(query.id)  # type: ignore[union-attr]
+                except Exception:
+                    log_swallowed(
+                        logger,
+                        "fp_gray_zone_reopen_lost_discard_failed",
+                        turn_id=str(turn_id),
+                        chat_id=chat_id,
+                        query_id=str(getattr(query, "id", None)),
+                    )
+                return self._fp_not_resumed(
+                    "reopen_lost", turn_id=turn_id, chat_id=chat_id
+                )
+        logger.info(
+            "escalation_fp_opened_gray_zone",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": chat_id,
+                "query_id": str(getattr(query, "id", None)),
+            },
+        )
+        return FpResumeOutcome(
+            marked=True, status=RESUME_OPENED_GRAY_ZONE, detail="opened_gray_zone"
         )
 
     async def _enqueue_resumed_draft(
@@ -1469,27 +1726,9 @@ class AdminService:
         turn_id = turn.id
         chat_id = turn.chat_id
         async with self._coordinator.chat_scope(chat_id):
-            fresh = await self._turns.get(turn_id)
-            if fresh is None or fresh.status != TurnStatus.ESCALATED.value:
-                return self._fp_not_resumed(
-                    "stale", turn_id=turn_id, chat_id=chat_id
-                )
-            live = await self._turns.list_non_terminal(chat_id)
-            if live:
-                # One live turn per chat is non-negotiable: a newer VIP message
-                # owns the chat, so this escalation stays closed.
-                return self._fp_not_resumed(
-                    "chat_busy", turn_id=turn_id, chat_id=chat_id
-                )
-            latest = await self._turns.latest_turn_id(chat_id)
-            if latest is not None and latest != turn_id:
-                # A newer message of this chat was already attended and maybe
-                # delivered — delivered turns are invisible to
-                # ``list_non_terminal``, so this is the only place that stops an
-                # old escalation from answering *after* the newer one.
-                return self._fp_not_resumed(
-                    "stale", turn_id=turn_id, chat_id=chat_id
-                )
+            blocked = await self._fp_resume_chat_ready(turn_id, chat_id)
+            if blocked is not None:
+                return blocked
             existing = await self._approvals.get_by_turn(turn_id)
             if existing is not None and existing.status != "waiting":
                 if existing.status != "cancelled":

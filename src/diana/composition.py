@@ -1219,6 +1219,12 @@ def build_app(
     # A8), matching the autonomous-path behaviour byte-for-byte.
     admin.set_post_turn_hook(orchestrator._maybe_post_turn)
     admin.set_director(director)
+    # FP resume → consult_doctrine opens gray zone with the same optional RULE
+    # proposal the orchestrator uses (FEATURE_GRAY_ZONE_PROPOSAL_ENABLED).
+    admin.set_gray_zone_proposal(
+        gray_zone_proposal,
+        enabled=feature_gray_zone_proposal_enabled,
+    )
 
     # Forbidden keywords loaded at boot (async load deferred to startup helper;
     # the list object was created above so the H1 scorer sees live updates).

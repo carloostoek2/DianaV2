@@ -36,6 +36,9 @@ FP_RESUME_MESSAGES_ES: dict[str, str] = {
     "draft_sent": (
         "Falso positivo marcado ✅\nTe envié el borrador para aprobar."
     ),
+    "opened_gray_zone": (
+        "Falso positivo marcado ✅\nTe envié la consulta de doctrina (zona gris) para que definas la regla."
+    ),
     "blocked_safety": (
         "Falso positivo marcado ✅\nNo generé borrador: ese turno se frenó por "
         "seguridad. Puedes responder manualmente al suscriptor."

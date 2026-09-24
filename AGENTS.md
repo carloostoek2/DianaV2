@@ -483,9 +483,12 @@ flujo supervisado normal (REQ-ESC-04 "forzar generación normal").
      b. si no existe (H4 pregunta_repetida, determinísticas): Director.handle_turn
         del MISMO turno con skip_repetition_guard=True
         — el texto del VIP sale del historial del chat
-  3. bajo lock de chat: crear aprobación (send_draft_for_approval) y reabrir el
-     turno escalated → pending_approval (TurnStore.reopen_from_escalated, CAS atómico)
-  4. DM de borrador normal: Aprobar / Corregir / Escalar / Regenerar → entrega
+  3. bajo lock de chat:
+     a. si el Decisor regenerado pide doctrina → create_query + DM doctrina
+        y reabrir escalated → gray_zone (reopen_from_escalated; NUNCA transition)
+     b. si no → crear aprobación (send_draft_for_approval) y reabrir
+        escalated → pending_approval (CAS atómico)
+  4. DM de borrador normal (caso b): Aprobar / Corregir / Escalar / Regenerar → entrega
 ```
 
 Reglas: la respuesta de la dueña es una acción manual (no pasa por el Decisor,
@@ -499,7 +502,18 @@ La marca de falso positivo es un flag de métrica (owner_marks), NO un ejemplo:
 no entra a memories/examples/policies ni enseña nada al sistema. En sandbox,
 `mark_false_positive` NO persiste (aislamiento igual que el aprendizaje).
 
-Fallo cerrado del resume (se marca y NO se manda borrador, con aviso honesto):
+Tras el resume, el destino del Decisor regenerado es:
+  - `approve` / `escalate` no-safety con borrador → cola de aprobación (igual que antes)
+  - `consult_doctrine` con borrador usable → **abre zona gris** (`create_query` +
+    DM de doctrina + `reopen_from_escalated(..., status="gray_zone")`; notify
+    ANTES del CAS, patrón BUG-3). Si `FEATURE_GRAY_ZONE_PROPOSAL_ENABLED`, también
+    se genera la propuesta de regla (igual que el orchestrator). NO se reentra
+    `handle_vip_message` / TurnOrchestrator completo.
+  - borrador vacío / safety / sin texto VIP / sin BC / chat busy|stale / etc. →
+    fail-closed (solo marca + aviso)
+
+Fallo cerrado del resume (se marca y NO se manda borrador ni se abre zona gris,
+con aviso honesto y copy distinto por causa):
 escalación por `safety_below_threshold` (nunca se encola un borrador que no pasó
 seguridad, misma regla que §4.5; el motivo se lee de la traza y, si la traza ya
 no está —purga por TTL o fallo de lectura—, del `motivo` persistido en
@@ -507,12 +521,18 @@ no está —purga por TTL o fallo de lectura—, del `motivo` persistido en
 manda: invariante de un solo turno no terminal por chat); el chat ya siguió
 adelante con otro turno más nuevo, aunque ese turno ya esté `delivered` (un
 turno entregado no aparece en `list_non_terminal`, así que la obsolescencia se
-chequea además contra `TurnStore.latest_turn_id`); falta el business connection
-o el texto del VIP; el Decisor vuelve a pedir doctrina o el borrador sale vacío
-(los dos casos comparten el aviso "no pude preparar el borrador"); la dueña ya
-intervino en el chat, incluso por el botón "Responder al VIP" del propio DM; y
-un segundo toque del mismo botón mientras el resume anterior sigue corriendo
-(guarda de in-flight por turno en `AdminService`, proceso único).
+chequea además contra `TurnStore.latest_turn_id`); falta el business connection;
+falta el texto del VIP (`skipped_no_vip_text`: no se pudo recuperar el mensaje
+original); el borrador regenerado sale vacío (`skipped_no_draft_generated`: no
+se pudo preparar un borrador usable); zona gris no disponible o fallo al notificar
+la consulta; la dueña ya intervino en el chat, incluso por el botón "Responder
+al VIP" del propio DM; y un segundo toque del mismo botón mientras el resume
+anterior sigue corriendo (guarda de in-flight por turno en `AdminService`,
+proceso único).
+
+El fail-closed de **regen doctrinal** (`resolve_doctrine_rule_and_enqueue`, §4.5:
+regla inyectada que vuelve a pedir doctrina) permanece intacto y es semántica
+opuesta a este primer `consult_doctrine` tras FP.
 
 `TurnStore.reopen_from_escalated` es la ÚNICA excepción sancionada al latch
 terminal (`apply_terminal_latch`): CAS `UPDATE ... WHERE status='escalated'`, así

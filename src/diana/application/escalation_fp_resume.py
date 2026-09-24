@@ -13,8 +13,9 @@ draft comes from* without touching Telegram, the DB or the LLM:
   (same rule as the doctrine regen, ``AdminService.resolve_doctrine_rule_and_enqueue``).
   The reason comes from the trace and, when the trace is gone (TTL purge, read
   fault), from the persisted ``escalation_events.motivo``.
-- ``blocked_no_text``: nothing usable to show (empty draft, or the regenerated
-  decision asks for doctrine instead of a reply).
+- ``blocked_no_text``: nothing usable to show (empty regenerated draft).
+- ``open_gray_zone``: the regenerated decision asks for doctrine — open the
+  gray-zone consult (§4.5) instead of fail-closing like doctrine *regen*.
 
 Machine tokens stay stable English/snake_case for stores and parsers.
 """
@@ -31,6 +32,7 @@ __all__ = [
     "FP_RESUME_REASON",
     "RESUME_BLOCKED_SAFETY",
     "RESUME_MARKED_ONLY",
+    "RESUME_OPENED_GRAY_ZONE",
     "RESUME_RESUMED",
     "SAFETY_ESCALATION_REASON",
     "FpResumeAction",
@@ -50,6 +52,7 @@ FpResumeAction = Literal[
     "generate",
     "blocked_safety",
     "blocked_no_text",
+    "open_gray_zone",
 ]
 
 # Decider reason for a draft that failed the safety gate (fail closed).
@@ -61,12 +64,14 @@ FP_RESUME_REASON = "escalation_false_positive_resume"
 RESUME_RESUMED = "resumed_with_draft"
 RESUME_MARKED_ONLY = "marked_only"
 RESUME_BLOCKED_SAFETY = "blocked_safety"
+RESUME_OPENED_GRAY_ZONE = "opened_gray_zone"
 
 # Owner-facing reason keys: the closed vocabulary both entry points (DM button
 # and /fp command) map to their own token + message. ``Outcome.detail`` is the
 # machine token; this is the *why* the owner gets told.
 FpResumeKey = Literal[
     "draft_sent",
+    "opened_gray_zone",
     "blocked_safety",
     "skipped_new_turn",
     "skipped_owner_wrote",
@@ -92,7 +97,9 @@ _DETAIL_KEYS: dict[str, FpResumeKey] = {
     "no_draft_generated": "skipped_no_draft_generated",
     "no_business_connection": "skipped_no_connection",
     "no_director": "skipped_unavailable",
+    "gray_zone_unavailable": "skipped_unavailable",
     "already_running": "skipped_in_progress",
+    "doctrine_notify_failed": "skipped_error",
     "error": "skipped_error",
     "superseded": "skipped_error",
     "reopen_lost": "skipped_error",
@@ -166,6 +173,8 @@ def fp_resume_key(outcome: FpResumeOutcome) -> FpResumeKey:
         return "failed"
     if outcome.status == RESUME_RESUMED:
         return "draft_sent"
+    if outcome.status == RESUME_OPENED_GRAY_ZONE:
+        return "opened_gray_zone"
     if outcome.status == RESUME_BLOCKED_SAFETY:
         return "blocked_safety"
     return _DETAIL_KEYS.get(outcome.detail, "marked")
@@ -271,10 +280,11 @@ def plan_from_generated_decision(
     reason: str,
     draft_text: str,
 ) -> FpResumePlan:
-    """Validate a freshly generated decision (fail-closed rules).
+    """Validate a freshly generated decision for the FP resume path.
 
-    Mirrors the doctrine regen contract: ``consult_doctrine``, an empty draft
-    and an ``escalate`` by safety are blocked. An ``escalate`` by
+    Empty draft and ``escalate`` by safety stay fail-closed. ``consult_doctrine``
+    with a usable draft opens the gray zone (product: first consult after FP,
+    not the doctrine *regen* fail-closed of §4.5). An ``escalate`` by
     risk/frustration with a valid draft is NOT a failure — the owner decides
     from her approval queue.
     """
@@ -282,7 +292,9 @@ def plan_from_generated_decision(
     if not draft:
         return FpResumePlan(action="blocked_no_text", reason=reason)
     if action == _CONSULT_DOCTRINE:
-        return FpResumePlan(action="blocked_no_text", reason=reason)
+        return FpResumePlan(
+            action="open_gray_zone", reason=reason, draft_text=draft
+        )
     if action == _ESCALATE and reason == SAFETY_ESCALATION_REASON:
         return FpResumePlan(action="blocked_safety", reason=reason)
     return FpResumePlan(action="reuse_trace_draft", reason=reason, draft_text=draft)
