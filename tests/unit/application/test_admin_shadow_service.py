@@ -184,8 +184,8 @@ async def test_summary_shows_totals_trend_and_thresholds() -> None:
         trust=[_trust(vip_id)],
     )
     body = await service.render_summary()
-    assert "Totales: 8 turnos medidos · 1 habría enviado sola · 0 correcciones de la dueña" in body
-    assert "20/08 — 5 turnos · 1 habría enviado" in body
+    assert "Totales: 8 turnos medidos · 1 vía rápida (fático+confianza) · 0 correcciones de la dueña" in body
+    assert "20/08 — 5 turnos · 1 vía rápida" in body
     assert "21/08 — 3 turnos" in body
     assert "🎚 Umbrales actuales:" in body
     assert "Confianza para enviar sola: 0.90" in body
@@ -226,8 +226,8 @@ async def test_by_vip_shows_score_autonomous_and_threshold_mark() -> None:
     )
     body = await service.render_by_vip()
     assert "👤 María" in body
-    assert "[fatico] 0.30 · autónomos 2 · correcciones 0 · ⏳ en camino" in body
-    assert "[informativo] 0.95 · autónomos 5 · correcciones 0 · ✅ cumple" in body
+    assert "[fatico] 0.30 · vía rápida 2 · correcciones 0 · ⏳ en camino" in body
+    assert "[informativo] 0.95 · vía rápida 5 · correcciones 0 · ✅ cumple" in body
 
 
 @pytest.mark.asyncio
@@ -252,7 +252,7 @@ async def test_decisions_would_send_when_all_thresholds_met() -> None:
     )
     body, total_pages = await service.render_decisions()
     assert "1. 22/08 · Hug Vbs · fatico (conf. 0.70)" in body
-    assert "✅ CON AUTONOMÍA TOTAL: habría enviado sola" in body
+    assert "✅ Decisor: habría enviado sola" in body
     assert "Decisión real: aprobar (revisión de la dueña)" in body
     assert "Seguridad 0.95 · doctrina no aplica · naturalidad 0.80" in body
     assert "Confianza 0.95 vs 0.90: ✅ cumple" in body
@@ -274,7 +274,7 @@ async def test_decisions_below_threshold_shows_dimension_detail() -> None:
         vips=[_vip(vip_id, name="Alfonso")],
     )
     body, total_pages = await service.render_decisions()
-    assert "❌ Con autonomía: no habría enviado — umbrales no alcanzados:" in body
+    assert "❌ Decisor: no habría enviado — umbrales no alcanzados:" in body
     assert "Seguridad 0.50 vs 0.90 ❌" in body
     assert "Doctrina: no aplica" in body
     assert "Doctrina 0.85 vs 0.80 ✅" not in body
@@ -353,7 +353,7 @@ async def test_decisions_high_risk_escalates() -> None:
         vips=[_vip(vip_id)],
     )
     body, total_pages = await service.render_decisions()
-    assert "❌ Con autonomía: no habría enviado — riesgo alto en la conversación" in body
+    assert "❌ Decisor: no habría enviado — riesgo alto en la conversación" in body
 
 
 @pytest.mark.asyncio
@@ -369,7 +369,7 @@ async def test_decisions_molesta_escalates() -> None:
         vips=[_vip(vip_id)],
     )
     body, total_pages = await service.render_decisions()
-    assert "❌ Con autonomía: no habría enviado — el VIP está molesta" in body
+    assert "❌ Decisor: no habría enviado — el VIP está molesta" in body
 
 
 @pytest.mark.asyncio
@@ -386,7 +386,8 @@ async def test_decisions_pending_doctrine() -> None:
         vips=[_vip(vip_id)],
     )
     body, total_pages = await service.render_decisions()
-    assert "❌ Con autonomía: no habría enviado — doctrina pendiente (zona gris)" in body
+    assert "❌ Decisor: no habría enviado — doctrina" in body
+    assert "pendiente" in body and ("zona gris" in body or "gris" in body)
 
 
 @pytest.mark.asyncio
@@ -470,7 +471,7 @@ async def test_dispatch_sombra_renders_decisions() -> None:
     )
     call_args = msg.edit_text.call_args
     assert call_args is not None
-    assert "Simulación con autonomía total" in call_args[0][0]
+    assert "Simulación del Decisor con autonomía total" in call_args[0][0]
     assert "umbrales no alcanzados" in call_args[0][0]
 
 
@@ -543,3 +544,56 @@ async def test_decisions_keyboard_navigation() -> None:
     data = [b.callback_data for row in kb.inline_keyboard for b in row]
     assert "m:sombra:decisions:p2" in data
     assert "p4" not in "".join(data)
+
+
+# ---------------------------------------------------------------------------
+# P0 metrics coherence — windows + distinct autónomo labels
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_summary_states_7d_window_and_fast_lane_label() -> None:
+    vip_id = uuid4()
+    service = _build(
+        counts=[{"day": date(2026, 8, 20), "total": 5, "autonomous": 1}],
+        trust=[_trust(vip_id)],
+    )
+    body = await service.render_summary()
+    assert body.splitlines()[1] == "Ventana: últimos 7 días."
+    assert "vía rápida" in body
+    # Fast-lane totals must NOT claim "habría enviado"
+    assert "habría enviado" not in body
+    assert "No comparar estos tres números entre sí." in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_states_rows_window_not_days() -> None:
+    vip_id = uuid4()
+    service = _build(rows=[_decision_row(vip_id)])
+    body, _pages = await service.render_decisions()
+    assert body.splitlines()[1] == "Ventana: últimas 30 decisiones/filas."
+    assert "días" not in body.splitlines()[1]
+    assert "Decisor" in body
+
+
+@pytest.mark.asyncio
+async def test_phatic_fast_lane_vs_decider_block_labels() -> None:
+    """Fast-lane can count 1 while Decider would block — labels stay distinct."""
+    vip_id = uuid4()
+    row = _decision_row(
+        vip_id,
+        evaluation=_eval(safety=0.2, doctrine=0.85, naturalness=0.80),
+        comprehension=_comp(risk="alto"),
+    )
+    assert row.get("would_autonomous") is True
+    service = _build(
+        counts=[{"day": date(2026, 8, 20), "total": 1, "autonomous": 1}],
+        rows=[row],
+        trust=[_trust(vip_id, category="fatico", score=0.95, auton=1)],
+    )
+    summary = await service.render_summary()
+    assert "vía rápida" in summary
+    assert "habría enviado" not in summary.split("Borradores")[0]
+
+    decisions, _ = await service.render_decisions()
+    assert "Decisor: no habría enviado" in decisions

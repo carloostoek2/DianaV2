@@ -420,7 +420,11 @@ async def test_false_positive_rate_from_owner_marks() -> None:
     report = await svc.aggregate_week(date(2026, 7, 13))
     assert report.metrics is not None
     # 1 FP / 2 escalates
+    assert report.metrics.false_positive_escalation_count == 1
     assert report.metrics.false_positive_escalation_rate == pytest.approx(0.5)
+    stored = store.weeks[date(2026, 7, 13)]
+    assert stored["false_positive_escalation_count"] == 1.0
+    assert stored["false_positive_escalation_rate"] == pytest.approx(0.5)
 
 
 @pytest.mark.asyncio
@@ -439,4 +443,50 @@ async def test_false_positive_rate_zero_when_no_escalations() -> None:
     )
     report = await svc.aggregate_week(date(2026, 7, 13))
     assert report.metrics is not None
+    assert report.metrics.false_positive_escalation_count == 0
     assert report.metrics.false_positive_escalation_rate == 0.0
+
+
+@pytest.mark.asyncio
+
+@pytest.mark.asyncio
+async def test_false_positive_count_zero_when_no_fp_marks() -> None:
+    traces = [
+        _trace(action="escalate"),
+        _trace(action="escalate"),
+        _trace(action="approve"),
+    ]
+    store = FakeStore()
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource(traces),
+        sides=FakeSideSource(),
+        store=store,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.false_positive_escalation_count == 0
+    assert report.metrics.false_positive_escalation_rate == 0.0
+    assert store.weeks[date(2026, 7, 13)]["false_positive_escalation_count"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_false_positive_no_div_by_zero_when_escalate_zero() -> None:
+    from diana.application.owner_marks import InMemoryOwnerMarkStore
+
+    marks = InMemoryOwnerMarkStore()
+    marks._clock = lambda: datetime(2026, 7, 14, tzinfo=UTC)  # noqa: SLF001
+    await marks.mark(uuid4())
+    store = FakeStore()
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource([_trace(action="approve")]),
+        sides=FakeSideSource(),
+        store=store,
+        fp_marks=marks,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.false_positive_escalation_rate == 0.0
+    assert store.weeks[date(2026, 7, 13)]["false_positive_escalation_rate"] == 0.0
+

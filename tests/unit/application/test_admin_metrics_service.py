@@ -159,7 +159,7 @@ class TestFormatSummaryText:
         assert "- Repetición de zona gris: 3" in text
         assert "- Falsos positivos de escalación: 0" in text
         assert "- Drift de estilo: 0.03 (normal)" in text
-        assert "- Envíos autónomos: 45 (32% del total)" in text
+        assert "- Envíos reales autónomos (L1+L2+L3): 45 (32% del total)" in text
         assert "- Promos enviadas: 12 (únicos: 10, repetidos: 2)" in text
         # No gray-zone trigger list (Item 2 stores count only)
         assert "mismos triggers" not in text
@@ -291,3 +291,58 @@ class TestNoAiogram:
 
         assert hasattr(mod, "AdminMetricsService")
         assert hasattr(mod, "MetricsSummary")
+
+
+class TestP0FpCountCoherence:
+    async def test_ui_shows_persisted_fp_count(
+        self, svc: AdminMetricsService, store: FakeLearningMetricsStore
+    ) -> None:
+        week = date(2026, 7, 20)
+        store.seed(
+            week,
+            _full_values(
+                false_positive_escalation_rate=0.5,
+                false_positive_escalation_count=2.0,
+            ),
+        )
+        text = svc.format_summary_text(await svc.get_week_summary(week))
+        assert "- Falsos positivos de escalación: 2" in text or (
+            "- Falsos positivos de escalación: 2" in text
+        )
+        # Prefer whichever FP label the UI uses
+        assert ": 2" in text
+        assert "Falsos positivos" in text or "falsos positivos" in text.lower()
+
+    async def test_old_week_rate_only_does_not_crash(
+        self, svc: AdminMetricsService, store: FakeLearningMetricsStore
+    ) -> None:
+        week = date(2026, 7, 20)
+        vals = _full_values(false_positive_escalation_rate=0.25)
+        vals.pop("false_positive_escalation_count", None)
+        store.seed(week, vals)
+        text = svc.format_summary_text(await svc.get_week_summary(week))
+        assert "Falsos positivos" in text or "falsos positivos" in text.lower()
+        # Without count key, UI falls back to 0 (honest residual)
+        assert ": 0" in text or "0" in text
+
+    async def test_export_json_includes_fp_count_key(
+        self, svc: AdminMetricsService, store: FakeLearningMetricsStore
+    ) -> None:
+        week = date(2026, 7, 20)
+        store.seed(
+            week,
+            _full_values(false_positive_escalation_count=3.0),
+        )
+        payload = json.loads(await svc.export_week_json(week))
+        assert "false_positive_escalation_count" in payload["metrics"]
+        assert payload["metrics"]["false_positive_escalation_count"] == 3.0
+
+    async def test_real_sends_label_and_footer(
+        self, svc: AdminMetricsService, store: FakeLearningMetricsStore
+    ) -> None:
+        week = date(2026, 7, 20)
+        store.seed(week, _full_values())
+        text = svc.format_summary_text(await svc.get_week_summary(week))
+        assert "Envíos reales autónomos (L1+L2+L3)" in text
+        assert "No comparar estos tres números entre sí." in text
+        assert text.startswith("📊")

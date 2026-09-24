@@ -201,9 +201,12 @@ class AdminMetricsService:
             f"- Repetición de zona gris: {gray}",
             f"- Falsos positivos de escalación: {fp_count}{fp_delta}",
             f"- Drift de estilo: {drift:.2f} ({drift_lbl})",
-            f"- Envíos autónomos: {auto_count} ({auto_pct}% del total)",
+            f"- Envíos reales autónomos (L1+L2+L3): {auto_count} "
+            f"({auto_pct}% del total)",
             f"- Promos enviadas: {promo_sent} (únicos: {promo_unique}, "
             f"repetidos: {promo_repeat})",
+            "",
+            "No comparar estos tres números entre sí.",
         ]
         return "\n".join(lines)
 

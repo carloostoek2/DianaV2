@@ -35,6 +35,7 @@ METRIC_NAMES: tuple[str, ...] = (
     "approval_without_correction_rate",
     "gray_zone_repetition_count",
     "false_positive_escalation_rate",
+    "false_positive_escalation_count",
     "style_drift_score",
     "autonomous_send_rate",
     "average_latency_ms",
@@ -90,6 +91,7 @@ class WeekMetrics:
     style_drift_score: float
     autonomous_send_rate: float
     average_latency_ms: float
+    false_positive_escalation_count: int = 0
     promo_sent_count: int = 0
     promo_unique_chats: int = 0
     promo_repeat_count: int = 0
@@ -243,7 +245,12 @@ class MetricsAggregationService:
             except Exception:
                 logger.exception("metrics_fp_count_failed")
                 fp_count = 0
-        fp_rate = (fp_count / escalate_count) if escalate_count else 0.0
+        if escalate_count:
+            fp_rate = fp_count / escalate_count
+        else:
+            # AC: escalate=0 → 0/0 (no div-by-zero; count forced to 0)
+            fp_count = 0
+            fp_rate = 0.0
 
         style_score = await self._style_drift_score()
 
@@ -265,6 +272,7 @@ class MetricsAggregationService:
             style_drift_score=float(style_score),
             autonomous_send_rate=float(auto_rate),
             average_latency_ms=float(avg_latency),
+            false_positive_escalation_count=int(fp_count),
             promo_sent_count=int(promo_sent),
             promo_unique_chats=int(promo_unique),
             promo_repeat_count=int(promo_repeat),

@@ -364,6 +364,7 @@ class AutonomyReadinessService:
         match_ok = rate is not None and rate >= self._match_rate_min
         lines = [
             "🧭 Camino a la autonomía — Preparación global",
+            f"Ventana: últimos {data['window_days']} días.",
             "",
             "Diana mide si puede enviar sola por VIP. Esto es evidencia, "
             "no una decisión: nada cambia hasta que tú lo actives.",
@@ -402,6 +403,7 @@ class AutonomyReadinessService:
         casos = summary["aciertos"] + summary["desacuerdos"]
         lines = [
             "🧭 Camino a la autonomía — Comparativas",
+            f"Ventana: últimos {self._window_days} días.",
             "",
             f"Coincidencia: {rate_label} "
             f"({summary['aciertos']} aciertos / {casos or 1} casos de envío)",
@@ -435,6 +437,7 @@ class AutonomyReadinessService:
         readiness_list = await self._by_vip()
         lines = [
             "🧭 Camino a la autonomía — Por VIP",
+            f"Ventana: últimos {self._window_days} días.",
             "",
             "Quién está listo (✅) y a quién le falta cuánto (⏳). El botón "
             "activa el envío autónomo solo si se cumplen las 3 condiciones.",

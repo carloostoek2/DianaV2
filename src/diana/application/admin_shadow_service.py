@@ -8,9 +8,9 @@ no writes.
 
 Views (all neutral Mexican Spanish):
 - ``render_summary`` — global counts, last-7-day trend, current thresholds and
-  the would-be autonomous message.
+  the fast-lane (phatic+confidence) counter.
 - ``render_by_vip`` — trust score vs. threshold per VIP and turn category,
-  with the "autónomos" (would-have-sent) counter.
+  with the vía rápida (phatic+confidence) counter.
 - ``render_decisions`` — recent turns with the generated draft (the same
   message the owner approves), the shadow verdict and WHY the fast-lane would
   or would not have sent alone, plus the trust gate when applicable.
@@ -144,6 +144,7 @@ class AdminShadowService:
 
         lines = [
             "🤖 Modo sombra — Resumen",
+            f"Ventana: últimos {_SUMMARY_DAYS} días.",
             "",
             "Diana mide cada conversación sin cambiar sus decisiones. "
             "Todo lo que ves aquí es registro, no acción.",
@@ -154,12 +155,13 @@ class AdminShadowService:
                 day = row.get("day")
                 total = int(row.get("total") or 0)
                 would = int(row.get("autonomous") or 0)
-                mark = f" · {would} habría enviado" if would else ""
+                mark = f" · {would} vía rápida" if would else ""
                 lines.append(f"  {_fmt_day(day)} — {total} turnos{mark}")
         lines += [
             "",
-            f"Totales: {total_turns} turnos medidos · {total_would} habría "
-            f"enviado sola · {total_corrections} correcciones de la dueña",
+            f"Totales: {total_turns} turnos medidos · {total_would} vía "
+            f"rápida (fático+confianza) · {total_corrections} correcciones "
+            f"de la dueña",
             "",
             "🎚 Umbrales actuales:",
             f"  Confianza para enviar sola: {self._thresholds.trust_min:.2f}",
@@ -167,8 +169,10 @@ class AdminShadowService:
             f"{self._thresholds.classifier_confidence_min:.2f}",
             f'  Plantilla de saludo automático: "{self._thresholds.draft_text}"',
             "",
-            "El detalle de cada turno (borrador real y si habría enviado sola) "
+            "El detalle de cada turno (borrador real y simulación del Decisor) "
             "está en 💬 Borradores y decisiones.",
+            "",
+            "No comparar estos tres números entre sí.",
             "",
             f"Última medición: {last_label}",
         ]
@@ -214,7 +218,7 @@ class AdminShadowService:
                 )
                 lines.append(
                     f"  • [{row.turn_category}] {row.trust_score:.2f} · "
-                    f"autónomos {row.autonomous_count} · "
+                    f"vía rápida {row.autonomous_count} · "
                     f"correcciones {row.correction_count} · {meets}"
                 )
         hidden = len(sorted_vips) - len(shown)
@@ -259,10 +263,11 @@ class AdminShadowService:
 
         lines = [
             "🤖 Modo sombra — Borradores y decisiones",
+            f"Ventana: últimas {window} decisiones/filas.",
             "",
-            "Simulación con autonomía total: cada turno real se re-decide "
-            "con el Decisor y el interruptor de autonomía ENCENDIDO. El "
-            "borrador es el mismo que te llega para aprobar.",
+            "Simulación del Decisor con autonomía total: cada turno real "
+            "se re-decide con el Decisor y el interruptor de autonomía "
+            "ENCENDIDO. El borrador es el mismo que te llega para aprobar.",
         ]
         if not rows:
             lines += ["", "Todavía no hay turnos medidos."]
@@ -290,6 +295,8 @@ class AdminShadowService:
             else:
                 lines.append("   (sin borrador guardado en este turno)")
 
+        lines.append("")
+        lines.append("No comparar estos tres números entre sí.")
         lines.append(
             f"\nPágina {page + 1} de {total_pages} — usa los botones para navegar."
         )
@@ -344,19 +351,19 @@ class AdminShadowService:
         )
 
         if decision.action == "send":
-            lines.append("   ✅ CON AUTONOMÍA TOTAL: habría enviado sola")
+            lines.append("   ✅ Decisor: habría enviado sola")
         elif decision.action == "escalate":
             reason = _ESCALATE_LABELS.get(decision.reason, decision.reason)
             lines.append(
-                f"   ❌ Con autonomía: no habría enviado — {reason}"
+                f"   ❌ Decisor: no habría enviado — {reason}"
             )
         elif decision.action == "consult_doctrine":
             lines.append(
-                "   ❌ Con autonomía: no habría enviado — doctrina "
+                "   ❌ Decisor: no habría enviado — doctrina "
                 "pendiente (zona gris)"
             )
         else:  # approve (autonomous_below_threshold)
-            lines.append("   ❌ Con autonomía: no habría enviado — umbrales no alcanzados:")
+            lines.append("   ❌ Decisor: no habría enviado — umbrales no alcanzados:")
             safety_min, doctrine_min, naturalness_min = self._decider.autonomous_mins()
             dims: list[tuple[str, float | None, float | None]] = [
                 ("Seguridad", evaluation.safety, safety_min),
