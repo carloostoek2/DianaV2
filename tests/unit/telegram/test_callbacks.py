@@ -907,6 +907,7 @@ def test_escalation_fp_token_table_is_complete() -> None:
     from diana.application.escalation_fp_resume import (
         RESUME_BLOCKED_SAFETY,
         RESUME_MARKED_ONLY,
+        RESUME_OPENED_GRAY_ZONE,
         RESUME_RESUMED,
         FpResumeOutcome,
     )
@@ -918,6 +919,9 @@ def test_escalation_fp_token_table_is_complete() -> None:
     tokens = {
         escalation_fp_token(FpResumeOutcome(marked=False, status=RESUME_MARKED_ONLY)),
         escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_RESUMED)),
+        escalation_fp_token(
+            FpResumeOutcome(marked=True, status=RESUME_OPENED_GRAY_ZONE)
+        ),
         escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_BLOCKED_SAFETY)),
         escalation_fp_token(FpResumeOutcome(marked=True, status=RESUME_MARKED_ONLY)),
     }
@@ -925,6 +929,7 @@ def test_escalation_fp_token_table_is_complete() -> None:
     assert tokens == {
         "escalation_fp_failed",
         "escalation_fp_draft_sent",
+        "escalation_fp_opened_gray_zone",
         "escalation_fp_blocked_safety",
         "escalation_fp_marked",
     }
