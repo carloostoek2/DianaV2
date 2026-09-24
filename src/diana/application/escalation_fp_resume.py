@@ -70,7 +70,8 @@ FpResumeKey = Literal[
     "blocked_safety",
     "skipped_new_turn",
     "skipped_owner_wrote",
-    "skipped_no_draft",
+    "skipped_no_vip_text",
+    "skipped_no_draft_generated",
     "skipped_no_connection",
     "skipped_unavailable",
     "skipped_in_progress",
@@ -85,11 +86,10 @@ FpResumeKey = Literal[
 _DETAIL_KEYS: dict[str, FpResumeKey] = {
     "chat_busy": "skipped_new_turn",
     "owner_intervened": "skipped_owner_wrote",
-    "no_vip_text": "skipped_no_draft",
-    # Every generation failure (empty draft, doctrine re-request, safety) is
-    # told as one honest "no draft was prepared"; the underlying decision
-    # reason stays in the log.
-    "no_draft_generated": "skipped_no_draft",
+    # Distinct owner copy: missing VIP text vs generation that produced nothing
+    # usable (empty draft / doctrine re-request today). Do not collapse them.
+    "no_vip_text": "skipped_no_vip_text",
+    "no_draft_generated": "skipped_no_draft_generated",
     "no_business_connection": "skipped_no_connection",
     "no_director": "skipped_unavailable",
     "already_running": "skipped_in_progress",

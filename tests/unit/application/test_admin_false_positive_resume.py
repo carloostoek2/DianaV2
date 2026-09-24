@@ -180,6 +180,7 @@ async def test_resume_without_vip_text_stays_marked_only() -> None:
 
     assert outcome.status == RESUME_MARKED_ONLY
     assert outcome.detail == "no_vip_text"
+    assert fp_resume_key(outcome) == "skipped_no_vip_text"
     # Fail-closed before the LLM: the text is pipeline input, never fabricated.
     assert director.calls == []
     assert await _no_approval(g, turn_id)
@@ -304,7 +305,7 @@ async def test_resume_generation_blocked_by_doctrine_sends_no_draft() -> None:
 
     assert outcome.status == RESUME_MARKED_ONLY
     assert outcome.detail == "no_draft_generated"
-    assert fp_resume_key(outcome) == "skipped_no_draft"
+    assert fp_resume_key(outcome) == "skipped_no_draft_generated"
     assert await _no_approval(g, turn_id)
     assert g["notifier"].drafts == []
 
@@ -323,7 +324,7 @@ async def test_resume_generation_with_empty_draft_sends_no_draft() -> None:
 
     assert outcome.status == RESUME_MARKED_ONLY
     assert outcome.detail == "no_draft_generated"
-    assert fp_resume_key(outcome) == "skipped_no_draft"
+    assert fp_resume_key(outcome) == "skipped_no_draft_generated"
     assert await _no_approval(g, turn_id)
     assert g["notifier"].drafts == []
 
