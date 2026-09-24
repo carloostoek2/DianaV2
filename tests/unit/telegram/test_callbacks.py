@@ -952,8 +952,8 @@ def test_escalation_fp_skip_reasons_have_their_own_alert() -> None:
     expected = {
         "chat_busy": "escalation_fp_skipped_new_turn",
         "owner_intervened": "escalation_fp_skipped_owner_wrote",
-        "no_vip_text": "escalation_fp_skipped_no_draft",
-        "no_draft_generated": "escalation_fp_skipped_no_draft",
+        "no_vip_text": "escalation_fp_skipped_no_vip_text",
+        "no_draft_generated": "escalation_fp_skipped_no_draft_generated",
         "no_business_connection": "escalation_fp_skipped_no_connection",
         "no_director": "escalation_fp_skipped_unavailable",
         "already_running": "escalation_fp_skipped_in_progress",
@@ -989,6 +989,14 @@ def test_every_resume_key_has_its_own_owner_message() -> None:
     for key, message in FP_RESUME_MESSAGES_ES.items():
         if key not in {"marked", "failed"}:
             assert len(message) > len(marked), key
+
+    # Missing VIP text vs empty/unusable draft must not share wording.
+    assert (
+        FP_RESUME_MESSAGES_ES["skipped_no_vip_text"]
+        != FP_RESUME_MESSAGES_ES["skipped_no_draft_generated"]
+    )
+    assert "mensaje original" in FP_RESUME_MESSAGES_ES["skipped_no_vip_text"]
+    assert "borrador usable" in FP_RESUME_MESSAGES_ES["skipped_no_draft_generated"]
 
 
 @pytest.mark.asyncio
