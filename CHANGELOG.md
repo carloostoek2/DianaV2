@@ -7,6 +7,18 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+La escalación ya muestra que quedó resuelta — 2026-09-24
+
+Cuando la dueña tocaba Falso positivo o Responder al VIP en el mensaje de escalación, la acción sí ocurría, pero el mensaje se quedaba igual: mismos botones, sin señal de que algo pasó. Eso hacía dudar de si el toque había servido.
+
+Ahora esos dos botones dejan el mensaje en el mismo estilo que un borrador ya enviado: arriba del título aparece ✅ Resuelto y los botones de acción desaparecen. Ver traza no cambia el mensaje — solo abre la traza y al volver todo sigue igual, porque mirar no es resolver.
+
+- Falso positivo (si la marca se guardó) y Responder al VIP: banner Resuelto + sin botones.
+- Ver traza: el mensaje de escalación no se edita.
+- Si el falso positivo no se pudo marcar, los botones se quedan para poder reintentar.
+
+---
+
 Contexto adicional para rehacer un borrador sin penalizar la evaluación — 2026-09-22
 
 A veces un borrador es incorrecto, pero no porque Diana haya interpretado mal la información que tenía, sino porque esa información estaba incompleta. En esos casos, utilizar los botones habituales de Corrección haría que la equivocación se contabilizara como un fallo del modelo, aunque el problema real estuviera en el contexto que recibió. No quería que una falta de información se convirtiera injustamente en una penalización de confianza.

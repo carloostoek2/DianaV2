@@ -280,6 +280,44 @@ _ESCALATION_FP_ALERTS: dict[str, str] = {
 }
 
 
+# Matches draft approve/escalate banners (✅ <b>Enviado</b> / ⚠️ <b>Escalado</b>).
+_ESCALATION_RESOLVED_BANNER = "✅ <b>Resuelto</b>"
+
+
+def _esc_html(text: str) -> str:
+    """Escape plain text for Telegram HTML parse_mode."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def format_escalation_resolved_text(original: str) -> str:
+    """Prepend the resolved legend above the escalation body.
+
+    Same pattern as the draft approve path (``✅ <b>Enviado</b>`` above the
+    body): the owner sees the escalation was acted on. Idempotent if the
+    banner is already present (HTML source or Telegram display form).
+    """
+    body = original or ""
+    if body.startswith(_ESCALATION_RESOLVED_BANNER) or body.startswith("✅ Resuelto"):
+        return body
+    return f"{_ESCALATION_RESOLVED_BANNER}\n\n{_esc_html(body)}"
+
+
+async def _mark_escalation_message_resolved(message: Any) -> None:
+    """Edit the escalation DM in place: resolved banner + strip action buttons."""
+    if message is None:
+        return
+    original = message.text or message.caption or ""
+    try:
+        await message.edit_text(
+            format_escalation_resolved_text(original),
+            reply_markup=None,
+            parse_mode="HTML",
+        )
+    except Exception:
+        logger.exception("escalation_resolved_edit_failed")
+
+
+
 # Owner-facing alerts for approve/correct no-ops (product language).
 _APPROVE_NOOP_ALERTS: dict[str, str] = {
     "stale": "Ya fue resuelto o reemplazado — no se realizó ninguna acción",
@@ -747,6 +785,11 @@ def build_callback_router(
                 outcome = await admin.mark_false_positive_and_resume(
                     esc_turn_id, actor_id=actor_id
                 )
+                # Visual resolve (draft Enviado pattern): banner + strip buttons
+                # only when the mark landed. Failed marks keep the keyboard so
+                # the owner can retry. Ver traza never reaches here.
+                if outcome.marked:
+                    await _mark_escalation_message_resolved(query.message)
                 if query.message is not None:
                     await query.message.answer(
                         _ESCALATION_FP_ALERTS[escalation_fp_token(outcome)]
@@ -755,6 +798,10 @@ def build_callback_router(
             if esc_kind == "reply":
                 sessions.start(actor_id, esc_turn_id, mode="escalation_reply")
                 await query.answer("Listo")
+                # Choosing "Responder al VIP" resolves the escalation card
+                # immediately (same banner/strip as FP); the follow-up prompt
+                # still collects the reply text. Ver traza leaves the card alone.
+                await _mark_escalation_message_resolved(query.message)
                 if query.message is not None:
                     await query.message.answer(
                         "✍️ Escribe la respuesta que quieres enviarle al "
@@ -1314,4 +1361,6 @@ __all__ = [
     "CorrectSessionStore",
     "build_callback_router",
     "dispatch_owner_callback",
+    "escalation_fp_token",
+    "format_escalation_resolved_text",
 ]
