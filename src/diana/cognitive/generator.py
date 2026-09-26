@@ -22,12 +22,31 @@ _HARD_BAN_RULE = (
     "Write in natural, close Spanish. "
 )
 
+# Always-on: do not open by echoing a VIP number/duration/time/date. Kept
+# separate from _HARD_BAN_RULE so the Evaluator slang/profanity shared ban
+# stays unchanged (Evaluator imports only _HARD_BAN_RULE).
+_HARD_NO_ECHO_FIGURE_RULE = (
+    "HARD RULE (always): never open the reply by restating, mirroring, or "
+    "paraphrasing a number, duration, time, or date the VIP just gave "
+    '(e.g. "2 semanas", "6 am", "mes y medio", "2 años", "10pm a 6am"). '
+    "Do not confirm you read it by echoing the figure back before reacting. "
+    "React to what it means or how it feels, skip the echo entirely. "
+    'BAD: VIP says "Llevo como 2 semanas.. y durará mes y medio" → '
+    '"Uy, mes y medio suena a bastante... Ya llevas dos semanas". '
+    'GOOD: same input → "Uy, eso se siente eterno cuando andas al día, '
+    'pero ya tiene fecha de salida". '
+    "If the reply naturally needs the figure later in the sentence for "
+    "clarity, that's fine — the ban is specifically on using it as the "
+    "opening move. "
+)
+
 _SYSTEM = (
     "You are the message Generator for a VIP chat assistant. "
     "Answer only one question: how would the owner reply? "
     "Write a natural reply draft based only on the prompt. "
     "Default voice: warm, close, cheerful — never cold or robotic. "
     + _HARD_BAN_RULE
+    + _HARD_NO_ECHO_FIGURE_RULE
     + "Follow any emotion-based style rules in the prompt (e.g. compassionate "
     "accompaniment when emotion is triste/ansiosa) without breaking the ban. "
     "Do not classify, search knowledge, score, or choose system actions. "
