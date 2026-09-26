@@ -64,6 +64,26 @@ async def test_generate_system_forbids_mexican_slang_and_profanity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_system_forbids_opening_echo_of_vip_figures() -> None:
+    """HARD RULE: never open by restating a VIP number/duration/time/date."""
+    llm = FakeLLM(text_responses=["draft ok"])
+    await Generator(llm).generate("prompt body")
+    system = llm.calls[0][1]["messages"][0]["content"]
+    system_l = system.lower()
+    assert "hard rule (always)" in system_l
+    assert "never open the reply by restating" in system_l
+    assert "opening move" in system_l
+    assert "mes y medio" in system_l
+    # Inline BAD/GOOD contrast must stay in system (not style_rules).
+    assert "bad:" in system_l and "good:" in system_l
+    # Must not live only inside the slang shared ban constant.
+    from diana.cognitive.generator import _HARD_BAN_RULE, _HARD_NO_ECHO_FIGURE_RULE
+
+    assert "never open the reply by restating" not in _HARD_BAN_RULE
+    assert "never open the reply by restating" in _HARD_NO_ECHO_FIGURE_RULE
+
+
+@pytest.mark.asyncio
 async def test_generate_system_prompt_has_injection_defense() -> None:
     """SEC-INJ-02: Generator system prompt must defend against prompt injection
     in user-supplied knowledge blocks.
