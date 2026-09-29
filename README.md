@@ -67,18 +67,20 @@ Cada turno mide sus propias etapas y conserva esos tiempos en la trazabilidad.
 Esta es una muestra real de un turno completo del sistema:
 
 Etapa| Qué hace| Tiempo
-Analista| Entiende intención, emoción, urgencia y riesgo| ~1,39 s
-Planificador| Decide qué conocimiento se necesita| ~0,03 ms
-Recuperación de memoria| Busca lo que Diana recuerda de ese VIP| ~145 ms
+Analista| Entiende intención, emoción, urgencia y riesgo| ~1,27 s
+Planificador| Decide qué conocimiento se necesita| ~0,02 ms
+Recuperación de memoria| Busca lo que Diana recuerda de ese VIP| ~73 ms
 Recuperación de políticas| Busca reglas aplicables| 0 ms
-Recuperación de ejemplos| Busca respuestas de referencia| ~419 ms
+Recuperación de ejemplos| Busca respuestas de referencia| ~607 ms
 Hechos de persona| Busca rasgos de personalidad activa| 0 ms
-Patrones de voz| Busca patrones de estilo del canal| 0 ms
-Construcción de contexto| Arma el contexto final| ~0,17 ms
-Generador| Escribe el borrador| ~3,20 s
-Evaluador| Evalúa naturalidad, seguridad, cobertura y empatía| ~1,00 s
-Decisor| Determina la acción final| ~0,04 ms
-Total| | ~6,16 s
+Patrones de voz| Busca patrones de estilo del canal| ~0,05 ms
+Construcción de contexto| Arma el contexto final| ~0,16 ms
+Generador| Escribe el borrador| ~2,05 s
+Evaluador| Evalúa naturalidad, seguridad, cobertura y empatía| ~0,97 s
+Decisor| Determina la acción final| ~0,03 ms
+Total| | ~4,97 s
+
+Además del pensamiento, en esta muestra la escritura simulada duró 15 s.
 
 Este tipo de medición nos dejó una conclusión bastante clara: el cuello de botella está en el modelo de lenguaje, principalmente en analizar, generar y evaluar. La recuperación de conocimiento explica prácticamente todo el resto del tiempo.
 
