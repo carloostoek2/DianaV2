@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     # (reusing the draft already in the trace, or generating one when the
     # escalation never got that far). ON by product decision; OFF restores the
     # previous behavior of this action (metric mark only). That parity is about
-    # the resume: the §0.6 placeholder `(texto no disponible)` of the gray-zone
+    # the resume: the placeholder `(texto no disponible)` of the gray-zone
     # path is a Spanish copy fix of its own and applies either way. The Settings
     # default is deliberately True here — the .env file is the source of truth
     # and carries it explicitly.

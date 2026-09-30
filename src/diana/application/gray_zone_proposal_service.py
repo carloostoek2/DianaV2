@@ -13,7 +13,6 @@ Loan semantics (AGENTS §4.5 invariants):
 - The proposal is a SUGGESTION only: "Usar regla propuesta" adopts the RULE
   through the existing rule→regen→approval path (never the VIP-facing reply).
 - No threshold/gate is auto-calibrated (incidente de calibración).
-- Neutral Mexican Spanish for all proposal copy (AGENTS §0.6).
 """
 
 from __future__ import annotations

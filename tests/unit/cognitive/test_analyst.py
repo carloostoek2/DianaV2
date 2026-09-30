@@ -48,7 +48,7 @@ async def test_analyze_returns_comprehension_from_fake_llm() -> None:
     expected = _valid_comprehension(intent="ask_schedule")
     llm = FakeLLM(structured_responses=[expected])
     analyst = Analyst(llm)
-    result = await analyst.analyze(_input("¿cuándo podés?"))
+    result = await analyst.analyze(_input("¿cuándo puedes?"))
     assert isinstance(result, Comprehension)
     assert result.intent == "ask_schedule"
     assert len(llm.calls) == 1

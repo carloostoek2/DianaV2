@@ -86,8 +86,8 @@ _ESCALATION_LOG_BACKUP_COUNT = 5
 _escalation_file_handler_attached = False
 
 # Owner-facing placeholder when the VIP's original text cannot be recovered
-# (bounded history window / gray zone row without a question). Spanish neutral
-# per AGENTS §0.6 — never show the owner an English token.
+# (bounded history window / gray zone row without a question).
+# Never show the owner an English token.
 _NO_VIP_TEXT_PLACEHOLDER = "(texto no disponible)"
 
 

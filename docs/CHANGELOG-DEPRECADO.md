@@ -36,7 +36,7 @@ Highlights of what's new and fixed in Diana, from her early releases through the
 - **Regen no longer blocks when the Decider escalates by risk/frustration of the original message**: if the rule was applied and a valid draft was generated (action `escalate` with reason `risk_high` / `frustracion_directa`), the regenerated draft now goes to the owner approval queue instead of failing with "La regeneración no produjo un borrador usable". The safety gate remains absolute: a regenerated draft that fails the safety check (`safety_below_threshold`) is still fail-closed (rule deactivated, case returns to gray-zone resolution).
 
 ### 🔧 Improvements
-- `ExamplesRepo.list_gold_global` (read-only global gold source for proposals); neutral Mexican Spanish across all new proposal copy (AGENTS §0.6).
+- `ExamplesRepo.list_gold_global` (read-only global gold source for proposals).
 
 ### ✅ Tests
 - 3079 unit tests passing (+ new `test_gray_zone_proposal_service.py`, dp: callback + keyboard + notifier + orchestrator + migration 033 + regen-returns-to-resolution coverage; escalate-by-risk enqueues / escalate-by-safety fail-closed); gray-zone e2e green.

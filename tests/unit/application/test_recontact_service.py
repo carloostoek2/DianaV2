@@ -286,7 +286,7 @@ def test_render_template_nombre_and_producto() -> None:
         render_template("Hola {nombre}, re: {producto}", nombre="Ana", producto="kit")
         == "Hola Ana, re: kit"
     )
-    assert render_template("Hola {nombre}", nombre="vos") == "Hola vos"
+    assert render_template("Hola {nombre}", nombre="tú") == "Hola tú"
     assert (
         render_template("Hola {nombre} {producto}", nombre="Ana") == "Hola Ana "
     )

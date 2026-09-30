@@ -203,12 +203,12 @@ CHECKIN_BIENESTAR_SOFT_POOL = (
 )
 CHECKIN_DIA_POOL = (
     "Bien, tranqui por aquí",
-    "Todo bien por acá, ¿y el tuyo?",
+    "Todo bien por aquí, ¿y el tuyo?",
     "Aquí andamos, ¿tú qué tal tu día?",
 )
 CHECKIN_DIA_SOFT_POOL = (
     "Tranqui por aquí 💙 ¿tú cómo vas?",
-    "Todo bien por acá, ¿cómo te fue el tuyo?",
+    "Todo bien por aquí, ¿cómo te fue el tuyo?",
     "Aquí andamos suave, ¿qué tal tu día?",
 )
 # Warmer picks when a safe fact exists (presence only — no fact interpolation).
