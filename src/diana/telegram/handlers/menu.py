@@ -325,7 +325,7 @@ def _trust_section_lines(
     The "collapsible section" pattern of this codebase = a header + lines that
     never break the Telegram render (no orphan header when there are no rows).
     Each row: category, score (0.00-1.00), trend icon, counts and the date of
-    the last correction. User-facing text is neutral Mexican Spanish.
+    the last correction. User-facing text is Spanish.
 
     SPEC-EA-07: when ``severity_counts`` is present and non-zero, an ADDITIVE
     one-line severity summary is appended without touching the per-category

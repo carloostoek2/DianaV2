@@ -384,7 +384,7 @@ def parse_doctrine_scope(data: str) -> tuple[UUID, str] | None:
     return (turn_id, scope)
 
 
-# SPEC-EA-07: correction-severity labels (neutral Mexican Spanish).
+# SPEC-EA-07: correction-severity labels (Spanish).
 SEVERITY_LABELS = {
     "minor": "🎨 Tono",
     "moderate": "📋 Contenido",
