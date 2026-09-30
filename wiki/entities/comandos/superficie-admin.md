@@ -55,6 +55,7 @@ Si falla el aviso de doctrina en un turno VIP, el orquestador descongela y degra
 
 - Solo la dueña (admin configurado) opera menús, aprobaciones y comandos (REQ-AUTH-08).
 - Sin comandos nuevos para evolución de agente: todo vive en secciones de la ficha del VIP o del menú (EA-06).
+- Los textos de la UI son español neutro obligatorio (ver [[comunicacion-con-producto]]).
 - Destacar/Reprender no aplican al canal [[canal-atencion]] (REQ-ATN-13).
 
 ^[src/diana/telegram/handlers/*, docs/UX.md, docs/REQUERIMIENTOS.md §9.13]
