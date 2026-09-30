@@ -28,6 +28,7 @@ from diana.cognitive.generator import Generator
 from diana.cognitive.timing import TimingContext
 from diana.cognitive.models import (
     AnalystInput,
+    Comprehension,
     Decision,
     EvaluationProfile,
     EvaluatorInput,
@@ -35,6 +36,7 @@ from diana.cognitive.models import (
     IncomingTurn,
     TurnStatus,
 )
+from diana.profile_content import normalize_content
 from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.repetition_guard import RepetitionGuard
 from diana.cognitive.template_gate import (
@@ -231,6 +233,11 @@ class CognitiveDirector:
         naturalness_min: float | None = None,
         knowledge_augmenter: KnowledgeAugmenter | None = None,
         persona_catalog_provider: PersonaCatalogProvider | None = None,
+        # Option A: OR needs_profile when VIP has non-empty owner notes.
+        # Injected bool — never import Settings inside cognitive.
+        force_profile_when_notes: bool = False,
+        # Duck-typed ProfilesRepo (get_by_vip_id). None → force is a no-op.
+        profiles_repo: Any | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -261,6 +268,8 @@ class CognitiveDirector:
             else float(naturalness_min)
         )
         self._knowledge_augmenter = knowledge_augmenter
+        self._force_profile_when_notes = bool(force_profile_when_notes)
+        self._profiles_repo = profiles_repo
 
     async def _resolve_persona(
         self, channel_type: str = "vip"
@@ -411,6 +420,9 @@ class CognitiveDirector:
         with TimingContext("analyst") as tc:
             comprehension = await self._analyst.analyze(analyst_input)
         timings["analyst_ms"] = tc.elapsed_ms
+        # Option A: hard-OR needs_profile when VIP has non-empty notes[]
+        # (before store/plan so Planner 1:1 and traces stay honest).
+        comprehension = await self._maybe_force_needs_profile(turn, comprehension)
         await self._store(turn_id, "comprehension", comprehension)
         logger.info(
             "🧠 Comprensión — intent: %s | emoción: %s | urgencia: %s | riesgo: %s",
@@ -778,6 +790,46 @@ class CognitiveDirector:
                 )
             )
         return out
+
+    async def _maybe_force_needs_profile(
+        self,
+        turn: IncomingTurn,
+        comprehension: Comprehension,
+    ) -> Comprehension:
+        """OR ``needs_profile=True`` when VIP has non-empty owner notes.
+
+        Trigger is ONLY ``profiles.content.notes`` after ``normalize_content``
+        (``len(notes) > 0``). Facts alone, síntesis alone, or hollow content
+        do NOT force. Never clears an Analyst ``True``. ``vip_id is None`` →
+        no lookup (BR-15). Feature flag / missing repo → no-op.
+        """
+        if not self._force_profile_when_notes:
+            return comprehension
+        if comprehension.needs_profile:
+            # Natural Analyst hit — leave needs_profile_forced False so miss
+            # rate of the classifier remains measurable.
+            return comprehension
+        if turn.vip_id is None or self._profiles_repo is None:
+            return comprehension
+        try:
+            row = await self._profiles_repo.get_by_vip_id(turn.vip_id)
+        except Exception:
+            logger.exception(
+                "force_profile_when_notes_lookup_failed",
+                extra={"vip_id": str(turn.vip_id)},
+            )
+            return comprehension
+        if not isinstance(row, dict):
+            return comprehension
+        notes = normalize_content(row.get("content")).get("notes") or []
+        if len(notes) == 0:
+            return comprehension
+        logger.info(
+            "📌 needs_profile forzado — VIP con notes[] no vacío (option A)",
+        )
+        return comprehension.model_copy(
+            update={"needs_profile": True, "needs_profile_forced": True}
+        )
 
     async def _store(self, turn_id: UUID, key: str, value: Any) -> None:
         await self._trace.store(turn_id, key, to_jsonable(value))

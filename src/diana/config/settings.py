@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # session deliver responses directly (instant, no owner approval).
     # Real VIP traffic is never affected; escalations keep their notifications.
     feature_sandbox_auto_send: bool = False
+    # Option A: when ON, after Analyst OR needs_profile=True if the VIP has
+    # non-empty profiles.content.notes (normalized). Keeps Planner 1:1.
+    # Prod-intent ON; kill-switch via env/config. Facts/síntesis alone do NOT
+    # trigger. vip_id None → no force (BR-15).
+    feature_force_profile_when_notes: bool = True
 
     # F3 feature flag static defaults (runtime DB merge is a later item).
     feature_autonomous_mode: bool = False

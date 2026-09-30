@@ -520,3 +520,28 @@ def test_settings_escalation_fp_draft_env_false_kills_it(
     monkeypatch.setenv("FEATURE_ESCALATION_FP_DRAFT_ENABLED", "false")
     settings = Settings()
     assert settings.feature_escalation_fp_draft_enabled is False
+
+
+def test_feature_force_profile_when_notes_defaults_true(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Option A prod-intent: force-profile-when-notes defaults ON (kill-switch via env)."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    assert settings.feature_force_profile_when_notes is True
+
+
+def test_feature_force_profile_when_notes_can_disable(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("FEATURE_FORCE_PROFILE_WHEN_NOTES", "false")
+    settings = Settings()
+    assert settings.feature_force_profile_when_notes is False
+
