@@ -571,7 +571,7 @@ business_message con photo + flag ON:
          d) Sin datos → viaja tal cual (como hoy)
       3. La imagen (tapada o limpia) → ImageDescriber (cognitive/image_vision.py)
          → GeminiVisionProvider (llm/gemini_vision.py) → descripción corta
-         (español neutro, máx. 40 palabras; el prompt indica IGNORAR las zonas
+         (español, máx. 40 palabras; el prompt indica IGNORAR las zonas
          tapadas: no mencionarlas ni adivinar qué hay debajo). Fallo del
          proveedor → fail-open: se mantiene el tag plano [imagen] (nunca se
          rompe el turno)

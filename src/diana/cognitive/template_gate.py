@@ -190,7 +190,7 @@ _CHECKIN_SUBSTANCE_CUES = (
     "porque no",
 )
 
-# Default pools (español neutro, 1 sentence max). Soft pools when mood_low.
+# Default pools (español, 1 sentence max). Soft pools when mood_low.
 CHECKIN_BIENESTAR_POOL = (
     "Bien, aquí ando 😊",
     "Todo bien, ¿y tú?",
