@@ -27,12 +27,5 @@ Regla obligatoria de AGENTS.md §0: el interlocutor del chat **no es un desarrol
 3. ¿La pregunta se puede responder sin saber de código?
 4. Si usé un término técnico, ¿lo traduje al efecto práctico?
 
-## Idioma (AGENTS.md §0.6)
-
-Todo texto de producto — UI, prompts, seeds, mensajes al VIP, specs — se escribe en **español neutro (variante mexicana/neutra)**. Regla de acción inmediata: cualquier texto que no sea español neutro encontrado en código, docs, prompts, seeds o DB se corrige en el mismo instante a neutro.
-
-## Qué NO cambia esta regla
-
-El código, tests, commits y docs técnicos siguen en la convención del artefacto (inglés en código por defecto). Los límites de módulo y flujos canónicos siguen siendo de cumplimiento estricto.
 
 ^[AGENTS.md §0]
