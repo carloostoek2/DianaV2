@@ -174,6 +174,10 @@ class Comprehension(BaseModel):
     needs_persona_facts: bool = False
     needs_voice_patterns: bool = False
     needs_profile: bool = False
+    # Director-only telemetry: True when needs_profile was OR'd because the VIP
+    # had non-empty owner notes (option A). Analyst never sets this; default
+    # False keeps historical JSONB / LLM structured output compatible.
+    needs_profile_forced: bool = False
     raw_llm_output: dict | None = None
 
 

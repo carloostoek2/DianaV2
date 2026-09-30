@@ -7,6 +7,18 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Las notas permanentes del VIP ya no se quedan fuera del turno — 2026-09-29
+
+Cuando la dueña escribe notas en el perfil de un VIP, espera que Diana las tenga en cuenta. En la práctica el Analyst casi nunca pedía el perfil (alrededor de 4 de cada 5 turnos de esos VIP), así que las notas se guardaban pero no llegaban al modelo.
+
+Ahora, si el VIP tiene al menos una nota permanente, Diana fuerza la lectura del perfil antes de planear la respuesta. El interruptor se llama `FEATURE_FORCE_PROFILE_WHEN_NOTES` y viene encendido: apagarlo devuelve el comportamiento anterior. Los saludos y check-ins de plantilla siguen sin pedir perfil. En sandbox, el fixture de prueba sigue ganando sobre el perfil real.
+
+- Solo disparan las `notes[]` del perfil (no bastan facts ni la síntesis sola).
+- Si el Analyst ya pedía perfil, no se toca; si no, se marca `needs_profile_forced` para poder medir el miss natural.
+- Sin VIP asociado al turno, no se fuerza nada (anti-contaminación).
+
+---
+
 La escalación ya muestra que quedó resuelta — 2026-09-24
 
 Cuando la dueña tocaba Falso positivo o Responder al VIP en el mensaje de escalación, la acción sí ocurría, pero el mensaje se quedaba igual: mismos botones, sin señal de que algo pasó. Eso hacía dudar de si el toque había servido.

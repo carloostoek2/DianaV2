@@ -329,6 +329,7 @@ def test_comprehension_optional_needs_profile_default_false() -> None:
         **_NEEDS,
     )
     assert c.needs_profile is False
+    assert c.needs_profile_forced is False
 
 
 def test_comprehension_needs_profile_round_trip_true() -> None:
@@ -345,6 +346,27 @@ def test_comprehension_needs_profile_round_trip_true() -> None:
         needs_profile=True,
     )
     assert c.needs_profile is True
+    assert c.needs_profile_forced is False
+
+
+def test_comprehension_needs_profile_forced_round_trip() -> None:
+    """Option A telemetry: needs_profile_forced persists on stored comprehension."""
+    from diana.cognitive.models import Comprehension
+
+    c = Comprehension(
+        intent="preferencias",
+        topics=["preferencias"],
+        emotion="neutral",
+        urgency="baja",
+        risk="bajo",
+        **_NEEDS,
+        needs_profile=True,
+        needs_profile_forced=True,
+    )
+    assert c.needs_profile is True
+    assert c.needs_profile_forced is True
+    dumped = c.model_dump(mode="json")
+    assert dumped["needs_profile_forced"] is True
 
 
 

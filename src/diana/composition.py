@@ -1049,6 +1049,9 @@ def build_app(
         naturalness_min=float(DEFAULT_SUPERVISED_THRESHOLDS["naturalness_min"]),
         knowledge_augmenter=knowledge_augmenter,
         persona_catalog_provider=persona_catalog_provider,
+        # Option A: OR needs_profile when VIP has non-empty owner notes.
+        force_profile_when_notes=settings.feature_force_profile_when_notes,
+        profiles_repo=profiles_repo,
     )
 
     learning = LearningService(traces)

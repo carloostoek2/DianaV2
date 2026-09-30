@@ -540,6 +540,19 @@ def test_composition_phatic_auto_send_wired_from_settings_not_autonomy(
     )
 
 
+def test_composition_force_profile_when_notes_wired(_comp_src: str) -> None:
+    """Option A: Director gets force flag + profiles_repo from composition."""
+    director_start = _comp_src.find("director = CognitiveDirector(")
+    orch_start = _comp_src.find("orchestrator = TurnOrchestrator(")
+    assert director_start != -1 and orch_start != -1
+    director_block = _comp_src[director_start:orch_start]
+    assert (
+        "force_profile_when_notes=settings.feature_force_profile_when_notes"
+        in director_block
+    )
+    assert "profiles_repo=profiles_repo" in director_block
+
+
 def test_persona_reglas_estilo_no_j2_examples_note() -> None:
     """H6.6.5: persona JSON style rules drop the (ver J.2 / examples) note."""
     import json
