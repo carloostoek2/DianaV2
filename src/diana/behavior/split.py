@@ -10,7 +10,7 @@ import re
 _BREAK_CHARS = frozenset(".,\n")
 _BLANK_LINE_RE = re.compile(r"\n\s*\n")
 # Single-newline fallback: each line must look like a real paragraph, not
-# a short chat burst ("Hola" / "qué onda").
+# a short chat burst ("Hola" / "cómo estás").
 _MIN_SOFT_PARAGRAPH_LEN = 40
 
 

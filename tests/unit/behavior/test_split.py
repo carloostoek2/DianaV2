@@ -27,7 +27,7 @@ def test_split_paragraphs_single_block_unchanged() -> None:
 
 
 def test_split_paragraphs_short_single_newlines_stay_one() -> None:
-    text = "Hola\nqué onda\ntodo bien"
+    text = "Hola\ncómo estás\ntodo bien"
     assert split_paragraphs(text) == [text]
 
 
