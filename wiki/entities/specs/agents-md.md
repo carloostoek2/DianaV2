@@ -14,7 +14,7 @@ Documento de operación para agentes de desarrollo (v1.3 — Fase 3 Producto Com
 
 ## Contenido clave
 
-- **§0 Comunicación con el usuario:** reglas de [[comunicacion-con-producto]] y español neutro obligatorio.
+- **§0 Comunicación con el usuario:** reglas de [[comunicacion-con-producto]].
 - **§1 Propósito y principios rectores:** los 7 innegociables (Director determinista, una pregunta por componente, Behavior fuera de la cognición, aprendizaje post-turno, anti-contaminación, decisión reconstruible, Turn Coordinator serializa).
 - **§2 Mapa de módulos y límites duros:** capas, preguntas, qué puede/nunca puede hacer cada módulo; reglas de dependencia unidireccionales y prohibiciones explícitas.
 - **§3 Flujos canónicos por fase:** 4.1-4.12 (turno normal, cortocircuito, cancelación, memoria, zona gris, staging, sandbox, autónomo, recontacto, promo, calibración, behavior avanzado).
