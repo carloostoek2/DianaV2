@@ -51,29 +51,6 @@ Hablar de **qué pasa en el producto**, **qué gana o pierde el negocio**, **qu�
 
 Si alguna respuesta es “no”, reescribir el mensaje antes de enviarlo.
 
-0.6 Idioma del producto: español neutro (obligatorio, sin excepciones)
-
-Todo texto de producto — UI del bot, prompts, seeds de persona, plantillas,
-mensajes al VIP, textos de la dueña, specs y este documento — se escribe en
-**español neutro** (variante mexicana/neutra).
-
-Regla de acción inmediata para cualquier agente (humano o IA):
-
-1. Al encontrar **cualquier** texto, referencia, código hardcodeado o
-   instrucción que no esté en español neutro — en código, docs, prompts,
-   seeds, DB o ejemplos — **corregirlo en ese mismo instante** a español
-   neutro, sin esperar una tarea aparte ni una orden explícita.
-2. Si la referencia es una **regla o instrucción que prescribe otro
-   dialecto**, **borrar esa regla** y reemplazarla por la forma neutra.
-3. Verificar también la **base de datos** cuando aplique (ej.
-   `persona_versions.payload` puede conservar seeds viejos); actualizar
-   las filas afectadas.
-4. Los textos de producto nuevos que escriba el agente deben nacer ya en
-   español neutro; no es válido dejarlos en otro dialecto “porque es lo
-   que se entiende” ni postergar la corrección.
-
----
-
 1. Propósito de este documento
 
 Este archivo define límites duros de módulo y flujos canónicos que ningún agente (humano o IA) puede violar al modificar el código. También fija cómo debe hablar el agente con el dueño de producto (sección 0).
