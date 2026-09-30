@@ -1145,7 +1145,7 @@
      "comunicacion-con-producto"
     ],
     "category": "Entities — Specs",
-    "content": "---\ntitle: Changelog\ncreated: 2026-08-11\nupdated: 2026-08-21\ntype: entity\ntags: [estado, operacion]\nsources: [../../CHANGELOG.md]\nconfidence: high\n---\n\n# Changelog\n\nHistorial de cambios del sistema (CHANGELOG.md). **Al día: 2026-08-20** (última entrada \"Cognitive greeting and delivery polish\").\n\n## Saludo cognitivo y pulido de entrega — 2026-08-20\n\n- Entrega en **burbujas por párrafo**: los borradores se dividen por bloques de línea en blanco antes del corte por caracteres; las respuestas multi-párrafo llegan como mensajes separados naturales.\n- **Progreso de envío**: entregas multi-segmento muestran a la dueña un indicador \"enviando X/Y\" en vivo.\n- **Quirks de entrega ponderados**: la selección de quirks favorece el error de tipeo + autocorrección y la tasa general sube a 20 %.\n- Fix: arranque sin hang en la cola de backfill de memoria — el chequeo de historial usa un `count()` barato en vez de recorrer todo el historial por páginas.\n\n## Control de la dueña, vínculo Lucien y calidad — 2026-08-16\n\n- [[calidad-feedback]]: Destacar/Reprender en borradores VIP; banco gold-first.\n- [[vinculo-lucien]]: aviso de expulsión Lucien→Diana.\n- [[eventos-temporales]]: contexto con fecha, sin flag.\n- Menú unificado, progreso en vivo al aprobar, paracaídas si falla el aviso de doctrina.\n- Ops: repo en migración 029; producción verificada hasta 026.\n\n## Evolución de agente (shadow) — 2026-08-07\n\n- Motor de observación completo en modo shadow: señales emocionales, auto-clasificación por turno, mood 3 ejes, trust por VIP (ver [[detector-emocional]], [[perfil-evolutivo]], [[trust-budget]]).\n- Eventos de corrección estructurados; purga automática TTL (housekeeping).\n- El clasificador pondera contenido sensible/personal primero.\n\n## Funcionalidades acumuladas\n\n- **Memoria automática** y **perfiles VIP** desde el historial ([[memoria-vip]]).\n- **Canal de atención** no-VIP con escalación real ([[canal-atencion]]).\n- Freeze/pausa de VIP, menú rediseñado, registro de VIP por reenvío.\n- Staging con aprobación de la dueña ([[aprendizaje-post-turno]]).\n- Dashboard de la dueña (`/resumen`, `/metricas`), trazabilidad paso a paso.\n- Ciclo de atención de 30 días + seguimiento proactivo no-VIP.\n- Seguimiento autónomo post-respuesta, manejo de mensajes editados, recuperación resiliente tras reinicio, sandbox.\n\n## Mejoras y seguridad\n\n- Historial rápido en conversaciones largas; entrega human-like por modo.\n- Español neutro consistente, sin dialecto ni slang (ver [[comunicacion-con-producto]]).\n- Seguridad: los errores de memoria no exponen contenido crudo; sanitización de prompts; gates owner-only; canal de atención fail-closed.\n\n## Cambio rompedor\n\nEl canal de atención solo admite chats que recibieron la promo y permanece abierto 30 días (el pago lo cierra).\n\n^[CHANGELOG.md]\n",
+    "content": "---\ntitle: Changelog\ncreated: 2026-08-11\nupdated: 2026-08-21\ntype: entity\ntags: [estado, operacion]\nsources: [../../CHANGELOG.md]\nconfidence: high\n---\n\n# Changelog\n\nHistorial de cambios del sistema (CHANGELOG.md). **Al día: 2026-08-20** (última entrada \"Cognitive greeting and delivery polish\").\n\n## Saludo cognitivo y pulido de entrega — 2026-08-20\n\n- Entrega en **burbujas por párrafo**: los borradores se dividen por bloques de línea en blanco antes del corte por caracteres; las respuestas multi-párrafo llegan como mensajes separados naturales.\n- **Progreso de envío**: entregas multi-segmento muestran a la dueña un indicador \"enviando X/Y\" en vivo.\n- **Quirks de entrega ponderados**: la selección de quirks favorece el error de tipeo + autocorrección y la tasa general sube a 20 %.\n- Fix: arranque sin hang en la cola de backfill de memoria — el chequeo de historial usa un `count()` barato en vez de recorrer todo el historial por páginas.\n\n## Control de la dueña, vínculo Lucien y calidad — 2026-08-16\n\n- [[calidad-feedback]]: Destacar/Reprender en borradores VIP; banco gold-first.\n- [[vinculo-lucien]]: aviso de expulsión Lucien→Diana.\n- [[eventos-temporales]]: contexto con fecha, sin flag.\n- Menú unificado, progreso en vivo al aprobar, paracaídas si falla el aviso de doctrina.\n- Ops: repo en migración 029; producción verificada hasta 026.\n\n## Evolución de agente (shadow) — 2026-08-07\n\n- Motor de observación completo en modo shadow: señales emocionales, auto-clasificación por turno, mood 3 ejes, trust por VIP (ver [[detector-emocional]], [[perfil-evolutivo]], [[trust-budget]]).\n- Eventos de corrección estructurados; purga automática TTL (housekeeping).\n- El clasificador pondera contenido sensible/personal primero.\n\n## Funcionalidades acumuladas\n\n- **Memoria automática** y **perfiles VIP** desde el historial ([[memoria-vip]]).\n- **Canal de atención** no-VIP con escalación real ([[canal-atencion]]).\n- Freeze/pausa de VIP, menú rediseñado, registro de VIP por reenvío.\n- Staging con aprobación de la dueña ([[aprendizaje-post-turno]]).\n- Dashboard de la dueña (`/resumen`, `/metricas`), trazabilidad paso a paso.\n- Ciclo de atención de 30 días + seguimiento proactivo no-VIP.\n- Seguimiento autónomo post-respuesta, manejo de mensajes editados, recuperación resiliente tras reinicio, sandbox.\n\n## Mejoras y seguridad\n\n- Historial rápido en conversaciones largas; entrega human-like por modo.\n- Español consistente, sin slang (ver [[comunicacion-con-producto]]).\n- Seguridad: los errores de memoria no exponen contenido crudo; sanitización de prompts; gates owner-only; canal de atención fail-closed.\n\n## Cambio rompedor\n\nEl canal de atención solo admite chats que recibieron la promo y permanece abierto 30 días (el pago lo cierra).\n\n^[CHANGELOG.md]\n",
     "backlinks": []
    }
   },
@@ -1805,10 +1805,10 @@
    "complexity": "simple"
   },
   {
-   "id": "entity:espanol-neutro",
+   "id": "entity:idioma-espanol",
    "type": "entity",
-   "name": "Espanol neutro (regla de idioma)",
-   "summary": "Todo texto de producto (UI, prompts, seeds, mensajes al VIP, specs) se escribe en espanol neutro (AGENTS.md 0.6).",
+   "name": "Español (estilo de producto)",
+   "summary": "Todo texto de producto (UI, prompts, seeds, mensajes al VIP, specs) se escribe en español.",
    "tags": [
     "regla-negocio",
     "contrato"
@@ -4143,7 +4143,7 @@
   },
   {
    "source": "article:concepts/comunicacion-con-producto",
-   "target": "entity:espanol-neutro",
+   "target": "entity:idioma-espanol",
    "type": "exemplifies",
    "direction": "forward",
    "weight": 0.8
@@ -4554,7 +4554,7 @@
     "entity:banco-ejemplos",
     "entity:system-config",
     "entity:cortocircuito-escalacion",
-    "entity:espanol-neutro",
+    "entity:idioma-espanol",
     "entity:zona-gris",
     "claim:umbrales-seguridad-nunca-auto-calibrados",
     "claim:zona-gris-antes-que-riesgo-alto",
