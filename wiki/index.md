@@ -58,7 +58,7 @@
 - [[modos-de-operacion]] — supervisado/autónomo/sandbox/pausa/congelación; modos filtran
 - [[escalacion]] — cortocircuito determinístico + escalación semántica; triage de la dueña
 - [[zona-gris-y-politicas]] — consulta de doctrina, congelación, destilación estructurada
-- [[comunicacion-con-producto]] — reglas del chat con la dueña
+- [[comunicacion-con-producto]] — reglas del chat con la dueña; español neutro obligatorio
 - [[feature-flags]] — regla de oro: comportamientos nuevos detrás de flags; rollback sin redeploy
 - [[calibracion-de-umbrales]] — ajuste empírico de umbrales; margen autónomo > supervisado; incidente que prohibió auto-calibración
 - [[trust-budget]] — confianza por (VIP, categoría); doble puerta del autoenvío cableada pero deshabilitada
