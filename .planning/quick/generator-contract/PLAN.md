@@ -374,7 +374,6 @@ python -m pytest -q tests/unit
 - Exception class name **English**: `GeneratorEmptyOutputError`
 - Notify message shape: `f"Turn {turn_id} failed: generador_salida_vacia"`
 - Logger event name for notify secondary fail: `owner_notify_failed_after_generator_empty_output`
-- Identifiers/comments English; no Rioplatense in code artifacts
 
 ### Commits
 - Work unit = verifiable behavior per task (1 commit per task OK):

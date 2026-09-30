@@ -57,7 +57,7 @@ def format_staging_candidate_body(candidate: Any) -> str:
 
     Policy candidates (gray-zone doctrine rules) render the rule, the draft
     and the chosen scope; example candidates keep the original/corrected
-    pair. New text is neutral Mexican Spanish (AGENTS.md §0.6).
+    pair.
     """
     cid = str(getattr(candidate, "id", ""))
     short = cid[:8] if cid else "?"

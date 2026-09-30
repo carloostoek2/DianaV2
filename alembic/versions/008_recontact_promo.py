@@ -164,7 +164,7 @@ def upgrade() -> None:
     _promo_seq = json.dumps([_promo_msj1, _promo_msj2], ensure_ascii=False)
     _promociones_seq = json.dumps(
         [
-            "Hola! Acá te dejo mis promociones vigentes ✨",
+            "Hola! Aquí te dejo mis promociones vigentes ✨",
             "Las armé pensando en lo que más piden y las adapto a ti.",
             "Cualquier duda, escríbeme y te ayudo con gusto 💕",
         ],

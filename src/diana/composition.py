@@ -905,7 +905,7 @@ def build_app(
         response_pool=[IA_TEMPLATE],
         reason="plantilla_deteccion_ia",
     )
-    # Small rotating pool (español neutro). Director picks with saludo_rng;
+    # Small rotating pool (español). Director picks with saludo_rng;
     # keep entries short/phatic-only — this path can auto-send without AMS.
     saludo_response_pool = [
         "Holis 😁",

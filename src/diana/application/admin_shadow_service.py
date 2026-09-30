@@ -6,7 +6,7 @@ This service renders owner-facing views of that accumulated evidence so the
 owner can check, on demand, how the system is evolving — no notifications,
 no writes.
 
-Views (all neutral Mexican Spanish):
+Views (all Spanish):
 - ``render_summary`` — global counts, last-7-day trend, current thresholds and
   the fast-lane (phatic+confidence) counter.
 - ``render_by_vip`` — trust score vs. threshold per VIP and turn category,

@@ -868,7 +868,7 @@ class TestSeverityKeyboard:
             SEVERITY_LABELS["moderate"],
             SEVERITY_LABELS["major"],
         ]
-        # Neutral Mexican Spanish labels.
+        # Spanish labels.
         assert "Tono" in labels[0]
         assert "Contenido" in labels[1]
         assert "Doctrina/Seguridad" in labels[2]

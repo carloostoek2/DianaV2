@@ -46,7 +46,6 @@ Historial de cambios del sistema (CHANGELOG.md). **Al día: 2026-08-20** (últim
 ## Mejoras y seguridad
 
 - Historial rápido en conversaciones largas; entrega human-like por modo.
-- Español neutro consistente, sin dialecto ni slang (ver [[comunicacion-con-producto]]).
 - Seguridad: los errores de memoria no exponen contenido crudo; sanitización de prompts; gates owner-only; canal de atención fail-closed.
 
 ## Cambio rompedor

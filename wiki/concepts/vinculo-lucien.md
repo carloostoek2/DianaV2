@@ -31,7 +31,7 @@ Lucien puede mandar el `@` en `username`; el aviso lo normaliza (`Ana @ana`, nun
 
 ## Botones de la dueña
 
-Texto del aviso (español neutro): «El suscriptor {nombre} ha sido expulsado del Canal VIP. ¿Quieres inhabilitarlo aquí?»
+Texto del aviso (español): «El suscriptor {nombre} ha sido expulsado del Canal VIP. ¿Quieres inhabilitarlo aquí?»
 
 | Botón | Acción en `vips` | Estado en `link_events` |
 |---|---|---|
