@@ -800,23 +800,6 @@ def build_app(
     catalog = get_persona_catalog()
     voz = catalog["voz_configurada"]
 
-    # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: system-generated RULE proposal for
-    # gray-zone consults. Built whenever the gray-zone feature is on; the
-    # orchestrator gates the actual generation on its own flag + service
-    # injection (fail-open → current owner-writes-rule behavior).
-    feature_gray_zone_proposal_enabled = (
-        settings.feature_gray_zone_proposal_enabled
-    )
-    gray_zone_proposal: GrayZoneProposalService | None = None
-    if feature_gray_zone_enabled and feature_gray_zone_proposal_enabled:
-        gray_zone_proposal = GrayZoneProposalService(
-            llm=provider,
-            policies_reader=policies_repo,
-            gold_reader=examples_repo,
-            persona_facts=catalog["persona_facts"],
-            voice_patterns=catalog["voice_patterns"],
-        )
-
     # Item 2 — live persona catalog (hot-reload): the owner-admin service is
     # always wired; its runtime read (get_current_persona) is flag-gated, so
     # with the flag off the provider falls back to the static catalog and the
@@ -834,6 +817,26 @@ def build_app(
         persona_admin_service=persona_admin_service,
     )
     persona_admin_service.set_on_change(persona_catalog_provider.invalidate)
+
+    # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: system-generated RULE proposal for
+    # gray-zone consults. Built whenever the gray-zone feature is on; the
+    # orchestrator gates the actual generation on its own flag + service
+    # injection (fail-open → current owner-writes-rule behavior).
+    feature_gray_zone_proposal_enabled = (
+        settings.feature_gray_zone_proposal_enabled
+    )
+    gray_zone_proposal: GrayZoneProposalService | None = None
+    if feature_gray_zone_enabled and feature_gray_zone_proposal_enabled:
+        gray_zone_proposal = GrayZoneProposalService(
+            llm=provider,
+            policies_reader=policies_repo,
+            gold_reader=examples_repo,
+            persona_facts=catalog["persona_facts"],
+            voice_patterns=catalog["voice_patterns"],
+            # Live, channel-scoped persona slices (panel edits apply). The
+            # static VIP lists above are only the vip fallback on read failure.
+            persona_catalog_provider=persona_catalog_provider,
+        )
 
     # Ephemeral events (eventos temporales): owner-injected time-bounded context.
     # The augmenter is ALWAYS active (independent + additive, never overwrites
@@ -884,6 +887,7 @@ def build_app(
         schedule=catalog["schedule"],
         clock=clock,
         persona_catalog_provider=persona_catalog_provider,
+        persona_facts_max=settings.persona_facts_max_per_turn,
     )
     # Single TurnClassifier instance (Director pure-greeting cut + orchestrator shadow).
     classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)

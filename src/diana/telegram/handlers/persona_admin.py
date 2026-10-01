@@ -26,6 +26,7 @@ from diana.cognitive.persona_catalog import (
     get_persona_atencion_catalog,
     get_persona_catalog,
 )
+from diana.cognitive.tags import normalize_tags
 from diana.telegram.keyboards import (
     MENU_CATEGORY_TEXT,
     encode_menu,
@@ -57,6 +58,7 @@ _ADD_PROMPTS: dict[str, str] = {
         "👤 Envíame el dato nuevo con este formato:\n"
         "id | tema1, tema2 | hecho\n"
         "Ej: estudios | psicologia, trayectoria | Termino la carrera de psicología.\n"
+        "Los temas se guardan sin acentos y con _ (\"Motivación personal\" → motivacion_personal).\n"
         "Usa /cancelar para abortar."
     ),
     "fact_edit": (
@@ -408,7 +410,14 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     if len(fact_id.encode("utf-8")) > 24:
         raise ValueError("el id es demasiado largo (máximo 24 bytes)")
-    item: dict[str, Any] = {"id": fact_id, "tema": _split_topics(temas), "hecho": hecho}
+    # Temas are stored in canonical form (no accents, lowercase, spaces/hyphens
+    # → "_") so "Motivación personal" is saved as "motivacion_personal" and
+    # matches the Analyst topic vocabulary (the retriever also normalizes at
+    # read time, so legacy un-normalized rows keep matching).
+    tema_list = normalize_tags(_split_topics(temas))
+    if not tema_list:
+        raise ValueError("id, temas y hecho no pueden estar vacíos")
+    item: dict[str, Any] = {"id": fact_id, "tema": tema_list, "hecho": hecho}
     if len(parts) > 3 and parts[3].strip():
         item["nota_privada"] = parts[3].strip()
     return item

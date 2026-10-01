@@ -841,3 +841,27 @@ def test_composition_load_runtime_thresholds_reads_trust(_comp_src: str) -> None
     assert 'store.get("trust_budget")' in _comp_src
     assert "trust_budget_thresholds_loaded" in _comp_src
     assert "trust_budget_thresholds_skipped" in _comp_src
+
+
+def test_build_app_gray_zone_proposal_uses_live_catalog_provider(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix/persona-facts-matching: the gray-zone proposal reads the SAME live
+    PersonaCatalogProvider as the pipeline (panel edits + channel scoping)."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:test-token-not-real")
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "999001")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://diana:diana@localhost:5432/diana"
+    )
+    monkeypatch.setenv("FEATURE_GRAY_ZONE_ENABLED", "true")
+    monkeypatch.setenv("FEATURE_GRAY_ZONE_PROPOSAL_ENABLED", "true")
+    monkeypatch.setenv("PERSONA_FACTS_MAX_PER_TURN", "2")
+
+    from diana.composition import build_app
+    from diana.config import Settings
+
+    app = build_app(Settings())
+    proposal = app.orchestrator._gray_zone_proposal  # noqa: SLF001
+    assert proposal is not None
+    assert proposal._catalog_provider is app.orchestrator._catalog_provider  # noqa: SLF001

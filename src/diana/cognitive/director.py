@@ -39,6 +39,7 @@ from diana.cognitive.models import (
 from diana.profile_content import normalize_content
 from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.repetition_guard import RepetitionGuard
+from diana.cognitive.tags import catalog_fact_topics
 from diana.cognitive.template_gate import (
     TemplateGate,
     TemplateRule,
@@ -745,7 +746,32 @@ class CognitiveDirector:
         mapped = self._map_history_messages(raw)
         if limit > 0 and len(mapped) > limit:
             mapped = mapped[-limit:]
-        return AnalystInput(turno_actual=turn.text, historial_reciente=mapped)
+        return AnalystInput(
+            turno_actual=turn.text,
+            historial_reciente=mapped,
+            channel_type=turn.channel_type,
+            catalog_topics=await self._catalog_topics(turn.channel_type),
+        )
+
+    async def _catalog_topics(self, channel_type: str) -> list[str]:
+        """Normalized persona-fact temas of the ACTIVE catalog for the channel.
+
+        Fail-soft: no provider / read failure → ``[]`` (Analyst keeps the fixed
+        topic vocabulary, i.e. the pre-change behavior). The provider is cached
+        (0 DB reads in steady state), so this adds no per-turn query.
+        """
+        if self._persona_catalog_provider is None:
+            return []
+        try:
+            catalog = await self._persona_catalog_provider.get_catalog(channel_type)
+        except Exception:
+            logger.warning(
+                "analyst_catalog_topics_unavailable",
+                extra={"channel_type": channel_type},
+                exc_info=True,
+            )
+            return []
+        return catalog_fact_topics(catalog)
 
     @staticmethod
     def _drop_open_vip_burst(raw: list[dict]) -> list[dict]:

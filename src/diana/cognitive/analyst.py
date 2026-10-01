@@ -49,7 +49,8 @@ _SYSTEM = (
     "topics MUST be from: familia, duelo, estudios, trayectoria, "
     "vivienda, rutina, independencia, trabajo, contenido, canal, "
     "suscripcion, soporte, motivacion_personal, tema_pesado, saludo, "
-    "ausencia, reencuentro, conexion, "
+    "ausencia, reencuentro, conexion — or from the active catalog temas "
+    "listed at the end of this prompt (when present). "
     "Set each needs_* boolean only to indicate which knowledge would help later stages. "
     "needs_persona_facts=true when the turn asks about Diana biography/personal facts. "
     "Prefer topics/intent from catalog temas: familia, duelo, estudios, trayectoria, "
@@ -77,6 +78,43 @@ _SYSTEM = (
     "how Diana actually replied before — not for purely factual/policy-governed turns "
     "(payment terms, schedule, biography) where those other fields already cover it."
 )
+
+# Channel/catalog addendum (appended to _SYSTEM per turn). The base prompt
+# above stays byte-identical for a VIP turn with no catalog temas.
+_ATENCION_CHANNEL_GUIDANCE = (
+    " CHANNEL: atencion — non-VIP customer service for the business (not a "
+    "VIP/girlfriend chat). In this channel set needs_persona_facts=true when "
+    "the turn asks about the business or the service itself: who runs it, "
+    "what is offered, how content is delivered, prices or payment methods, "
+    "how attention/support works — not only Diana's biography."
+)
+_MAX_CATALOG_TOPICS_IN_PROMPT = 60
+
+
+def _catalog_addendum(channel_type: str, catalog_topics: list[str]) -> str:
+    """Per-turn system addendum: channel guidance + active catalog temas.
+
+    Owner-added temas ("Datos personales" panel) only become retrievable when
+    the Analyst can emit them as topics, so the ACTIVE catalog temas for the
+    turn's channel are listed verbatim and declared valid topics.
+    """
+    parts: list[str] = []
+    if channel_type == "atencion":
+        parts.append(_ATENCION_CHANNEL_GUIDANCE)
+    temas = [t for t in catalog_topics if t][:_MAX_CATALOG_TOPICS_IN_PROMPT]
+    if temas:
+        subject = (
+            "the business/service" if channel_type == "atencion" else "Diana's biography/personal facts"
+        )
+        parts.append(
+            " Active catalog temas (channel "
+            f"{channel_type}): {', '.join(temas)}. These are ALSO valid topics: "
+            "when the turn touches one of them, include that exact tema "
+            "(verbatim, lowercase, with underscores) in topics and set "
+            f"needs_persona_facts=true if the turn asks about {subject}."
+        )
+    return "".join(parts)
+
 
 _MAX_ATTEMPTS = 2  # initial try + exactly one retry (contrato A.6)
 
@@ -152,7 +190,10 @@ class Analyst:
             f"turno_actual:\n{input.turno_actual}\n\n"
             f"historial_reciente:\n{json.dumps(history_payload, ensure_ascii=False)}"
         )
+        system = _SYSTEM + _catalog_addendum(
+            input.channel_type, list(input.catalog_topics)
+        )
         return [
-            {"role": "system", "content": _SYSTEM},
+            {"role": "system", "content": system},
             {"role": "user", "content": user_content},
         ]

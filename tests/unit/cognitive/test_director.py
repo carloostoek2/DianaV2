@@ -2095,7 +2095,8 @@ async def test_persona_provider_resolves_turn_channel() -> None:
     turn.channel_type = "atencion"
     await director.handle_turn(turn)
 
-    assert provider.requested_channels == ["atencion"]
+    # Analyst catalog temas + persona resolve: every read scoped to the turn channel.
+    assert provider.requested_channels and set(provider.requested_channels) == {"atencion"}
     prompt = trace.get(turn.turn_id, "prompt_text")
     assert "Persona atencion" in prompt
     assert "r atencion" in prompt
@@ -2252,3 +2253,52 @@ async def test_director_collapses_owner_album_into_one_line() -> None:
     )
     assert flat.count("parte de álbum") == 1, "the album must collapse to one line"
     assert "parte de álbum ×6" in flat
+
+
+async def test_analyst_receives_active_catalog_temas_for_turn_channel() -> None:
+    """fix/persona-facts-matching: owner-added temas reach the Analyst prompt."""
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _FakePersonaProvider(
+        {
+            "persona_facts": [
+                {"id": "gato", "tema": ["Mascota", "gatos"], "hecho": "Tengo un gato"},
+            ],
+            "voz_configurada": {"persona": "P", "reglas_estilo": ["r"]},
+        }
+    )
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
+    turn = _turn()
+    turn.channel_type = "atencion"
+    await director.handle_turn(turn)
+
+    analyst_call = next(c for c in llm.calls if c[0] == "generate_structured")
+    system = analyst_call[1]["messages"][0]["content"]
+    assert "CHANNEL: atencion" in system
+    assert "Active catalog temas (channel atencion): mascota, gatos" in system
+    assert set(provider.requested_channels) == {"atencion"}
+
+
+async def test_analyst_catalog_temas_fail_soft_on_provider_error() -> None:
+    class _Boom:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_catalog(self, channel_type: str = "vip"):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("db down")
+            return None
+
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=_Boom())
+    await director.handle_turn(_turn())
+    analyst_call = next(c for c in llm.calls if c[0] == "generate_structured")
+    from diana.cognitive import analyst as analyst_mod
+
+    assert analyst_call[1]["messages"][0]["content"] == analyst_mod._SYSTEM

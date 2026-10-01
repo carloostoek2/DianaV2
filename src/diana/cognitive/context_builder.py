@@ -29,8 +29,8 @@ _KNOWLEDGE_EMISSION_ORDER: tuple[str, ...] = (
 )
 
 # Essential evidence blocks forwarded (fenced) to the Evaluator. Doctrine needs
-# the business rules; precision/consistency need the VIP's memory facts and the
-# standing profile. History/examples/voice are style-heavy and would duplicate
+# the business rules; precision/consistency need the VIP's memory facts, the
+# standing profile and the persona facts actually retrieved for the turn. History/examples/voice are style-heavy and would duplicate
 # the Generator payload for little evaluative gain (cost decision, EA fix).
 # ``knowledge.policy`` may be missing (most turns) — doctrine is then scored as
 # "not applicable", never as a fabricated neutral-high.
@@ -39,6 +39,10 @@ EVALUATOR_KNOWLEDGE_BLOCKS: frozenset[str] = frozenset(
         "knowledge.policy",
         "knowledge.memory",
         "knowledge.profile",
+        # Persona facts ("Datos personales") are small (≤ a few atomic facts)
+        # and let precision/consistency check biographical claims against the
+        # owner catalog instead of flagging them as invented.
+        "knowledge.persona_facts",
     }
 )
 
