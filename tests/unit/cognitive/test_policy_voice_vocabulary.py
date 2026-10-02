@@ -11,7 +11,18 @@ from uuid import uuid4
 
 import pytest
 
-from diana.cognitive.models import Comprehension, IncomingTurn
+from diana.cognitive import analyst as analyst_mod
+from diana.cognitive.decider import Decider
+from diana.cognitive.models import (
+    AnalystInput,
+    Comprehension,
+    EvaluationProfile,
+    IncomingTurn,
+)
+from diana.cognitive.persona_catalog import (
+    get_persona_atencion_catalog,
+    get_persona_catalog,
+)
 from diana.cognitive.retrievers.policy import PolicyRetriever
 from diana.cognitive.retrievers.voice_patterns import VoicePatternsRetriever
 from diana.cognitive.tags import (
@@ -20,6 +31,7 @@ from diana.cognitive.tags import (
     catalog_policy_topics,
     fair_share_limits,
     normalize_tag,
+    normalize_tags,
 )
 from diana.telegram.handlers.persona_admin import (
     _parse_pattern,
@@ -292,3 +304,258 @@ def test_fair_share_limits_invariants_and_determinism() -> None:
                     for lim, s in zip(limits, sizes):
                         if s > 0:
                             assert lim >= min(s, floor), (sizes, limits)
+
+
+# --- 5. addendum del Analyst: bloques por tipo, por canal, _SYSTEM intacto ---
+
+# sha256 de analyst._SYSTEM en la base 947cc42: el ítem 1 NO lo edita.
+_SYSTEM_SHA256_BASE = "4673ad282ea3bd47c7b62a2ae4ee3ab6bb7843a4b3130b3e427c6d0d46f4d368"
+
+
+def _system_for(channel: str, catalog: dict) -> str:
+    msgs = analyst_mod.Analyst(llm=None)._build_messages(  # type: ignore[arg-type]
+        AnalystInput(
+            turno_actual="hola",
+            historial_reciente=[],
+            channel_type=channel,  # type: ignore[arg-type]
+            catalog_topics=catalog_fact_topics(catalog),
+            policy_topics=catalog_policy_topics(catalog),
+            voice_tags=catalog_pattern_tags(catalog),
+        )
+    )
+    return msgs[0]["content"]
+
+
+def _addendum(system: str) -> str:
+    assert system.startswith(analyst_mod._SYSTEM)
+    return system[len(analyst_mod._SYSTEM):]
+
+
+def test_analyst_base_system_prompt_is_byte_identical_to_base() -> None:
+    import hashlib
+
+    digest = hashlib.sha256(analyst_mod._SYSTEM.encode("utf-8")).hexdigest()
+    assert digest == _SYSTEM_SHA256_BASE
+    # La lista fija conserva las formas crudas que consume el detector emocional.
+    assert "extrañar" in analyst_mod._SYSTEM
+    assert "cariño" in analyst_mod._SYSTEM
+
+
+def test_addendum_without_policy_or_voice_is_unchanged() -> None:
+    """Sin vocabulario nuevo el addendum es exactamente el de 6507796."""
+    assert analyst_mod._catalog_addendum("vip", []) == ""
+    assert analyst_mod._catalog_addendum("vip", [], [], []) == ""
+    assert (
+        analyst_mod._catalog_addendum("atencion", [], [], [])
+        == analyst_mod._ATENCION_CHANNEL_GUIDANCE
+    )
+    assert analyst_mod._catalog_addendum("vip", ["mascota"], [], []) == (
+        analyst_mod._catalog_addendum("vip", ["mascota"])
+    )
+
+
+def test_addendum_policy_and_voice_blocks_exact_text_vip() -> None:
+    out = analyst_mod._catalog_addendum(
+        "vip", ["mascota"], ["precios_especiales"], ["tema_pesado", "extranar"]
+    )
+    assert out == (
+        " Active catalog temas (channel vip): mascota. These are ALSO valid topics: "
+        "when the turn touches one of them, include that exact tema "
+        "(verbatim, lowercase, with underscores) in topics and set "
+        "needs_persona_facts=true if the turn asks about Diana's biography/personal facts."
+        " Active policy temas (channel vip): precios_especiales. These are ALSO valid topics: "
+        "when the turn touches one of them, include that exact tema "
+        "(verbatim, lowercase, with underscores) in topics and set "
+        "needs_policy=true."
+        " Active voice pattern tags (channel vip): tema_pesado, extranar. These are ALSO valid topics: "
+        "when the turn's register or subject matches one of them, include "
+        "that exact tag (verbatim, lowercase, with underscores) in topics "
+        "and set needs_voice_patterns=true."
+    )
+
+
+def test_addendum_atencion_overrides_vip_fixed_policy_list() -> None:
+    out = analyst_mod._catalog_addendum("atencion", [], ["precios"], [])
+    assert out.startswith(analyst_mod._ATENCION_CHANNEL_GUIDANCE)
+    assert " Active policy temas (channel atencion): precios." in out
+    assert (
+        " In this channel these are the policy temas; the fixed 'Policy temas' "
+        "list above belongs to the VIP channel and does not apply here."
+    ) in out
+    # VIP nunca recibe esa frase.
+    assert "does not apply here" not in analyst_mod._catalog_addendum("vip", [], ["precios"], [])
+
+
+def _listed(addendum: str, header: str) -> list[str]:
+    """Terms of one addendum block, in prompt order ([] if the block is absent)."""
+    marker = f" {header} (channel "
+    if marker not in addendum:
+        return []
+    body = addendum.split(marker, 1)[1].split(": ", 1)[1].split(". These", 1)[0]
+    return body.split(", ")
+
+
+def _truncation_records(caplog) -> list:
+    return [r for r in caplog.records if r.getMessage() == "analyst_catalog_vocab_truncated"]
+
+
+def test_addendum_60_plus_facts_still_lists_policies_and_voice(caplog) -> None:
+    facts = [f"f{i}" for i in range(70)]
+    pols = [f"p{i}" for i in range(8)]
+    voz = [f"v{i}" for i in range(28)]
+    with caplog.at_level("WARNING", logger="diana.cognitive"):
+        out = analyst_mod._catalog_addendum("vip", facts, pols, voz)
+    # Reparto justo: 60 // 3 = 20; Políticas (8) cabe; quedan 52 → 26 + 26.
+    assert _listed(out, "Active catalog temas") == facts[:26]
+    assert _listed(out, "Active policy temas") == pols
+    assert _listed(out, "Active voice pattern tags") == voz[:26]
+    recs = _truncation_records(caplog)
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec.channel_type == "vip" and rec.max_terms == 60
+    assert (rec.kept_fact_topics, rec.dropped_fact_topics) == (26, 44)
+    assert (rec.kept_policy_topics, rec.dropped_policy_topics) == (8, 0)
+    assert (rec.kept_voice_tags, rec.dropped_voice_tags) == (26, 2)
+    assert rec.dropped == 46
+
+
+def test_addendum_policies_never_crowded_out_by_facts_or_voice(caplog) -> None:
+    facts = [f"f{i}" for i in range(200)]
+    pols = [f"p{i}" for i in range(15)]
+    voz = [f"v{i}" for i in range(200)]
+    with caplog.at_level("WARNING", logger="diana.cognitive"):
+        out = analyst_mod._catalog_addendum("atencion", facts, pols, voz)
+    assert _listed(out, "Active policy temas") == pols  # 15 <= 20: completas
+    assert len(_listed(out, "Active catalog temas")) == 23  # 45 // 2 = 22, +1 sobrante
+    assert len(_listed(out, "Active voice pattern tags")) == 22
+    assert "does not apply here" in out
+
+
+@pytest.mark.parametrize(
+    ("n_fact", "n_pol", "n_voz"),
+    [(14, 9, 28), (7, 14, 12), (20, 20, 20), (60, 0, 0), (0, 0, 60), (1, 1, 58)],
+)
+def test_addendum_at_or_under_60_is_not_truncated(caplog, n_fact, n_pol, n_voz) -> None:
+    facts = [f"f{i}" for i in range(n_fact)]
+    pols = [f"p{i}" for i in range(n_pol)]
+    voz = [f"v{i}" for i in range(n_voz)]
+    with caplog.at_level("WARNING", logger="diana.cognitive"):
+        out = analyst_mod._catalog_addendum("vip", facts, pols, voz)
+    assert _listed(out, "Active catalog temas") == facts
+    assert _listed(out, "Active policy temas") == pols
+    assert _listed(out, "Active voice pattern tags") == voz
+    assert not _truncation_records(caplog)
+
+
+def test_addendum_budget_is_deterministic_and_keeps_catalog_order() -> None:
+    facts = [f"f{i}" for i in range(90)]
+    pols = [f"p{i}" for i in range(33)]
+    voz = [f"v{i}" for i in range(41)]
+    first = analyst_mod._catalog_addendum("vip", facts, pols, voz)
+    for _ in range(5):
+        assert analyst_mod._catalog_addendum("vip", list(facts), list(pols), list(voz)) == first
+    # Cada bloque es un prefijo en orden de catálogo (nunca se reordena).
+    assert _listed(first, "Active catalog temas") == facts[:20]
+    assert _listed(first, "Active policy temas") == pols[:20]
+    assert _listed(first, "Active voice pattern tags") == voz[:20]
+
+
+@pytest.mark.parametrize(
+    ("slot", "header"),
+    [
+        (0, "Active catalog temas"),
+        (1, "Active policy temas"),
+        (2, "Active voice pattern tags"),
+    ],
+)
+def test_addendum_single_type_present_gets_full_budget(caplog, slot, header) -> None:
+    terms = [f"t{i}" for i in range(75)]
+    groups: list[list[str]] = [[], [], []]
+    groups[slot] = terms
+    with caplog.at_level("WARNING", logger="diana.cognitive"):
+        out = analyst_mod._catalog_addendum("vip", *groups)
+    assert _listed(out, header) == terms[:60]
+    rec = _truncation_records(caplog)[0]
+    assert rec.dropped == 15
+
+
+def test_static_catalogs_fit_under_cap() -> None:
+    for cat in (get_persona_catalog(), get_persona_atencion_catalog()):
+        total = (
+            len(catalog_fact_topics(cat))
+            + len(catalog_policy_topics(cat))
+            + len(catalog_pattern_tags(cat))
+        )
+        assert total <= analyst_mod._MAX_CATALOG_TOPICS_IN_PROMPT, total
+
+
+def test_addendum_channel_isolation_vip_vs_atencion() -> None:
+    vip = _addendum(_system_for("vip", get_persona_catalog()))
+    at = _addendum(_system_for("atencion", get_persona_atencion_catalog()))
+    # VIP-exclusivos nunca en atención (el _SYSTEM fijo se excluye al comparar).
+    for vip_only in ("dinamica_novia_virtual", "momento_bonito", "extranar", "psicologia"):
+        assert vip_only in vip, vip_only
+        assert vip_only not in at, vip_only
+    # Atención-exclusivos nunca en VIP.
+    for at_only in ("precios", "citas", "despedida", "redireccion"):
+        assert at_only in at, at_only
+        assert at_only not in vip, at_only
+
+
+@pytest.mark.parametrize(
+    ("channel", "loader"),
+    [("vip", get_persona_catalog), ("atencion", get_persona_atencion_catalog)],
+)
+def test_every_static_policy_and_voice_pattern_is_reachable(channel, loader) -> None:
+    """Cobertura DoD 4: 100 % de las reglas estáticas tienen ≥1 tema/tag en el addendum."""
+    cat = loader()
+    add = _addendum(_system_for(channel, cat))
+    pol_line = add.split(" Active policy temas (channel ")[1].split(". These")[0]
+    voz_line = add.split(" Active voice pattern tags (channel ")[1].split(". These")[0]
+    pol_vocab = set(pol_line.split(": ", 1)[1].split(", "))
+    voz_vocab = set(voz_line.split(": ", 1)[1].split(", "))
+    for pol in cat["policies"]:
+        assert set(normalize_tags(pol.get("tema"))) & pol_vocab, pol["id"]
+    for pat in cat["voice_patterns"]:
+        assert set(normalize_tags(pat.get("tags"))) & voz_vocab, pat["id"]
+
+
+# --- 6. zona gris: tema de política de atención antes inalcanzable ----------
+
+
+def _profile() -> EvaluationProfile:
+    return EvaluationProfile(
+        naturalness=0.9,
+        precision=0.8,
+        doctrine=0.85,
+        consistency=0.9,
+        safety=0.9,
+        coverage=0.7,
+        empathy=0.8,
+    )
+
+
+@pytest.mark.parametrize("tema", ["precios", "costos", "citas", "contacto", "alcance"])
+async def test_atencion_policy_tema_now_offered_and_avoids_doctrine_not_found(tema) -> None:
+    at = get_persona_atencion_catalog()
+    # Antes: el tema no estaba en ningún vocabulario del prompt de atención.
+    assert tema not in analyst_mod._SYSTEM
+    assert tema not in catalog_fact_topics(at)
+    # Ahora: el addendum de atención lo ofrece como topic válido.
+    assert tema in _addendum(_system_for("atencion", at))
+    provider = _Provider({"atencion": at})
+    retriever = PolicyRetriever(persona_catalog_provider=provider)  # type: ignore[arg-type]
+    comp = _comp([tema], needs_policy=True)
+    policies = await retriever.fetch(_turn("atencion"), comp)
+    assert policies, tema
+    assert provider.requested == ["atencion"]
+    decision = Decider(feature_gray_zone_enabled=True).decide(
+        _profile(), comp, retrieved={"knowledge.policy": policies}
+    )
+    assert decision.reason != "doctrine_not_found"
+    assert decision.action != "consult_doctrine"
+    # Control: sin política recuperada sí sería zona gris.
+    gray = Decider(feature_gray_zone_enabled=True).decide(
+        _profile(), comp, retrieved={"knowledge.policy": []}
+    )
+    assert gray.reason == "doctrine_not_found"

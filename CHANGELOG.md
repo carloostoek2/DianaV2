@@ -7,6 +7,19 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Las "Políticas" y los "Patrones de voz" del panel ahora sí llegan a Diana — 2026-10-02
+
+Lo que la dueña captura en Personalidad y reglas → Políticas y → Patrones de voz se guardaba bien, pero el Analyst solo podía elegir temas de una lista fija escrita en el código. En atención, una pregunta de precios, costos o citas no tenía un tema válido: la regla correcta no se recuperaba y el turno caía en zona gris ("no encontré doctrina") aunque la regla existía. Además, "Precios especiales" no era igual a `precios_especiales`, ni "cariño" a `carino`.
+
+Ahora el Analyst recibe en cada turno, además de los temas de Datos personales, los temas de Políticas y los tags de Patrones de voz del catálogo activo de ese canal, que ya viene cacheado, sin consultas extra. Se normalizan igual que los Datos personales al guardar y al comparar (sin acentos, en minúsculas y con `_`). Los datos ya guardados siguen funcionando sin migración.
+
+- VIP y atención siguen aisladas: cada canal ve solo su propio vocabulario. En atención, el Analyst sabe que la lista fija de temas de política del prompt es del canal VIP.
+- Hasta 60 términos por turno en total, repartidos de forma justa entre Datos personales, Políticas y Patrones de voz: ningún tipo puede dejar fuera a otro aunque el catálogo crezca. Si hay que recortar, cada sección conserva sus primeros términos y se registra `analyst_catalog_vocab_truncated` con lo que se quedó fuera de cada una.
+- Efecto esperado: menos consultas de zona gris "falsas" en atención, porque más turnos se evalúan con una regla real. Sin interruptor nuevo; el prompt base del Analyst no cambia, lo nuevo se agrega al final según el canal.
+- La señal emocional "revelación de vida" reconoce el tema con o sin acento (`extrañar` / `extranar`).
+
+---
+
 Nueva sección "⚙️ Operación" en Personalidad y reglas — 2026-10-01
 
 Diana no sabía cómo se llaman las piezas del propio negocio: si un cliente preguntaba "¿quién es Lucien?" o mencionaba el "canal VIP", el modelo improvisaba o el evaluador lo marcaba como inventado. Estos datos no son biografía, así que meterlos en Datos personales ensuciaba los temas del Analyst y la zona gris.

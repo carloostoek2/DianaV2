@@ -39,7 +39,11 @@ from diana.cognitive.models import (
 from diana.profile_content import normalize_content
 from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.repetition_guard import RepetitionGuard
-from diana.cognitive.tags import catalog_fact_topics
+from diana.cognitive.tags import (
+    catalog_fact_topics,
+    catalog_pattern_tags,
+    catalog_policy_topics,
+)
 from diana.cognitive.template_gate import (
     TemplateGate,
     TemplateRule,
@@ -782,22 +786,32 @@ class CognitiveDirector:
         mapped = self._map_history_messages(raw)
         if limit > 0 and len(mapped) > limit:
             mapped = mapped[-limit:]
+        fact_topics, policy_topics, voice_tags = await self._catalog_vocabulary(
+            turn.channel_type
+        )
         return AnalystInput(
             turno_actual=turn.text,
             historial_reciente=mapped,
             channel_type=turn.channel_type,
-            catalog_topics=await self._catalog_topics(turn.channel_type),
+            catalog_topics=fact_topics,
+            policy_topics=policy_topics,
+            voice_tags=voice_tags,
         )
 
-    async def _catalog_topics(self, channel_type: str) -> list[str]:
-        """Normalized persona-fact temas of the ACTIVE catalog for the channel.
+    async def _catalog_vocabulary(
+        self, channel_type: str
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Normalized Analyst vocabulary of the ACTIVE catalog for the channel.
 
-        Fail-soft: no provider / read failure → ``[]`` (Analyst keeps the fixed
-        topic vocabulary, i.e. the pre-change behavior). The provider is cached
+        Returns ``(fact_topics, policy_topics, voice_tags)`` derived from ONE
+        ``get_catalog(channel_type)`` read, so all three blocks always come
+        from the same channel (VIP/atencion isolation). Fail-soft: no provider
+        / read failure → three empty lists (Analyst keeps the fixed
+        vocabulary, i.e. the pre-change behavior). The provider is cached
         (0 DB reads in steady state), so this adds no per-turn query.
         """
         if self._persona_catalog_provider is None:
-            return []
+            return [], [], []
         try:
             catalog = await self._persona_catalog_provider.get_catalog(channel_type)
         except Exception:
@@ -806,8 +820,14 @@ class CognitiveDirector:
                 extra={"channel_type": channel_type},
                 exc_info=True,
             )
-            return []
-        return catalog_fact_topics(catalog)
+            return [], [], []
+        # Uncapped here: the 60-term prompt budget is split fairly per type
+        # by the Analyst (tags.fair_share_limits), so the log sees real sizes.
+        return (
+            catalog_fact_topics(catalog, limit=None),
+            catalog_policy_topics(catalog),
+            catalog_pattern_tags(catalog),
+        )
 
     @staticmethod
     def _drop_open_vip_burst(raw: list[dict]) -> list[dict]:

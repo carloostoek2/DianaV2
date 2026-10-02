@@ -2302,3 +2302,100 @@ async def test_analyst_catalog_temas_fail_soft_on_provider_error() -> None:
     from diana.cognitive import analyst as analyst_mod
 
     assert analyst_call[1]["messages"][0]["content"] == analyst_mod._SYSTEM
+
+
+class _ByChannelPersonaProvider:
+    """PersonaCatalogProvider double: one catalog per channel, records reads."""
+
+    def __init__(self, by_channel: dict) -> None:
+        self.by_channel = by_channel
+        self.requested_channels: list[str] = []
+
+    async def get_catalog(self, channel_type: str = "vip"):
+        self.requested_channels.append(channel_type)
+        return self.by_channel.get(channel_type)
+
+
+_VOCAB_VIP_CATALOG = {
+    "persona_facts": [{"id": "gato", "tema": ["Mascota"], "hecho": "Tengo un gato"}],
+    "policies": [{"id": "nv", "tema": ["Dinámica novia virtual"], "regla": "R"}],
+    "voice_patterns": [{"id": "mb", "tags": ["Momento bonito"], "patron": "P", "uso": "U"}],
+    "voz_configurada": {"persona": "P", "reglas_estilo": ["r"]},
+}
+_VOCAB_ATENCION_CATALOG = {
+    "persona_facts": [{"id": "pago", "tema": ["Pago"], "hecho": "Por transferencia"}],
+    "policies": [{"id": "pe", "tema": ["Precios especiales"], "regla": "R"}],
+    "voice_patterns": [{"id": "dc", "tags": ["Despedida"], "patron": "P", "uso": "U"}],
+    "voz_configurada": {"persona": "P", "reglas_estilo": ["r"]},
+}
+
+
+async def test_catalog_vocabulary_single_read_per_channel() -> None:
+    """Ítem 1: los tres vocabularios salen de UNA llamada get_catalog(canal)."""
+    provider = _ByChannelPersonaProvider(
+        {"vip": _VOCAB_VIP_CATALOG, "atencion": _VOCAB_ATENCION_CATALOG}
+    )
+    llm = FakeLLM(structured_responses=[], text_responses=[])
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
+
+    vocab = await director._catalog_vocabulary("atencion")
+    assert vocab == (["pago"], ["precios_especiales"], ["despedida"])
+    assert provider.requested_channels == ["atencion"]
+
+    vocab = await director._catalog_vocabulary("vip")
+    assert vocab == (["mascota"], ["dinamica_novia_virtual"], ["momento_bonito"])
+    assert provider.requested_channels == ["atencion", "vip"]
+
+
+async def test_catalog_vocabulary_fail_soft_and_no_provider() -> None:
+    class _Boom:
+        async def get_catalog(self, channel_type: str = "vip"):
+            raise RuntimeError("db down")
+
+    llm = FakeLLM(structured_responses=[], text_responses=[])
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=_Boom())
+    assert await director._catalog_vocabulary("vip") == ([], [], [])
+    director_np, _, _ = make_director(llm, persona="Boot")
+    assert await director_np._catalog_vocabulary("atencion") == ([], [], [])
+
+
+async def test_analyst_receives_policy_and_voice_vocabulary_of_turn_channel() -> None:
+    """Aislamiento VIP/atención en el prompt real del Analyst (turno de atención)."""
+    from diana.cognitive import analyst as analyst_mod
+
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _ByChannelPersonaProvider(
+        {"vip": _VOCAB_VIP_CATALOG, "atencion": _VOCAB_ATENCION_CATALOG}
+    )
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
+    turn = _turn()
+    turn.channel_type = "atencion"
+    await director.handle_turn(turn)
+
+    analyst_call = next(c for c in llm.calls if c[0] == "generate_structured")
+    system = analyst_call[1]["messages"][0]["content"]
+    assert system.startswith(analyst_mod._SYSTEM)
+    addendum = system[len(analyst_mod._SYSTEM):]
+    assert "Active policy temas (channel atencion): precios_especiales." in addendum
+    assert "Active voice pattern tags (channel atencion): despedida." in addendum
+    assert "does not apply here" in addendum
+    assert "dinamica_novia_virtual" not in addendum
+    assert "momento_bonito" not in addendum
+    assert set(provider.requested_channels) == {"atencion"}
+
+
+async def test_catalog_vocabulary_is_uncapped_budget_lives_in_analyst() -> None:
+    """El Director entrega tamaños reales; el reparto de 60 lo hace el Analyst."""
+    big = {
+        "persona_facts": [{"id": "x", "tema": [f"t{i}" for i in range(70)], "hecho": "h"}],
+        "policies": [{"id": "p", "tema": [f"p{i}" for i in range(70)], "regla": "r"}],
+        "voice_patterns": [{"id": "v", "tags": [f"v{i}" for i in range(70)], "patron": "P", "uso": "U"}],
+    }
+    provider = _ByChannelPersonaProvider({"vip": big})
+    llm = FakeLLM(structured_responses=[], text_responses=[])
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
+    facts, pols, voz = await director._catalog_vocabulary("vip")
+    assert (len(facts), len(pols), len(voz)) == (70, 70, 70)
