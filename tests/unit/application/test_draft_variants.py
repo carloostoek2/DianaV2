@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import pytest
@@ -60,9 +60,11 @@ class FakeDirector:
         self._drafts = list(drafts)
         self.calls = 0
         self.last_overrides = None
+        self.last_turn: IncomingTurn | None = None
 
     async def handle_turn(self, turn: IncomingTurn, **kwargs) -> Decision:
         self.calls += 1
+        self.last_turn = turn
         self.last_overrides = kwargs.get("knowledge_overrides")
         text = self._drafts.pop(0) if self._drafts else "fallback"
         return Decision(
@@ -182,6 +184,7 @@ async def _pending_approval_fixture(
     draft: str = "primera",
     status: str = "pending_approval",
     owner_message_id: int = 501,
+    channel_type: Literal["vip", "atencion"] = "vip",
 ) -> tuple:
     OWNER = 99
     approvals = InMemoryPendingApprovalStore()
@@ -192,6 +195,7 @@ async def _pending_approval_fixture(
             id=turn_id,
             chat_id=1,
             status=status,
+            channel_type=channel_type,
             trigger_message_id=10,
         )
     )
@@ -918,3 +922,74 @@ async def test_persist_truncates_long_hint() -> None:
     assert director.last_overrides is not None
     injected = director.last_overrides["knowledge.ephemeral"]["owner_regen_context"]
     assert len(injected) == MAX_REGEN_HINT_CHARS
+
+
+@pytest.mark.asyncio
+async def test_regenerate_uses_atencion_channel_of_original_turn() -> None:
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture(
+        channel_type="atencion"
+    )
+    director = FakeDirector(["versión atención"])
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=FakeOwnerNotifier(),
+        owner_telegram_id=OWNER,
+    )
+    r = await svc.regenerate(turn_id, actor_id=OWNER)
+    assert r.ok and r.token == "regen_ok"
+    assert director.calls == 1
+    assert director.last_turn is not None
+    assert director.last_turn.channel_type == "atencion"
+    assert director.last_turn.turn_id == turn_id
+    assert director.last_turn.vip_id is None
+
+
+@pytest.mark.asyncio
+async def test_regenerate_vip_turn_keeps_vip_channel() -> None:
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    director = FakeDirector(["versión vip"])
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=FakeOwnerNotifier(),
+        owner_telegram_id=OWNER,
+    )
+    r = await svc.regenerate(turn_id, actor_id=OWNER)
+    assert r.ok and r.token == "regen_ok"
+    assert director.last_turn is not None
+    assert director.last_turn.channel_type == "vip"
+    assert director.last_turn.chat_id == 1
+    assert director.last_turn.text == "hola"
+    assert director.last_turn.telegram_message_id == 10
+    assert director.last_turn.business_connection_id == "bc"
+
+
+@pytest.mark.asyncio
+async def test_persist_regen_hint_on_atencion_turn_keeps_channel_and_hint() -> None:
+    from diana.application.draft_variants import REGEN_HINT_KEY
+
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture(
+        channel_type="atencion"
+    )
+    director = FakeDirector(["atención con hint"])
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=director,
+        notifier=FakeOwnerNotifier(),
+        owner_telegram_id=OWNER,
+    )
+    r = await svc.persist_regen_hint_and_regenerate(
+        turn_id, "responde como servicio", actor_id=OWNER
+    )
+    assert r.ok and r.token == "regen_ok"
+    assert r.approval is not None
+    assert director.last_turn is not None
+    assert director.last_turn.channel_type == "atencion"
+    assert director.last_overrides is not None
+    ephemeral = director.last_overrides["knowledge.ephemeral"]
+    assert ephemeral["owner_regen_context"] == "responde como servicio"
+    assert REGEN_HINT_KEY not in (r.approval.evaluation or {})
