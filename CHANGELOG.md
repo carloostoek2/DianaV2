@@ -16,7 +16,6 @@ Ahora la regeneración usa el canal del mensaje que originó el borrador. Ese da
 - Aplica a los dos botones: 🔄 Regenerar y 💡 Contexto para regen. En el segundo, el contexto temporal que escribe la dueña se sigue usando y se limpia después, como antes.
 - Sin interruptor nuevo: es la corrección de un comportamiento que ya existía. Los botones, textos y avisos no cambian.
 - Los turnos antiguos sin canal claro se tratan como VIP, igual que en la reanudación de un falso positivo.
-- Queda pendiente, fuera de este cambio: la regeneración todavía no vuelve a pasar la foto del mensaje original.
 
 ---
 
