@@ -96,14 +96,20 @@ class GrayZoneProposalService:
         gold_reader: GlobalGoldExamplesReader | None = None,
         persona_facts: list[dict] | None = None,
         voice_patterns: list[dict] | None = None,
+        persona_catalog_provider: Any = None,
         timeout_seconds: float = DEFAULT_PROPOSAL_TIMEOUT_SECONDS,
         max_chars: int = DEFAULT_PROPOSAL_MAX_CHARS,
     ) -> None:
         self._llm = llm
         self._policies = policies_reader
         self._gold = gold_reader
+        # Static VIP slices: fallback ONLY for the vip channel when no live
+        # provider is wired (or it fails). Never lent to atencion.
         self._persona_facts = persona_facts or []
         self._voice_patterns = voice_patterns or []
+        # Live catalog (owner panel, per channel) — same provider the pipeline
+        # retrievers use, so panel edits apply here too.
+        self._catalog_provider = persona_catalog_provider
         self._timeout = timeout_seconds
         self._max_chars = max_chars
 
@@ -159,8 +165,14 @@ class GrayZoneProposalService:
                 )
             except Exception:
                 logger.exception("gray_zone_proposal_gold_read_failed")
-        facts = self._persona_facts[: DEFAULT_PROPOSAL_LIMITS["persona_facts"]]
-        voices = self._voice_patterns[: DEFAULT_PROPOSAL_LIMITS["voice_patterns"]]
+        facts_src, voices_src = await self._persona_slices(channel_type)
+        facts = [
+            _public_fact(f) for f in facts_src if isinstance(f, dict)
+        ]
+        facts = [f for f in facts if f][: DEFAULT_PROPOSAL_LIMITS["persona_facts"]]
+        voices = [
+            _public_pattern(v) for v in voices_src if isinstance(v, dict)
+        ][: DEFAULT_PROPOSAL_LIMITS["voice_patterns"]]
         return {
             "channel_type": channel_type,
             "policies": policies,
@@ -168,6 +180,36 @@ class GrayZoneProposalService:
             "persona_facts": facts,
             "voice_patterns": voices,
         }
+
+    async def _persona_slices(
+        self, channel_type: str
+    ) -> tuple[list[Any], list[Any]]:
+        """Persona facts/voice patterns for the conversation's channel.
+
+        Live catalog first (provider, channel-scoped). Fallback: the static
+        constructor slices, but only for ``vip`` — an atencion consult never
+        borrows VIP persona material.
+        """
+        if self._catalog_provider is not None:
+            try:
+                catalog = await self._catalog_provider.get_catalog(channel_type)
+            except Exception:
+                logger.warning(
+                    "gray_zone_proposal_catalog_read_failed",
+                    extra={"channel_type": channel_type},
+                    exc_info=True,
+                )
+                catalog = None
+            if isinstance(catalog, dict):
+                facts = catalog.get("persona_facts")
+                voices = catalog.get("voice_patterns")
+                return (
+                    list(facts) if isinstance(facts, list) else [],
+                    list(voices) if isinstance(voices, list) else [],
+                )
+        if channel_type != "vip":
+            return [], []
+        return list(self._persona_facts), list(self._voice_patterns)
 
     def _build_prompt(
         self, question: str, draft: str, context: dict[str, Any]
@@ -224,6 +266,25 @@ class GrayZoneProposalService:
         if proposal.suggested_scope not in {"vip", "all"}:
             proposal = proposal.model_copy(update={"suggested_scope": "vip"})
         return proposal
+
+
+def _public_fact(fact: dict[str, Any]) -> dict[str, Any]:
+    """Allow-list projection of a persona fact: ``tema`` + ``hecho`` only.
+
+    ``nota_privada`` (and any other owner-only key) is NEVER sent to the LLM.
+    """
+    out: dict[str, Any] = {}
+    if fact.get("tema") is not None:
+        out["tema"] = fact["tema"]
+    hecho = fact.get("hecho")
+    if hecho is not None and str(hecho).strip():
+        out["hecho"] = hecho
+    return out if "hecho" in out else {}
+
+
+def _public_pattern(pattern: dict[str, Any]) -> dict[str, Any]:
+    """Voice pattern without private/owner-only annotations."""
+    return {k: v for k, v in pattern.items() if k != "nota_privada"}
 
 
 __all__ = [

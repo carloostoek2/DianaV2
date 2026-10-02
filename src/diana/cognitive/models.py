@@ -147,6 +147,13 @@ class AnalystInput(BaseModel):
 
     turno_actual: str
     historial_reciente: list[HistoryMessage]
+    # Channel of the turn: the Analyst adapts the persona-facts guidance
+    # (VIP → Diana biography; atencion → the business / service).
+    channel_type: Literal["vip", "atencion"] = "vip"
+    # Normalized temas declared by the ACTIVE persona catalog for this channel
+    # (owner-editable "Datos personales"). Injected so owner-added temas are
+    # reachable by the PersonaFactsRetriever. Empty → legacy fixed prompt.
+    catalog_topics: list[str] = Field(default_factory=list)
 
 
 class Comprehension(BaseModel):

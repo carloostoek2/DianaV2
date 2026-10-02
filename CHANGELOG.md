@@ -7,6 +7,19 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Los "Datos personales" del panel ahora sí llegan a Diana — 2026-10-01
+
+Los datos que la dueña captura en Personalidad y reglas → Datos personales se guardaban bien, pero casi nunca llegaban al modelo. El Analyst solo podía elegir temas de una lista fija escrita en el código, así que un tema nuevo (por ejemplo "mascota") nunca coincidía. Además, "Motivación personal" no era igual a `motivacion_personal`, el canal atención casi no usaba sus datos de negocio, y solo entraba un dato por mensaje.
+
+Ahora el Analyst recibe en cada turno los temas reales del catálogo activo de ese canal, que ya viene cacheado, sin consultas extra. Los temas se normalizan de la misma forma al guardar y al comparar: sin acentos, en minúsculas y con `_`. Los datos ya guardados siguen funcionando sin migración.
+
+- En atención, el Analyst pide datos personales cuando preguntan por el negocio (servicio, entrega, pagos), no solo por la biografía.
+- Hasta `PERSONA_FACTS_MAX_PER_TURN` datos por turno (por defecto 3), ordenados por puntaje.
+- El Evaluator también ve los datos recuperados, para no marcar como inventado algo que está en el catálogo.
+- La propuesta de zona gris usa el catálogo vivo del canal de la conversación y nunca envía `nota_privada`.
+
+---
+
 Las notas permanentes del VIP ya no se quedan fuera del turno — 2026-09-29
 
 Cuando la dueña escribe notas en el perfil de un VIP, espera que Diana las tenga en cuenta. En la práctica el Analyst casi nunca pedía el perfil (alrededor de 4 de cada 5 turnos de esos VIP), así que las notas se guardaban pero no llegaban al modelo.

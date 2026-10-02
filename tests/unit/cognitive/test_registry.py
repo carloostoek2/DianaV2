@@ -307,7 +307,7 @@ async def test_build_default_registry_accepts_catalog_kwargs() -> None:
     )
     fact = await registry.resolve("knowledge.persona_facts").fetch(turn, c_facts)
     assert fact is not None
-    assert "Laura" in fact["hecho"]
+    assert "Laura" in fact[0]["hecho"]
 
     c_voice = Comprehension(
         intent="saludo",
@@ -403,7 +403,7 @@ async def test_registry_propagates_persona_catalog_provider() -> None:
     facts = await registry.resolve("knowledge.persona_facts").fetch(
         _turn(), _comprehension(topics=["familia"])
     )
-    assert facts is not None and facts["hecho"] == "live fact"
+    assert facts is not None and facts[0]["hecho"] == "live fact"
 
     patterns = await registry.resolve("knowledge.voice_patterns").fetch(
         _turn(), _comprehension(emotion="positiva", intent="saludo", topics=["apertura"])
@@ -488,7 +488,7 @@ async def test_retrievers_are_channel_aware_per_channel_cache() -> None:
     facts = await registry.resolve("knowledge.persona_facts").fetch(
         atencion_turn, _comprehension(topics=["servicio"])
     )
-    assert facts is not None and facts["hecho"] == "hecho atencion"
+    assert facts is not None and facts[0]["hecho"] == "hecho atencion"
 
     patterns = await registry.resolve("knowledge.voice_patterns").fetch(
         atencion_turn, _comprehension(emotion="neutral", topics=["servicio"])
@@ -510,7 +510,7 @@ async def test_retrievers_are_channel_aware_per_channel_cache() -> None:
     facts = await registry.resolve("knowledge.persona_facts").fetch(
         _turn(), _comprehension(topics=["familia"])
     )
-    assert facts is not None and facts["hecho"] == "hecho VIP"
+    assert facts is not None and facts[0]["hecho"] == "hecho VIP"
 
     assert provider.requested.count("atencion") >= 1
     assert provider.requested.count("vip") >= 1
@@ -528,4 +528,4 @@ async def test_registry_static_slices_plus_provider_combination() -> None:
     result = await registry.resolve("knowledge.persona_facts").fetch(
         _turn(), _comprehension(topics=["familia"])
     )
-    assert result is not None and result["hecho"] == "static fact"
+    assert result is not None and result[0]["hecho"] == "static fact"

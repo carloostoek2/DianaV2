@@ -58,9 +58,9 @@ async def test_persona_facts_match_by_topic() -> None:
     retriever = PersonaFactsRetriever(_MINI_FACTS)
     result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
     assert result is not None
-    assert result["hecho"] == "Tengo una hermana, Laura."
-    assert result["tema"] == "familia"
-    assert set(result.keys()) == {"hecho", "tema"}
+    assert result[0]["hecho"] == "Tengo una hermana, Laura."
+    assert result[0]["tema"] == "familia"
+    assert set(result[0].keys()) == {"hecho", "tema"}
 
 
 @pytest.mark.asyncio
@@ -71,8 +71,8 @@ async def test_persona_facts_match_by_intent_only() -> None:
         _comp(intent="duelo", topics=[]),
     )
     assert result is not None
-    assert "mamá" in result["hecho"] or "mama" in result["hecho"].lower()
-    assert result["tema"] in ("familia", "duelo")
+    assert "mamá" in result[0]["hecho"] or "mama" in result[0]["hecho"].lower()
+    assert result[0]["tema"] in ("familia", "duelo")
 
 
 @pytest.mark.asyncio
@@ -90,8 +90,8 @@ async def test_persona_facts_never_emits_nota_privada() -> None:
     retriever = PersonaFactsRetriever(_MINI_FACTS)
     result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
     assert result is not None
-    assert "nota_privada" not in result
-    assert set(result.keys()) == {"hecho", "tema"}
+    assert all("nota_privada" not in r for r in result)
+    assert set(result[0].keys()) == {"hecho", "tema"}
 
 
 @pytest.mark.asyncio
@@ -111,9 +111,9 @@ async def test_persona_facts_prefers_largest_intersection() -> None:
         _comp(topics=["familia", "duelo"], intent="chat"),
     )
     assert result is not None
-    assert "mamá" in result["hecho"] or "mama" in result["hecho"].lower()
+    assert "mamá" in result[0]["hecho"] or "mama" in result[0]["hecho"].lower()
     # familia_duelo intersects {familia, duelo} = 2; hermana only {familia} = 1
-    assert result["hecho"] == "Perdí a mi mamá el año pasado."
+    assert result[0]["hecho"] == "Perdí a mi mamá el año pasado."
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,7 @@ async def test_persona_facts_match_is_case_insensitive() -> None:
         _comp(topics=["Familia"], intent="chat"),
     )
     assert result is not None
-    assert "Laura" in result["hecho"]
+    assert "Laura" in result[0]["hecho"]
 
 
 
@@ -140,8 +140,8 @@ async def test_production_catalog_familia_gold() -> None:
         _comp(topics=["familia"], intent="chat"),
     )
     assert result is not None
-    assert "Laura" in result["hecho"]
-    assert "nota_privada" not in result
+    assert "Laura" in result[0]["hecho"]
+    assert all("nota_privada" not in r for r in result)
 
 
 @pytest.mark.asyncio
@@ -164,7 +164,7 @@ async def test_production_catalog_motivacion_beats_generic_estudios_tag() -> Non
         ),
     )
     assert result is not None
-    assert "ansiedad" in result["hecho"].lower() or "entender" in result["hecho"].lower(), (
+    assert "ansiedad" in result[0]["hecho"].lower() or "entender" in result[0]["hecho"].lower(), (
         "expected the motivacion_psicologia fact (the 'why'), got: "
         f"{result['hecho']!r}"
     )
@@ -186,7 +186,7 @@ async def test_weighted_score_prefers_specific_tag_over_shared_tag() -> None:
     # B's weighted score (1/3 + 1) > A's weighted score (1/3 only, no raro_a hit).
     result = await retriever.fetch(_turn(), _comp(topics=["comun", "raro_b"]))
     assert result is not None
-    assert result["hecho"] == "B"
+    assert result[0]["hecho"] == "B"
 
 
 class _FakeProvider:
@@ -209,12 +209,12 @@ async def test_hot_swap_persona_facts_via_provider() -> None:
     retriever = PersonaFactsRetriever(persona_catalog_provider=provider)  # type: ignore[arg-type]
 
     result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
-    assert result is not None and result["hecho"] == "hecho v1"
+    assert result is not None and result[0]["hecho"] == "hecho v1"
 
     # New catalog object (simulates invalidate + new DB payload) → hot swap.
     provider.catalog = dict(v2)
     result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
-    assert result is not None and result["hecho"] == "hecho v2"
+    assert result is not None and result[0]["hecho"] == "hecho v2"
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_provider_none_falls_back_to_constructor_state() -> None:
         persona_catalog_provider=provider,  # type: ignore[arg-type]
     )
     result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
-    assert result is not None and "Laura" in result["hecho"]
+    assert result is not None and "Laura" in result[0]["hecho"]
 
 
 
@@ -259,4 +259,4 @@ async def test_missing_slice_keeps_last_good_state() -> None:
 
     provider.catalog = {"other_key": []}  # key missing -> None slice
     result = await retriever.fetch(_turn(), _comp(topics=["familia"]))
-    assert result is not None and result["hecho"] == "hecho v1"
+    assert result is not None and result[0]["hecho"] == "hecho v1"

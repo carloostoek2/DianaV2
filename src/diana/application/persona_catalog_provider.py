@@ -9,7 +9,10 @@ repeated calls return the same cached object until ``invalidate`` is called
 (after every owner save/restore via ``set_on_change``).
 
 Process-local by design: ops are single-instance (``docs/OPS_SINGLE_INSTANCE.md``),
-so invalidation within the process is sufficient.
+so invalidation within the process is sufficient. Multi-replica caveat: a save
+handled by another process does NOT invalidate this cache — it would serve the
+previous catalog until restart (see the ops doc for the required cross-process
+invalidation before scaling out).
 
 Concurrency: an epoch counter protects the cache from being clobbered by a
 read that started before an ``invalidate``.

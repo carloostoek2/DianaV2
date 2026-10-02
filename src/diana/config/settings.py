@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     feature_calibration_enabled: bool = False
     feature_advanced_behavior: bool = False
     feature_persona_admin_enabled: bool = False
+    # Max persona facts ("Datos personales") injected per turn when several
+    # catalog temas match (best score first). Small on purpose: prompt cost.
+    persona_facts_max_per_turn: Annotated[int, Field(ge=1, le=10)] = 3
 
     # F4 general mode (non-VIP atencion channel) — env-driven, default off.
     feature_general_mode_enabled: bool = False

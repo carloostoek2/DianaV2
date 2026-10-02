@@ -15,7 +15,10 @@ from diana.cognitive.retrievers.context import ContextRetriever
 from diana.cognitive.retrievers.examples import ExamplesRetriever
 from diana.cognitive.retrievers.history import HistoryRetriever
 from diana.cognitive.retrievers.memory import MemoryRetriever
-from diana.cognitive.retrievers.persona_facts import PersonaFactsRetriever
+from diana.cognitive.retrievers.persona_facts import (
+    DEFAULT_MAX_PERSONA_FACTS,
+    PersonaFactsRetriever,
+)
 from diana.cognitive.retrievers.policy import PolicyRetriever
 from diana.cognitive.retrievers.profile import ProfileRetriever
 from diana.cognitive.retrievers.schedule import ScheduleRetriever
@@ -87,6 +90,7 @@ def build_default_registry(
     schedule: dict | None = None,
     clock: ClockPort | None = None,
     persona_catalog_provider: PersonaCatalogProvider | None = None,
+    persona_facts_max: int = DEFAULT_MAX_PERSONA_FACTS,
 ) -> CapabilityRegistry:
     """Register capabilities and fail-fast for the planner universe.
 
@@ -134,6 +138,7 @@ def build_default_registry(
         PersonaFactsRetriever(
             persona_facts or [],
             persona_catalog_provider=persona_catalog_provider,
+            max_facts=persona_facts_max,
         ),
     )
     registry.register(

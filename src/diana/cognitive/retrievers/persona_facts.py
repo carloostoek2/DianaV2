@@ -1,8 +1,14 @@
-"""PersonaFactsRetriever — static catalog match by tema ∩ topics/intent.
+"""PersonaFactsRetriever — catalog match by tema ∩ topics/intent.
 
-Returns a single atomic fact ``{hecho, tema}`` or ``None``. Never emits
+Returns a list of up to ``max_facts`` atomic facts ``[{hecho, tema}, ...]``
+ordered by score (best first), or ``None`` when nothing matches. Never emits
 ``nota_privada``. No embeddings; pure in-memory set intersection, weighted
 by tag specificity.
+
+Both sides are normalized with :func:`diana.cognitive.tags.normalize_tag`
+(no accents, lowercase, spaces/hyphens → ``_``), so a tema stored as
+"Motivación personal" (legacy rows included) matches the Analyst topic
+``motivacion_personal``.
 
 Score per matched tag = 1 / (how many facts in the catalog share that tag).
 A generic tag shared by many facts (e.g. "estudios") barely moves the score;
@@ -20,30 +26,32 @@ from typing import Any
 
 from diana.cognitive.models import Comprehension, IncomingTurn
 from diana.cognitive.ports import PersonaCatalogProvider
+from diana.cognitive.tags import normalize_tag, normalize_tags
+
+DEFAULT_MAX_PERSONA_FACTS = 3
 
 
 def _norm(token: Any) -> str:
-    return str(token).strip().lower()
+    return normalize_tag(token)
 
 
 def _as_tema_list(tema: Any) -> list[str]:
-    if isinstance(tema, list):
-        return [_norm(t) for t in tema if str(t).strip()]
-    if tema is None:
-        return []
-    token = _norm(tema)
-    return [token] if token else []
+    return normalize_tags(tema)
 
 
 class PersonaFactsRetriever:
-    """Fetch one persona fact whose tema intersects comprehension signals."""
+    """Fetch up to ``max_facts`` persona facts whose tema intersects the turn."""
 
     def __init__(
         self,
         facts: list[dict] | None = None,
         *,
         persona_catalog_provider: PersonaCatalogProvider | None = None,
+        max_facts: int = DEFAULT_MAX_PERSONA_FACTS,
     ) -> None:
+        if int(max_facts) < 1:
+            raise ValueError("max_facts must be >= 1")
+        self._max_facts = int(max_facts)
         self._provider = persona_catalog_provider
         self._last_facts: dict[str, object] = {}
         self._facts: dict[str, list[dict]] = {}
@@ -87,37 +95,37 @@ class PersonaFactsRetriever:
         self,
         turn: IncomingTurn,
         comprehension: Comprehension,
-    ) -> dict[str, str] | None:
+    ) -> list[dict[str, str]] | None:
         _ = turn  # match is comprehension-driven only
         await self._maybe_refresh(turn.channel_type)
         facts = self._facts.get(turn.channel_type)
         if facts is None:
             return None  # channel never populated → no fact, never VIP data
         tag_freq = self._tag_freq[turn.channel_type]
-        topics = {_norm(t) for t in comprehension.topics if str(t).strip()} | {
-            _norm(comprehension.intent)
-        }
+        topics = {_norm(t) for t in comprehension.topics} | {_norm(comprehension.intent)}
+        topics.discard("")
 
-        best: dict[str, str] | None = None
-        best_score = 0.0
-        for fact in facts:
+        scored: list[tuple[float, int, dict[str, str]]] = []
+        for idx, fact in enumerate(facts):
             temas = _as_tema_list(fact.get("tema"))
             if not temas:
                 continue
             inter = topics & set(temas)
             if not inter:
                 continue
+            hecho = str(fact.get("hecho") or "").strip()
+            if not hecho:
+                continue
             score = sum(1.0 / tag_freq[t] for t in inter)
-            if score > best_score:
-                best_score = score
-                # Prefer the matched tag with the highest individual weight
-                # (most specific) as the reported `tema`, not just the first.
-                match_tema = max(inter, key=lambda t: 1.0 / tag_freq[t])
-                best = {
-                    "hecho": str(fact["hecho"]),
-                    "tema": match_tema,
-                }
-        return best
+            # Report the most specific matched tag (highest weight); tie →
+            # alphabetical so the output is deterministic.
+            match_tema = min(inter, key=lambda t: (-1.0 / tag_freq[t], t))
+            scored.append((score, idx, {"hecho": hecho, "tema": match_tema}))
+        if not scored:
+            return None
+        # Best score first; ties keep catalog order (stable, deterministic).
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [item[2] for item in scored[: self._max_facts]]
 
 
-__all__ = ["PersonaFactsRetriever"]
+__all__ = ["DEFAULT_MAX_PERSONA_FACTS", "PersonaFactsRetriever"]

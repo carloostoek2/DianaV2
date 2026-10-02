@@ -16,6 +16,7 @@ G.4: Postgres `SELECT … FOR UPDATE` / advisory locks).
 | **CorrectSessionStore** | `telegram/handlers/callbacks.py` | In-memory FSM: owner awaiting free-text Correct. TTL (default 15 min). **Restart clears** all sessions (owner presses Correct again — expected). |
 | **DedupMiddleware** | `telegram/middlewares/dedup.py` | In-memory TTL cache of update / callback ids. Drops Telegram redeliveries in-process only. |
 | **RateLimitMiddleware** | `telegram/middlewares/rate_limit.py` | Per-user sliding window in-process. Owner exempt via constructor id. |
+| **PersonaCatalogProvider** | `application/persona_catalog_provider.py` | In-process cache of the active persona catalog per channel (panel "Personalidad y reglas"). Invalidated only by saves/restores **in the same process** (`set_on_change`). Consumers: retrievers (persona facts / voice / policy / schedule), Director persona, Analyst catalog temas, gray-zone proposal, delivery mode. |
 
 ## Multi-replica consequences (if run anyway)
 
@@ -25,6 +26,7 @@ Without a shared store / lock:
 - **Split Correct sessions** — Correct pressed on process A; free-text lands on process B → silent ignore or wrong session.
 - **Weak rate limits / dedup holes** — each process has its own counters and seen-set; limits are not global.
 - **Chat lock does not span processes** — concurrent pipelines for the same VIP chat can race.
+- **Stale persona catalog** — an owner edit in "Personalidad y reglas" saved through process A invalidates only A's cache; process B keeps serving its cached catalog (old "Datos personales", rules, persona) until it restarts. Scaling out requires a cross-process invalidation (e.g. Postgres `LISTEN/NOTIFY` on `persona_versions`, or a short TTL on the cache). Not implemented on purpose (single instance).
 
 Do **not** treat these as supported multi-replica features. Prefer a single active process (or implement real shared coordination before scaling out).
 
