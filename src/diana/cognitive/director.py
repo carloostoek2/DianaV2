@@ -102,6 +102,8 @@ _NEUTRAL_ATENCION_STYLE_RULES: list[str] = []
 
 logger = logging.getLogger("diana.cognitive")
 
+_OPERACION_CAPABILITY = "knowledge.operacion"
+
 _DECISION_EMOJI: dict[str, str] = {
     "approve": "✅",
     "escalate": "🚨",
@@ -239,6 +241,10 @@ class CognitiveDirector:
         force_profile_when_notes: bool = False,
         # Duck-typed ProfilesRepo (get_by_vip_id). None → force is a no-op.
         profiles_repo: Any | None = None,
+        # FEATURE_PERSONA_OPERACION_ENABLED: deterministic alias match →
+        # knowledge.operacion. Injected bool — never import Settings here.
+        # False → pipeline (and prompt) byte-identical to the pre-feature path.
+        feature_persona_operacion_enabled: bool = False,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -271,6 +277,9 @@ class CognitiveDirector:
         self._knowledge_augmenter = knowledge_augmenter
         self._force_profile_when_notes = bool(force_profile_when_notes)
         self._profiles_repo = profiles_repo
+        self._feature_persona_operacion_enabled = bool(
+            feature_persona_operacion_enabled
+        )
 
     async def _resolve_persona(
         self, channel_type: str = "vip"
@@ -424,7 +433,25 @@ class CognitiveDirector:
         # Option A: hard-OR needs_profile when VIP has non-empty notes[]
         # (before store/plan so Planner 1:1 and traces stay honest).
         comprehension = await self._maybe_force_needs_profile(turn, comprehension)
+        # Operación: deterministic alias n-gram match on the turn text (never
+        # the Analyst). Same precedent as needs_profile_forced: OR the flag
+        # before store/plan so the Planner stays 1:1 and the trace is honest.
+        comprehension, operacion_hits = await self._maybe_force_operacion(
+            turn, comprehension
+        )
         await self._store(turn_id, "comprehension", comprehension)
+        if operacion_hits:
+            await self._store(
+                turn_id,
+                "operacion_match",
+                {
+                    "channel_type": turn.channel_type,
+                    "matched": [
+                        {"id": hit.id, "alias": hit.alias} for hit in operacion_hits
+                    ],
+                    "injected_ids": [hit.id for hit in operacion_hits],
+                },
+            )
         logger.info(
             "🧠 Comprensión — intent: %s | emoción: %s | urgencia: %s | riesgo: %s",
             comprehension.intent,
@@ -549,6 +576,15 @@ class CognitiveDirector:
         retriever_timings: dict[str, float] = {}
         try:
             for cap in plan.capabilities:
+                if cap == _OPERACION_CAPABILITY:
+                    # Inject exactly what the trigger matched (and traced) —
+                    # no second catalog read that could diverge mid-turn.
+                    retrieved[cap] = (
+                        [{"hecho": hit.hecho} for hit in operacion_hits]
+                        if operacion_hits
+                        else None
+                    )
+                    continue
                 retriever = self._registry.resolve(cap)
                 with TimingContext(cap) as tc:
                     retrieved[cap] = await retriever.fetch(turn, comprehension)
@@ -856,6 +892,46 @@ class CognitiveDirector:
         return comprehension.model_copy(
             update={"needs_profile": True, "needs_profile_forced": True}
         )
+
+    async def _maybe_force_operacion(
+        self,
+        turn: IncomingTurn,
+        comprehension: Comprehension,
+    ) -> tuple[Comprehension, list[Any]]:
+        """Set ``needs_operacion`` from a deterministic alias match.
+
+        Flag off → never requested (a stray ``True`` is cleared so the prompt
+        stays byte-identical). Flag on → ``needs_operacion = bool(hits)``; the
+        retriever reads ONLY the turn channel's live catalog (channel
+        isolation is the provider's contract). Fail-soft: any error → no hits.
+        """
+        if not self._feature_persona_operacion_enabled:
+            if comprehension.needs_operacion:
+                comprehension = comprehension.model_copy(update={"needs_operacion": False})
+            return comprehension, []
+        hits: list[Any] = []
+        try:
+            retriever = self._registry.resolve(_OPERACION_CAPABILITY)
+            match = getattr(retriever, "match", None)
+            if match is not None:
+                hits = list(await match(turn))
+        except Exception:
+            logger.warning(
+                "operacion_match_failed",
+                extra={"channel_type": turn.channel_type},
+                exc_info=True,
+            )
+            hits = []
+        if hits:
+            logger.info(
+                "⚙️ Operación — alias: %s",
+                ", ".join(f"{h.id}<-{h.alias}" for h in hits),
+            )
+        if bool(hits) != comprehension.needs_operacion:
+            comprehension = comprehension.model_copy(
+                update={"needs_operacion": bool(hits)}
+            )
+        return comprehension, hits
 
     async def _store(self, turn_id: UUID, key: str, value: Any) -> None:
         await self._trace.store(turn_id, key, to_jsonable(value))

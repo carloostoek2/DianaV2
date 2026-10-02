@@ -1196,3 +1196,72 @@ async def test_channel_switch_persists_across_wizard_start() -> None:
     sess = sessions.get(_OWNER_ID)
     assert sess is not None and sess.persona_channel == "atencion"
     assert sess.persona_section == "rule"
+
+
+# ---------------------------------------------------------------------------
+# ⚙️ Operación (feat/persona-operacion)
+# ---------------------------------------------------------------------------
+
+
+def _shown_text(msg: AsyncMock) -> str:
+    call = msg.edit_text.call_args
+    return str(call.args[0] if call.args else call.kwargs.get("text", ""))
+
+
+@pytest.mark.asyncio
+async def test_operacion_empty_list_shows_restore_warning() -> None:
+    service = _FakePersonaAdmin(_base_catalog())  # legacy payload: no key
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("operacion"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    text = _shown_text(msg)
+    assert "vacía" in text
+    assert "restaurar una versión anterior" in text
+
+
+@pytest.mark.asyncio
+async def test_operacion_wizard_add_then_delete_last_item() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = AsyncMock()
+    msg.text = "lucien | Lucien, el mayordomo | Lucien es el bot administrador."
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    await handle_persona_edit_text(msg, _bot(), _session("operacion"), service, _sessions())
+    assert service.saved[-1]["operacion"] == [
+        {"id": "lucien", "alias": ["Lucien", "el mayordomo"],
+         "hecho": "Lucien es el bot administrador."}
+    ]
+
+    list_msg = _msg()
+    await dispatch_personalidad(list_msg, parsed=_parsed("operacion"), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=_sessions())
+    assert "⚙️ Operación" in _shown_text(list_msg)
+
+    del_msg = _msg()
+    await dispatch_personalidad(del_msg, parsed=_parsed("operacion_del", "lucien"),
+                                actor_id=_OWNER_ID, persona_admin=service, sessions=_sessions())
+    assert service.saved[-1]["operacion"] == []
+    assert "Eliminado" in _shown_text(del_msg)
+
+
+@pytest.mark.asyncio
+async def test_operacion_wizard_rejects_common_alias_without_saving() -> None:
+    service = _FakePersonaAdmin(_base_catalog())
+    msg = AsyncMock()
+    msg.text = "x | admin | hecho"
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    bot = _bot()
+    await handle_persona_edit_text(msg, bot, _session("operacion"), service, _sessions())
+    assert service.saved == []
+    assert "común" in str(bot.edit_message_text.call_args.kwargs.get("text", ""))
+
+
+@pytest.mark.asyncio
+async def test_restore_confirm_warns_about_operacion() -> None:
+    msg = _msg()
+    await dispatch_personalidad(msg, parsed=_parsed("restore", str(uuid4())), actor_id=_OWNER_ID,
+                                persona_admin=_FakePersonaAdmin(_base_catalog()), sessions=_sessions())
+    assert "Operación vacía" in _shown_text(msg)

@@ -888,6 +888,7 @@ def build_app(
         clock=clock,
         persona_catalog_provider=persona_catalog_provider,
         persona_facts_max=settings.persona_facts_max_per_turn,
+        operacion_max=settings.persona_operacion_max_per_turn,
     )
     # Single TurnClassifier instance (Director pure-greeting cut + orchestrator shadow).
     classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)
@@ -1056,6 +1057,7 @@ def build_app(
         # Option A: OR needs_profile when VIP has non-empty owner notes.
         force_profile_when_notes=settings.feature_force_profile_when_notes,
         profiles_repo=profiles_repo,
+        feature_persona_operacion_enabled=settings.feature_persona_operacion_enabled,
     )
 
     learning = LearningService(traces)

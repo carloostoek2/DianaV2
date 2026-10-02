@@ -7,6 +7,20 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Nueva sección "⚙️ Operación" en Personalidad y reglas — 2026-10-01
+
+Diana no sabía cómo se llaman las piezas del propio negocio: si un cliente preguntaba "¿quién es Lucien?" o mencionaba el "canal VIP", el modelo improvisaba o el evaluador lo marcaba como inventado. Estos datos no son biografía, así que meterlos en Datos personales ensuciaba los temas del Analyst y la zona gris.
+
+Ahora hay una lista aparte, `operacion` (`id | alias1, alias2 | hecho`, por canal). Cuando el mensaje del cliente menciona un alias como palabra o frase completa, el hecho se inyecta en `knowledge.operacion` de forma determinista, sin depender del Analyst. El bloque va cercado como dato (no instrucciones) e indica que es información del negocio que Diana puede compartir con el cliente. El Evaluator también lo recibe.
+
+- Flag `FEATURE_PERSONA_OPERACION_ENABLED` (apagado por defecto: el prompt queda idéntico byte a byte). Tope `PERSONA_OPERACION_MAX_PER_TURN` (por defecto 2).
+- El tokenizador quita puntuación (¿?¡!), acentos y mayúsculas: "¿Quién es Lucien?" coincide, pero "Luciena" no.
+- Al guardar se rechazan los alias de menos de 4 letras, las palabras comunes (canal, bot, admin, hola…) y los que chocan con temas de Datos personales.
+- VIP y atención están aisladas: atención nunca usa la operación de VIP. La traza guarda `operacion_match` con el alias que coincidió y los ids inyectados.
+- La lista puede quedar vacía. Las versiones anteriores no tienen la clave, así que restaurarlas deja Operación vacía (el panel lo avisa).
+
+---
+
 Los "Datos personales" del panel ahora sí llegan a Diana — 2026-10-01
 
 Los datos que la dueña captura en Personalidad y reglas → Datos personales se guardaban bien, pero casi nunca llegaban al modelo. El Analyst solo podía elegir temas de una lista fija escrita en el código, así que un tema nuevo (por ejemplo "mascota") nunca coincidía. Además, "Motivación personal" no era igual a `motivacion_personal`, el canal atención casi no usaba sus datos de negocio, y solo entraba un dato por mensaje.

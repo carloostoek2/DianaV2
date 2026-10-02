@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from diana.cognitive.operacion import DEFAULT_MAX_OPERACION_FACTS
 from diana.cognitive.ports import (
     ClockPort,
     MessageHistoryPort,
@@ -15,6 +16,7 @@ from diana.cognitive.retrievers.context import ContextRetriever
 from diana.cognitive.retrievers.examples import ExamplesRetriever
 from diana.cognitive.retrievers.history import HistoryRetriever
 from diana.cognitive.retrievers.memory import MemoryRetriever
+from diana.cognitive.retrievers.operacion import OperacionRetriever
 from diana.cognitive.retrievers.persona_facts import (
     DEFAULT_MAX_PERSONA_FACTS,
     PersonaFactsRetriever,
@@ -41,6 +43,9 @@ PLANNER_CAPABILITY_UNIVERSE: tuple[str, ...] = (
     "knowledge.policy",
     "knowledge.examples",
     "knowledge.schedule",
+    # Not Analyst-driven: needs_operacion is forced by the Director after a
+    # deterministic alias match (flag-gated, like needs_profile_forced).
+    "knowledge.operacion",
 )
 
 _DEFAULT_SCHEDULE_TZ = "America/Mexico_City"
@@ -91,6 +96,7 @@ def build_default_registry(
     clock: ClockPort | None = None,
     persona_catalog_provider: PersonaCatalogProvider | None = None,
     persona_facts_max: int = DEFAULT_MAX_PERSONA_FACTS,
+    operacion_max: int = DEFAULT_MAX_OPERACION_FACTS,
 ) -> CapabilityRegistry:
     """Register capabilities and fail-fast for the planner universe.
 
@@ -179,6 +185,13 @@ def build_default_registry(
             tz_name,
             resolved_clock,
             persona_catalog_provider=persona_catalog_provider,
+        ),
+    )
+    registry.register(
+        "knowledge.operacion",
+        OperacionRetriever(
+            persona_catalog_provider=persona_catalog_provider,
+            max_items=operacion_max,
         ),
     )
     # Boot fail-fast: planner-requested names must resolve (H.1).

@@ -23,6 +23,8 @@ _NEED_TO_CAPABILITY: tuple[tuple[str, str], ...] = (
     ("needs_policy", "knowledge.policy"),
     ("needs_examples", "knowledge.examples"),
     ("needs_schedule", "knowledge.schedule"),
+    # Director-forced only (deterministic alias match, never the Analyst).
+    ("needs_operacion", "knowledge.operacion"),
 )
 
 
