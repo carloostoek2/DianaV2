@@ -17,6 +17,7 @@ from typing import Any
 
 from diana.cognitive.models import Comprehension, IncomingTurn
 from diana.cognitive.ports import PersonaCatalogProvider
+from diana.cognitive.tags import normalize_tag, normalize_tags
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +26,11 @@ DEFAULT_POLICY_LIMIT = 5
 
 
 def _norm(token: Any) -> str:
-    return str(token).strip().lower()
+    return normalize_tag(token)
 
 
 def _as_tema_list(tema: Any) -> list[str]:
-    if isinstance(tema, list):
-        return [_norm(t) for t in tema if str(t).strip()]
-    if tema is None:
-        return []
-    token = _norm(tema)
-    return [token] if token else []
+    return normalize_tags(tema)
 
 
 def _rule_text_from_formatted(line: str) -> str:
@@ -110,9 +106,10 @@ class PolicyRetriever:
         seen_rules: list[str] = []
 
         if has_static:
-            signals = {_norm(t) for t in comprehension.topics if str(t).strip()} | {
+            signals = {_norm(t) for t in comprehension.topics} | {
                 _norm(comprehension.intent)
             }
+            signals.discard("")
             for policy in channel_static or []:
                 temas = _as_tema_list(policy.get("tema"))
                 if not (signals & set(temas)):

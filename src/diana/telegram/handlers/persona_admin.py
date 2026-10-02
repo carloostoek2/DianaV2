@@ -491,7 +491,11 @@ def _parse_pattern(text: str | None) -> dict[str, Any]:
         raise ValueError("ningún campo puede estar vacío")
     if len(pattern_id.encode("utf-8")) > 24:
         raise ValueError("el id es demasiado largo (máximo 24 bytes)")
-    return {"id": pattern_id, "tags": _split_topics(tags), "patron": patron, "uso": uso}
+    # Tags stored in canonical form (same rule as _parse_fact temas).
+    tag_list = normalize_tags(_split_topics(tags))
+    if not tag_list:
+        raise ValueError("ningún campo puede estar vacío")
+    return {"id": pattern_id, "tags": tag_list, "patron": patron, "uso": uso}
 
 
 def _parse_policy(text: str | None) -> dict[str, Any]:
@@ -503,7 +507,11 @@ def _parse_policy(text: str | None) -> dict[str, Any]:
         raise ValueError("id, temas y regla no pueden estar vacíos")
     if len(policy_id.encode("utf-8")) > 24:
         raise ValueError("el id es demasiado largo (máximo 24 bytes)")
-    return {"id": policy_id, "tema": _split_topics(temas), "regla": regla}
+    # Temas stored in canonical form (same rule as _parse_fact temas).
+    tema_list = normalize_tags(_split_topics(temas))
+    if not tema_list:
+        raise ValueError("id, temas y regla no pueden estar vacíos")
+    return {"id": policy_id, "tema": tema_list, "regla": regla}
 
 
 # ---------------------------------------------------------------------------
