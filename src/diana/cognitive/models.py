@@ -185,6 +185,10 @@ class Comprehension(BaseModel):
     # had non-empty owner notes (option A). Analyst never sets this; default
     # False keeps historical JSONB / LLM structured output compatible.
     needs_profile_forced: bool = False
+    # Director-only (never asked to / sent to the Analyst — excluded from the
+    # LLM schema hint): True when a deterministic "operacion" alias matched the
+    # turn text (FEATURE_PERSONA_OPERACION_ENABLED). Drives knowledge.operacion.
+    needs_operacion: bool = False
     raw_llm_output: dict | None = None
 
 

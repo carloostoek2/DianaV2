@@ -12,6 +12,8 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from diana.cognitive.operacion import validate_operacion_structure
+
 _REQUIRED_TOP_KEYS = (
     "voz_configurada",
     "persona_facts",
@@ -186,6 +188,10 @@ def validate_persona_catalog(data: dict[str, Any]) -> dict[str, Any]:
     _validate_unique_ids("voice_patterns", data["voice_patterns"])
     _validate_unique_ids("policies", data["policies"])
     _validate_schedule(data["schedule"])
+    # Optional: "operacion" (alias-triggered internal business facts). Shape
+    # only here — alias policy is enforced on the write path (see
+    # diana.cognitive.operacion). Absent key ≡ empty list (legacy payloads).
+    validate_operacion_structure(data)
     # Optional: channel delivery_mode (REQ-ATN-05). Absent → consumer default.
     dm = data.get("delivery_mode")
     if dm is not None:

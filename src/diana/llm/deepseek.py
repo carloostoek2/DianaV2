@@ -20,7 +20,8 @@ _FENCE_RE = re.compile(
     r"^\s*```(?:json|JSON)?\s*\n?(.*?)\n?\s*```\s*$",
     re.DOTALL,
 )
-_INTERNAL_SCHEMA_FIELDS = frozenset({"raw_llm_output"})
+# Internal/Director-only fields never shown to the model (schema stays stable).
+_INTERNAL_SCHEMA_FIELDS = frozenset({"raw_llm_output", "needs_operacion"})
 _METADATA_HOSTS = frozenset(
     {
         "metadata.google.internal",

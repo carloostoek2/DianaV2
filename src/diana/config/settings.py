@@ -120,6 +120,12 @@ class Settings(BaseSettings):
     # Max persona facts ("Datos personales") injected per turn when several
     # catalog temas match (best score first). Small on purpose: prompt cost.
     persona_facts_max_per_turn: Annotated[int, Field(ge=1, le=10)] = 3
+    # "Operación" (panel ⚙️ Operación): alias-triggered internal business facts
+    # (channel names, admin bot name…) injected deterministically when the
+    # client message mentions an alias. Off → prompt byte-identical.
+    feature_persona_operacion_enabled: bool = False
+    # Max operación facts injected per turn (separate from persona facts).
+    persona_operacion_max_per_turn: Annotated[int, Field(ge=1, le=5)] = 2
 
     # F4 general mode (non-VIP atencion channel) — env-driven, default off.
     feature_general_mode_enabled: bool = False

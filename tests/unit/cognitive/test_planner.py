@@ -149,6 +149,8 @@ def test_planner_persona_voice_order_between_context_and_memory() -> None:
         "knowledge.policy",
         "knowledge.examples",
         "knowledge.schedule",
+        # Director-forced only (deterministic alias match), always last.
+        "knowledge.operacion",
     ]
     assert _STABLE_CAPS == expected
     plan = Planner().plan(_comprehension(**_all_needs(True)))

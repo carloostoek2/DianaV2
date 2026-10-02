@@ -22,6 +22,11 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from diana.application.persona_admin_service import PersonaAdminService
+from diana.cognitive.operacion import (
+    OPERACION_ID_MAX_BYTES,
+    OPERACION_KEY,
+    validate_operacion_semantics,
+)
 from diana.cognitive.persona_catalog import (
     get_persona_atencion_catalog,
     get_persona_catalog,
@@ -40,6 +45,13 @@ from diana.telegram.keyboards import (
 logger = logging.getLogger("diana.telegram")
 
 _PERSONA_BACK = encode_menu("personalidad")
+
+# Versions saved before "⚙️ Operación" existed have no operacion key: restoring
+# one leaves that section EMPTY (by design, missing key ≡ []).
+_OPERACION_RESTORE_NOTE = (
+    "\n\n⚠️ Ojo: restaurar una versión anterior a «⚙️ Operación» deja la "
+    "sección Operación vacía (tendrás que volver a capturarla)."
+)
 
 # Item sections → (prompt hint when a wizard captures text).
 _ADD_PROMPTS: dict[str, str] = {
@@ -102,6 +114,19 @@ _ADD_PROMPTS: dict[str, str] = {
     "default_edit": (
         "🗓️ Envíame el texto nuevo de la respuesta libre.\nUsa /cancelar para abortar."
     ),
+    "operacion": (
+        "⚙️ Envíame el dato de operación con este formato:\n"
+        "id | alias1, alias2 | hecho\n"
+        "Ej: lucien | Lucien, el mayordomo | Lucien es el bot administrador del canal VIP.\n"
+        "Si el cliente menciona un alias (palabra o frase completa), Diana recibe el "
+        "hecho y puede explicárselo. Alias de mínimo 4 letras, sin palabras comunes "
+        "(canal, bot, admin, hola…) ni temas de Datos personales.\n"
+        "Usa /cancelar para abortar."
+    ),
+    "operacion_edit": (
+        "⚙️ Envíame el dato con este formato (puedes cambiar id, alias o hecho):\n"
+        "id | alias1, alias2 | hecho\nUsa /cancelar para abortar."
+    ),
     "timezone": (
         "🗓️ Envíame la zona horaria nueva (ej: America/Mexico_City).\n"
         "Usa /cancelar para abortar."
@@ -120,6 +145,7 @@ def _section_op(section: str) -> str | None:
         "policies": "policy",
         "bloques": "bloque",
         "defaults": "default",
+        "operacion": "operacion",
     }.get(section)
 
 
@@ -239,8 +265,10 @@ def _delete_item(
     extra: str,
     *,
     by_id: bool,
+    allow_empty: bool = False,
 ) -> list[Any]:
-    if len(items) <= 1:
+    # Required sections must keep ≥1 item; optional ones (operacion) may empty.
+    if not allow_empty and len(items) <= 1:
         raise ValueError("no se puede borrar el último elemento de una lista")
     if by_id:
         if not any(str(item.get("id")) == extra for item in items):
@@ -377,6 +405,18 @@ def apply_persona_edit(
         )
         return nuevo
 
+    if op in ("operacion", "operacion_del"):
+        # Optional top-level key: missing ≡ [] (legacy versions) and the list
+        # may become empty (allow_empty) — unlike the required sections.
+        nuevo[OPERACION_KEY] = _apply_typed_item(
+            list(nuevo.get(OPERACION_KEY) or []), op, extra, text,
+            parser=_parse_operacion, by_id=True, allow_empty=True,
+        )
+        if op == "operacion":
+            # Alias policy (min length, common words, persona_facts temas).
+            validate_operacion_semantics(nuevo)
+        return nuevo
+
     raise ValueError(f"operación de personalidad desconocida: {op}")
 
 
@@ -388,9 +428,10 @@ def _apply_typed_item(
     *,
     parser: Any,
     by_id: bool,
+    allow_empty: bool = False,
 ) -> list[Any]:
     if op.endswith("_del"):
-        return _delete_item(items, extra or "", by_id=by_id)
+        return _delete_item(items, extra or "", by_id=by_id, allow_empty=allow_empty)
     new_item = parser(text)
     new_id = str(new_item.get("id"))
     if any(str(item.get("id")) == new_id for item in items):
@@ -421,6 +462,24 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     if len(parts) > 3 and parts[3].strip():
         item["nota_privada"] = parts[3].strip()
     return item
+
+
+def _parse_operacion(text: str | None) -> dict[str, Any]:
+    parts = [p.strip() for p in (text or "").split("|")]
+    if len(parts) < 3:
+        raise ValueError("formato: id | alias1, alias2 | hecho")
+    op_id, aliases, hecho = parts[0], parts[1], "|".join(parts[2:]).strip()
+    if not op_id or not aliases or not hecho:
+        raise ValueError("id, alias y hecho no pueden estar vacíos")
+    if len(op_id.encode("utf-8")) > OPERACION_ID_MAX_BYTES:
+        raise ValueError("el id es demasiado largo (máximo 24 bytes)")
+    alias_list: list[str] = []
+    for alias in _split_topics(aliases):
+        if alias not in alias_list:
+            alias_list.append(alias)
+    if not alias_list:
+        raise ValueError("agrega al menos un alias")
+    return {"id": op_id, "alias": alias_list, "hecho": hecho}
 
 
 def _parse_pattern(text: str | None) -> dict[str, Any]:
@@ -490,6 +549,13 @@ def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str
     if section == "defaults":
         defaults = (catalog.get("schedule") or {}).get("default_responses") or []
         return [(str(i), f"💬 {_truncate(d, 70)}") for i, d in enumerate(defaults)]
+    if section == "operacion":
+        items = catalog.get(OPERACION_KEY) or []
+        return [
+            (str(o.get("id")), f"⚙️ {o.get('id')} — {_truncate(o.get('hecho', ''), 60)}")
+            for o in items
+            if isinstance(o, dict)
+        ]
     return []
 
 
@@ -570,6 +636,13 @@ def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | No
             return None
         return f"💬 Respuesta libre #{idx + 1}\n\n{defaults[idx]}"
 
+    if section == "operacion":
+        for o in catalog.get(OPERACION_KEY) or []:
+            if isinstance(o, dict) and str(o.get("id")) == key:
+                alias = ", ".join(o.get("alias") or [])
+                return f"⚙️ {o.get('id')}\nAlias: {alias}\nHecho: {o.get('hecho')}"
+        return None
+
     return None
 
 
@@ -582,7 +655,7 @@ def _edit_current_value(
         return _truncate(str(voz.get("persona") or ""), 3500)  # message-size safety only
     if section == "timezone":
         return str((catalog.get("schedule") or {}).get("timezone") or "")
-    if section in ("rule", "fact", "pattern", "policy", "bloque", "default"):
+    if section in ("rule", "fact", "pattern", "policy", "bloque", "default", "operacion"):
         # _item_full_text keys on the PLURAL list-section name (rules/facts/…)
         return _item_full_text(catalog, _section_list_action(section), extra or "")
     return None
@@ -724,7 +797,7 @@ async def dispatch_personalidad(
         await _show(
             message,
             "¿Restaurar esta versión? La versión actual quedará en el historial "
-            "y podrás volver a ella.",
+            "y podrás volver a ella." + _OPERACION_RESTORE_NOTE,
             menu_persona_confirm_restore_keyboard(extra),
         )
         return
@@ -761,10 +834,12 @@ async def dispatch_personalidad(
         return
 
     # ---- item lists (rules, facts, patterns, policies, bloques, defaults) ----
-    if action in ("rules", "facts", "patterns", "policies", "bloques", "defaults"):
+    if action in ("rules", "facts", "patterns", "policies", "bloques", "defaults",
+                  "operacion"):
         section = {
             "rules": "rules", "facts": "facts", "patterns": "patterns",
             "policies": "policies", "bloques": "bloques", "defaults": "defaults",
+            "operacion": "operacion",
         }[action]
         catalog = await load_current(persona_admin, channel_type=channel)
         raw_items = _section_items(catalog, section)
@@ -776,11 +851,13 @@ async def dispatch_personalidad(
         add_action = {
             "rules": "rule_add", "facts": "fact_add", "patterns": "pattern_add",
             "policies": "policy_add", "bloques": "bloque_add", "defaults": "default_add",
+            "operacion": "operacion_add",
         }[action]
+        empty_note = _OPERACION_RESTORE_NOTE if action == "operacion" else ""
         if not items:
             await _show(
                 message,
-                f"La sección está vacía. Toca «Agregar» para crear el primer elemento.",
+                f"La sección está vacía. Toca «Agregar» para crear el primer elemento.{empty_note}",
                 menu_persona_list_keyboard([], add_action),
             )
             return
@@ -791,6 +868,7 @@ async def dispatch_personalidad(
             "policies": "📜 Políticas de conducta",
             "bloques": "🗓️ Bloques de agenda",
             "defaults": "💬 Respuestas libres",
+            "operacion": "⚙️ Operación",
         }
         try:
             keyboard = menu_persona_list_keyboard(items, add_action)
@@ -804,7 +882,7 @@ async def dispatch_personalidad(
             return
         await _show(
             message,
-            titles[action] + "\n\nToca un elemento para verlo.",
+            titles[action] + "\n\nToca un elemento para verlo." + empty_note,
             keyboard,
         )
         return
@@ -833,7 +911,8 @@ async def dispatch_personalidad(
         return
 
     # ---- immediate deletes ----
-    if action in ("rule_del", "fact_del", "pattern_del", "policy_del", "bloque_del", "default_del"):
+    if action in ("rule_del", "fact_del", "pattern_del", "policy_del", "bloque_del",
+                  "default_del", "operacion_del"):
         section = action[: -len("_del")]
         catalog = await load_current(persona_admin, channel_type=channel)
         try:
@@ -867,7 +946,7 @@ async def dispatch_personalidad(
     if action in ("persona_edit", "rule_add", "rule_edit", "fact_add", "fact_edit",
                   "pattern_add", "pattern_edit", "policy_add", "policy_edit",
                   "bloque_add", "bloque_edit", "default_add", "default_edit",
-                  "timezone_edit"):
+                  "operacion_add", "operacion_edit", "timezone_edit"):
         section = _wizard_section(action, extra)
         sessions.start(
             actor_id,
@@ -903,6 +982,7 @@ def _section_list_action(op: str) -> str:
         "policy": "policies",
         "bloque": "bloques",
         "default": "defaults",
+        "operacion": "operacion",
     }.get(op, "personalidad")
 
 
@@ -948,6 +1028,7 @@ async def handle_persona_edit_text(
     # extra == key/index means "replace that item".
     if section not in (
         "persona", "rule", "fact", "pattern", "policy", "bloque", "default", "timezone",
+        "operacion",
     ):
         # REQ-ATN-06: a bare persona_edit session can exist without a section
         # (e.g. right after a channel toggle). Typed free text has no target op,

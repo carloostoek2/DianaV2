@@ -26,6 +26,7 @@ ALL_CAPS = (
     "knowledge.schedule",
     "knowledge.persona_facts",
     "knowledge.voice_patterns",
+    "knowledge.operacion",
 )
 
 
@@ -216,9 +217,11 @@ async def test_build_default_registry_without_repos_still_stubs() -> None:
 
 
 
-def test_planner_universe_has_nine_capabilities() -> None:
-    """H2: 6 original + persona_facts + voice_patterns + profile."""
-    assert len(PLANNER_CAPABILITY_UNIVERSE) == 9
+def test_planner_universe_has_ten_capabilities() -> None:
+    """H2: 6 original + persona_facts + voice_patterns + profile + operacion
+    (operacion is Director-forced via needs_operacion, never the Analyst)."""
+    assert len(PLANNER_CAPABILITY_UNIVERSE) == 10
+    assert PLANNER_CAPABILITY_UNIVERSE[-1] == "knowledge.operacion"
     assert "knowledge.persona_facts" in PLANNER_CAPABILITY_UNIVERSE
     assert "knowledge.voice_patterns" in PLANNER_CAPABILITY_UNIVERSE
     assert "knowledge.profile" in PLANNER_CAPABILITY_UNIVERSE

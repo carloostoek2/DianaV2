@@ -1141,7 +1141,9 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
     "personalidad": (
         "🎭 Personalidad y reglas\n\n"
         "Revisa y edita cómo habla Diana: su descripción, las reglas de tono y "
-        "estilo, sus datos personales, patrones de voz, políticas y agenda. "
+        "estilo, sus datos personales, patrones de voz, políticas, agenda y "
+        "operación (nombres de canales o del bot administrador que Diana "
+        "explica cuando el cliente los menciona). "
         "Cada cambio se guarda como una versión nueva (el historial permite "
         "volver atrás) y aplica de inmediato, sin reiniciar el bot."
     ),
@@ -1830,6 +1832,10 @@ def menu_personalidad_keyboard(active_channel: str = "vip") -> InlineKeyboardMar
             [InlineKeyboardButton(
                 text="🗓️ Agenda",
                 callback_data=encode_menu_persona("schedule"),
+            )],
+            [InlineKeyboardButton(
+                text="⚙️ Operación",
+                callback_data=encode_menu_persona("operacion"),
             )],
             [InlineKeyboardButton(
                 text="🕘 Historial y restauración",
