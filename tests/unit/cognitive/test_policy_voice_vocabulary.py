@@ -559,3 +559,33 @@ async def test_atencion_policy_tema_now_offered_and_avoids_doctrine_not_found(te
         _profile(), comp, retrieved={"knowledge.policy": []}
     )
     assert gray.reason == "doctrine_not_found"
+
+
+# --- 7. gaps de TESTS.md (paso 2.5b): G1 log en atención, G2 tamaños negativos ---
+
+
+def test_addendum_truncation_log_atencion_channel_level_and_logger(caplog) -> None:
+    """G1: el log de recorte identifica el canal real (no "vip" fijo) y usa el
+    logger exacto ``diana.cognitive`` con nivel WARNING."""
+    import logging
+
+    facts = [f"f{i}" for i in range(70)]
+    with caplog.at_level("WARNING", logger="diana.cognitive"):
+        analyst_mod._catalog_addendum("atencion", facts, ["p0"], [])
+    recs = _truncation_records(caplog)
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec.channel_type == "atencion"
+    assert rec.levelno == logging.WARNING
+    assert rec.name == "diana.cognitive"
+    assert rec.max_terms == 60
+    # Reparto justo [70, 1, 0] → Políticas (1) cabe; Datos recibe el resto (59).
+    assert (rec.kept_fact_topics, rec.dropped_fact_topics) == (59, 11)
+    assert (rec.kept_policy_topics, rec.dropped_policy_topics) == (1, 0)
+    assert (rec.kept_voice_tags, rec.dropped_voice_tags) == (0, 0)
+    assert rec.dropped == 11
+
+
+def test_fair_share_limits_treats_negative_sizes_as_absent() -> None:
+    """G2: tamaños negativos cuentan como ausentes (0) y no consumen presupuesto."""
+    assert fair_share_limits([-5, 10, 70], 60) == [0, 10, 50]
