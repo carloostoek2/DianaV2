@@ -315,3 +315,17 @@ def test_no_llm_import_in_detector_module() -> None:
     for module in imports:
         assert not module.startswith("diana.llm"), module
     assert "aiogram" not in " ".join(imports)
+
+
+def test_revelacion_de_vida_matches_normalized_topic_forms() -> None:
+    """hardener/persona-reglas ítem 1 (R3): el addendum del Analyst ofrece los
+    tags de voz normalizados (``extranar``), la lista fija de _SYSTEM los
+    crudos (``extrañar``); ambas formas deben dar la señal."""
+    for topic in ("extranar", "extrañar", "Extrañar", "tema pesado", "Conexión"):
+        sig = _detector().detect(_comp(topics=[topic]), None, None)
+        assert sig.signal_type == "revelacion_de_vida", topic
+
+
+def test_revelacion_de_vida_ignores_unrelated_normalized_topic() -> None:
+    sig = _detector().detect(_comp(topics=["carino", "precios"]), None, None)
+    assert sig.signal_type != "revelacion_de_vida"
