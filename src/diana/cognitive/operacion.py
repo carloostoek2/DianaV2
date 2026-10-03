@@ -277,10 +277,21 @@ def validate_operacion_semantics(
         return
     temas = fact_temas(data)
     stored = _stored_aliases(previous)
+    previous_temas = fact_temas(previous)
     for item in items:
         known = stored.get(item["id"], frozenset())
         for alias in item["alias"]:
             if alias in known:
+                # Review round 1 (G1): a stored alias that was valid before
+                # this save and is invalid after it (e.g. a new Dato tema
+                # "mayordomo" vs alias "el mayordomo") would be silently
+                # disabled — reject the save instead.
+                problem = alias_problem(alias, temas)
+                if problem is not None and alias_problem(alias, previous_temas) is None:
+                    raise ValueError(
+                        f"esto desactivaría el alias «{alias}» de ⚙️ Operación "
+                        f"«{item['id']}»: {problem}. Usa otro tema."
+                    )
                 continue
             problem = alias_problem(alias, temas)
             if problem is not None:

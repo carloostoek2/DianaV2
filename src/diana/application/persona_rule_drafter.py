@@ -245,7 +245,28 @@ def _longest_token(text: str) -> list[str]:
     return normalize_tags([max(tokens, key=len)])
 
 
+def _operacion_alias_cores(catalog: dict[str, Any] | None) -> set[str]:
+    """Alias cores ("el mayordomo" → "mayordomo") a Dato tema must not take (G1)."""
+    out: set[str] = set()
+    items = catalog.get(OPERACION_KEY) if isinstance(catalog, dict) else None
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict) and isinstance(item.get("alias"), list):
+            out.update("_".join(alias_core(a)) for a in item["alias"] if isinstance(a, str))
+    return out
+
+
+def _longest_free_token(text: str, blocked: set[str]) -> list[str]:
+    tokens = [t for t in normalize_tags(tokenize_words(text)) if t not in blocked]
+    return [max(tokens, key=len)] if tokens else []
+
+
 def _fallback_temas(op: str, text: str, catalog: dict[str, Any] | None) -> list[str]:
+    if op == "fact":
+        # Review round 1 (G1): never pick a tema that collides with an
+        # Operación alias (it would disable that alias).
+        blocked = _operacion_alias_cores(catalog)
+        hits = [t for t in _vocab_hits(text, _vocabulary(op, catalog)) if t not in blocked]
+        return hits or _longest_free_token(text, blocked)
     return _vocab_hits(text, _vocabulary(op, catalog)) or _longest_token(text)
 
 
@@ -392,17 +413,23 @@ def _postprocess(
             "alias": aliases,
             "hecho": hecho,
         }
-    # bloque
-    dias = normalize_tags(data.get("dias"))
+    # bloque — Review round 1 (G2): same day/hour rules as the catalog
+    # validator, so an LLM draft that would fail there falls back instead.
+    dias: list[str] = []
+    for raw_day in normalize_tags(data.get("dias")):
+        day = _DAY_TOKENS.get(raw_day)
+        if day is None:
+            raise ValueError("día desconocido")
+        if day not in dias:
+            dias.append(day)
     actividad = str(data.get("actividad") or "").strip()
     if not dias or not actividad:
         raise ValueError("bloque incompleto")
-    return {
-        "dias": dias,
-        "inicio": _pad_time(str(data.get("inicio") or "")),
-        "fin": _pad_time(str(data.get("fin") or "")),
-        "actividad": actividad,
-    }
+    inicio = _pad_time(str(data.get("inicio") or ""))
+    fin = _pad_time(str(data.get("fin") or ""))
+    if not inicio < fin:
+        raise ValueError("inicio >= fin")
+    return {"dias": dias, "inicio": inicio, "fin": fin, "actividad": actividad}
 
 
 # ---------------------------------------------------------------------------

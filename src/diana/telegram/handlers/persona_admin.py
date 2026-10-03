@@ -19,12 +19,13 @@ from collections.abc import Sequence
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from diana.application.persona_admin_service import PersonaAdminService
+from diana.application.persona_rule_drafter import fallback_draft
 from diana.cognitive.operacion import (
     OPERACION_ID_MAX_BYTES,
     OPERACION_KEY,
@@ -193,6 +194,12 @@ _ADD_PROMPTS: dict[str, str] = {
 # free-text sections (persona, rule, default, timezone) keep saving directly.
 _PREVIEW_SECTIONS = frozenset({"fact", "policy", "pattern", "operacion", "bloque"})
 _DRAFT_EXPIRED = "Esta vista previa expiró. Vuelve a escribir la regla."
+# Review round 1 (G3): text that arrives while a preview is being prepared.
+_DRAFT_BUSY = (
+    "⏳ Todavía estoy preparando la vista previa del mensaje anterior. "
+    "Espera a que aparezca y luego usa Corregir si quieres cambiarla."
+)
+_DRAFTING = "drafting"
 _NOTA_PROMPT = (
     "Escribe la nota privada. Diana no la usa para responder y no se envía a la IA."
 )
@@ -1300,7 +1307,10 @@ async def _dispatch_draft_action(
     back = menu_back_keyboard(_PERSONA_BACK)
     sess = sessions.get(actor_id) if sessions is not None else None
     draft = getattr(sess, "persona_draft", None) if sess is not None else None
-    if not draft:
+    if draft and draft.get("awaiting") == _DRAFTING:
+        await _show(message, _DRAFT_BUSY, None)  # G3: the new preview is on its way
+        return
+    if not draft or "item" not in draft:
         await _show(message, _DRAFT_EXPIRED, back)
         return
     ch = draft["channel"]
@@ -1339,12 +1349,15 @@ async def _dispatch_draft_action(
         return
 
     if action == "draft_fix":
+        # G4: a note added in this preview survives Corregir (local only).
+        nota = draft["item"].get("nota_privada") if op == "fact" else None
         sessions.start(
             actor_id,
             "persona_edit",
             persona_section=op,
             persona_target=target,
             persona_channel=ch,
+            persona_draft={"pending_nota": nota} if nota else None,
             last_bot_message_id=message.message_id,
             last_chat_id=message.chat.id,
         )
@@ -1511,7 +1524,16 @@ async def _handle_preview_text(
 ) -> None:
     """C3: build (or amend) the preview of an item; never saves."""
     draft_in = getattr(session, "persona_draft", None) or {}
-    if draft_in.get("awaiting") == "nota":
+    owner_id = message.from_user.id
+    if draft_in.get("awaiting") == _DRAFTING:
+        # G3: the previous text is still being drafted (the router popped the
+        # session). Put it back untouched — unless something already replaced
+        # it — and tell the owner instead of dropping her text silently.
+        if sessions.get(owner_id) is None:
+            _restore_session(sessions, owner_id, session)
+        await message.answer(_DRAFT_BUSY)
+        return
+    if draft_in.get("awaiting") == "nota" and "item" in draft_in:
         # ➕ Nota privada: plain local text, no LLM involved.
         item = dict(draft_in["item"])
         item["nota_privada"] = text
@@ -1519,44 +1541,61 @@ async def _handle_preview_text(
             bot, message, session, sessions, {**draft_in, "item": item, "awaiting": None}
         )
         return
+    # G4: a note shown in the open preview (or kept by Corregir) is carried over.
+    carried_nota = (
+        (draft_in.get("item") or {}).get("nota_privada") or draft_in.get("pending_nota")
+        if op == "fact"
+        else None
+    )
+    # G3: mark the session busy BEFORE any await (DB read, LLM ≤10 s). The
+    # token tells us later whether a channel switch / Cancelar replaced it.
+    token = uuid4().hex
+    marker = {"awaiting": _DRAFTING, "token": token, "pending_nota": carried_nota}
+    _restore_session(sessions, owner_id, session, persona_draft=marker)
+
+    def _still_ours() -> bool:
+        live = sessions.get(owner_id)
+        live_draft = getattr(live, "persona_draft", None) or {}
+        return live_draft.get("token") == token
+
     # Any other text while a preview is open acts as "Corregir": new draft.
-    base = await load_current(persona_admin, channel_type=channel)
     try:
+        base = await load_current(persona_admin, channel_type=channel)
         if "|" in text:
             # G-C4: the pipe format yields exactly the same item as before.
             item = _extract_item(
                 apply_persona_edit(base, op, extra, text), op, extra, base=base
             )
             source = "formato"
-        else:
-            # M2/S2: a "Nota privada: …" segment stays local — it never reaches
-            # the LLM, the deterministic fallback or the public hecho.
-            public, nota = _split_private_note(text)
-            if nota is not None and op != "fact":
-                raise ValueError(
-                    "La nota privada solo aplica a Datos personales. "
-                    "Quita «Nota privada:» del texto."
-                )
-            if not public:
-                raise ValueError("Escribe el dato antes de «Nota privada:».")
-            draft = await persona_admin.draft_rule(
-                op, public, catalog=base, target=extra, channel_type=channel
+            _carry_nota(item, op, carried_nota)
+            prepared = await persona_admin.prepare_persona(
+                apply_persona_item(base, op, extra, item), channel_type=channel
             )
-            item, source = dict(draft.item), draft.source
-            item.pop("nota_privada", None)
-            if nota:
-                item["nota_privada"] = nota
-            _keep_existing_nota(item, base, op, extra)  # G-C1
-        # Same validation save_persona runs (canonical temas, shape, alias policy).
-        prepared = await persona_admin.prepare_persona(
-            apply_persona_item(base, op, extra, item), channel_type=channel
-        )
+        else:
+            item, source, prepared = await _draft_free_text(
+                persona_admin, base, op, extra, channel, text, carried_nota
+            )
     except ValueError as exc:
+        if not _still_ours():
+            logger.info("persona_draft_discarded_stale", extra={"op": op})
+            return
         await _restart_persona_wizard(sessions, message, op, extra, channel)
+        if carried_nota:
+            sessions.get(owner_id).persona_draft = {"pending_nota": carried_nota}
         await _edit_or_answer(
-            bot, f"❌ {exc}\n\nEnvíame el texto corregido o usa /cancelar.",
+            bot, f"❌ {_owner_error(exc)}\n\nEnvíame el texto corregido o usa /cancelar.",
             session=session, fallback=message, keyboard=None,
         )
+        return
+    except Exception:
+        # Never leave the wizard stuck in "drafting" (TTL would be the only exit).
+        if _still_ours():
+            await _restart_persona_wizard(sessions, message, op, extra, channel)
+        raise
+    if not _still_ours():
+        # The owner switched channel / cancelled meanwhile: this preview belongs
+        # to a wizard that no longer exists.
+        logger.info("persona_draft_discarded_stale", extra={"op": op})
         return
     issues = persona_admin.operacion_alias_issues(prepared) if op == "operacion" else []
     await _show_draft(
@@ -1565,6 +1604,107 @@ async def _handle_preview_text(
          "source": source, "awaiting": None},
         issues,
     )
+
+
+async def _draft_free_text(
+    persona_admin: PersonaAdminService,
+    base: dict[str, Any],
+    op: str,
+    extra: str | None,
+    channel: str,
+    text: str,
+    carried_nota: str | None,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    """Free text → (item, source, prepared catalog). Raises ``ValueError``."""
+    # M2/S2: a "Nota privada: …" segment stays local — it never reaches
+    # the LLM, the deterministic fallback or the public hecho.
+    public, nota = _split_private_note(text)
+    if nota is not None and op != "fact":
+        raise ValueError(
+            "La nota privada solo aplica a Datos personales. "
+            "Quita «Nota privada:» del texto."
+        )
+    if not public:
+        raise ValueError("Escribe el dato antes de «Nota privada:».")
+
+    def _finish(raw: dict[str, Any]) -> dict[str, Any]:
+        item = dict(raw)
+        item.pop("nota_privada", None)
+        _carry_nota(item, op, nota or carried_nota)
+        _keep_existing_nota(item, base, op, extra)  # G-C1
+        return item
+
+    draft = await persona_admin.draft_rule(
+        op, public, catalog=base, target=extra, channel_type=channel
+    )
+    item, source = _finish(draft.item), draft.source
+    try:
+        # Same validation save_persona runs (canonical temas, shape, alias policy).
+        prepared = await persona_admin.prepare_persona(
+            apply_persona_item(base, op, extra, item), channel_type=channel
+        )
+    except ValueError as exc:
+        if source != "llm":
+            raise
+        # G2: the LLM proposal passed the drafter but not the catalog rules →
+        # deterministic fallback with the same (public) text.
+        logger.info(
+            "persona_rule_draft_validation_fallback",
+            extra={"op": op, "error": type(exc).__name__},
+        )
+        item = _finish(fallback_draft(op, public, catalog=base, target=extra))
+        source = "fallback"
+        prepared = await persona_admin.prepare_persona(
+            apply_persona_item(base, op, extra, item), channel_type=channel
+        )
+    return item, source, prepared
+
+
+def _carry_nota(item: dict[str, Any], op: str, nota: str | None) -> None:
+    if op == "fact" and nota and not item.get("nota_privada"):
+        item["nota_privada"] = nota
+
+
+# Review round 1 (G2): catalog-validator messages are English and technical;
+# the owner gets the Spanish meaning.
+_OWNER_ERROR_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("must use weekday tokens",
+     "Los días deben ser lunes, martes, miércoles, jueves, viernes, sábado o domingo."),
+    ("must match HH:MM", "La hora debe tener el formato HH:MM (por ejemplo 09:00)."),
+    ("requires inicio < fin",
+     "La hora de inicio debe ser antes que la de fin (un bloque no cruza la medianoche)."),
+    ("has duplicate id", "Ya existe un elemento con ese id."),
+)
+_ENGLISH_ERROR_RE = re.compile(r"\b(must|missing|requires|exceeds|invalid|unknown)\b")
+
+
+def _owner_error(exc: Exception) -> str:
+    raw = str(exc)
+    for needle, spanish in _OWNER_ERROR_PATTERNS:
+        if needle in raw:
+            return spanish
+    if _ENGLISH_ERROR_RE.search(raw):
+        return (
+            "El elemento no tiene un formato válido. Reescríbelo con tus palabras "
+            "o usa el formato con |."
+        )
+    return raw
+
+
+def _restore_session(
+    sessions: Any, owner_id: int, session: Any, **overrides: Any
+) -> None:
+    """Re-persist a popped persona_edit session (optionally with overrides)."""
+    fields = {
+        "persona_section": getattr(session, "persona_section", None),
+        "persona_target": getattr(session, "persona_target", None),
+        "persona_channel": getattr(session, "persona_channel", None) or "vip",
+        "persona_draft": getattr(session, "persona_draft", None),
+        "last_bot_message_id": getattr(session, "last_bot_message_id", None),
+        "last_chat_id": getattr(session, "last_chat_id", None),
+    }
+    fields.update(overrides)
+    sessions.start(owner_id, "persona_edit", **fields)
 
 
 async def _restart_persona_wizard(

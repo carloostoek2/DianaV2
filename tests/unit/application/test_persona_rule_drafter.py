@@ -209,3 +209,36 @@ def test_drafter_output_matches_pipe_parser_shape():
             expected = edited[section][-1]
         drafted = fallback_draft(op, texts[op], catalog=cat)
         assert set(drafted) == set(expected), op
+
+
+
+# Review round 1 — G1 / G2 (drafter side)
+
+
+async def test_postprocess_bloque_maps_abbreviated_days():
+    llm = FakeLLM(structured_responses=[
+        {"dias": ["lun", "Mié"], "inicio": "9:00", "fin": "12:00", "actividad": "gimnasio"}])
+    d = await PersonaRuleDrafter(llm).draft("bloque", "lun y mié 9 a 12 gimnasio",
+                                            catalog=_catalog())
+    assert d.source == "llm"
+    assert d.item["dias"] == ["lunes", "miercoles"] and d.item["inicio"] == "09:00"
+
+
+@pytest.mark.parametrize("bad", [
+    {"dias": ["funday"], "inicio": "09:00", "fin": "12:00", "actividad": "gym"},
+    {"dias": ["lunes"], "inicio": "12:00", "fin": "09:00", "actividad": "gym"},
+])
+async def test_postprocess_bloque_invalid_days_or_hours_fall_back(bad):
+    llm = FakeLLM(structured_responses=[bad])
+    d = await PersonaRuleDrafter(llm).draft("bloque", "lunes de 9:00 a 12:00 gimnasio",
+                                            catalog=_catalog())
+    assert d.source == "fallback"
+    assert d.item == {"dias": ["lunes"], "inicio": "09:00", "fin": "12:00",
+                      "actividad": "gimnasio"}
+
+
+def test_fallback_fact_tema_never_takes_an_operacion_alias_core():
+    cat = _catalog()
+    cat["operacion"] = [{"id": "lucien", "alias": ["Lucien", "el mayordomo"], "hecho": "h"}]
+    item = fallback_draft("fact", "El mayordomo me ayuda mucho", catalog=cat)
+    assert "mayordomo" not in item["tema"] and item["tema"]

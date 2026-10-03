@@ -139,3 +139,34 @@ async def test_proper_name_alias_is_saved_with_its_capitalization() -> None:
                                                 "alias": ["Ana", "El Diván"]})
     )
     assert record.payload["operacion"][0]["alias"] == ["Ana", "El Diván"]  # sin normalizar
+
+
+
+# Review round 1 (G1): a new Dato tema must not silently disable a stored alias.
+
+
+def _with_lucien(payload: dict) -> dict:
+    out = deepcopy(payload)
+    out["operacion"] = [{"id": "lucien", "alias": ["Lucien", "el mayordomo"],
+                         "hecho": "Lucien es el bot administrador del canal VIP."}]
+    return out
+
+
+def test_new_fact_tema_disabling_a_stored_alias_is_rejected():
+    from diana.application.persona_admin_service import prepare_persona_payload
+
+    previous = _with_lucien(get_persona_catalog())
+    nuevo = deepcopy(previous)
+    nuevo["persona_facts"].append({"id": "casa", "tema": ["mayordomo"], "hecho": "h"})
+    with pytest.raises(ValueError, match="desactivaría el alias «el mayordomo».*«lucien»"):
+        prepare_persona_payload(nuevo, previous=previous)
+
+
+def test_alias_already_disabled_before_the_save_does_not_block():
+    from diana.application.persona_admin_service import prepare_persona_payload
+
+    previous = _with_lucien(get_persona_catalog())
+    previous["persona_facts"].append({"id": "casa", "tema": ["mayordomo"], "hecho": "h"})
+    nuevo = deepcopy(previous)
+    nuevo["policies"].append({"id": "otra", "tema": ["precios"], "regla": "r"})
+    prepare_persona_payload(nuevo, previous=previous)  # legacy collision: no raise

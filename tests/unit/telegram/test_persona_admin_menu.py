@@ -55,6 +55,8 @@ class _FakePersonaAdmin:
         self.last_restore_channel_type: str | None = None
         self.last_list_channel_type: str | None = None
         self.draft_calls: list[tuple[str, str, str]] = []
+        self.draft_catalogs: list[dict] = []
+        self.draft_override = None  # async (op, text, catalog, target) -> RuleDraft
 
     async def get_current_persona(self, channel_type: str = "vip") -> dict | None:
         self.last_channel_type = channel_type
@@ -66,6 +68,9 @@ class _FakePersonaAdmin:
 
     async def draft_rule(self, op, text, *, catalog, target=None, channel_type="vip"):
         self.draft_calls.append((op, text, channel_type))
+        self.draft_catalogs.append(catalog)
+        if self.draft_override is not None:
+            return await self.draft_override(op, text, catalog, target)
         return RuleDraft(fallback_draft(op, text, catalog=catalog, target=target), "fallback")
 
     async def prepare_persona(self, payload, channel_type="vip"):
@@ -1694,3 +1699,220 @@ def test_edit_prompts_say_free_text_works_and_fact_prompts_say_where_privacy_goe
     for key in ("fact", "fact_edit"):
         assert _PRIVATE_NOTE_HINT in _ADD_PROMPTS[key], key
     assert "➕ Nota privada" in _PRIVATE_NOTE_HINT
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 — G1, G2, G3, G4, P3
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+from diana.telegram.handlers.persona_admin import _DRAFT_BUSY  # noqa: E402
+
+
+def _catalog_with_mayordomo() -> dict:
+    import copy
+
+    cat = copy.deepcopy(_base_catalog())
+    cat["operacion"] = [{"id": "lucien", "alias": ["Lucien", "el mayordomo"],
+                         "hecho": "Lucien es el bot administrador del canal VIP."}]
+    return cat
+
+
+def _llm_draft(item: dict):
+    async def _draft(op, text, catalog, target):
+        return RuleDraft(dict(item), "llm")
+    return _draft
+
+
+@pytest.mark.asyncio
+async def test_g1_fact_tema_that_disables_operacion_alias_is_rejected():
+    cat = _catalog_with_mayordomo()
+    service = _FakePersonaAdmin(cat)
+    bot = _bot()
+    sessions = _sessions()
+    await handle_persona_edit_text(_text_msg("nuevo_dato | mayordomo | Tengo un mayordomo"),
+                                   bot, _session("fact"), service, sessions)
+    shown = _bot_text(bot)
+    assert shown.startswith("❌") and "desactivaría el alias «el mayordomo»" in shown
+    assert "«lucien»" in shown
+    assert getattr(_live_session(sessions), "persona_draft", None) is None
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_g1_g2_llm_tema_colliding_with_alias_falls_back_to_a_safe_tema():
+    cat = _catalog_with_mayordomo()
+    service = _FakePersonaAdmin(cat)
+    service.draft_override = _llm_draft(
+        {"id": "ayuda_casa", "tema": ["mayordomo"], "hecho": "El mayordomo me ayuda mucho"})
+    _, sessions = await _preview("fact", "El mayordomo me ayuda mucho", service=service)
+    draft = _live_session(sessions).persona_draft
+    assert draft["source"] == "fallback"
+    assert "mayordomo" not in draft["item"]["tema"]
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_g2_llm_draft_failing_catalog_validation_falls_back():
+    service = _FakePersonaAdmin(_base_catalog())
+    service.draft_override = _llm_draft(
+        {"dias": ["lun", "mié"], "inicio": "09:00", "fin": "12:00", "actividad": "gimnasio"})
+    _, sessions = await _preview("bloque", "lunes y miércoles de 9:00 a 12:00 gimnasio",
+                                 service=service)
+    draft = _live_session(sessions).persona_draft
+    assert draft["source"] == "fallback"
+    assert draft["item"] == {"dias": ["lunes", "miercoles"], "inicio": "09:00",
+                             "fin": "12:00", "actividad": "gimnasio"}
+
+
+@pytest.mark.asyncio
+async def test_g2_when_fallback_also_fails_owner_sees_spanish_message():
+    service = _FakePersonaAdmin(_base_catalog())
+    service.draft_override = _llm_draft(
+        {"dias": ["lunes"], "inicio": "22:00", "fin": "08:00", "actividad": "dormir"})
+    sessions = _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg("lunes de 22:00 a 08:00 dormir"), bot,
+                                   _session("bloque"), service, sessions)
+    shown = _bot_text(bot)
+    assert shown.startswith("❌")
+    assert "inicio debe ser antes que la de fin" in shown
+    assert "requires" not in shown and "schedule.bloques" not in shown
+    assert _live_session(sessions).persona_section == "bloque"
+
+
+def test_g2_owner_error_translates_validator_messages():
+    from diana.telegram.handlers.persona_admin import _owner_error
+
+    assert "lunes" in _owner_error(ValueError("schedule.bloques[3].dias must use weekday tokens"))
+    assert "HH:MM" in _owner_error(ValueError("schedule.bloques[0].fin must match HH:MM"))
+    generic = _owner_error(ValueError("voice_pattern.uso must be a non-empty string"))
+    assert "must" not in generic and "formato" in generic
+    spanish = "operación «x»: el alias «admin» es una palabra demasiado común"
+    assert _owner_error(ValueError(spanish)) == spanish
+
+
+class _GatedDrafts:
+    """draft_override that blocks until released (simulates the ≤10 s LLM wait)."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.entered = asyncio.Event()
+
+    async def __call__(self, op, text, catalog, target):
+        self.entered.set()
+        await self.release.wait()
+        return RuleDraft(fallback_draft(op, text, catalog=catalog, target=target), "llm")
+
+
+@pytest.mark.asyncio
+async def test_g3_text_during_drafting_is_answered_and_session_survives():
+    service = _FakePersonaAdmin(_base_catalog())
+    gate = _GatedDrafts()
+    service.draft_override = gate
+    sessions = _sessions()
+    first = asyncio.create_task(handle_persona_edit_text(
+        _text_msg("tengo un perro que se llama Toby"), _bot(), _session("fact"),
+        service, sessions))
+    await asyncio.wait_for(gate.entered.wait(), 1.0)
+    assert _live_session(sessions).persona_draft["awaiting"] == "drafting"
+    # second owner message: the router pops the (busy) session first
+    second_msg = _text_msg("otra cosa")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(second_msg, _bot(), live, service, sessions)
+    second_msg.answer.assert_awaited_with(_DRAFT_BUSY)
+    assert _live_session(sessions).persona_draft["awaiting"] == "drafting"
+    # a button tap while drafting does not save nor report "expired"
+    m = await _tap(service, sessions, "draft_save")
+    assert _DRAFT_BUSY in _shown(m) and service.saved == []
+    gate.release.set()
+    await asyncio.wait_for(first, 1.0)
+    draft = _live_session(sessions).persona_draft
+    assert draft["item"]["hecho"] == "tengo un perro que se llama Toby"
+    assert len(service.draft_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_g3_channel_switch_during_drafting_discards_the_late_preview():
+    service = _FakePersonaAdmin(_base_catalog())
+    gate = _GatedDrafts()
+    service.draft_override = gate
+    sessions = _sessions()
+    bot = _bot()
+    first = asyncio.create_task(handle_persona_edit_text(
+        _text_msg("tengo un perro que se llama Toby"), bot, _session("fact"),
+        service, sessions))
+    await asyncio.wait_for(gate.entered.wait(), 1.0)
+    await _tap(service, sessions, "channel", "atencion")
+    gate.release.set()
+    await asyncio.wait_for(first, 1.0)
+    live = _live_session(sessions)
+    assert live.persona_channel == "atencion" and live.persona_draft is None
+    assert live.persona_section is None
+    bot.edit_message_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_g4_nota_survives_corregir():
+    service, sessions = await _preview("fact", "nuevo_dato | familia | Tengo un hermano")
+    await _tap(service, sessions, "draft_nota")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("N-PRIVADA"), _bot(), live, service, sessions)
+    await _tap(service, sessions, "draft_fix")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("Tengo un hermano mayor"), _bot(), live,
+                                   service, sessions)
+    draft = _live_session(sessions).persona_draft
+    assert draft["item"]["hecho"] == "Tengo un hermano mayor"
+    assert draft["item"]["nota_privada"] == "N-PRIVADA"
+    assert all("N-PRIVADA" not in call[1] for call in service.draft_calls)
+
+
+@pytest.mark.asyncio
+async def test_g4_nota_survives_redraft_text_during_preview():
+    service, sessions = await _preview("fact", "nuevo_dato | familia | Tengo un hermano")
+    await _tap(service, sessions, "draft_nota")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("N-PRIVADA"), _bot(), live, service, sessions)
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("otro_dato | familia | Tengo dos hermanos"),
+                                   _bot(), live, service, sessions)
+    item = _live_session(sessions).persona_draft["item"]
+    assert item["id"] == "otro_dato" and item["nota_privada"] == "N-PRIVADA"
+    await _tap(service, sessions, "draft_save")
+    assert service.saved[-1]["persona_facts"][-1]["nota_privada"] == "N-PRIVADA"
+
+
+@pytest.mark.asyncio
+async def test_p3_free_text_draft_in_atencion_sees_only_the_atencion_catalog():
+    import copy
+
+    vip = copy.deepcopy(_base_catalog())
+    atn = copy.deepcopy(_base_catalog())
+    atn["persona_facts"] = [{"id": "atn_horario", "tema": ["horario_atencion"],
+                             "hecho": "Atiendo de lunes a viernes."}]
+    atn["policies"] = [{"id": "atn_pol", "tema": ["pagos_atencion"], "regla": "No cobro aquí."}]
+    service = _FakePersonaAdmin(vip)
+    service.channel_currents["atencion"] = atn
+    await _preview("fact", "tengo un perro que se llama Toby", channel="atencion",
+                   service=service)
+    assert service.draft_calls[-1][2] == "atencion"
+    seen = service.draft_catalogs[-1]
+    assert [f["id"] for f in seen["persona_facts"]] == ["atn_horario"]
+    vip_ids = {f["id"] for f in vip["persona_facts"]}
+    assert not vip_ids & {f["id"] for f in seen["persona_facts"]}
+
+
+@pytest.mark.asyncio
+async def test_p3_expired_preview_never_saves():
+    now = [datetime(2026, 10, 2, 12, 0, tzinfo=UTC)]
+    sessions = MenuSessionStore(clock=lambda: now[0])
+    service, _ = await _preview("pattern", "nuevo_patron | risa | jsjs | uso",
+                                sessions=sessions)
+    assert _live_session(sessions).persona_draft is not None
+    now[0] += timedelta(minutes=16)
+    m = await _tap(service, sessions, "draft_save")
+    assert _DRAFT_EXPIRED in _shown(m)
+    assert service.saved == []
