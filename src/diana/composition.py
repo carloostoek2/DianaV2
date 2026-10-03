@@ -392,6 +392,10 @@ class AppContainer:
     # Fase 6 (vínculo Lucien→Diana): link coordinator (built ALWAYS — consumed
     # via dispatcher gated by feature_link_enabled).
     link_coordinator: LinkCoordinator | None = None
+    # hardener/persona-reglas ítem 3 (D1/D2): shared embedder (boot warmup job)
+    # and policies repo (zero-vector repair) exposed for main.py.
+    embedding_svc: Any | None = None
+    policies_repo: Any | None = None
 
 
 def build_app(
@@ -1546,6 +1550,8 @@ def build_app(
         trust_budget_wired=settings.feature_trust_budget,
         vip_trust_budget_repo=vip_trust_budget_repo,
         link_coordinator=link_coordinator,
+        embedding_svc=embedding_svc,
+        policies_repo=policies_repo,
     )
 
 

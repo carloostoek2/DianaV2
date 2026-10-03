@@ -1,13 +1,16 @@
 """EmbeddingService — lazy-loaded sentence-transformers text vectorization (384 dims).
 
-The model is loaded only on the first call to ``embed()``, never at import time or
-constructor time. ``run_in_executor`` avoids blocking the async event loop during
-the CPU-bound ``model.encode()`` call.
+The model is loaded only on the first call to ``embed()`` / ``warmup()``, never at
+import time or constructor time. The load runs in a worker thread
+(``asyncio.to_thread``) behind an ``asyncio.Lock`` with a double check, so it never
+blocks the event loop and never happens twice. ``run_in_executor`` avoids blocking
+the loop during the CPU-bound ``model.encode()`` call.
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 __all__ = ["EmbeddingService"]
 
@@ -35,13 +38,40 @@ class EmbeddingService:
         self._model_name = model_name
         self._max_input_chars = int(max_input_chars)
         self._model = None  # lazy-loaded on first embed()
+        # Python >= 3.10: Lock() does not bind to a loop at construction time.
+        self._load_lock = asyncio.Lock()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._model is not None
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def _load_model(self) -> Any:
+        """Blocking model load — always called through ``asyncio.to_thread``."""
+        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+
+        return SentenceTransformer(self._model_name)
+
+    async def _ensure_model(self) -> Any:
+        """Load the model once, off the event loop thread (lock + double check)."""
+        model = self._model
+        if model is not None:
+            return model
+        async with self._load_lock:
+            if self._model is None:
+                self._model = await asyncio.to_thread(self._load_model)
+            return self._model
 
     async def warmup(self) -> None:
         """Pre-load the model and run one dummy encode.
 
-        Call from boot (main.py) so the first real VIP message after process
-        start does not pay the model-load latency. Safe to call multiple
-        times; subsequent calls are no-ops once the model is cached.
+        Started from boot (main.py, ``EmbeddingWarmupJob`` in background) so the
+        first real VIP message after process start does not pay the model-load
+        latency. Safe to call multiple times; subsequent calls are no-ops once
+        the model is cached. The load itself runs in a worker thread.
         """
         if self._model is not None:
             return
@@ -71,10 +101,7 @@ class EmbeddingService:
                     "original_length": original_length,
                 },
             )
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
-
-            self._model = SentenceTransformer(self._model_name)
+        model = await self._ensure_model()
         loop = asyncio.get_running_loop()
-        emb = await loop.run_in_executor(None, self._model.encode, text)
+        emb = await loop.run_in_executor(None, model.encode, text)
         return emb.tolist()

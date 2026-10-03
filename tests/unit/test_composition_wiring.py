@@ -893,3 +893,23 @@ def test_build_app_injects_persona_operacion_flag_and_cap(
     retriever = director._registry.resolve("knowledge.operacion")
     assert retriever._max_items == (3 if enabled else 2)
     assert retriever._provider is app.orchestrator._catalog_provider
+
+
+def test_container_exposes_embedding_svc_and_policies_repo(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """hardener/persona-reglas ítem 3 (D1): main.py needs the embedder + repo."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:test-token-not-real")
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "999001")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://diana:diana@localhost:5432/diana"
+    )
+
+    from diana.cognitive.embedding import EmbeddingService
+    from diana.composition import build_app
+    from diana.config import Settings
+
+    app = build_app(Settings())
+    assert isinstance(app.embedding_svc, EmbeddingService)
+    assert app.policies_repo is not None

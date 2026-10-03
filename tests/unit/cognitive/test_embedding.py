@@ -9,7 +9,12 @@ download.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from unittest.mock import MagicMock, patch
+
+import numpy as np
 
 import pytest
 
@@ -91,3 +96,76 @@ async def test_embedding_service_returns_list_of_384_floats() -> None:
         assert len(result) == 384
         for v in result:
             assert isinstance(v, float)
+
+
+# --- hardener/persona-reglas ítem 3 (D1): una sola carga, en un hilo ---------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_embeds_load_model_once() -> None:
+    loads = 0
+
+    class _M:
+        def encode(self, text):
+            return np.zeros(384)
+
+    def _ctor(name):
+        nonlocal loads
+        loads += 1
+        time.sleep(0.05)
+        return _M()
+
+    with patch("sentence_transformers.SentenceTransformer", side_effect=_ctor):
+        svc = EmbeddingService()
+        await asyncio.gather(*(svc.embed(f"t{i}") for i in range(5)))
+    assert loads == 1 and svc.is_loaded
+
+
+@pytest.mark.asyncio
+async def test_model_loads_off_the_event_loop_thread() -> None:
+    seen: dict[str, int] = {}
+
+    def _ctor(name):
+        seen["thread"] = threading.get_ident()
+        return MagicMock(encode=lambda t: np.zeros(384))
+
+    with patch("sentence_transformers.SentenceTransformer", side_effect=_ctor):
+        await EmbeddingService().warmup()
+    assert seen["thread"] != threading.get_ident()
+
+
+def test_is_loaded_and_model_name_properties() -> None:
+    svc = EmbeddingService(model_name="m")
+    assert svc.is_loaded is False and svc.model_name == "m"
+
+
+@pytest.mark.asyncio
+async def test_warmup_twice_loads_once() -> None:
+    ctor = MagicMock(return_value=MagicMock(encode=lambda t: np.zeros(384)))
+    with patch("sentence_transformers.SentenceTransformer", ctor):
+        svc = EmbeddingService()
+        await svc.warmup()
+        await svc.warmup()
+    assert ctor.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_stays_responsive_during_load() -> None:
+    def _ctor(name):
+        time.sleep(0.2)
+        return MagicMock(encode=lambda t: np.zeros(384))
+
+    order: list[str] = []
+
+    async def _tick():
+        await asyncio.sleep(0.01)
+        order.append("tick")
+
+    async def _warm(svc):
+        await svc.warmup()
+        order.append("warm")
+
+    with patch("sentence_transformers.SentenceTransformer", side_effect=_ctor):
+        svc = EmbeddingService()
+        await asyncio.gather(_warm(svc), _tick())
+    assert order == ["tick", "warm"]
