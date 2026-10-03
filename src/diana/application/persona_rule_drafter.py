@@ -47,22 +47,25 @@ _ID_MAX_BYTES = min(24, OPERACION_ID_MAX_BYTES)
 _DEFAULT_USO = "Usar cuando encaje"
 
 
+# Review round 1 (S2): unknown keys the model invents (e.g. ``nota_privada``)
+# are DROPPED instead of raising — a validation error would carry the raw
+# value (``input_value=…``) into logs, and the draft never stores them.
 class FactDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     id: str
     temas: list[str]
     hecho: str
 
 
 class PolicyDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     id: str
     temas: list[str]
     regla: str
 
 
 class PatternDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     id: str
     tags: list[str]
     patron: str
@@ -70,14 +73,14 @@ class PatternDraft(BaseModel):
 
 
 class OperacionDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     id: str
     alias: list[str]
     hecho: str
 
 
 class BloqueDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     dias: list[str]
     inicio: str
     fin: str
@@ -457,8 +460,13 @@ class PersonaRuleDrafter:
                     "persona_rule_draft_timeout",
                     extra={"op": op, "timeout_s": self._timeout},
                 )
-            except Exception:
-                logger.exception("persona_rule_draft_failed", extra={"op": op})
+            except Exception as exc:
+                # S2: type only — no traceback/str(exc): provider and pydantic
+                # errors can echo the owner text or the model reply.
+                logger.warning(
+                    "persona_rule_draft_failed",
+                    extra={"op": op, "error": type(exc).__name__},
+                )
             if raw is not None:
                 try:
                     if not isinstance(raw, _MODELS[op]):

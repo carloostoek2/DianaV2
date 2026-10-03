@@ -74,9 +74,41 @@ async def test_llm_exception_falls_back():
 
 
 async def test_invalid_llm_shape_falls_back():
-    llm = FakeLLM(structured_responses=[{"id": "x", "temas": ["t"], "regla": "r", "extra": 1}])
+    # Review round 1 (S2): extra keys are now dropped, so "invalid" = wrong type.
+    llm = FakeLLM(structured_responses=[{"id": "x", "temas": {"no": "lista"}, "regla": "r"}])
     d = await PersonaRuleDrafter(llm).draft("policy", "Nunca hablo de mi ex", catalog=_catalog())
     assert d.source == "fallback"
+
+
+async def test_llm_reply_with_nota_privada_is_dropped_and_never_logged(caplog):
+    """S2: a hallucinated ``nota_privada`` key never reaches the item or the logs."""
+    caplog.set_level("DEBUG")
+    llm = FakeLLM(structured_responses=[
+        {"id": "x", "temas": ["familia"], "hecho": "Tengo un hermano.", "nota_privada": SECRET}
+    ])
+    d = await PersonaRuleDrafter(llm).draft("fact", "Tengo un hermano.", catalog=_catalog())
+    assert d.source == "llm"
+    assert "nota_privada" not in d.item
+    assert SECRET not in json.dumps(d.item, ensure_ascii=False)
+    assert SECRET not in caplog.text
+
+
+async def test_draft_failure_logs_error_type_only(caplog):
+    """S2: the provider error text (may echo the owner text) is never logged."""
+
+    class _Boom:
+        async def generate_structured(self, *a, **k):
+            raise ValueError(f"1 validation error input_value='{SECRET}'")
+
+    caplog.set_level("DEBUG")
+    d = await PersonaRuleDrafter(_Boom()).draft("policy", "Nunca hablo de mi ex", catalog=_catalog())
+    assert d.source == "fallback"
+    records = [r for r in caplog.records if r.getMessage() == "persona_rule_draft_failed"]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert records[0].exc_info is None
+    assert records[0].error == "ValueError"
+    assert SECRET not in caplog.text
 
 
 async def test_no_llm_uses_fallback():

@@ -14,6 +14,7 @@ cycle; it duck-types the session store and session objects.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from copy import deepcopy
 from types import SimpleNamespace
@@ -67,6 +68,21 @@ _OPERACION_IGNORED_LIST_NOTE = (
 )
 
 # Item sections → (prompt hint when a wizard captures text).
+# Review round 1 (P7/S3): every item edit prompt says free text works, and the
+# Dato prompts say where private data goes (never into the free text).
+_FREE_TEXT_HINT = (
+    "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+    "de guardar. El formato con | sigue funcionando.\n"
+)
+_PRIVATE_NOTE_HINT = (
+    "Si hay algo privado (que Diana no debe decir), no lo escribas aquí: "
+    "después de la vista previa toca «➕ Nota privada» "
+    "(o usa id | temas | hecho | nota).\n"
+)
+# Review round 1 (M2): the edit prompt only says a private note exists.
+_NOTA_HIDDEN_LINE = "🔒 Tiene nota privada (no se muestra aquí; se conserva al editar)"
+_NOTA_MARKER_RE = re.compile(r"\bnota\s+privada\s*:", re.IGNORECASE)
+
 _ADD_PROMPTS: dict[str, str] = {
     "persona": (
         "📝 Envíame la nueva descripción de Diana (cómo habla, quién es).\n\n"
@@ -86,11 +102,15 @@ _ADD_PROMPTS: dict[str, str] = {
         "Los temas se guardan sin acentos y con _ (\"Motivación personal\" → motivacion_personal).\n"
         "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
         "de guardar. El formato con | sigue funcionando.\n"
+        f"{_PRIVATE_NOTE_HINT}"
         "Usa /cancelar para abortar."
     ),
     "fact_edit": (
         "👤 Envíame el dato con este formato (puedes cambiar id, temas o hecho):\n"
-        "id | tema1, tema2 | hecho\nUsa /cancelar para abortar."
+        "id | tema1, tema2 | hecho\n"
+        f"{_FREE_TEXT_HINT}"
+        f"{_PRIVATE_NOTE_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "pattern": (
         "🗣️ Envíame el patrón de voz con este formato:\n"
@@ -102,7 +122,9 @@ _ADD_PROMPTS: dict[str, str] = {
     ),
     "pattern_edit": (
         "🗣️ Envíame el patrón con este formato:\n"
-        "id | tag1, tag2 | patron | uso\nUsa /cancelar para abortar."
+        "id | tag1, tag2 | patron | uso\n"
+        f"{_FREE_TEXT_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "policy": (
         "📜 Envíame la política con este formato:\n"
@@ -114,7 +136,9 @@ _ADD_PROMPTS: dict[str, str] = {
     ),
     "policy_edit": (
         "📜 Envíame la política con este formato:\n"
-        "id | tema1, tema2 | regla\nUsa /cancelar para abortar."
+        "id | tema1, tema2 | regla\n"
+        f"{_FREE_TEXT_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "bloque": (
         "🗓️ Envíame el bloque de agenda con este formato:\n"
@@ -126,7 +150,9 @@ _ADD_PROMPTS: dict[str, str] = {
     ),
     "bloque_edit": (
         "🗓️ Envíame el bloque con este formato:\n"
-        "dias1, dias2 | inicio | fin | actividad\nUsa /cancelar para abortar."
+        "dias1, dias2 | inicio | fin | actividad\n"
+        f"{_FREE_TEXT_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "default": (
         "🗓️ Envíame la respuesta libre nueva (para cuando no hay actividad).\n"
@@ -153,6 +179,7 @@ _ADD_PROMPTS: dict[str, str] = {
         "⚙️ Envíame el dato con este formato (puedes cambiar id, alias o hecho):\n"
         "id | alias1, alias2 | hecho\n"
         "Los alias nuevos siguen las mismas reglas que al agregar.\n"
+        f"{_FREE_TEXT_HINT}"
         "Usa /cancelar para abortar."
     ),
     "timezone": (
@@ -540,6 +567,16 @@ def apply_persona_item(
     return nuevo
 
 
+def _split_private_note(text: str) -> tuple[str, str | None]:
+    """``"hecho … Nota privada: secreto"`` → ``("hecho …", "secreto")`` (local only)."""
+    match = _NOTA_MARKER_RE.search(text or "")
+    if match is None:
+        return (text or "").strip(), None
+    public = text[: match.start()].strip(" \t\n,;:-—")
+    nota = text[match.end():].strip()
+    return public, nota
+
+
 def _keep_existing_nota(
     item: dict[str, Any], base: dict[str, Any], op: str, extra: str | None
 ) -> None:
@@ -553,12 +590,22 @@ def _keep_existing_nota(
             return
 
 
+_CHANNEL_LABEL = {"vip": "VIP", "atencion": "Atención"}
+
+
 def _draft_preview(
-    op: str, item: dict[str, Any], source: str, issues: Sequence[Any] = ()
+    op: str,
+    item: dict[str, Any],
+    source: str,
+    issues: Sequence[Any] = (),
+    channel: str | None = None,
 ) -> str:
     """Product-language preview. Shows that a private note exists, never its text."""
     origin = "formato |" if source == "formato" else "propuesta automática"
-    lines = [f"👀 Vista previa ({origin})", ""]
+    lines = [f"👀 Vista previa ({origin})"]
+    if channel is not None:
+        lines.append(f"Canal: {_CHANNEL_LABEL.get(channel, channel)}")
+    lines.append("")
     if op == "fact":
         lines += [
             "👤 Dato personal",
@@ -626,7 +673,9 @@ async def _show_draft(
     )
     await _edit_or_answer(
         bot,
-        _draft_preview(draft["op"], draft["item"], draft["source"], issues),
+        _draft_preview(
+            draft["op"], draft["item"], draft["source"], issues, draft.get("channel")
+        ),
         session=session,
         fallback=message,
         keyboard=menu_persona_draft_keyboard(allow_nota=draft["op"] == "fact"),
@@ -771,10 +820,17 @@ def _section_items(
 
 
 def _item_full_text(
-    catalog: dict[str, Any], section: str, key: str, *, issues: Sequence[Any] = ()
+    catalog: dict[str, Any],
+    section: str,
+    key: str,
+    *,
+    issues: Sequence[Any] = (),
+    reveal_nota: bool = True,
 ) -> str | None:
     """Render the FULL content of one item (no truncation) for detail/edit views.
 
+    ``reveal_nota=False`` (edit prompts, M2) only says a private note exists, so
+    the owner never copies it into free text that goes to the LLM.
     Returns None when the item does not exist.
     """
     voz = catalog.get("voz_configurada") or {}
@@ -799,7 +855,11 @@ def _item_full_text(
                     f"Hecho: {f.get('hecho')}",
                 ]
                 if f.get("nota_privada"):
-                    lines.append(f"Nota privada: {f.get('nota_privada')}")
+                    lines.append(
+                        f"Nota privada: {f.get('nota_privada')}"
+                        if reveal_nota
+                        else _NOTA_HIDDEN_LINE
+                    )
                 return "\n".join(lines)
         return None
 
@@ -881,7 +941,8 @@ def _edit_current_value(
     if section in ("rule", "fact", "pattern", "policy", "bloque", "default", "operacion"):
         # _item_full_text keys on the PLURAL list-section name (rules/facts/…)
         return _item_full_text(
-            catalog, _section_list_action(section), extra or "", issues=issues
+            catalog, _section_list_action(section), extra or "", issues=issues,
+            reveal_nota=False,
         )
     return None
 
@@ -918,13 +979,18 @@ async def dispatch_personalidad(
 
     if action == "channel" and extra in ("vip", "atencion"):
         # REQ-ATN-06: switch the persona channel and re-render the panel root.
+        # Review round 1 (M3/S1): switching channel closes EVERY open wizard,
+        # edit target and preview — only the channel survives, so no text or
+        # "✅ Guardar" can land in the other channel's catalog.
         if sessions is not None:
             sess = sessions.get(actor_id)
-            if sess is not None:
-                sess.persona_channel = extra
-                sess.persona_draft = None  # G-C8: a preview never crosses channels
-            else:
-                sessions.start(actor_id, "persona_edit", persona_channel=extra)
+            sessions.start(
+                actor_id,
+                "persona_edit",
+                persona_channel=extra,
+                last_bot_message_id=getattr(sess, "last_bot_message_id", None),
+                last_chat_id=getattr(sess, "last_chat_id", None),
+            )
         logger.info(
             "persona_channel_switched",
             extra={"actor_id": actor_id, "channel_type": extra},
@@ -1463,10 +1529,23 @@ async def _handle_preview_text(
             )
             source = "formato"
         else:
+            # M2/S2: a "Nota privada: …" segment stays local — it never reaches
+            # the LLM, the deterministic fallback or the public hecho.
+            public, nota = _split_private_note(text)
+            if nota is not None and op != "fact":
+                raise ValueError(
+                    "La nota privada solo aplica a Datos personales. "
+                    "Quita «Nota privada:» del texto."
+                )
+            if not public:
+                raise ValueError("Escribe el dato antes de «Nota privada:».")
             draft = await persona_admin.draft_rule(
-                op, text, catalog=base, target=extra, channel_type=channel
+                op, public, catalog=base, target=extra, channel_type=channel
             )
             item, source = dict(draft.item), draft.source
+            item.pop("nota_privada", None)
+            if nota:
+                item["nota_privada"] = nota
             _keep_existing_nota(item, base, op, extra)  # G-C1
         # Same validation save_persona runs (canonical temas, shape, alias policy).
         prepared = await persona_admin.prepare_persona(

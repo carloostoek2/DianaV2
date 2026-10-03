@@ -1545,3 +1545,152 @@ def test_draft_keyboard_callbacks_fit_64_bytes_and_toggle_nota():
     datas2 = [b.callback_data for row in without.inline_keyboard for b in row]
     assert encode_menu_persona("draft_nota") not in datas2
     assert len(datas2) == 3
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 — security (M2, M3/S1, S2, S3/P7)
+# ---------------------------------------------------------------------------
+
+from diana.telegram.handlers.persona_admin import (  # noqa: E402
+    _ADD_PROMPTS,
+    _FREE_TEXT_HINT,
+    _NOTA_HIDDEN_LINE,
+    _PRIVATE_NOTE_HINT,
+)
+
+_NOTA_SECRET = "NOTA-SECRETA-777"
+
+
+def _catalog_with_nota() -> tuple[dict, str]:
+    import copy
+
+    cat = copy.deepcopy(_base_catalog())
+    cat["persona_facts"][0]["nota_privada"] = _NOTA_SECRET
+    return cat, cat["persona_facts"][0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_edit_prompt_never_shows_nota_privada_text():
+    """M2: the "📄 Actual:" block says a note exists, never its text."""
+    cat, target = _catalog_with_nota()
+    m = await _tap(_FakePersonaAdmin(cat), _sessions(), "fact_edit", target)
+    prompt = _shown(m)
+    assert "📄 Actual:" in prompt
+    assert _NOTA_SECRET not in prompt
+    assert _NOTA_HIDDEN_LINE in prompt
+
+
+@pytest.mark.asyncio
+async def test_free_text_nota_privada_marker_stays_local():
+    """M2/S2: "Nota privada: …" is split off before the drafter (LLM or fallback)."""
+    service = _FakePersonaAdmin(_base_catalog())
+    sessions = _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(
+        _text_msg(f"Tengo un hermano mayor. Nota privada: {_NOTA_SECRET}"),
+        bot, _session("fact"), service, sessions,
+    )
+    assert service.draft_calls == [("fact", "Tengo un hermano mayor.", "vip")]
+    item = _live_session(sessions).persona_draft["item"]
+    assert _NOTA_SECRET not in item["hecho"]
+    assert item["nota_privada"] == _NOTA_SECRET
+    assert _NOTA_SECRET not in _bot_text(bot)
+    assert "🔒 Nota privada: sí" in _bot_text(bot)
+
+
+@pytest.mark.asyncio
+async def test_free_text_nota_marker_rejected_outside_facts():
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(
+        _text_msg(f"No doy precios. Nota privada: {_NOTA_SECRET}"),
+        bot, _session("policy"), service, sessions,
+    )
+    assert service.draft_calls == []
+    assert _bot_text(bot).startswith("❌") and "Datos personales" in _bot_text(bot)
+    assert _live_session(sessions).persona_section == "policy"
+
+
+@pytest.mark.asyncio
+async def test_free_text_edit_of_fact_with_nota_never_sends_it():
+    """M2: editing a Dato with a note → the note stays local and is kept."""
+    cat, target = _catalog_with_nota()
+    service = _FakePersonaAdmin(cat)
+    _, sessions = await _preview("fact", "ahora estudio una maestría", target=target,
+                                 service=service)
+    assert all(_NOTA_SECRET not in call[1] for call in service.draft_calls)
+    assert _live_session(sessions).persona_draft["item"]["nota_privada"] == _NOTA_SECRET
+
+
+@pytest.mark.asyncio
+async def test_channel_switch_resets_open_edit_wizard():
+    """S1: Editar (VIP) → cambiar a Atención → texto ⇒ 0 borradores, 0 guardados."""
+    cat, target = _catalog_with_nota()
+    service = _FakePersonaAdmin(cat)
+    service.channel_currents["atencion"] = _base_catalog()
+    sessions = _sessions()
+    await _tap(service, sessions, "fact_edit", target)
+    await _tap(service, sessions, "channel", "atencion")
+    live = sessions.pop(_OWNER_ID)
+    assert live.persona_channel == "atencion"
+    assert live.persona_section is None and live.persona_target is None
+    assert live.persona_draft is None
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg("Texto libre para el dato"), bot, live,
+                                   service, sessions)
+    assert service.draft_calls == [] and service.saved == []
+    assert MENU_CATEGORY_TEXT["personalidad"] in _bot_text(bot)
+
+
+@pytest.mark.asyncio
+async def test_channel_switch_resets_nota_wizard():
+    """M3: ➕ Nota privada → cambiar canal → texto ⇒ nunca va al drafter."""
+    service, sessions = await _preview("fact", "nuevo_dato | familia | Tengo un hermano")
+    await _tap(service, sessions, "draft_nota")
+    await _tap(service, sessions, "channel", "atencion")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg(_NOTA_SECRET), _bot(), live, service, sessions)
+    assert service.draft_calls == [] and service.saved == []
+    m = await _tap(service, sessions, "draft_save")
+    assert _DRAFT_EXPIRED in _shown(m) and service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_channel_switch_with_open_preview_then_text_drafts_nothing():
+    service, sessions = await _preview("pattern", "nuevo_patron | risa | jsjs | uso")
+    await _tap(service, sessions, "channel", "atencion")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("un patrón en texto libre"), _bot(), live,
+                                   service, sessions)
+    assert service.draft_calls == [] and service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_channel_switch_keeps_last_bot_message():
+    sessions = _sessions()
+    sessions.start(_OWNER_ID, "persona_edit", persona_section="fact", persona_target="x",
+                   persona_channel="vip", last_bot_message_id=77, last_chat_id=42)
+    await _tap(_FakePersonaAdmin(_base_catalog()), sessions, "channel", "atencion")
+    live = _live_session(sessions)
+    assert (live.last_bot_message_id, live.last_chat_id) == (77, 42)
+    assert live.persona_section is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("channel", "label"), [("vip", "Canal: VIP"),
+                                                ("atencion", "Canal: Atención")])
+async def test_preview_shows_channel(channel, label):
+    session = _session("pattern")
+    session.persona_channel = channel
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg("nuevo_patron | risa | jsjs | uso"), bot,
+                                   session, _FakePersonaAdmin(_base_catalog()), _sessions())
+    assert label in _bot_text(bot)
+
+
+def test_edit_prompts_say_free_text_works_and_fact_prompts_say_where_privacy_goes():
+    for key in ("fact_edit", "pattern_edit", "policy_edit", "bloque_edit", "operacion_edit"):
+        assert _FREE_TEXT_HINT in _ADD_PROMPTS[key], key
+    for key in ("fact", "fact_edit"):
+        assert _PRIVATE_NOTE_HINT in _ADD_PROMPTS[key], key
+    assert "➕ Nota privada" in _PRIVATE_NOTE_HINT
