@@ -40,18 +40,21 @@ Agregar un dato, una política, un patrón de voz, un dato de Operación o un bl
 - Ahora se puede escribir con tus palabras. El texto va al mismo proveedor de IA que usa Diana, con una espera máxima de 10 s; si no responde (o propone algo inválido), se arma una propuesta sin IA.
 - Antes de guardar siempre aparece una vista previa con ✅ Guardar, ✏️ Corregir, ➕ Nota privada (solo Datos personales) y ✖️ Cancelar. Nada se guarda sin tocar Guardar.
 - La nota privada nunca se envía a la IA, Diana no la usa para responder y la vista previa no muestra su texto. Editar un dato con tus palabras conserva su nota.
-- Cómo se reconoce una nota privada dentro del texto (la misma regla en el texto libre y en el formato `|`):
-  - Cuenta como marcador «Nota privada» al inicio del texto o del campo, o justo después de un punto, un punto y coma o un salto de línea, seguido de «:» o de un guion («-», «–», «—»). Ejemplo: «Tengo un hermano. Nota privada: se llama Juan».
+- Cómo se reconoce una nota privada dentro del texto (la misma regla en el texto libre y en el formato `|` de Datos personales, Políticas, Patrones de voz, Operación y Agenda):
+  - «Nota privada» seguido de «:» cuenta como marcador en cualquier parte del texto, también entre paréntesis o comillas. Ejemplos: «Laura tiene gastritis, nota privada: no lo menciones», «(Nota privada: se llama Juan)».
+  - «Nota privada» seguido de un guion («-», «–», «—») solo cuenta al inicio del texto o del campo, o justo después de un punto, un punto y coma o un salto de línea. Ejemplo: «Tengo un hermano. Nota privada - se llama Juan».
   - También cuenta «(nota privada)» entre paréntesis, con o sin «:» después. Ejemplo: «Laura tiene gastritis (nota privada) no lo menciones».
-  - Se reconocen el plural, «privado», mayúsculas, «nota_privada», «nota-privada», letras de ancho completo y caracteres invisibles.
-  - Una mención en medio de una frase («Guardo mis notas privadas - las releo») no es marcador.
+  - Se reconocen el plural, «privado», mayúsculas, «nota_privada», «nota-privada», letras de ancho completo, caracteres invisibles y cualquier tipo de salto de línea.
+  - Una mención con guion en medio de una frase («Guardo mis notas privadas - las releo») no es marcador en Datos personales.
+- Todo lo que escribes se guarda tal cual: «1º», «nº», «m²», «½», emojis y letras de ancho completo no se cambian. La regla anterior solo se usa para encontrar el marcador.
 - En Datos personales, lo que sigue al marcador se guarda como nota privada y lo anterior como hecho, tanto en el texto libre como en el 3.er campo del formato `|`. La nota nunca se envía a la IA.
 - En el texto libre de Datos personales, si se menciona una nota privada sin marcador, el panel pide aclararlo y no envía nada a la IA. En el formato `|`, esa mención es texto normal.
+- Cómo habla Diana, Reglas de tono, Respuestas libres de Agenda y Zona horaria no revisan notas privadas: lo que escribas ahí se guarda directo. No escribas notas privadas en esas secciones.
 - Al editar, el panel solo indica que el dato tiene nota (no muestra su texto). La nota agregada se conserva al Corregir.
 - La vista previa muestra el canal. Cambiar de canal cierra cualquier alta, edición o vista previa abierta.
 - Un dato cuyo tema apagaría un alias de Operación existente no se guarda (el panel explica por qué).
 - El formato `|` funciona como antes y ahora también muestra una vista previa. En Datos personales, el 4.º campo (`id | temas | hecho | nota`) se guarda como nota privada tal cual.
-- Políticas, Patrones de voz, Operación y Agenda no tienen nota privada. Se rechaza cualquier texto que traiga el marcador, incluido «(nota privada)», tanto en el texto libre como en el formato `|`, porque Diana podría decirlo. Mencionar «nota privada» sin marcador sí se acepta.
+- Políticas, Patrones de voz, Operación y Agenda no tienen nota privada. Se rechaza cualquier texto en que «nota privada» vaya seguida de «:» o de un guion en cualquier parte, o que traiga «(nota privada)», tanto en el texto libre como en el formato `|`, porque Diana podría decirlo. Mencionar «nota privada» sin «:», guion ni paréntesis sí se acepta.
 - La vista previa se guarda en el canal (VIP / atención) donde se escribió; cambiar de canal la descarta.
 - No hay interruptor nuevo.
 

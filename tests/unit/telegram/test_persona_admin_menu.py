@@ -2178,6 +2178,57 @@ _R2_MARKERS = ["Nota privada:", "nota privada -", "Nota privada —", "Nota priv
 _R3_MARKERS = ["Notas privadas:", "nota-privada:", "NOTA  PRIVADO -", "NotaPrivada:",
                "Nota‐privada:", "Nota privado:", "nota‑privada —"]
 
+# --- Review round 5 --------------------------------------------------------
+# R5-1: NFKC/invisible handling is for DETECTION only; the stored text is the
+# original, byte for byte (no marker: as written; marker: cut, ends trimmed).
+_R5_KEEP = [
+    "Quedé en 1º lugar", "Vivo en el nº 2", "el 4.º campo y la 2ª vuelta",
+    "Mi familia 👨‍👩‍👧 y yo", "Mi depa mide 50 m²", "Como ½ pizza…",
+    "Uso Diana™ a diario", "Son las 10\u00a0h", "Me dicen Ｌａｕｒｉｔａ",
+    "ﬁn de semana", "texto con LRM\u200e y RLM\u200f dentro",
+]
+_R5_ROWS: list[tuple[str, str, str, tuple]] = [
+    *[(path, "fact", t, ("ok", t, None)) for t in _R5_KEEP for path in ("free", "pipe")],
+    *[(path, "policy", t, ("ok", t, None)) for t in _R5_KEEP[:4] for path in ("free", "pipe")],
+    ("pipe", "fact", f"Quedé en 1º lugar ½. Nota privada: el nº 2 {_S} 👨‍👩‍👧",
+     ("ok", "Quedé en 1º lugar ½.", f"el nº 2 {_S} 👨‍👩‍👧")),
+    ("free", "fact", f"Mido 50 m². Ｎｏｔａ ｐｒｉｖａｄａ： {_S} ﬁn",
+     ("ok", "Mido 50 m².", f"{_S} ﬁn")),
+    # R5-2: "<word>:" in any position, in parentheses or quotes
+    *[(path, "fact", f"Laura tiene gastritis{sep}nota privada: {_S}", ("ok", f"Laura tiene gastritis{keep}", _S))
+      for sep, keep in ((", ", ""), ("! ", "!"), (" — ", ""), (" ", "")) for path in ("free", "pipe")],
+    *[(path, "fact", f"Laura tiene gastritis {o}Nota privada: {_S}{c}", ("ok", "Laura tiene gastritis", _S))
+      for o, c in (("(", ")"), ('"', '"'), ("«", "»"), ("“", "”"), ("[", "]"))
+      for path in ("free", "pipe")],
+    ("pipe", "fact", f"Laura tiene gastritis «Nota privada»: {_S}", ("ok", "Laura tiene gastritis", _S)),
+    ("pipe", "fact", f"Laura tiene gastritis (Nota privada: {_S}) y más",
+     ("ok", "Laura tiene gastritis", f"{_S}) y más")),
+    ("pipe", "fact", f"Dijo 'hola' nota privada: {_S}", ("ok", "Dijo 'hola'", _S)),
+    ("pipe", "fact", "Tengo un perro, nota privada - vive lejos",      # dash mid-sentence (R4-2)
+     ("ok", "Tengo un perro, nota privada - vive lejos", None)),
+    *[(path, sec, f"{pub}{form}", _NOT_HERE)
+      for path in ("free", "pipe")
+      for sec, pub in (("policy", "No doy precios"), ("pattern", "uso jsjs"),
+                       ("operacion", "Lucien ayuda"), ("bloque", "gimnasio"))
+      for form in (f", nota privada: {_S}", f" Nota privada: {_S}", f" (Nota privada: {_S})",
+                   f' "Nota privada: {_S}"', f" notas privadas - {_S}")],
+    ("free", "policy", "Guardo mis notas privadas - las releo cada año", _NOT_HERE),  # 2ceb244 broad
+    ("pipe", "policy", "Nunca leo notas privadas ajenas", ("ok", "Nunca leo notas privadas ajenas", None)),
+    # R5-3: every Unicode Cf char + U+034F/U+180E ignored for detection
+    *[(path, sec, f"Tengo un perro. No{ch}ta privada: {_S}",
+       ("ok", "Tengo un perro.", _S) if sec == "fact" else _NOT_HERE)
+      for ch in ("\u200e", "\u200f", "\u2061", "\u2064", "\u2066", "\u034f", "\u180e", "\u00ad")
+      for path, sec in (("free", "fact"), ("pipe", "fact"), ("pipe", "policy"))],
+    ("pipe", "fact", f"Tengo un perro.\u200e Nota privada - {_S}", ("ok", "Tengo un perro.", _S)),
+    # R5-3: U+2028, U+2029, U+0085, \r and CRLF are newlines (dash form anchored)
+    *[(path, sec, f"Tengo un perro{nl}Nota privada - {_S}",
+       ("ok", "Tengo un perro", _S) if sec == "fact" else _NOT_HERE)
+      for nl in ("\u2028", "\u2029", "\u0085", "\r", "\r\n")
+      for path, sec in (("free", "fact"), ("pipe", "fact"), ("free", "pattern"))],
+    ("pipe", "fact", f"Tengo un perro\r\nNota privada: {_S}\r\n", ("ok", "Tengo un perro", _S)),
+    ("free", "fact", "Línea uno\r\nLínea dos", ("ok", "Línea uno\r\nLínea dos", None)),
+]
+
 _NOTE_TABLE: list[tuple[str, str, str, tuple]] = [
     # --- Datos · texto libre ------------------------------------------------
     ("free", "fact", f"Tengo un hermano mayor. Nota privada: {_S}", ("ok", "Tengo un hermano mayor.", _S)),
@@ -2185,7 +2236,9 @@ _NOTE_TABLE: list[tuple[str, str, str, tuple]] = [
      ("ok", "Mi mamá se llama Rosa.", "vive en Toluca")),
     *[("free", "fact", f"Tengo un hermano mayor. {m} {_S}", ("ok", "Tengo un hermano mayor.", _S))
       for m in _R2_MARKERS + _R3_MARKERS],
-    *[("free", "fact", f"Tengo un hermano mayor {m} {_S}", _NO_SEP)  # mid-sentence (R4-2)
+    # mid-sentence: "<word>:" is a marker anywhere (R5-2); a dash is not (R4-2)
+    *[("free", "fact", f"Tengo un hermano mayor {m} {_S}",
+       ("ok", "Tengo un hermano mayor", _S) if m[-1] in ":：" else _NO_SEP)
       for m in _R2_MARKERS + _R3_MARKERS],
     ("free", "fact", f"Tengo un hermano mayor (nota privada) {_S}", ("ok", "Tengo un hermano mayor", _S)),
     ("free", "fact", f"Tengo un hermano mayor (Nota privada): {_S}", ("ok", "Tengo un hermano mayor", _S)),
@@ -2218,7 +2271,7 @@ _NOTE_TABLE: list[tuple[str, str, str, tuple]] = [
     ("pipe", "fact", f"Tengo un perro. Ｎｏｔａ ｐｒｉｖａｄａ： {_S}", ("ok", "Tengo un perro.", _S)),
     ("pipe", "fact", f"Tengo un perro.\nNota\u200bprivada: {_S}", ("ok", "Tengo un perro.", _S)),
     ("pipe", "fact", "Tengo un perro nota-privada: vive lejos",
-     ("ok", "Tengo un perro nota-privada: vive lejos", None)),     # mid-sentence: not a marker
+     ("ok", "Tengo un perro", "vive lejos")),                      # R5-2: ":" anywhere
     ("pipe", "fact", "Tengo un perro — Nota privada ‐ vive lejos",
      ("ok", "Tengo un perro — Nota privada ‐ vive lejos", None)),
     ("pipe", "fact", "Guardo mis notas privadas - las releo cada año",
@@ -2261,6 +2314,7 @@ _NOTE_TABLE: list[tuple[str, str, str, tuple]] = [
     ("free", "bloque", f"lunes de 09:00 a 12:00 gimnasio (nota privada) {_S}", _NOT_HERE),
     ("pipe", "bloque", f"en el gimnasio. Nota privada: {_S}", _NOT_HERE),
     ("pipe", "bloque", "escribo notas privadas", ("ok", "escribo notas privadas", None)),
+    *_R5_ROWS,
 ]
 
 _PIPE_LINES = {  # how a single field is embedded in a real | line per section
@@ -2331,3 +2385,14 @@ def test_r4_note_table_covers_every_path_and_section():
     for section in ("fact", "policy", "pattern", "operacion", "bloque"):
         assert {("free", section), ("pipe", section)} <= combos, section
     assert ("pipe-nota", "fact") in combos
+
+
+def test_r5_1_detection_view_maps_every_char_back_to_the_original():
+    from diana.telegram.handlers.persona_admin import _note_detection_view
+
+    text = "ﬁn ½\r\nNo\u200eta\u2028x\u0085y\rz👨‍👩‍👧"
+    view, origin = _note_detection_view(text)
+    assert view == "fin 1⁄2\nNota\nx\ny\nz👨👩👧"
+    assert len(origin) == len(view)
+    assert origin == sorted(origin) and all(0 <= i < len(text) for i in origin)
+    assert text[origin[view.index("Nota")]] == "N" and text[origin[view.index("x")]] == "x"

@@ -84,17 +84,28 @@ _PRIVATE_NOTE_HINT = (
 )
 # Review round 1 (M2): the edit prompt only says a private note exists.
 _NOTA_HIDDEN_LINE = "🔒 Tiene nota privada (no se muestra aquí; se conserva al editar)"
-# Private-note marker: see split_private_note (review round 4, single helper).
+# Private-note marker: see split_private_note (single helper, review rounds 4-5).
 _NOTA_WORD = r"\bnotas?[\s_\-‐‑]*privad[ao]s?\b"
+_NOTA_COLON = r"\s*[»”’\"']?\s*:"   # R5-2: "<word>:" (also «<word>»:) counts anywhere
+_NOTA_DASH = r"[ \t]*[\-–—‐]"
+_NOTA_PAREN = r"\([ \t]*" + _NOTA_WORD + r"[ \t]*\)(?:[ \t]*:)?"
+# Datos: ":" anywhere; dash only at the field start / after ". ; newline"; "( )".
 _NOTA_MARKER_RE = re.compile(
-    # (a) at the start of the field or after ".", ";" or a newline, then ":" / dash
-    r"(?:^|(?<=[.;\n]))[ \t]*(?P<lead>" + _NOTA_WORD + r")[ \t]*[:\-–—‐]"
-    # (b) in parentheses, optionally followed by ":"
-    r"|\([ \t]*(?P<paren>" + _NOTA_WORD + r")[ \t]*\)(?:[ \t]*:)?",
+    _NOTA_WORD + _NOTA_COLON
+    + r"|(?:^|(?<=[.;\n]))[ \t]*" + _NOTA_WORD + _NOTA_DASH
+    + r"|" + _NOTA_PAREN,
     re.IGNORECASE,
 )
+# Other sections only reject, so the broad 2ceb244 form applies: ":" or a dash
+# anywhere, or "( )".
+_NOTA_REJECT_RE = re.compile(
+    _NOTA_WORD + r"(?:" + _NOTA_COLON + r"|\s*[\-–—‐])|" + _NOTA_PAREN, re.IGNORECASE
+)
 _NOTA_MENTION_RE = re.compile(_NOTA_WORD, re.IGNORECASE)
-_ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff\u00ad]")
+# R5-3: ignored for detection (on top of every Unicode "Cf" character).
+_NOTE_INVISIBLE_EXTRA = frozenset("\u034f\u180e")
+_NOTE_LINE_BREAKS = frozenset("\r\u2028\u2029\u0085")
+_NOTE_OPEN_CLOSE = {"(": ")", "[": "]", "«": "»", "“": "”", "‘": "’", '"': '"', "'": "'"}
 _NOTA_PREVIEW_LINE = "🔒 Nota privada: sí"
 _NOTA_NO_SEPARATOR = (
     "No sé qué parte del texto es privada. " + _PRIVATE_NOTE_HINT.strip()
@@ -598,54 +609,122 @@ def apply_persona_item(
     return nuevo
 
 
-def _normalize_note_text(text: str) -> str:
-    r"""NFKC + no zero-width characters (R4-4: «Ｎｏｔａ ｐｒｉｖａｄａ：», «Nota\u200bprivada:»)."""
-    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text or ""))
+def _note_invisible(ch: str) -> bool:
+    return unicodedata.category(ch) == "Cf" or ch in _NOTE_INVISIBLE_EXTRA
+
+
+def _note_detection_view(text: str) -> tuple[str, list[int]]:
+    r"""Detection copy of ``text`` + offset map (review round 5, R5-1/R5-3).
+
+    Built char by char so every char of the copy maps back to the ORIGINAL
+    index it came from (NFKC can change the length: «ﬁ» → «fi», «½» → «1⁄2»):
+    NFKC per char; Unicode "Cf" chars, U+034F and U+180E dropped; U+2028,
+    U+2029, U+0085, ``\r`` and CRLF → one ``\n``. ``origin[j]`` is the original
+    index of ``view[j]``. The copy is only searched, never stored.
+    """
+    out: list[str] = []
+    origin: list[int] = []
+    for i, ch in enumerate(text):
+        if ch in _NOTE_LINE_BREAKS:
+            if ch == "\r" and text[i + 1 : i + 2] == "\n":
+                continue  # CRLF: the "\n" stands for both
+            piece = "\n"
+        elif _note_invisible(ch):
+            continue
+        else:
+            piece = unicodedata.normalize("NFKC", ch)
+        out.append(piece)
+        origin.extend([i] * len(piece))
+    return "".join(out), origin
+
+
+def _trim_note_edge(text: str, extra: str) -> str:
+    """Trim whitespace, invisible chars and ``extra`` from both ends only."""
+    def junk(ch: str) -> bool:
+        return ch.isspace() or _note_invisible(ch) or ch in extra
+
+    lo, hi = 0, len(text)
+    while lo < hi and junk(text[lo]):
+        lo += 1
+    while hi > lo and junk(text[hi - 1]):
+        hi -= 1
+    return text[lo:hi]
 
 
 def split_private_note(
     text: str, *, path: Literal["free", "pipe"], section: str
 ) -> tuple[str, str | None]:
-    r"""THE single private-note helper (review round 4). Every panel path calls it.
+    r"""THE single private-note marker helper (review rounds 4-5).
+
+    Who calls it (R5-4) — exactly these three places, nothing else:
+      * ``_draft_free_text``: free text of the preview sections (Datos
+        personales, Políticas, Patrones de voz, Operación, Agenda);
+      * ``_parse_fact``: the hecho (3rd field) of a Datos ``|`` line;
+      * ``_handle_preview_text``: every ``|`` field of Políticas, Patrones,
+        Operación and Agenda (checked only; the line is saved as before).
+    NOT covered (saved directly, no helper, no preview — residual R-8): Cómo
+    habla Diana, Reglas de tono, Respuestas libres de Agenda (default),
+    Zona horaria, and the text of the ➕ Nota privada button / the 4th ``|``
+    field of a Dato (those ARE the note, kept as written).
 
     Contract:
 
-    1. The text is normalized with NFKC and stripped of zero-width characters
-       (and of the panel's own note lines if the owner pasted them). The
-       returned text is the normalized one.
-    2. One word pattern ``\bnotas?[\s_\-‐‑]*privad[ao]s?\b`` (any case). It is a
-       MARKER only in these forms:
-         a. at the start of the field, or right after ``.``, ``;`` or a
-            newline, followed by ``:`` or a dash (``-`` ``–`` ``—`` ``‐``);
-         b. in parentheses ``(nota privada)``, with or without a following ``:``.
-       Anything else ("Guardo mis notas privadas - las releo") is a plain mention.
-    3. ``section == "fact"`` (Datos personales), ``path`` "free" or "pipe"
-       (the hecho field): the text after the first marker is the note, the
-       text before it is the hecho → ``(hecho, nota)``. No marker → ``(text, None)``.
-       The 4th ``|`` field is the note as written and never goes through here.
+    1. Detection runs on a normalized COPY: NFKC per char, every Unicode "Cf"
+       char plus U+034F / U+180E dropped, U+2028 / U+2029 / U+0085 / ``\r`` /
+       CRLF read as a newline. What is returned (and stored) is always the
+       ORIGINAL text: byte-identical when there is no marker (only the ends
+       are stripped, as before); with a marker, the original is cut at the
+       marker and only the two cut ends are trimmed. The panel's own note
+       lines (``_NOTA_HIDDEN_LINE``, ``_NOTA_PREVIEW_LINE``) are removed first.
+    2. Word pattern ``\bnotas?[\s_\-‐‑]*privad[ao]s?\b`` (any case; plural,
+       gender, ``_``/``-``, full width and invisible chars all match). In Datos
+       it is a MARKER only in these forms:
+         a. followed by ``:`` in ANY position — also «(Nota privada: X)»,
+            «"Nota privada: X"», «Nota privada»: X» (R5-2);
+         b. followed by a dash (``-`` ``–`` ``—`` ``‐``) only at the start of the
+            field or right after ``.``, ``;`` or a newline (R4-2: «Guardo mis
+            notas privadas - las releo» is a plain mention);
+         c. in parentheses ``(nota privada)``, with or without a following ``:``.
+    3. ``section == "fact"`` (Datos personales), free text or the ``|`` hecho:
+       the text after the first marker is the note, the text before it is the
+       hecho → ``(hecho, nota)``. If the marker sits right after an opening
+       bracket/quote, that opener is dropped from the hecho and the matching
+       closer from the end of the note. No marker → ``(text, None)``.
     4. Any other section (policy, pattern, operacion, bloque; ``|`` fields or
-       free text): a marker → ``ValueError(_NOTA_NOT_IN_SECTION)``; a plain
-       mention is accepted → ``(text, None)``.
+       free text) only rejects, with the broad 2ceb244 form: the word followed
+       by ``:`` or a dash ANYWHERE, or ``(nota privada)`` →
+       ``ValueError(_NOTA_NOT_IN_SECTION)``. A plain mention is accepted.
     5. Datos free text only (it goes to the LLM): a plain mention with no
        marker — in the whole text, or left in the hecho part — →
        ``ValueError(_NOTA_NO_SEPARATOR)``.
     """
-    text = _normalize_note_text(text)
+    text = text or ""
     for line in (_NOTA_HIDDEN_LINE, _NOTA_PREVIEW_LINE):
         text = text.replace(line, " ")
-    match = _NOTA_MARKER_RE.search(text)
+    view, origin = _note_detection_view(text)
     if section != "fact":
-        if match is not None:
+        if _NOTA_REJECT_RE.search(view):
             raise ValueError(_NOTA_NOT_IN_SECTION)
         return text.strip(), None
+    match = _NOTA_MARKER_RE.search(view)
     if match is None:
-        if path == "free" and _NOTA_MENTION_RE.search(text):
+        if path == "free" and _NOTA_MENTION_RE.search(view):
             raise ValueError(_NOTA_NO_SEPARATOR)
         return text.strip(), None
-    hecho = text[: match.start()].strip(" \t\n,;:-–—‐")
-    nota = text[match.end():].strip(" \t\n:-–—‐")
-    if path == "free" and _NOTA_MENTION_RE.search(hecho):
+    if path == "free" and _NOTA_MENTION_RE.search(view[: match.start()]):
         raise ValueError(_NOTA_NO_SEPARATOR)
+    cut_start = origin[match.start()]
+    cut_end = origin[match.end() - 1] + 1
+    hecho = _trim_note_edge(text[:cut_start], "")
+    nota = _trim_note_edge(text[cut_end:], ":：-–—‐‑")
+    closer = _NOTE_OPEN_CLOSE.get(hecho[-1:]) if hecho else None
+    if hecho[-1:] in ("'", '"') and hecho[-2:-1].strip():
+        closer = None  # a straight quote closing a word, not opening the marker
+    if closer is not None:
+        hecho = _trim_note_edge(hecho[:-1], "")
+        if nota.endswith(closer):
+            nota = _trim_note_edge(nota[: -len(closer)], "")
+    hecho = _trim_note_edge(hecho, ",;:：-–—‐‑")
     return hecho, nota or None
 
 
