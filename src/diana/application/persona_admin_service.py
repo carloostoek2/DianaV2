@@ -16,7 +16,7 @@ from uuid import UUID
 
 from diana.application.admin_service import OwnerAuthError
 from diana.application.ports import PersonaAdminStore, PersonaVersionRecord
-from diana.cognitive.operacion import validate_operacion_semantics
+from diana.cognitive.operacion import OPERACION_KEY, validate_operacion_semantics
 from diana.cognitive.persona_catalog import validate_persona_catalog
 
 logger = logging.getLogger("diana.application")
@@ -110,9 +110,16 @@ class PersonaAdminService:
         _assert_channel(channel_type)
         validated = validate_persona_catalog(dict(payload))
         # Write-path-only alias policy for "operacion" (length / common words /
-        # collision with persona_facts temas). Read path stays shape-only so
-        # a policy change never invalidates an already-active catalog.
-        validate_operacion_semantics(validated)
+        # collision with persona_facts temas), applied ONLY to the aliases that
+        # are new vs the active version of THIS channel: an alias stored under
+        # an older, looser policy never blocks saving another section (the
+        # runtime ignores it and the panel warns). Read path stays shape-only
+        # so a policy change never invalidates an already-active catalog.
+        previous: dict[str, Any] | None = None
+        if validated.get(OPERACION_KEY):
+            active = await self._store.get_active(channel_type=channel_type)
+            previous = active.payload if active is not None else None
+        validate_operacion_semantics(validated, previous=previous)
         # GLOBAL version counter: ``uq_persona_versions_version`` is a unique
         # index over ``version`` across every channel, so next_version must be
         # computed from ALL versions (PLAN A2), not per channel — otherwise a

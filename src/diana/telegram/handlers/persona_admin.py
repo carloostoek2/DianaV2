@@ -25,6 +25,7 @@ from diana.application.persona_admin_service import PersonaAdminService
 from diana.cognitive.operacion import (
     OPERACION_ID_MAX_BYTES,
     OPERACION_KEY,
+    alias_issues,
     validate_operacion_semantics,
 )
 from diana.cognitive.persona_catalog import (
@@ -51,6 +52,16 @@ _PERSONA_BACK = encode_menu("personalidad")
 _OPERACION_RESTORE_NOTE = (
     "\n\n⚠️ Ojo: restaurar una versión anterior a «⚙️ Operación» deja la "
     "sección Operación vacía (tendrás que volver a capturarla)."
+)
+# B7: aliases stored under an older, looser rule are ignored by Diana; the
+# panel says so (it never blocks a save).
+_OPERACION_IGNORED_HEADER = (
+    "\n\n⚠️ Alias que Diana no usa (no cumplen la regla actual; edítalos o "
+    "quítalos):"
+)
+_OPERACION_IGNORED_LIST_NOTE = (
+    "\n\n⚠️ Los elementos marcados tienen alias que Diana no usa. Ábrelos "
+    "para ver por qué."
 )
 
 # Item sections → (prompt hint when a wizard captures text).
@@ -119,13 +130,18 @@ _ADD_PROMPTS: dict[str, str] = {
         "id | alias1, alias2 | hecho\n"
         "Ej: lucien | Lucien, el mayordomo | Lucien es el bot administrador del canal VIP.\n"
         "Si el cliente menciona un alias (palabra o frase completa), Diana recibe el "
-        "hecho y puede explicárselo. Alias de mínimo 4 letras, sin palabras comunes "
-        "(canal, bot, admin, hola…) ni temas de Datos personales.\n"
+        "hecho y puede explicárselo. Los artículos del inicio o del final son "
+        "opcionales: «el mayordomo» también responde a «mayordomo».\n"
+        "Alias de mínimo 4 letras (3 si es un nombre propio con mayúscula, como "
+        "«Ana»), sin palabras comunes (canal, bot, admin, hola, sol, mar…) ni temas "
+        "de Datos personales.\n"
         "Usa /cancelar para abortar."
     ),
     "operacion_edit": (
         "⚙️ Envíame el dato con este formato (puedes cambiar id, alias o hecho):\n"
-        "id | alias1, alias2 | hecho\nUsa /cancelar para abortar."
+        "id | alias1, alias2 | hecho\n"
+        "Los alias nuevos siguen las mismas reglas que al agregar.\n"
+        "Usa /cancelar para abortar."
     ),
     "timezone": (
         "🗓️ Envíame la zona horaria nueva (ej: America/Mexico_City).\n"
@@ -413,8 +429,10 @@ def apply_persona_edit(
             parser=_parse_operacion, by_id=True, allow_empty=True,
         )
         if op == "operacion":
-            # Alias policy (min length, common words, persona_facts temas).
-            validate_operacion_semantics(nuevo)
+            # Alias policy (min length, common words, persona_facts temas) for
+            # the aliases this edit adds; the ones already stored never block
+            # (they are flagged with ⚠️ in the list/detail instead).
+            validate_operacion_semantics(nuevo, previous=base)
         return nuevo
 
     raise ValueError(f"operación de personalidad desconocida: {op}")
@@ -559,8 +577,13 @@ def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str
         return [(str(i), f"💬 {_truncate(d, 70)}") for i, d in enumerate(defaults)]
     if section == "operacion":
         items = catalog.get(OPERACION_KEY) or []
+        flagged = {issue.id for issue in alias_issues(catalog)}
         return [
-            (str(o.get("id")), f"⚙️ {o.get('id')} — {_truncate(o.get('hecho', ''), 60)}")
+            (
+                str(o.get("id")),
+                f"{'⚠️' if str(o.get('id')) in flagged else '⚙️'} {o.get('id')} — "
+                f"{_truncate(o.get('hecho', ''), 60)}",
+            )
             for o in items
             if isinstance(o, dict)
         ]
@@ -648,7 +671,13 @@ def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | No
         for o in catalog.get(OPERACION_KEY) or []:
             if isinstance(o, dict) and str(o.get("id")) == key:
                 alias = ", ".join(o.get("alias") or [])
-                return f"⚙️ {o.get('id')}\nAlias: {alias}\nHecho: {o.get('hecho')}"
+                text = f"⚙️ {o.get('id')}\nAlias: {alias}\nHecho: {o.get('hecho')}"
+                ignored = [i for i in alias_issues(catalog) if i.id == key]
+                if ignored:
+                    text += _OPERACION_IGNORED_HEADER + "".join(
+                        f"\n• {i.reason}" for i in ignored
+                    )
+                return text
         return None
 
     return None
@@ -862,6 +891,8 @@ async def dispatch_personalidad(
             "operacion": "operacion_add",
         }[action]
         empty_note = _OPERACION_RESTORE_NOTE if action == "operacion" else ""
+        if action == "operacion" and alias_issues(catalog):
+            empty_note = _OPERACION_IGNORED_LIST_NOTE + empty_note
         if not items:
             await _show(
                 message,
