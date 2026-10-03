@@ -39,7 +39,11 @@ from diana.cognitive.models import (
 from diana.profile_content import normalize_content
 from diana.cognitive.exceptions import TurnSupersededError
 from diana.cognitive.repetition_guard import RepetitionGuard
-from diana.cognitive.tags import catalog_fact_topics
+from diana.cognitive.tags import (
+    catalog_fact_topics,
+    catalog_pattern_tags,
+    catalog_policy_topics,
+)
 from diana.cognitive.template_gate import (
     TemplateGate,
     TemplateRule,
@@ -48,6 +52,7 @@ from diana.cognitive.template_gate import (
     detect_phatic_subtype,
     pick_checkin_reply,
 )
+from diana.cognitive.persona_semantic import build_shadow_snapshot
 from diana.cognitive.planner import Planner
 
 from diana.cognitive.ports import (
@@ -245,6 +250,10 @@ class CognitiveDirector:
         # knowledge.operacion. Injected bool — never import Settings here.
         # False → pipeline (and prompt) byte-identical to the pre-feature path.
         feature_persona_operacion_enabled: bool = False,
+        # FEATURE_PERSONA_SEMANTIC_SHADOW (SHADOW — only measures): duck-typed
+        # PersonaSemanticShadow; gets a snapshot of strings after retrieval and
+        # runs in background. None (default) → no hook at all.
+        persona_semantic_shadow: Any | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -280,6 +289,7 @@ class CognitiveDirector:
         self._feature_persona_operacion_enabled = bool(
             feature_persona_operacion_enabled
         )
+        self._persona_semantic_shadow = persona_semantic_shadow
 
     async def _resolve_persona(
         self, channel_type: str = "vip"
@@ -440,18 +450,8 @@ class CognitiveDirector:
             turn, comprehension
         )
         await self._store(turn_id, "comprehension", comprehension)
-        if operacion_hits:
-            await self._store(
-                turn_id,
-                "operacion_match",
-                {
-                    "channel_type": turn.channel_type,
-                    "matched": [
-                        {"id": hit.id, "alias": hit.alias} for hit in operacion_hits
-                    ],
-                    "injected_ids": [hit.id for hit in operacion_hits],
-                },
-            )
+        # operacion_match is traced right before EVERY exit below (early exits
+        # never inject; see _store_operacion_match).
         logger.info(
             "🧠 Comprensión — intent: %s | emoción: %s | urgencia: %s | riesgo: %s",
             comprehension.intent,
@@ -485,6 +485,7 @@ class CognitiveDirector:
                     )
                     await self._store(turn_id, "generated_text", draft)
                     await self._store(turn_id, "decision", decision)
+                    await self._store_operacion_match(turn, operacion_hits, injected=False)
                     return decision
 
         # Post-Analyst check-in cut: pools + light context; send when phatic_auto_send.
@@ -528,6 +529,7 @@ class CognitiveDirector:
                         )
                         await self._store(turn_id, "generated_text", draft)
                         await self._store(turn_id, "decision", decision)
+                        await self._store_operacion_match(turn, operacion_hits, injected=False)
                         return decision
 
         # H4: 3+ consecutive same intent → Decision-only escalate (no Planner+).
@@ -562,6 +564,7 @@ class CognitiveDirector:
                     mode_restriction_applied=None,
                 )
                 await self._store(turn_id, "decision", decision)
+                await self._store_operacion_match(turn, operacion_hits, injected=False)
                 return decision
 
         await self._status.transition(turn_id, TurnStatus.PLANNING)
@@ -570,6 +573,11 @@ class CognitiveDirector:
         timings["planner_ms"] = tc.elapsed_ms
         await self._store(turn_id, "plan", plan)
         logger.info("🗺️ Plan — capacidades: %s", ", ".join(plan.capabilities))
+        # Retrieval injects the trigger's hits only when the plan asks for
+        # knowledge.operacion (Planner 1:1 with needs_operacion): trace exactly that.
+        await self._store_operacion_match(
+            turn, operacion_hits, injected=_OPERACION_CAPABILITY in plan.capabilities
+        )
 
         await self._status.transition(turn_id, TurnStatus.RETRIEVING)
         retrieved: dict[str, Any | None] = {}
@@ -594,6 +602,16 @@ class CognitiveDirector:
             # signals "retrieval ran with no capabilities" vs "retrieval had
             # a pre-loop exception" (in which case the turn is failed anyway).
             await self._store(turn_id, "retrieved", retrieved)
+
+        # SHADOW (E1): fire-and-forget; the turn never awaits nor reads it and
+        # nothing it does can change the prompt, retrieved map or trace.
+        if self._persona_semantic_shadow is not None:
+            try:
+                self._persona_semantic_shadow.schedule(
+                    build_shadow_snapshot(turn, retrieved, operacion_hits)
+                )
+            except Exception:
+                logger.warning("persona_semantic_shadow_schedule_failed", exc_info=True)
 
         # Aggregate retriever timings by type (only when no exception occurred).
         if retriever_timings:
@@ -782,22 +800,32 @@ class CognitiveDirector:
         mapped = self._map_history_messages(raw)
         if limit > 0 and len(mapped) > limit:
             mapped = mapped[-limit:]
+        fact_topics, policy_topics, voice_tags = await self._catalog_vocabulary(
+            turn.channel_type
+        )
         return AnalystInput(
             turno_actual=turn.text,
             historial_reciente=mapped,
             channel_type=turn.channel_type,
-            catalog_topics=await self._catalog_topics(turn.channel_type),
+            catalog_topics=fact_topics,
+            policy_topics=policy_topics,
+            voice_tags=voice_tags,
         )
 
-    async def _catalog_topics(self, channel_type: str) -> list[str]:
-        """Normalized persona-fact temas of the ACTIVE catalog for the channel.
+    async def _catalog_vocabulary(
+        self, channel_type: str
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Normalized Analyst vocabulary of the ACTIVE catalog for the channel.
 
-        Fail-soft: no provider / read failure → ``[]`` (Analyst keeps the fixed
-        topic vocabulary, i.e. the pre-change behavior). The provider is cached
+        Returns ``(fact_topics, policy_topics, voice_tags)`` derived from ONE
+        ``get_catalog(channel_type)`` read, so all three blocks always come
+        from the same channel (VIP/atencion isolation). Fail-soft: no provider
+        / read failure → three empty lists (Analyst keeps the fixed
+        vocabulary, i.e. the pre-change behavior). The provider is cached
         (0 DB reads in steady state), so this adds no per-turn query.
         """
         if self._persona_catalog_provider is None:
-            return []
+            return [], [], []
         try:
             catalog = await self._persona_catalog_provider.get_catalog(channel_type)
         except Exception:
@@ -806,8 +834,14 @@ class CognitiveDirector:
                 extra={"channel_type": channel_type},
                 exc_info=True,
             )
-            return []
-        return catalog_fact_topics(catalog)
+            return [], [], []
+        # Uncapped here: the 60-term prompt budget is split fairly per type
+        # by the Analyst (tags.fair_share_limits), so the log sees real sizes.
+        return (
+            catalog_fact_topics(catalog, limit=None),
+            catalog_policy_topics(catalog),
+            catalog_pattern_tags(catalog),
+        )
 
     @staticmethod
     def _drop_open_vip_burst(raw: list[dict]) -> list[dict]:
@@ -932,6 +966,29 @@ class CognitiveDirector:
                 update={"needs_operacion": bool(hits)}
             )
         return comprehension, hits
+
+    async def _store_operacion_match(
+        self, turn: IncomingTurn, hits: list[Any], *, injected: bool
+    ) -> None:
+        """Trace ``operacion_match`` honestly; no-op without hits.
+
+        Early exits (saludo / check-in / H4) call it with ``injected=False``
+        (``injected_ids == []``); the retrieval path with the ids it really
+        injects. In-process trace only: ``SqlTraceStore`` drops keys that are
+        not in ``TRACE_KEY_TO_COLUMN``, so this never reaches the database.
+        """
+        if not hits:
+            return
+        await self._store(
+            turn.turn_id,
+            "operacion_match",
+            {
+                "channel_type": turn.channel_type,
+                "matched": [{"id": hit.id, "alias": hit.alias} for hit in hits],
+                "injected_ids": [hit.id for hit in hits] if injected else [],
+                "injected": injected,
+            },
+        )
 
     async def _store(self, turn_id: UUID, key: str, value: Any) -> None:
         await self._trace.store(turn_id, key, to_jsonable(value))

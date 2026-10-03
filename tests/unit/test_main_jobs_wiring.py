@@ -116,3 +116,28 @@ def test_main_cancels_profile_synthesis_job(_main_src: str) -> None:
     assert finally_idx != -1
     finally_block = _main_src[finally_idx:]
     assert "profile_synthesis_job" in finally_block
+
+
+# --- hardener/persona-reglas ítem 3 (D1): warmup de embeddings en background ---
+
+
+def test_main_imports_embedding_warmup_job(_main_src: str) -> None:
+    assert "from diana.jobs.embedding_warmup import EmbeddingWarmupJob" in _main_src
+
+
+def test_main_starts_embedding_warmup_job(_main_src: str) -> None:
+    assert "embedding_warmup_job = _setup_embedding_warmup_job(app)" in _main_src
+
+
+def test_embedding_warmup_starts_before_polling_and_is_not_awaited(_main_src: str) -> None:
+    assert _main_src.index("embedding_warmup_job = _setup_embedding_warmup_job(app)") < (
+        _main_src.index("start_polling(")
+    )
+    assert "await _setup_embedding_warmup_job" not in _main_src
+
+
+def test_main_cancels_embedding_warmup_job(_main_src: str) -> None:
+    body = _main_src[_main_src.index("async def async_main"):]
+    finally_idx = body.rfind("    finally:\n        # Stop new jobs first")
+    assert finally_idx != -1
+    assert '_cancel_job(embedding_warmup_job, "embedding_warmup_job")' in body[finally_idx:]

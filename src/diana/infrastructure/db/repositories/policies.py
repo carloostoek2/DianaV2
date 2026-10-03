@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import Policy  # noqa: TCH001
+
+EMBEDDING_DIM = 384
+ZERO_EMBEDDING: tuple[float, ...] = (0.0,) * EMBEDDING_DIM
+
+
+def zero_embedding_clause(column: Any) -> Any:
+    """True for the zero-vector marker (pending re-embed, G-D1)."""
+    return column == list(ZERO_EMBEDDING)
 
 
 def vip_id_visibility_clause(column, vip_id: UUID | None):
@@ -51,7 +60,7 @@ class PoliciesRepo:
     ) -> Policy:
         async with self._sf() as session:
             row = Policy(
-                embedding=embedding or [0.0] * 384,
+                embedding=embedding or list(ZERO_EMBEDDING),
                 trigger_description=trigger_description,
                 rule=rule,
                 scope=scope,
@@ -132,6 +141,33 @@ class PoliciesRepo:
             await session.commit()
             return result.rowcount > 0
 
+    async def list_active_zero_embedding(self, *, limit: int = 50) -> list[Policy]:
+        """Active policies still carrying the zero-vector marker (G-D1 repair)."""
+        async with self._sf() as session:
+            stmt = (
+                select(Policy)
+                .where(
+                    Policy.is_active.is_(True),
+                    zero_embedding_clause(Policy.embedding),
+                )
+                .order_by(Policy.created_at)
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def set_embedding(self, policy_id: UUID, embedding: list[float]) -> None:
+        """Overwrite a policy's embedding (repair of the zero marker)."""
+        from sqlalchemy import update
+
+        async with self._sf() as session:
+            await session.execute(
+                update(Policy)
+                .where(Policy.id == policy_id)
+                .values(embedding=embedding)
+            )
+            await session.commit()
+
     async def find_active_by_source_query_id(
         self, source_query_id: UUID
     ) -> Policy | None:
@@ -150,4 +186,11 @@ class PoliciesRepo:
             return result.scalars().first()
 
 
-__all__ = ["PoliciesRepo", "policy_to_dict", "vip_id_visibility_clause"]
+__all__ = [
+    "EMBEDDING_DIM",
+    "PoliciesRepo",
+    "ZERO_EMBEDDING",
+    "policy_to_dict",
+    "vip_id_visibility_clause",
+    "zero_embedding_clause",
+]

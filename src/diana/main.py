@@ -8,6 +8,7 @@ import sys
 
 from diana.application.logformat import ColorExtraFormatter
 from diana.application.missed_message_recovery import recover_missed_updates
+from diana.application.policy_embedding import PolicyEmbeddingRepairService
 from diana.composition import (
     AppContainer,
     build_app,
@@ -20,6 +21,7 @@ from diana.config import Settings
 from diana.jobs.agent_data_purge import AgentDataPurgeJob
 from diana.jobs.backfill import BackfillJob
 from diana.jobs.calibration import CalibrationJob
+from diana.jobs.embedding_warmup import EmbeddingWarmupJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
 from diana.jobs.metrics import MetricsJob
 from diana.jobs.outcome_reaction import OutcomeReactionJob
@@ -100,6 +102,9 @@ async def async_main() -> None:
     except BaseException:
         logger.exception("pre_delay_recovery_failed")
 
+    # hardener/persona-reglas ítem 3 (D1): embedding warmup in background
+    # (model load runs in a worker thread; polling never waits for it).
+    embedding_warmup_job = _setup_embedding_warmup_job(app)
     # F2 Item 4: start gray zone expiration background job.
     expiration_job = _setup_expiration_job(app)
     purge_job = _setup_purge_job(app)
@@ -154,6 +159,7 @@ async def async_main() -> None:
             await health.stop()
     finally:
         # Stop new jobs first, then existing F2/F3 jobs.
+        await _cancel_job(embedding_warmup_job, "embedding_warmup_job")
         await _cancel_job(backfill_job, "backfill_job")
         await _cancel_job(history_reimport_job, "history_reimport_job")
         await _cancel_job(profile_synthesis_job, "profile_synthesis_job")
@@ -164,6 +170,20 @@ async def async_main() -> None:
         await _cancel_job(purge_job, "purge_job")
         await _cancel_job(agent_purge_job, "agent_purge_job")
         await _cancel_job(expiration_job, "expiration_job")
+
+
+def _setup_embedding_warmup_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the embedding warmup job (non-awaited task; never delays polling)."""
+    if app.embedding_svc is None:
+        logger.info("embedding_warmup_job_skipped_no_embedder")
+        return None
+    repair = None
+    if app.policies_repo is not None:
+        repair = PolicyEmbeddingRepairService(app.policies_repo, app.embedding_svc)
+    job = EmbeddingWarmupJob(app.embedding_svc, repair=repair)
+    task = asyncio.create_task(job.start())
+    logger.info("embedding_warmup_job_started")
+    return task
 
 
 def _setup_expiration_job(app: AppContainer) -> asyncio.Task | None:

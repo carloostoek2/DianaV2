@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     feature_persona_operacion_enabled: bool = False
     # Max operación facts injected per turn (separate from persona facts).
     persona_operacion_max_per_turn: Annotated[int, Field(ge=1, le=5)] = 2
+    # SHADOW: solo mide; nunca cambia el prompt. Background semantic comparison
+    # of the client message vs the channel catalog (ids + scores in the
+    # ``persona_semantic_shadow`` log; no text, no DB). hardener/persona-reglas E1.
+    feature_persona_semantic_shadow: bool = False
 
     # F4 general mode (non-VIP atencion channel) — env-driven, default off.
     feature_general_mode_enabled: bool = False

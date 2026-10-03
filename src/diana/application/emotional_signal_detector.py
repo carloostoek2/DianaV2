@@ -16,6 +16,7 @@ from typing import Any
 
 from diana.application.ports import EmotionalSignalRecord
 from diana.cognitive.models import Comprehension, SignalType
+from diana.cognitive.tags import normalize_tag
 
 logger = logging.getLogger("diana.application")
 
@@ -34,11 +35,14 @@ _VULNERABILITY_EMOTIONS = frozenset({"triste", "ansiosa"})
 _PERSONAL_OPENING_INTENTS = frozenset(
     {"pedir_consejo", "contar_anecdota", "compartir_logro"}
 )
-# ``honestidad``/``extrañar`` are analyst "useful tags" (analyst.py:44-53),
+# ``honestidad``/``extrañar`` are analyst "useful tags" (analyst._SYSTEM),
 # not mandatory topics — match both sets; a missing tag is simply "no signal".
 _REVELATION_TOPICS = frozenset(
     {"honestidad", "tema_pesado", "extrañar", "reencuentro", "conexion"}
 )
+# Canonical forms (``extrañar`` → ``extranar``): the Analyst addendum lists
+# catalog voice tags normalized, so the topic may arrive in either form.
+_REVELATION_TOPICS_NORM = frozenset(normalize_tag(t) for t in _REVELATION_TOPICS)
 _WARM_EMOTIONS = frozenset({"positiva", "cariñosa"})
 _COLD_EMOTIONS = frozenset({"triste", "ansiosa", "molesta"})
 
@@ -173,7 +177,7 @@ class EmotionalSignalDetector:
             )
 
         # revelacion_de_vida (0.5): topics intersect revelation set.
-        if bool(topics & _REVELATION_TOPICS):
+        if bool({normalize_tag(t) for t in topics} & _REVELATION_TOPICS_NORM):
             return self._build(
                 signal_type="revelacion_de_vida",
                 intensity=0.5,

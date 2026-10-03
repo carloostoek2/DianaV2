@@ -59,3 +59,25 @@ def test_policy_to_dict_includes_vip_id() -> None:
     row.vip_id = None
     out = policies_mod.policy_to_dict(row)  # type: ignore[arg-type]
     assert out["vip_id"] is None
+
+
+# --- D2 (hardener/persona-reglas ítem 3): zero-vector pending marker ---
+
+
+def test_zero_embedding_clause_compiles_to_literal_zero_vector() -> None:
+    clause = policies_mod.zero_embedding_clause(Policy.embedding)
+    compiled = clause.compile(dialect=postgresql.dialect())
+    sql = str(compiled)
+    assert "policies.embedding =" in sql
+    params = list(compiled.params.values())
+    assert len(params) == 1
+    literal = list(params[0])
+    assert len(literal) == 384
+    assert not any(literal)
+
+
+def test_zero_embedding_constant_matches_insert_default() -> None:
+    assert len(policies_mod.ZERO_EMBEDDING) == policies_mod.EMBEDDING_DIM == 384
+    assert not any(policies_mod.ZERO_EMBEDDING)
+    assert "ZERO_EMBEDDING" in policies_mod.__all__
+    assert "zero_embedding_clause" in policies_mod.__all__

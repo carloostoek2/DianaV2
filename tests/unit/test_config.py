@@ -545,3 +545,26 @@ def test_feature_force_profile_when_notes_can_disable(
     settings = Settings()
     assert settings.feature_force_profile_when_notes is False
 
+
+
+
+def test_persona_semantic_shadow_defaults_off(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """hardener/persona-reglas ítem 3 (E1): SHADOW flag is off by default."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    assert Settings().feature_persona_semantic_shadow is False
+
+
+def test_persona_semantic_shadow_env_true(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("FEATURE_PERSONA_SEMANTIC_SHADOW", "true")
+    assert Settings().feature_persona_semantic_shadow is True

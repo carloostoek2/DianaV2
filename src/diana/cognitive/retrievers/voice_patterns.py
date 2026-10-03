@@ -13,10 +13,11 @@ from collections import Counter
 
 from diana.cognitive.models import Comprehension, IncomingTurn
 from diana.cognitive.ports import PersonaCatalogProvider
+from diana.cognitive.tags import normalize_tag, normalize_tags
 
 
 def _norm(token: object) -> str:
-    return str(token).strip().lower()
+    return normalize_tag(token)
 
 
 class VoicePatternsRetriever:
@@ -39,7 +40,7 @@ class VoicePatternsRetriever:
         self._patterns[channel_type] = list(patterns)
         self._tag_freq[channel_type] = Counter()
         for pattern in self._patterns[channel_type]:
-            for tag in set(_norm(t) for t in pattern.get("tags", [])):
+            for tag in set(normalize_tags(pattern.get("tags"))):
                 self._tag_freq[channel_type][tag] += 1
 
     async def _maybe_refresh(self, channel_type: str) -> None:
@@ -78,15 +79,13 @@ class VoicePatternsRetriever:
         signals = {
             _norm(comprehension.emotion),
             _norm(comprehension.intent),
-            *(_norm(t) for t in comprehension.topics if str(t).strip()),
+            *(_norm(t) for t in comprehension.topics),
         }
+        signals.discard("")
         best: dict[str, str] | None = None
         best_score = 0.0
         for pattern in patterns:
-            tags = pattern.get("tags") or []
-            if not isinstance(tags, list):
-                tags = [tags]
-            tag_set = {_norm(t) for t in tags if str(t).strip()}
+            tag_set = set(normalize_tags(pattern.get("tags")))
             inter = signals & tag_set
             if not inter:
                 continue

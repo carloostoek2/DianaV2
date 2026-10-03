@@ -9,7 +9,10 @@ from uuid import uuid4
 import pytest
 
 from diana.application.admin_service import OwnerAuthError
-from diana.application.persona_admin_service import PersonaAdminService
+from diana.application.persona_admin_service import (
+    PersonaAdminService,
+    canonicalize_persona_payload,
+)
 from diana.application.ports import PersonaVersionRecord
 from diana.cognitive.persona_catalog import load_persona_catalog
 
@@ -208,7 +211,8 @@ async def test_roundtrip_save_then_get_current_persona() -> None:
     service = _make_service(store)
     await service.save_persona(OWNER_ID, _valid_catalog())
     current = await service.get_current_persona()
-    assert current == _valid_catalog()
+    # M1: the static VIP catalog has tags with ñ → stored in canonical form.
+    assert current == canonicalize_persona_payload(_valid_catalog())
 
 
 class _RaiseOnActivateStore(_MemoryPersonaAdminStore):
@@ -342,7 +346,7 @@ async def test_get_current_persona_channel_scoped() -> None:
     assert await service.get_current_persona(channel_type="vip") is None
     atencion_current = await service.get_current_persona(channel_type="atencion")
     assert atencion_current is not None
-    assert atencion_current == _valid_catalog()
+    assert atencion_current == canonicalize_persona_payload(_valid_catalog())
 
 
 @pytest.mark.asyncio
@@ -460,3 +464,118 @@ async def test_on_change_not_called_on_restore_unknown_id() -> None:
     assert calls == ["change"]
     assert await service.restore(OWNER_ID, uuid4()) is None
     assert calls == ["change"]  # None path: no activation, no notification
+
+
+# --- C1 (hardener/persona-reglas ítem 3): one write path + canonical temas ---
+
+
+async def _saved_payload(payload: dict) -> dict:
+    store = _MemoryPersonaAdminStore()
+    service = _make_service(store)
+    record = await service.save_persona(OWNER_ID, payload)
+    return record.payload
+
+
+async def test_save_canonicalizes_string_tema_to_list() -> None:
+    cat = _valid_catalog()
+    cat["policies"][0]["tema"] = "Cumpleaños Mamá"
+    saved = await _saved_payload(cat)
+    assert saved["policies"][0]["tema"] == ["cumpleanos_mama"]
+
+
+async def test_save_canonicalizes_pattern_tags() -> None:
+    cat = _valid_catalog()
+    cat["voice_patterns"][0]["tags"] = ["Cariño", "cariño"]
+    saved = await _saved_payload(cat)
+    assert saved["voice_patterns"][0]["tags"] == ["carino"]
+
+
+async def test_save_never_touches_operacion_alias() -> None:
+    cat = _valid_catalog()
+    cat["operacion"] = [
+        {"id": "lucien", "hecho": "Lucien es el mayordomo.", "alias": ["El Diván", "Lucien"]}
+    ]
+    saved = await _saved_payload(cat)
+    assert saved["operacion"][0]["alias"] == ["El Diván", "Lucien"]
+
+
+async def test_save_rejects_item_whose_temas_normalize_to_empty() -> None:
+    cat = _valid_catalog()
+    cat["persona_facts"][0]["tema"] = ["-", "  "]  # only separators → empty
+    store = _MemoryPersonaAdminStore()
+    with pytest.raises(ValueError, match="no tiene temas válidos"):
+        await _make_service(store).save_persona(OWNER_ID, cat)
+    assert store.inserted == []
+
+
+async def test_prepare_persona_uses_active_version_as_previous() -> None:
+    store = _MemoryPersonaAdminStore()
+    legacy = _valid_catalog()
+    legacy["operacion"] = [{"id": "x", "hecho": "h", "alias": ["admin"]}]
+    rec = await store.insert_version(version=1, source="db", payload=legacy)
+    await store.activate_version(rec.id, now=_now())
+    service = _make_service(store)
+    # Inherited bad alias on the same item → does not block.
+    prepared = await service.prepare_persona(legacy)
+    assert prepared["operacion"][0]["alias"] == ["admin"]
+    # A new bad alias → rejected through the same path.
+    fresh = _valid_catalog()
+    fresh["operacion"] = legacy["operacion"] + [{"id": "y", "hecho": "h", "alias": ["admin"]}]
+    with pytest.raises(ValueError, match="común"):
+        await service.prepare_persona(fresh)
+
+
+def test_operacion_alias_issues_delegates_to_pure_function() -> None:
+    from diana.cognitive.operacion import alias_issues
+
+    cat = _valid_catalog()
+    cat["operacion"] = [{"id": "x", "hecho": "h", "alias": ["admin", "Lucien"]}]
+    service = _make_service(_MemoryPersonaAdminStore())
+    assert service.operacion_alias_issues(cat) == alias_issues(cat)
+    assert [i.alias for i in service.operacion_alias_issues(cat)] == ["admin"]
+
+
+# --- C2: draft_rule delegates to the drafter, never touches the store ---
+
+
+class _NoTouchStore:
+    def __getattr__(self, name):  # any store access is a bug
+        raise AssertionError(f"store.{name} must not be touched by draft_rule")
+
+
+async def test_draft_rule_delegates_without_touching_store() -> None:
+    from diana.application.persona_rule_drafter import PersonaRuleDrafter, RuleDraft
+
+    service = PersonaAdminService(
+        payload_store=_NoTouchStore(),  # type: ignore[arg-type]
+        feature_persona_admin_enabled=True,
+        owner_telegram_id=OWNER_ID,
+        rule_drafter=PersonaRuleDrafter(llm=None),
+    )
+    draft = await service.draft_rule("policy", "Nunca hablo de mi ex", catalog=_valid_catalog())
+    assert isinstance(draft, RuleDraft)
+    assert draft.source == "fallback"
+    assert draft.item["regla"] == "Nunca hablo de mi ex"
+
+
+async def test_draft_rule_rejects_unknown_channel() -> None:
+    service = _make_service(_MemoryPersonaAdminStore())
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        await service.draft_rule("policy", "x", catalog=_valid_catalog(), channel_type="otro")
+
+
+
+# Review round 2 (R2-7): deterministic draft through the service, channel-checked.
+
+
+def test_fallback_rule_is_deterministic_and_channel_checked():
+    from diana.cognitive.persona_catalog import get_persona_catalog
+
+    svc = PersonaAdminService(
+        payload_store=None, feature_persona_admin_enabled=True, owner_telegram_id=1
+    )
+    draft = svc.fallback_rule("policy", "Nunca hablo de mi ex", catalog=get_persona_catalog(),
+                              channel_type="atencion")
+    assert draft.source == "fallback" and draft.item["regla"] == "Nunca hablo de mi ex"
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        svc.fallback_rule("policy", "x", catalog=None, channel_type="otro")
