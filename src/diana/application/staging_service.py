@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from diana.application.policy_embedding import embed_policy_text, policy_embedding_text
 from diana.cognitive.models import Policy as PolicyDomain
 from diana.infrastructure.db.repositories.examples import ExamplesRepo
 from diana.infrastructure.db.repositories.policies import PoliciesRepo
@@ -292,13 +293,25 @@ class StagingService:
                 f"expected 'pending'"
             )
 
+        embedding = await embed_policy_text(
+            self._embedder, policy_embedding_text(trigger, rule)
+        )
+        if embedding is None:
+            logger.warning(
+                "policy_embedding_pending",
+                extra={
+                    "candidate_id": str(candidate_id),
+                    "source": "staging_promote",
+                    "reason": "no_embedder" if self._embedder is None else "embed_failed",
+                },
+            )
         insert_kwargs: dict = {
             "trigger_description": trigger,
             "rule": rule,
             "scope": scope,
             "is_active": True,
             "source_query_id": candidate.payload.get("query_id"),
-            "embedding": await self._embed(f"{trigger}\n{rule}"),
+            "embedding": embedding,
         }
         if vip_id is not None:
             insert_kwargs["vip_id"] = vip_id

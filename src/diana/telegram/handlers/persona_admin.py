@@ -14,9 +14,13 @@ cycle; it duck-types the session store and session objects.
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
+from collections.abc import Sequence
 from copy import deepcopy
-from typing import Any
-from uuid import UUID
+from types import SimpleNamespace
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -25,7 +29,7 @@ from diana.application.persona_admin_service import PersonaAdminService
 from diana.cognitive.operacion import (
     OPERACION_ID_MAX_BYTES,
     OPERACION_KEY,
-    validate_operacion_semantics,
+    alias_core,
 )
 from diana.cognitive.persona_catalog import (
     get_persona_atencion_catalog,
@@ -38,6 +42,7 @@ from diana.telegram.keyboards import (
     encode_menu_persona,
     menu_back_keyboard,
     menu_persona_confirm_restore_keyboard,
+    menu_persona_draft_keyboard,
     menu_persona_list_keyboard,
     menu_personalidad_keyboard,
 )
@@ -52,8 +57,68 @@ _OPERACION_RESTORE_NOTE = (
     "\n\n⚠️ Ojo: restaurar una versión anterior a «⚙️ Operación» deja la "
     "sección Operación vacía (tendrás que volver a capturarla)."
 )
+# B7: aliases stored under an older, looser rule are ignored by Diana; the
+# panel says so (it never blocks a save).
+_OPERACION_IGNORED_HEADER = (
+    "\n\n⚠️ Alias que Diana no usa (no cumplen la regla actual; edítalos o "
+    "quítalos):"
+)
+_OPERACION_IGNORED_LIST_NOTE = (
+    "\n\n⚠️ Los elementos marcados tienen alias que Diana no usa. Ábrelos "
+    "para ver por qué."
+)
 
 # Item sections → (prompt hint when a wizard captures text).
+# Review round 1 (P7/S3): every item edit prompt says free text works, and the
+# Dato prompts say where private data goes (never into the free text).
+_FREE_TEXT_HINT = (
+    "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+    "de guardar. El formato con | sigue funcionando.\n"
+)
+# Review round 3 (R3-2): ONE private-note hint for Datos personales, used by
+# the prompts and by the errors (other sections have no private note).
+_PRIVATE_NOTE_HINT = (
+    "Lo privado (que Diana no debe decir) va aparte: toca «➕ Nota privada» "
+    "en la vista previa, ponlo en el 4.º campo (id | temas | hecho | nota) "
+    "o escríbelo al final después de «Nota privada:».\n"
+)
+# Review round 1 (M2): the edit prompt only says a private note exists.
+_NOTA_HIDDEN_LINE = "🔒 Tiene nota privada (no se muestra aquí; se conserva al editar)"
+# Private-note marker: see split_private_note (single helper, review rounds 4-5).
+_NOTA_WORD = r"\bnotas?[\s_\-‐‑]*privad[ao]s?\b"
+_NOTA_COLON = r"\s*[»”’\"']?\s*:"   # R5-2: "<word>:" (also «<word>»:) counts anywhere
+_NOTA_DASH = r"[ \t]*[\-–—‐]"
+_NOTA_PAREN = r"\([ \t]*" + _NOTA_WORD + r"[ \t]*\)(?:[ \t]*:)?"
+# Datos: ":" anywhere; dash only at the field start / after ". ; newline"; "( )".
+_NOTA_MARKER_RE = re.compile(
+    _NOTA_WORD + _NOTA_COLON
+    + r"|(?:^|(?<=[.;\n]))[ \t]*" + _NOTA_WORD + _NOTA_DASH
+    + r"|" + _NOTA_PAREN,
+    re.IGNORECASE,
+)
+# Other sections only reject, so the broad 2ceb244 form applies: ":" or a dash
+# anywhere, or "( )".
+_NOTA_REJECT_RE = re.compile(
+    _NOTA_WORD + r"(?:" + _NOTA_COLON + r"|\s*[\-–—‐])|" + _NOTA_PAREN, re.IGNORECASE
+)
+_NOTA_MENTION_RE = re.compile(_NOTA_WORD, re.IGNORECASE)
+# R5-3: ignored for detection (on top of every Unicode "Cf" character).
+_NOTE_INVISIBLE_EXTRA = frozenset("\u034f\u180e")
+_NOTE_LINE_BREAKS = frozenset("\r\u2028\u2029\u0085")
+_NOTE_OPEN_CLOSE = {"(": ")", "[": "]", "«": "»", "“": "”", "‘": "’", '"': '"', "'": "'"}
+_NOTA_PREVIEW_LINE = "🔒 Nota privada: sí"
+_NOTA_NO_SEPARATOR = (
+    "No sé qué parte del texto es privada. " + _PRIVATE_NOTE_HINT.strip()
+)
+_NOTA_NOT_IN_SECTION = (
+    "Esta sección no tiene notas privadas (solo Datos personales las tienen): "
+    "Diana puede usar todo lo que escribas aquí. Quita la parte privada."
+)
+_DRAFT_STALE = (
+    "Ese botón es de una vista previa anterior y ya no vale. "
+    "Usa los botones de la vista previa más reciente."
+)
+
 _ADD_PROMPTS: dict[str, str] = {
     "persona": (
         "📝 Envíame la nueva descripción de Diana (cómo habla, quién es).\n\n"
@@ -71,41 +136,59 @@ _ADD_PROMPTS: dict[str, str] = {
         "id | tema1, tema2 | hecho\n"
         "Ej: estudios | psicologia, trayectoria | Termino la carrera de psicología.\n"
         "Los temas se guardan sin acentos y con _ (\"Motivación personal\" → motivacion_personal).\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
+        f"{_PRIVATE_NOTE_HINT}"
         "Usa /cancelar para abortar."
     ),
     "fact_edit": (
         "👤 Envíame el dato con este formato (puedes cambiar id, temas o hecho):\n"
-        "id | tema1, tema2 | hecho\nUsa /cancelar para abortar."
+        "id | tema1, tema2 | hecho\n"
+        f"{_FREE_TEXT_HINT}"
+        f"{_PRIVATE_NOTE_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "pattern": (
         "🗣️ Envíame el patrón de voz con este formato:\n"
         "id | tag1, tag2 | patron | uso\n"
         "Ej: conector_o_sea | conector, explicacion | o sea | Conector natural.\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "pattern_edit": (
         "🗣️ Envíame el patrón con este formato:\n"
-        "id | tag1, tag2 | patron | uso\nUsa /cancelar para abortar."
+        "id | tag1, tag2 | patron | uso\n"
+        f"{_FREE_TEXT_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "policy": (
         "📜 Envíame la política con este formato:\n"
         "id | tema1, tema2 | regla\n"
         "Ej: no_consultas | psicologia | No doy consultas clínicas.\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "policy_edit": (
         "📜 Envíame la política con este formato:\n"
-        "id | tema1, tema2 | regla\nUsa /cancelar para abortar."
+        "id | tema1, tema2 | regla\n"
+        f"{_FREE_TEXT_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "bloque": (
         "🗓️ Envíame el bloque de agenda con este formato:\n"
         "dias1, dias2 | inicio | fin | actividad\n"
         "Ej: lunes, martes | 09:00 | 12:00 | en el servicio social\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "bloque_edit": (
         "🗓️ Envíame el bloque con este formato:\n"
-        "dias1, dias2 | inicio | fin | actividad\nUsa /cancelar para abortar."
+        "dias1, dias2 | inicio | fin | actividad\n"
+        f"{_FREE_TEXT_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "default": (
         "🗓️ Envíame la respuesta libre nueva (para cuando no hay actividad).\n"
@@ -119,18 +202,47 @@ _ADD_PROMPTS: dict[str, str] = {
         "id | alias1, alias2 | hecho\n"
         "Ej: lucien | Lucien, el mayordomo | Lucien es el bot administrador del canal VIP.\n"
         "Si el cliente menciona un alias (palabra o frase completa), Diana recibe el "
-        "hecho y puede explicárselo. Alias de mínimo 4 letras, sin palabras comunes "
-        "(canal, bot, admin, hola…) ni temas de Datos personales.\n"
+        "hecho y puede explicárselo. Los artículos del inicio o del final son "
+        "opcionales: «el mayordomo» también responde a «mayordomo».\n"
+        "Alias de mínimo 4 letras (3 si es un nombre propio con mayúscula, como "
+        "«Ana»), sin palabras comunes (canal, bot, admin, hola, sol, mar…) ni temas "
+        "de Datos personales.\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "operacion_edit": (
         "⚙️ Envíame el dato con este formato (puedes cambiar id, alias o hecho):\n"
-        "id | alias1, alias2 | hecho\nUsa /cancelar para abortar."
+        "id | alias1, alias2 | hecho\n"
+        "Los alias nuevos siguen las mismas reglas que al agregar.\n"
+        f"{_FREE_TEXT_HINT}"
+        "Usa /cancelar para abortar."
     ),
     "timezone": (
         "🗓️ Envíame la zona horaria nueva (ej: America/Mexico_City).\n"
         "Usa /cancelar para abortar."
     ),
+}
+
+# hardener/persona-reglas ítem 3 (C3): item sections that go through a
+# mandatory preview (Guardar / Corregir / ➕ Nota privada / Cancelar). The
+# free-text sections (persona, rule, default, timezone) keep saving directly.
+_PREVIEW_SECTIONS = frozenset({"fact", "policy", "pattern", "operacion", "bloque"})
+_DRAFT_EXPIRED = "Esta vista previa expiró. Vuelve a escribir la regla."
+# Review round 1 (G3): text that arrives while a preview is being prepared.
+_DRAFT_BUSY = (
+    "⏳ Todavía estoy preparando la vista previa del mensaje anterior. "
+    "Espera a que aparezca y luego usa Corregir si quieres cambiarla."
+)
+_DRAFTING = "drafting"
+_NOTA_PROMPT = (
+    "Escribe la nota privada. Diana no la usa para responder y no se envía a la IA."
+)
+_ITEM_SECTION_KEY = {
+    "fact": "persona_facts",
+    "policy": "policies",
+    "pattern": "voice_patterns",
+    "operacion": OPERACION_KEY,
 }
 
 # Sections whose items have ids (fact/pattern/policy) vs indexed (rule/bloque/default).
@@ -412,9 +524,9 @@ def apply_persona_edit(
             list(nuevo.get(OPERACION_KEY) or []), op, extra, text,
             parser=_parse_operacion, by_id=True, allow_empty=True,
         )
-        if op == "operacion":
-            # Alias policy (min length, common words, persona_facts temas).
-            validate_operacion_semantics(nuevo)
+        # Alias policy (min length, common words, persona_facts temas) is NOT
+        # applied here: it runs once in PersonaAdminService.prepare_persona
+        # (R-1, single write path), which the wizard calls before saving.
         return nuevo
 
     raise ValueError(f"operación de personalidad desconocida: {op}")
@@ -442,11 +554,298 @@ def _apply_typed_item(
     return _replace_item(items, extra, new_item, by_id=by_id)
 
 
+# ---------------------------------------------------------------------------
+# C3 — structured items (preview + Guardar share ONE apply path)
+# ---------------------------------------------------------------------------
+
+
+def _extract_item(
+    nuevo: dict[str, Any], op: str, extra: str | None, *, base: dict[str, Any]
+) -> dict[str, Any]:
+    """The item added/edited by ``apply_persona_edit`` (last one when appending).
+
+    Edits replace in place, so the edited item sits at the position the target
+    had in ``base`` (by id for fact/policy/pattern/operacion — the id may have
+    been renamed — and by index for bloque).
+    """
+    if op == "bloque":
+        items = list((nuevo.get("schedule") or {}).get("bloques") or [])
+        if extra is None:
+            return dict(items[-1])
+        return dict(items[int(extra)])
+    key = _ITEM_SECTION_KEY[op]
+    items = list(nuevo.get(key) or [])
+    if extra is None:
+        return dict(items[-1])
+    base_items = list(base.get(key) or [])
+    for idx, item in enumerate(base_items):
+        if str(item.get("id")) == str(extra):
+            return dict(items[idx])
+    raise ValueError("no se encontró el elemento")
+
+
+def apply_persona_item(
+    base: dict[str, Any], op: str, extra: str | None, item: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply an already-structured item (append / replace) — same semantics as
+    :func:`apply_persona_edit`. Single point used by the preview and Guardar."""
+    nuevo = dict(base)
+    item = dict(item)
+    if op == "bloque":
+        schedule = deepcopy(nuevo.get("schedule") or {})
+        bloques = list(schedule.get("bloques") or [])
+        schedule["bloques"] = _replace_item(bloques, extra, item, by_id=False)
+        nuevo["schedule"] = schedule
+        return nuevo
+    if op not in _ITEM_SECTION_KEY:
+        raise ValueError(f"operación de personalidad desconocida: {op}")
+    key = _ITEM_SECTION_KEY[op]
+    items = list(deepcopy(nuevo.get(key) or []))
+    new_id = str(item.get("id"))
+    if any(str(existing.get("id")) == new_id for existing in items):
+        if extra is None or str(extra) != new_id:
+            raise ValueError("ya existe un elemento con ese id")
+    nuevo[key] = _replace_item(items, extra, item, by_id=True)
+    return nuevo
+
+
+def _note_invisible(ch: str) -> bool:
+    return unicodedata.category(ch) == "Cf" or ch in _NOTE_INVISIBLE_EXTRA
+
+
+def _note_detection_view(text: str) -> tuple[str, list[int]]:
+    r"""Detection copy of ``text`` + offset map (review round 5, R5-1/R5-3).
+
+    Built char by char so every char of the copy maps back to the ORIGINAL
+    index it came from (NFKC can change the length: «ﬁ» → «fi», «½» → «1⁄2»):
+    NFKC per char; Unicode "Cf" chars, U+034F and U+180E dropped; U+2028,
+    U+2029, U+0085, ``\r`` and CRLF → one ``\n``. ``origin[j]`` is the original
+    index of ``view[j]``. The copy is only searched, never stored.
+    """
+    out: list[str] = []
+    origin: list[int] = []
+    for i, ch in enumerate(text):
+        if ch in _NOTE_LINE_BREAKS:
+            if ch == "\r" and text[i + 1 : i + 2] == "\n":
+                continue  # CRLF: the "\n" stands for both
+            piece = "\n"
+        elif _note_invisible(ch):
+            continue
+        else:
+            piece = unicodedata.normalize("NFKC", ch)
+        out.append(piece)
+        origin.extend([i] * len(piece))
+    return "".join(out), origin
+
+
+def _trim_note_edge(text: str, extra: str) -> str:
+    """Trim whitespace, invisible chars and ``extra`` from both ends only."""
+    def junk(ch: str) -> bool:
+        return ch.isspace() or _note_invisible(ch) or ch in extra
+
+    lo, hi = 0, len(text)
+    while lo < hi and junk(text[lo]):
+        lo += 1
+    while hi > lo and junk(text[hi - 1]):
+        hi -= 1
+    return text[lo:hi]
+
+
+def split_private_note(
+    text: str, *, path: Literal["free", "pipe"], section: str
+) -> tuple[str, str | None]:
+    r"""THE single private-note marker helper (review rounds 4-5).
+
+    Who calls it (R5-4) — exactly these three places, nothing else:
+      * ``_draft_free_text``: free text of the preview sections (Datos
+        personales, Políticas, Patrones de voz, Operación, Agenda);
+      * ``_parse_fact``: the hecho (3rd field) of a Datos ``|`` line;
+      * ``_handle_preview_text``: every ``|`` field of Políticas, Patrones,
+        Operación and Agenda (checked only; the line is saved as before).
+    NOT covered (saved directly, no helper, no preview — residual R-8): Cómo
+    habla Diana, Reglas de tono, Respuestas libres de Agenda (default),
+    Zona horaria, and the text of the ➕ Nota privada button / the 4th ``|``
+    field of a Dato (those ARE the note, kept as written).
+
+    Contract:
+
+    1. Detection runs on a normalized COPY: NFKC per char, every Unicode "Cf"
+       char plus U+034F / U+180E dropped, U+2028 / U+2029 / U+0085 / ``\r`` /
+       CRLF read as a newline. What is returned (and stored) is always the
+       ORIGINAL text: byte-identical when there is no marker (only the ends
+       are stripped, as before); with a marker, the original is cut at the
+       marker and only the two cut ends are trimmed. The panel's own note
+       lines (``_NOTA_HIDDEN_LINE``, ``_NOTA_PREVIEW_LINE``) are removed first.
+    2. Word pattern ``\bnotas?[\s_\-‐‑]*privad[ao]s?\b`` (any case; plural,
+       gender, ``_``/``-``, full width and invisible chars all match). In Datos
+       it is a MARKER only in these forms:
+         a. followed by ``:`` in ANY position — also «(Nota privada: X)»,
+            «"Nota privada: X"», «Nota privada»: X» (R5-2);
+         b. followed by a dash (``-`` ``–`` ``—`` ``‐``) only at the start of the
+            field or right after ``.``, ``;`` or a newline (R4-2: «Guardo mis
+            notas privadas - las releo» is a plain mention);
+         c. in parentheses ``(nota privada)``, with or without a following ``:``.
+    3. ``section == "fact"`` (Datos personales), free text or the ``|`` hecho:
+       the text after the first marker is the note, the text before it is the
+       hecho → ``(hecho, nota)``. If the marker sits right after an opening
+       bracket/quote, that opener is dropped from the hecho and the matching
+       closer from the end of the note. No marker → ``(text, None)``.
+    4. Any other section (policy, pattern, operacion, bloque; ``|`` fields or
+       free text) only rejects, with the broad 2ceb244 form: the word followed
+       by ``:`` or a dash ANYWHERE, or ``(nota privada)`` →
+       ``ValueError(_NOTA_NOT_IN_SECTION)``. A plain mention is accepted.
+    5. Datos free text only (it goes to the LLM): a plain mention with no
+       marker — in the whole text, or left in the hecho part — →
+       ``ValueError(_NOTA_NO_SEPARATOR)``.
+    """
+    text = text or ""
+    for line in (_NOTA_HIDDEN_LINE, _NOTA_PREVIEW_LINE):
+        text = text.replace(line, " ")
+    view, origin = _note_detection_view(text)
+    if section != "fact":
+        if _NOTA_REJECT_RE.search(view):
+            raise ValueError(_NOTA_NOT_IN_SECTION)
+        return text.strip(), None
+    match = _NOTA_MARKER_RE.search(view)
+    if match is None:
+        if path == "free" and _NOTA_MENTION_RE.search(view):
+            raise ValueError(_NOTA_NO_SEPARATOR)
+        return text.strip(), None
+    if path == "free" and _NOTA_MENTION_RE.search(view[: match.start()]):
+        raise ValueError(_NOTA_NO_SEPARATOR)
+    cut_start = origin[match.start()]
+    cut_end = origin[match.end() - 1] + 1
+    hecho = _trim_note_edge(text[:cut_start], "")
+    nota = _trim_note_edge(text[cut_end:], ":：-–—‐‑")
+    closer = _NOTE_OPEN_CLOSE.get(hecho[-1:]) if hecho else None
+    if hecho[-1:] in ("'", '"') and hecho[-2:-1].strip():
+        closer = None  # a straight quote closing a word, not opening the marker
+    if closer is not None:
+        hecho = _trim_note_edge(hecho[:-1], "")
+        if nota.endswith(closer):
+            nota = _trim_note_edge(nota[: -len(closer)], "")
+    hecho = _trim_note_edge(hecho, ",;:：-–—‐‑")
+    return hecho, nota or None
+
+
+def _keep_existing_nota(
+    item: dict[str, Any], base: dict[str, Any], op: str, extra: str | None
+) -> None:
+    """G-C1: editing a fact with free text keeps its nota_privada (local only)."""
+    if op != "fact" or extra is None or "nota_privada" in item:
+        return
+    for existing in base.get("persona_facts") or []:
+        if isinstance(existing, dict) and str(existing.get("id")) == str(extra):
+            if existing.get("nota_privada"):
+                item["nota_privada"] = existing["nota_privada"]
+            return
+
+
+_CHANNEL_LABEL = {"vip": "VIP", "atencion": "Atención"}
+
+
+def _draft_preview(
+    op: str,
+    item: dict[str, Any],
+    source: str,
+    issues: Sequence[Any] = (),
+    channel: str | None = None,
+) -> str:
+    """Product-language preview. Shows that a private note exists, never its text."""
+    origin = "formato |" if source == "formato" else "propuesta automática"
+    lines = [f"👀 Vista previa ({origin})"]
+    if channel is not None:
+        lines.append(f"Canal: {_CHANNEL_LABEL.get(channel, channel)}")
+    lines.append("")
+    if op == "fact":
+        lines += [
+            "👤 Dato personal",
+            f"id: {item.get('id')}",
+            f"Temas: {', '.join(item.get('tema') or [])}",
+            f"Hecho: {_truncate(item.get('hecho', ''), 1500)}",
+        ]
+        if item.get("nota_privada"):
+            lines.append(_NOTA_PREVIEW_LINE)
+    elif op == "policy":
+        lines += [
+            "📜 Política de conducta",
+            f"id: {item.get('id')}",
+            f"Temas: {', '.join(item.get('tema') or [])}",
+            f"Regla: {_truncate(item.get('regla', ''), 1500)}",
+        ]
+    elif op == "pattern":
+        lines += [
+            "🗣️ Patrón de voz",
+            f"id: {item.get('id')}",
+            f"Tags: {', '.join(item.get('tags') or [])}",
+            f"Patrón: {_truncate(item.get('patron', ''), 1000)}",
+            f"Uso: {_truncate(item.get('uso', ''), 500)}",
+        ]
+    elif op == "operacion":
+        lines += [
+            "⚙️ Operación",
+            f"id: {item.get('id')}",
+            f"Alias: {', '.join(item.get('alias') or [])}",
+            f"Hecho: {_truncate(item.get('hecho', ''), 1500)}",
+        ]
+        own = [i for i in issues if str(getattr(i, "id", "")) == str(item.get("id"))]
+        if own:
+            lines.append(_OPERACION_IGNORED_HEADER.strip("\n"))
+            lines += [f"• {i.reason}" for i in own]
+    elif op == "bloque":
+        lines += [
+            "🗓️ Bloque de agenda",
+            f"Días: {', '.join(item.get('dias') or [])}",
+            f"Horario: {item.get('inicio')}–{item.get('fin')}",
+            f"Actividad: {_truncate(item.get('actividad', ''), 1000)}",
+        ]
+    lines += ["", "¿Lo guardo?"]
+    return "\n".join(lines)
+
+
+async def _show_draft(
+    bot: Bot,
+    message: Message,
+    session: Any,
+    sessions: Any,
+    draft: dict[str, Any],
+    issues: Sequence[Any] = (),
+) -> None:
+    """Persist the draft in the session (the router popped it) and show it.
+
+    Every shown preview gets a fresh token (R2-3) that its buttons carry.
+    """
+    draft = {**draft, "token": uuid4().hex[:8]}
+    sessions.start(
+        message.from_user.id,
+        "persona_edit",
+        persona_section=draft["op"],
+        persona_target=draft["target"],
+        persona_channel=draft["channel"],
+        persona_draft=draft,
+        last_bot_message_id=getattr(session, "last_bot_message_id", None),
+        last_chat_id=getattr(session, "last_chat_id", None),
+    )
+    await _edit_or_answer(
+        bot,
+        _draft_preview(
+            draft["op"], draft["item"], draft["source"], issues, draft.get("channel")
+        ),
+        session=session,
+        fallback=message,
+        keyboard=menu_persona_draft_keyboard(
+            allow_nota=draft["op"] == "fact", token=draft["token"]
+        ),
+    )
+
+
 def _parse_fact(text: str | None) -> dict[str, Any]:
     parts = [p.strip() for p in (text or "").split("|")]
     if len(parts) < 3:
         raise ValueError("formato: id | tema1, tema2 | hecho")
     fact_id, temas, hecho = parts[:3]
+    # R2-1 / R4-1: a marked note inside the hecho field stays private too.
+    hecho, inline_nota = split_private_note(hecho, path="pipe", section="fact")
     if not fact_id or not temas or not hecho:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     if len(fact_id.encode("utf-8")) > 24:
@@ -459,8 +858,12 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     if not tema_list:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     item: dict[str, Any] = {"id": fact_id, "tema": tema_list, "hecho": hecho}
-    if len(parts) > 3 and parts[3].strip():
-        item["nota_privada"] = parts[3].strip()
+    # R3-1: the 4th field is the note, taken as-is (classic behavior).
+    notas = [parts[3].strip()] if len(parts) > 3 and parts[3].strip() else []
+    if inline_nota:
+        notas.append(inline_nota)
+    if notas:
+        item["nota_privada"] = " · ".join(notas)
     return item
 
 
@@ -473,9 +876,14 @@ def _parse_operacion(text: str | None) -> dict[str, Any]:
         raise ValueError("id, alias y hecho no pueden estar vacíos")
     if len(op_id.encode("utf-8")) > OPERACION_ID_MAX_BYTES:
         raise ValueError("el id es demasiado largo (máximo 24 bytes)")
+    # Dedup by alias core ("El Diván, diván, tu diván" → one alias); keep the
+    # first written form.
     alias_list: list[str] = []
+    seen: set[tuple[str, ...]] = set()
     for alias in _split_topics(aliases):
-        if alias not in alias_list:
+        core = alias_core(alias) or (alias.casefold(),)
+        if core not in seen:
+            seen.add(core)
             alias_list.append(alias)
     if not alias_list:
         raise ValueError("agrega al menos un alias")
@@ -491,7 +899,11 @@ def _parse_pattern(text: str | None) -> dict[str, Any]:
         raise ValueError("ningún campo puede estar vacío")
     if len(pattern_id.encode("utf-8")) > 24:
         raise ValueError("el id es demasiado largo (máximo 24 bytes)")
-    return {"id": pattern_id, "tags": _split_topics(tags), "patron": patron, "uso": uso}
+    # Tags stored in canonical form (same rule as _parse_fact temas).
+    tag_list = normalize_tags(_split_topics(tags))
+    if not tag_list:
+        raise ValueError("ningún campo puede estar vacío")
+    return {"id": pattern_id, "tags": tag_list, "patron": patron, "uso": uso}
 
 
 def _parse_policy(text: str | None) -> dict[str, Any]:
@@ -503,7 +915,11 @@ def _parse_policy(text: str | None) -> dict[str, Any]:
         raise ValueError("id, temas y regla no pueden estar vacíos")
     if len(policy_id.encode("utf-8")) > 24:
         raise ValueError("el id es demasiado largo (máximo 24 bytes)")
-    return {"id": policy_id, "tema": _split_topics(temas), "regla": regla}
+    # Temas stored in canonical form (same rule as _parse_fact temas).
+    tema_list = normalize_tags(_split_topics(temas))
+    if not tema_list:
+        raise ValueError("id, temas y regla no pueden estar vacíos")
+    return {"id": policy_id, "tema": tema_list, "regla": regla}
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +927,9 @@ def _parse_policy(text: str | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str]]:
+def _section_items(
+    catalog: dict[str, Any], section: str, *, issues: Sequence[Any] = ()
+) -> list[tuple[str, str]]:
     voz = catalog.get("voz_configurada") or {}
     if section == "rules":
         rules = voz.get("reglas_estilo") or []
@@ -551,17 +969,31 @@ def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str
         return [(str(i), f"💬 {_truncate(d, 70)}") for i, d in enumerate(defaults)]
     if section == "operacion":
         items = catalog.get(OPERACION_KEY) or []
+        flagged = {issue.id for issue in issues}
         return [
-            (str(o.get("id")), f"⚙️ {o.get('id')} — {_truncate(o.get('hecho', ''), 60)}")
+            (
+                str(o.get("id")),
+                f"{'⚠️' if str(o.get('id')) in flagged else '⚙️'} {o.get('id')} — "
+                f"{_truncate(o.get('hecho', ''), 60)}",
+            )
             for o in items
             if isinstance(o, dict)
         ]
     return []
 
 
-def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | None:
+def _item_full_text(
+    catalog: dict[str, Any],
+    section: str,
+    key: str,
+    *,
+    issues: Sequence[Any] = (),
+    reveal_nota: bool = True,
+) -> str | None:
     """Render the FULL content of one item (no truncation) for detail/edit views.
 
+    ``reveal_nota=False`` (edit prompts, M2) only says a private note exists, so
+    the owner never copies it into free text that goes to the LLM.
     Returns None when the item does not exist.
     """
     voz = catalog.get("voz_configurada") or {}
@@ -586,7 +1018,11 @@ def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | No
                     f"Hecho: {f.get('hecho')}",
                 ]
                 if f.get("nota_privada"):
-                    lines.append(f"Nota privada: {f.get('nota_privada')}")
+                    lines.append(
+                        f"Nota privada: {f.get('nota_privada')}"
+                        if reveal_nota
+                        else _NOTA_HIDDEN_LINE
+                    )
                 return "\n".join(lines)
         return None
 
@@ -640,14 +1076,24 @@ def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | No
         for o in catalog.get(OPERACION_KEY) or []:
             if isinstance(o, dict) and str(o.get("id")) == key:
                 alias = ", ".join(o.get("alias") or [])
-                return f"⚙️ {o.get('id')}\nAlias: {alias}\nHecho: {o.get('hecho')}"
+                text = f"⚙️ {o.get('id')}\nAlias: {alias}\nHecho: {o.get('hecho')}"
+                ignored = [i for i in issues if i.id == key]
+                if ignored:
+                    text += _OPERACION_IGNORED_HEADER + "".join(
+                        f"\n• {i.reason}" for i in ignored
+                    )
+                return text
         return None
 
     return None
 
 
 def _edit_current_value(
-    catalog: dict[str, Any], section: str, extra: str | None
+    catalog: dict[str, Any],
+    section: str,
+    extra: str | None,
+    *,
+    issues: Sequence[Any] = (),
 ) -> str | None:
     """Current value to show inside an edit prompt (full text; None = new item)."""
     voz = catalog.get("voz_configurada") or {}
@@ -657,13 +1103,18 @@ def _edit_current_value(
         return str((catalog.get("schedule") or {}).get("timezone") or "")
     if section in ("rule", "fact", "pattern", "policy", "bloque", "default", "operacion"):
         # _item_full_text keys on the PLURAL list-section name (rules/facts/…)
-        return _item_full_text(catalog, _section_list_action(section), extra or "")
+        return _item_full_text(
+            catalog, _section_list_action(section), extra or "", issues=issues,
+            reveal_nota=False,
+        )
     return None
 
 
-def _item_detail(catalog: dict[str, Any], section: str, extra: str) -> str:
+def _item_detail(
+    catalog: dict[str, Any], section: str, extra: str, *, issues: Sequence[Any] = ()
+) -> str:
     """Full-content detail view for a tapped item (review round fix: no truncation)."""
-    full = _item_full_text(catalog, section, extra)
+    full = _item_full_text(catalog, section, extra, issues=issues)
     return full if full is not None else "(no se encontró el elemento)"
 
 
@@ -691,12 +1142,18 @@ async def dispatch_personalidad(
 
     if action == "channel" and extra in ("vip", "atencion"):
         # REQ-ATN-06: switch the persona channel and re-render the panel root.
+        # Review round 1 (M3/S1): switching channel closes EVERY open wizard,
+        # edit target and preview — only the channel survives, so no text or
+        # "✅ Guardar" can land in the other channel's catalog.
         if sessions is not None:
             sess = sessions.get(actor_id)
-            if sess is not None:
-                sess.persona_channel = extra
-            else:
-                sessions.start(actor_id, "persona_edit", persona_channel=extra)
+            sessions.start(
+                actor_id,
+                "persona_edit",
+                persona_channel=extra,
+                last_bot_message_id=getattr(sess, "last_bot_message_id", None),
+                last_chat_id=getattr(sess, "last_chat_id", None),
+            )
         logger.info(
             "persona_channel_switched",
             extra={"actor_id": actor_id, "channel_type": extra},
@@ -705,6 +1162,13 @@ async def dispatch_personalidad(
             message,
             MENU_CATEGORY_TEXT["personalidad"],
             menu_personalidad_keyboard(active_channel=extra),
+        )
+        return
+
+    if action in ("draft_save", "draft_fix", "draft_nota", "draft_cancel"):
+        await _dispatch_draft_action(
+            message, action=action, actor_id=actor_id,
+            persona_admin=persona_admin, sessions=sessions, token=extra,
         )
         return
 
@@ -842,7 +1306,11 @@ async def dispatch_personalidad(
             "operacion": "operacion",
         }[action]
         catalog = await load_current(persona_admin, channel_type=channel)
-        raw_items = _section_items(catalog, section)
+        # R-2: alias issues computed ONCE per render and passed down.
+        issues = (
+            persona_admin.operacion_alias_issues(catalog) if section == "operacion" else []
+        )
+        raw_items = _section_items(catalog, section, issues=issues)
         # Item callbacks carry section|key so the detail view knows the context.
         # Cap at 40 rows: Telegram inline keyboards allow at most 100 buttons
         # and the add/back rows consume 2 — a huge section must stay renderable.
@@ -854,6 +1322,8 @@ async def dispatch_personalidad(
             "operacion": "operacion_add",
         }[action]
         empty_note = _OPERACION_RESTORE_NOTE if action == "operacion" else ""
+        if action == "operacion" and issues:
+            empty_note = _OPERACION_IGNORED_LIST_NOTE + empty_note
         if not items:
             await _show(
                 message,
@@ -897,7 +1367,10 @@ async def dispatch_personalidad(
             await _show(message, "Elemento inválido.", back)
             return
         catalog = await load_current(persona_admin, channel_type=channel)
-        detail = _item_detail(catalog, section, item_key)
+        issues = (
+            persona_admin.operacion_alias_issues(catalog) if section == "operacion" else []
+        )
+        detail = _item_detail(catalog, section, item_key, issues=issues)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -964,13 +1437,120 @@ async def dispatch_personalidad(
         # review it before fine-tuning (product requirement: no truncation).
         if action.endswith("_edit") or action == "persona_edit" or action == "timezone_edit":
             catalog = await load_current(persona_admin, channel_type=channel)
-            current = _edit_current_value(catalog, section, extra)
+            issues = (
+                persona_admin.operacion_alias_issues(catalog)
+                if section == "operacion"
+                else []
+            )
+            current = _edit_current_value(catalog, section, extra, issues=issues)
             if current is not None:
                 prompt = f"{prompt}\n\n📄 Actual:\n{current}"
         await _show(message, prompt, None)
         return
 
     await _show(message, "Esa opción de personalidad no está disponible.", back)
+
+
+async def _dispatch_draft_action(
+    message: Message,
+    *,
+    action: str,
+    actor_id: int,
+    persona_admin: PersonaAdminService,
+    sessions: Any,
+    token: str | None = None,
+) -> None:
+    """C3 preview buttons: Guardar / Corregir / ➕ Nota privada / Cancelar."""
+    back = menu_back_keyboard(_PERSONA_BACK)
+    sess = sessions.get(actor_id) if sessions is not None else None
+    draft = getattr(sess, "persona_draft", None) if sess is not None else None
+    if draft and draft.get("awaiting") == _DRAFTING:
+        await _show(message, _DRAFT_BUSY, None)  # G3: the new preview is on its way
+        return
+    if not draft or "item" not in draft:
+        await _show(message, _DRAFT_EXPIRED, back)
+        return
+    if token is None or token != draft.get("token"):
+        # R2-3: a button of an older preview never acts on the current draft.
+        logger.info("persona_draft_button_stale", extra={"actor_id": actor_id, "action": action})
+        await _show(message, _DRAFT_STALE, back)
+        return
+    ch = draft["channel"]
+    op = draft["op"]
+    target = draft["target"]
+
+    if action == "draft_save":
+        base = await load_current(persona_admin, channel_type=ch)
+        try:
+            nuevo = apply_persona_item(base, op, target, draft["item"])
+            record = await persona_admin.save_persona(actor_id, nuevo, channel_type=ch)
+        except ValueError as exc:
+            # Keep the draft so the owner can Corregir / Cancelar.
+            await _show(
+                message, f"❌ No se guardó: {exc}",
+                menu_persona_draft_keyboard(allow_nota=op == "fact", token=token),
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "persona_save_failed",
+                extra={"actor_id": actor_id, "error": type(exc).__name__},
+                exc_info=True,
+            )
+            await _show(
+                message, "❌ Error inesperado al guardar.",
+                menu_persona_draft_keyboard(allow_nota=op == "fact", token=token),
+            )
+            return
+        sessions.start(actor_id, "persona_edit", persona_channel=ch)
+        await _show(
+            message,
+            f"✅ Guardado como versión v{record.version}. Los cambios ya están activos.",
+            back,
+        )
+        return
+
+    if action == "draft_fix":
+        # G4: a note added in this preview survives Corregir (local only).
+        nota = draft["item"].get("nota_privada") if op == "fact" else None
+        sessions.start(
+            actor_id,
+            "persona_edit",
+            persona_section=op,
+            persona_target=target,
+            persona_channel=ch,
+            persona_draft={"pending_nota": nota} if nota else None,
+            last_bot_message_id=message.message_id,
+            last_chat_id=message.chat.id,
+        )
+        prompt = (_ADD_PROMPTS.get(f"{op}_edit") if target is not None else None) or _ADD_PROMPTS.get(
+            op, "Envíame el valor nuevo."
+        )
+        await _show(message, f"Envíame el texto corregido.\n\n{prompt}", None)
+        return
+
+    if action == "draft_nota":
+        if op != "fact":
+            await _show(
+                message, "La nota privada solo aplica a Datos personales.",
+                menu_persona_draft_keyboard(allow_nota=False, token=token),
+            )
+            return
+        sess.persona_draft = {**draft, "awaiting": "nota"}
+        sess.last_bot_message_id = message.message_id
+        sess.last_chat_id = message.chat.id
+        await _show(message, _NOTA_PROMPT, None)
+        return
+
+    # draft_cancel
+    sessions.start(actor_id, "persona_edit", persona_channel=ch)
+    await dispatch_personalidad(
+        message,
+        parsed=SimpleNamespace(action=_section_list_action(op), extra=None),
+        actor_id=actor_id,
+        persona_admin=persona_admin,
+        sessions=sessions,
+    )
 
 
 def _section_list_action(op: str) -> str:
@@ -1047,9 +1627,19 @@ async def handle_persona_edit_text(
         return
     op = section
 
+    if op in _PREVIEW_SECTIONS:
+        await _handle_preview_text(
+            message, bot, session, persona_admin, sessions,
+            op=op, extra=extra, channel=channel, text=text,
+        )
+        return
+
     base = await load_current(persona_admin, channel_type=channel)
     try:
         nuevo = apply_persona_edit(base, op, extra, text)
+        # R-1: the same validation save_persona runs (canonical temas, shape,
+        # alias policy vs the active version of this channel).
+        await persona_admin.prepare_persona(nuevo, channel_type=channel)
     except ValueError as exc:
         await _restart_persona_wizard(sessions, message, section, extra, channel)
         await _edit_or_answer(
@@ -1082,6 +1672,203 @@ async def handle_persona_edit_text(
     )
 
 
+async def _handle_preview_text(
+    message: Message,
+    bot: Bot,
+    session: Any,
+    persona_admin: PersonaAdminService,
+    sessions: Any,
+    *,
+    op: str,
+    extra: str | None,
+    channel: str,
+    text: str,
+) -> None:
+    """C3: build (or amend) the preview of an item; never saves."""
+    draft_in = getattr(session, "persona_draft", None) or {}
+    owner_id = message.from_user.id
+    if draft_in.get("awaiting") == _DRAFTING:
+        # G3: the previous text is still being drafted (the router popped the
+        # session). Put it back untouched — unless something already replaced
+        # it — and tell the owner instead of dropping her text silently.
+        if sessions.get(owner_id) is None:
+            _restore_session(sessions, owner_id, session)
+        await message.answer(_DRAFT_BUSY)
+        return
+    if draft_in.get("awaiting") == "nota" and "item" in draft_in:
+        # ➕ Nota privada: plain local text, no LLM involved.
+        item = dict(draft_in["item"])
+        item["nota_privada"] = text
+        await _show_draft(
+            bot, message, session, sessions, {**draft_in, "item": item, "awaiting": None}
+        )
+        return
+    # G4: a note shown in the open preview (or kept by Corregir) is carried over.
+    carried_nota = (
+        (draft_in.get("item") or {}).get("nota_privada") or draft_in.get("pending_nota")
+        if op == "fact"
+        else None
+    )
+    # G3: mark the session busy BEFORE any await (DB read, LLM ≤10 s). The
+    # token tells us later whether a channel switch / Cancelar replaced it.
+    token = uuid4().hex
+    marker = {"awaiting": _DRAFTING, "token": token, "pending_nota": carried_nota}
+    _restore_session(sessions, owner_id, session, persona_draft=marker)
+
+    def _still_ours() -> bool:
+        live = sessions.get(owner_id)
+        live_draft = getattr(live, "persona_draft", None) or {}
+        return live_draft.get("token") == token
+
+    # Any other text while a preview is open acts as "Corregir": new draft.
+    try:
+        base = await load_current(persona_admin, channel_type=channel)
+        if "|" in text:
+            if op != "fact":
+                for field in text.split("|"):  # R4-1: marker forms only, per field
+                    split_private_note(field, path="pipe", section=op)
+            # G-C4: the pipe format yields exactly the same item as before.
+            item = _extract_item(
+                apply_persona_edit(base, op, extra, text), op, extra, base=base
+            )
+            source = "formato"
+            _carry_nota(item, op, carried_nota)
+            prepared = await persona_admin.prepare_persona(
+                apply_persona_item(base, op, extra, item), channel_type=channel
+            )
+        else:
+            item, source, prepared = await _draft_free_text(
+                persona_admin, base, op, extra, channel, text, carried_nota
+            )
+    except ValueError as exc:
+        if not _still_ours():
+            logger.info("persona_draft_discarded_stale", extra={"op": op})
+            return
+        await _restart_persona_wizard(sessions, message, op, extra, channel)
+        if carried_nota:
+            sessions.get(owner_id).persona_draft = {"pending_nota": carried_nota}
+        await _edit_or_answer(
+            bot, f"❌ {_owner_error(exc)}\n\nEnvíame el texto corregido o usa /cancelar.",
+            session=session, fallback=message, keyboard=None,
+        )
+        return
+    except Exception:
+        # Never leave the wizard stuck in "drafting" (TTL would be the only exit).
+        if _still_ours():
+            await _restart_persona_wizard(sessions, message, op, extra, channel)
+        raise
+    if not _still_ours():
+        # The owner switched channel / cancelled meanwhile: this preview belongs
+        # to a wizard that no longer exists.
+        logger.info("persona_draft_discarded_stale", extra={"op": op})
+        return
+    issues = persona_admin.operacion_alias_issues(prepared) if op == "operacion" else []
+    await _show_draft(
+        bot, message, session, sessions,
+        {"channel": channel, "op": op, "target": extra, "item": item,
+         "source": source, "awaiting": None},
+        issues,
+    )
+
+
+async def _draft_free_text(
+    persona_admin: PersonaAdminService,
+    base: dict[str, Any],
+    op: str,
+    extra: str | None,
+    channel: str,
+    text: str,
+    carried_nota: str | None,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    """Free text → (item, source, prepared catalog). Raises ``ValueError``."""
+    # M2/S2: a "Nota privada: …" segment stays local — it never reaches
+    # the LLM, the deterministic fallback or the public hecho.
+    public, nota = split_private_note(text, path="free", section=op)
+    if not public:
+        raise ValueError("Escribe el dato antes de «Nota privada:».")
+
+    def _finish(raw: dict[str, Any]) -> dict[str, Any]:
+        item = dict(raw)
+        item.pop("nota_privada", None)
+        _carry_nota(item, op, nota or carried_nota)
+        _keep_existing_nota(item, base, op, extra)  # G-C1
+        return item
+
+    draft = await persona_admin.draft_rule(
+        op, public, catalog=base, target=extra, channel_type=channel
+    )
+    item, source = _finish(draft.item), draft.source
+    try:
+        # Same validation save_persona runs (canonical temas, shape, alias policy).
+        prepared = await persona_admin.prepare_persona(
+            apply_persona_item(base, op, extra, item), channel_type=channel
+        )
+    except ValueError as exc:
+        if source != "llm":
+            raise
+        # G2: the LLM proposal passed the drafter but not the catalog rules →
+        # deterministic fallback with the same (public) text.
+        logger.info(
+            "persona_rule_draft_validation_fallback",
+            extra={"op": op, "error": type(exc).__name__},
+        )
+        fallback = persona_admin.fallback_rule(
+            op, public, catalog=base, target=extra, channel_type=channel
+        )
+        item, source = _finish(fallback.item), fallback.source
+        prepared = await persona_admin.prepare_persona(
+            apply_persona_item(base, op, extra, item), channel_type=channel
+        )
+    return item, source, prepared
+
+
+def _carry_nota(item: dict[str, Any], op: str, nota: str | None) -> None:
+    if op == "fact" and nota and not item.get("nota_privada"):
+        item["nota_privada"] = nota
+
+
+# Review round 1 (G2): catalog-validator messages are English and technical;
+# the owner gets the Spanish meaning.
+_OWNER_ERROR_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("must use weekday tokens",
+     "Los días deben ser lunes, martes, miércoles, jueves, viernes, sábado o domingo."),
+    ("must match HH:MM", "La hora debe tener el formato HH:MM (por ejemplo 09:00)."),
+    ("requires inicio < fin",
+     "La hora de inicio debe ser antes que la de fin (un bloque no cruza la medianoche)."),
+    ("has duplicate id", "Ya existe un elemento con ese id."),
+)
+_ENGLISH_ERROR_RE = re.compile(r"\b(must|missing|requires|exceeds|invalid|unknown)\b")
+
+
+def _owner_error(exc: Exception) -> str:
+    raw = str(exc)
+    for needle, spanish in _OWNER_ERROR_PATTERNS:
+        if needle in raw:
+            return spanish
+    if _ENGLISH_ERROR_RE.search(raw):
+        return (
+            "El elemento no tiene un formato válido. Reescríbelo con tus palabras "
+            "o usa el formato con |."
+        )
+    return raw
+
+
+def _restore_session(
+    sessions: Any, owner_id: int, session: Any, **overrides: Any
+) -> None:
+    """Re-persist a popped persona_edit session (optionally with overrides)."""
+    fields = {
+        "persona_section": getattr(session, "persona_section", None),
+        "persona_target": getattr(session, "persona_target", None),
+        "persona_channel": getattr(session, "persona_channel", None) or "vip",
+        "persona_draft": getattr(session, "persona_draft", None),
+        "last_bot_message_id": getattr(session, "last_bot_message_id", None),
+        "last_chat_id": getattr(session, "last_chat_id", None),
+    }
+    fields.update(overrides)
+    sessions.start(owner_id, "persona_edit", **fields)
+
+
 async def _restart_persona_wizard(
     sessions: Any,
     message: Message,
@@ -1103,6 +1890,7 @@ async def _restart_persona_wizard(
 
 __all__ = [
     "apply_persona_edit",
+    "apply_persona_item",
     "dispatch_personalidad",
     "handle_persona_edit_text",
     "load_current",

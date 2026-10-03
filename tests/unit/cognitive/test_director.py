@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -34,6 +34,7 @@ from diana.cognitive.template_gate import TemplateGate, TemplateRule
 from unittest.mock import AsyncMock, MagicMock
 from diana.cognitive.registry import build_default_registry
 from diana.llm.fake import FakeLLM
+import asyncio
 import random
 
 IA_TEMPLATE = "jsjsj si y sólo vivo en tu mente 😏"
@@ -137,6 +138,7 @@ def make_director(
     phatic_auto_send: bool = False,
     checkin_cut: Any | None = None,
     phatic_context_provider: Any | None = None,
+    persona_semantic_shadow: Any | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -156,6 +158,8 @@ def make_director(
         director_kwargs["checkin_cut"] = checkin_cut
     if phatic_context_provider is not None:
         director_kwargs["phatic_context_provider"] = phatic_context_provider
+    if persona_semantic_shadow is not None:
+        director_kwargs["persona_semantic_shadow"] = persona_semantic_shadow
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),
@@ -2302,3 +2306,407 @@ async def test_analyst_catalog_temas_fail_soft_on_provider_error() -> None:
     from diana.cognitive import analyst as analyst_mod
 
     assert analyst_call[1]["messages"][0]["content"] == analyst_mod._SYSTEM
+
+
+class _ByChannelPersonaProvider:
+    """PersonaCatalogProvider double: one catalog per channel, records reads."""
+
+    def __init__(self, by_channel: dict) -> None:
+        self.by_channel = by_channel
+        self.requested_channels: list[str] = []
+
+    async def get_catalog(self, channel_type: str = "vip"):
+        self.requested_channels.append(channel_type)
+        return self.by_channel.get(channel_type)
+
+
+_VOCAB_VIP_CATALOG = {
+    "persona_facts": [{"id": "gato", "tema": ["Mascota"], "hecho": "Tengo un gato"}],
+    "policies": [{"id": "nv", "tema": ["Dinámica novia virtual"], "regla": "R"}],
+    "voice_patterns": [{"id": "mb", "tags": ["Momento bonito"], "patron": "P", "uso": "U"}],
+    "voz_configurada": {"persona": "P", "reglas_estilo": ["r"]},
+}
+_VOCAB_ATENCION_CATALOG = {
+    "persona_facts": [{"id": "pago", "tema": ["Pago"], "hecho": "Por transferencia"}],
+    "policies": [{"id": "pe", "tema": ["Precios especiales"], "regla": "R"}],
+    "voice_patterns": [{"id": "dc", "tags": ["Despedida"], "patron": "P", "uso": "U"}],
+    "voz_configurada": {"persona": "P", "reglas_estilo": ["r"]},
+}
+
+
+async def test_catalog_vocabulary_single_read_per_channel() -> None:
+    """Ítem 1: los tres vocabularios salen de UNA llamada get_catalog(canal)."""
+    provider = _ByChannelPersonaProvider(
+        {"vip": _VOCAB_VIP_CATALOG, "atencion": _VOCAB_ATENCION_CATALOG}
+    )
+    llm = FakeLLM(structured_responses=[], text_responses=[])
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
+
+    vocab = await director._catalog_vocabulary("atencion")
+    assert vocab == (["pago"], ["precios_especiales"], ["despedida"])
+    assert provider.requested_channels == ["atencion"]
+
+    vocab = await director._catalog_vocabulary("vip")
+    assert vocab == (["mascota"], ["dinamica_novia_virtual"], ["momento_bonito"])
+    assert provider.requested_channels == ["atencion", "vip"]
+
+
+async def test_catalog_vocabulary_fail_soft_and_no_provider() -> None:
+    class _Boom:
+        async def get_catalog(self, channel_type: str = "vip"):
+            raise RuntimeError("db down")
+
+    llm = FakeLLM(structured_responses=[], text_responses=[])
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=_Boom())
+    assert await director._catalog_vocabulary("vip") == ([], [], [])
+    director_np, _, _ = make_director(llm, persona="Boot")
+    assert await director_np._catalog_vocabulary("atencion") == ([], [], [])
+
+
+async def test_analyst_receives_policy_and_voice_vocabulary_of_turn_channel() -> None:
+    """Aislamiento VIP/atención en el prompt real del Analyst (turno de atención)."""
+    from diana.cognitive import analyst as analyst_mod
+
+    llm = FakeLLM(
+        structured_responses=[_comprehension(), _profile()],
+        text_responses=["draft"],
+    )
+    provider = _ByChannelPersonaProvider(
+        {"vip": _VOCAB_VIP_CATALOG, "atencion": _VOCAB_ATENCION_CATALOG}
+    )
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
+    turn = _turn()
+    turn.channel_type = "atencion"
+    await director.handle_turn(turn)
+
+    analyst_call = next(c for c in llm.calls if c[0] == "generate_structured")
+    system = analyst_call[1]["messages"][0]["content"]
+    assert system.startswith(analyst_mod._SYSTEM)
+    addendum = system[len(analyst_mod._SYSTEM):]
+    assert "Active policy temas (channel atencion): precios_especiales." in addendum
+    assert "Active voice pattern tags (channel atencion): despedida." in addendum
+    assert "does not apply here" in addendum
+    assert "dinamica_novia_virtual" not in addendum
+    assert "momento_bonito" not in addendum
+    assert set(provider.requested_channels) == {"atencion"}
+
+
+async def test_catalog_vocabulary_is_uncapped_budget_lives_in_analyst() -> None:
+    """El Director entrega tamaños reales; el reparto de 60 lo hace el Analyst."""
+    big = {
+        "persona_facts": [{"id": "x", "tema": [f"t{i}" for i in range(70)], "hecho": "h"}],
+        "policies": [{"id": "p", "tema": [f"p{i}" for i in range(70)], "regla": "r"}],
+        "voice_patterns": [{"id": "v", "tags": [f"v{i}" for i in range(70)], "patron": "P", "uso": "U"}],
+    }
+    provider = _ByChannelPersonaProvider({"vip": big})
+    llm = FakeLLM(structured_responses=[], text_responses=[])
+    director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
+    facts, pols, voz = await director._catalog_vocabulary("vip")
+    assert (len(facts), len(pols), len(voz)) == (70, 70, 70)
+
+
+
+# ---------------------------------------------------------------------------
+# E1 (hardener/persona-reglas ítem 3): semantic shadow hook
+# ---------------------------------------------------------------------------
+
+
+class _SpyShadow:
+    def __init__(self, *, boom: bool = False) -> None:
+        self.snapshots: list[Any] = []
+        self._boom = boom
+
+    def schedule(self, snapshot: Any) -> bool:
+        if self._boom:
+            raise RuntimeError("shadow exploded")
+        self.snapshots.append(snapshot)
+        return True
+
+
+def _shadow_llm() -> FakeLLM:
+    return FakeLLM(
+        structured_responses=[
+            _comprehension(risk="medio", needs_history=True),
+            _profile(safety=0.5),
+        ],
+        text_responses=["Draft reply for VIP"],
+    )
+
+
+def _decision_dump(decision: Decision) -> dict:
+    return decision.model_dump(mode="json")
+
+
+async def _run_shadow_turn(shadow: Any | None, text: str = "hola Diana, ¿cómo va todo?"):
+    llm = _shadow_llm()
+    director, trace, _ = make_director(llm, persona_semantic_shadow=shadow)
+    turn = IncomingTurn(
+        turn_id=UUID("00000000-0000-0000-0000-000000000042"), chat_id=42, text=text
+    )
+    decision = await director.handle_turn(turn)
+    return director, trace, turn, decision, llm
+
+
+@pytest.mark.asyncio
+async def test_shadow_off_by_default_no_schedule() -> None:
+    director, *_ = make_director(_shadow_llm())
+    assert director._persona_semantic_shadow is None  # noqa: SLF001
+    _, trace, turn, decision, _ = await _run_shadow_turn(None)
+    assert decision.action == "approve"
+
+
+@pytest.mark.asyncio
+async def test_prompt_and_decision_byte_identical_with_shadow_on() -> None:
+    _, trace_off, turn_off, dec_off, llm_off = await _run_shadow_turn(None)
+    spy = _SpyShadow()
+    _, trace_on, turn_on, dec_on, llm_on = await _run_shadow_turn(spy)
+    assert len(spy.snapshots) == 1  # the hook ran
+    p_off = trace_off.get(turn_off.turn_id, "prompt_text").encode()
+    p_on = trace_on.get(turn_on.turn_id, "prompt_text").encode()
+    assert p_off == p_on
+    assert _decision_dump(dec_off) == _decision_dump(dec_on)
+    assert [c[1].get("messages") for c in llm_off.calls] == [
+        c[1].get("messages") for c in llm_on.calls
+    ]
+    assert trace_off.get(turn_off.turn_id, "retrieved") == trace_on.get(turn_on.turn_id, "retrieved")
+
+
+@pytest.mark.asyncio
+async def test_shadow_schedule_exception_does_not_change_turn(caplog) -> None:
+    _, _, _, dec_off, _ = await _run_shadow_turn(None)
+    with caplog.at_level("WARNING", logger="diana.cognitive"):
+        _, _, _, dec_on, _ = await _run_shadow_turn(_SpyShadow(boom=True))
+    assert _decision_dump(dec_off) == _decision_dump(dec_on)
+    assert any(r.getMessage() == "persona_semantic_shadow_schedule_failed" for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_shadow_not_scheduled_on_early_exits() -> None:
+    # Saludo puro
+    spy = _SpyShadow()
+    llm = FakeLLM(structured_responses=[_saludo_comprehension()], text_responses=[])
+    director, *_ = make_director(
+        llm, pure_greeting_cut=lambda text, comp: True, saludo_response_pool=list(SALUDO_POOL),
+        saludo_rng=random.Random(0), persona_semantic_shadow=spy,
+    )
+    decision = await director.handle_turn(_turn(text="hola"))
+    assert decision.reason.startswith("plantilla_saludo")
+    # Check-in
+    llm = FakeLLM(structured_responses=[_comprehension()], text_responses=[])
+    director, *_ = make_director(
+        llm, checkin_cut=lambda text, comp: True, persona_semantic_shadow=spy,
+    )
+    decision = await director.handle_turn(_turn(text="¿cómo estás?"))
+    assert decision.reason.startswith("plantilla_checkin_")
+    # H4 (pregunta repetida)
+    intents = InMemoryRecentIntents()
+    intents.seed(42, ["precio", "precio"])
+    llm = FakeLLM(structured_responses=[_comprehension(intent="precio")], text_responses=[])
+    director, *_ = make_director(
+        llm, recent_intents=intents, repetition_guard=RepetitionGuard(threshold=3),
+        persona_semantic_shadow=spy,
+    )
+    decision = await director.handle_turn(_turn(text="otra vez el precio"))
+    assert decision.reason == "pregunta_repetida"
+    assert spy.snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_shadow_hook_overhead_under_10ms(monkeypatch) -> None:
+    import time as _time
+
+    from diana.cognitive import director as director_mod
+    from diana.cognitive.persona_semantic import PersonaSemanticShadow
+
+    class _Emb:
+        model_name = "fake-mini"
+        is_loaded = True
+
+        async def embed(self, text):
+            return [1.0, 0.0, 0.0]
+
+    class _Prov:
+        async def get_catalog(self, channel):
+            return None
+
+    shadow = PersonaSemanticShadow(_Emb(), _Prov())
+    elapsed: list[float] = []
+    real_build = director_mod.build_shadow_snapshot
+    real_schedule = shadow.schedule
+
+    def timed_build(*args, **kwargs):
+        timed_build.t0 = _time.perf_counter()
+        return real_build(*args, **kwargs)
+
+    def timed_schedule(snapshot):
+        try:
+            return real_schedule(snapshot)
+        finally:
+            elapsed.append((_time.perf_counter() - timed_build.t0) * 1000)
+
+    monkeypatch.setattr(director_mod, "build_shadow_snapshot", timed_build)
+    shadow.schedule = timed_schedule  # type: ignore[method-assign]
+    await _run_shadow_turn(shadow)
+    await asyncio.gather(*shadow._tasks.values())  # noqa: SLF001
+    assert len(elapsed) == 1
+    assert elapsed[0] < 10.0
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 (R3-1, R3-2): real PersonaSemanticShadow + live catalog
+# ---------------------------------------------------------------------------
+
+
+class _HashEmbedder:
+    """Loaded, deterministic 8-dim embedder (optionally gated on an Event)."""
+
+    model_name = "fake-hash"
+    is_loaded = True
+
+    def __init__(self, gate: asyncio.Event | None = None) -> None:
+        self.gate = gate
+        self.calls = 0
+
+    async def embed(self, text: str) -> list[float]:
+        self.calls += 1
+        if self.gate is not None:
+            await self.gate.wait()
+        import hashlib
+
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        return [b / 255.0 for b in digest[:8]]
+
+
+class _ChannelCatalogProvider:
+    def __init__(self, catalogs: dict[str, dict]) -> None:
+        self.catalogs = catalogs
+
+    async def get_catalog(self, channel_type: str = "vip"):
+        return self.catalogs.get(channel_type)
+
+
+def _shadow_catalogs() -> dict[str, dict]:
+    import copy
+
+    from diana.cognitive.persona_catalog import get_persona_atencion_catalog, get_persona_catalog
+
+    vip = copy.deepcopy(get_persona_catalog())
+    vip["operacion"] = [{"id": "lucien", "alias": ["Lucien"],
+                         "hecho": "Lucien es el bot administrador del canal VIP."}]
+    atn = copy.deepcopy(get_persona_atencion_catalog())
+    atn["operacion"] = [{"id": "pagos_bot", "alias": ["Pagobot"],
+                         "hecho": "Pagobot confirma los pagos."}]
+    return {"vip": vip, "atencion": atn}
+
+
+_SHADOW_CASES = {
+    "vip": (
+        "¿Lucien sabe algo de tu familia y tus estudios de psicología?",
+        ["familia", "estudios", "psicologia"],
+    ),
+    "atencion": ("¿Pagobot me dice los precios del contenido?", ["precios", "contenido"]),
+}
+
+
+def _catalog_director(llm: FakeLLM, provider: Any, shadow: Any | None):
+    """Director whose persona_facts / policy / operacion retrievers read ``provider``.
+
+    Review round 2 (R2-4): the catalog content must really reach the prompt so
+    the byte-identity check can catch a shadow that alters what feeds it.
+    """
+    history = InMemoryMessageHistory()
+    trace = InMemoryTraceStore()
+    kwargs: dict = {}
+    if shadow is not None:
+        kwargs["persona_semantic_shadow"] = shadow
+    director = CognitiveDirector(
+        analyst=Analyst(llm),
+        planner=Planner(),
+        registry=build_default_registry(history, persona_catalog_provider=provider),
+        context_builder=ContextBuilder(),
+        generator=Generator(llm),
+        evaluator=Evaluator(llm),
+        decider=Decider(),
+        trace=trace,
+        persona="You are Diana.",
+        history=history,
+        persona_catalog_provider=provider,
+        feature_persona_operacion_enabled=True,
+        **kwargs,
+    )
+    return director, trace
+
+
+async def _run_catalog_turn(channel: str, shadow: Any | None, provider: Any):
+    text, topics = _SHADOW_CASES[channel]
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(topics=topics, needs_policy=True, needs_persona_facts=True,
+                           risk="medio"),
+            _profile(safety=0.5),
+        ],
+        text_responses=["Draft reply"],
+    )
+    director, trace = _catalog_director(llm, provider, shadow)
+    turn = IncomingTurn(
+        turn_id=UUID("00000000-0000-0000-0000-000000000077"),
+        chat_id=42, text=text, channel_type=channel,
+    )
+    decision = await director.handle_turn(turn)
+    return trace, turn, decision, llm
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["vip", "atencion"])
+async def test_prompt_byte_identical_with_real_shadow_and_catalog(channel, caplog) -> None:
+    from diana.cognitive.persona_semantic import PersonaSemanticShadow
+
+    provider = _ChannelCatalogProvider(_shadow_catalogs())
+    trace_off, turn_off, dec_off, llm_off = await _run_catalog_turn(channel, None, provider)
+    embedder = _HashEmbedder()
+    shadow = PersonaSemanticShadow(embedder, provider)
+    with caplog.at_level("INFO"):
+        trace_on, turn_on, dec_on, llm_on = await _run_catalog_turn(channel, shadow, provider)
+        await asyncio.gather(*shadow._tasks.values())  # noqa: SLF001
+    # the real shadow ran against this channel's catalog
+    assert channel in shadow._tasks and embedder.calls > 1  # noqa: SLF001
+    assert any(r.getMessage() == "persona_semantic_shadow" and r.channel_type == channel
+               for r in caplog.records)
+    retrieved_off = trace_off.get(turn_off.turn_id, "retrieved")
+    # R2-4: real catalog content of THIS channel feeds the prompt
+    catalogs = _shadow_catalogs()
+    cat, other = catalogs[channel], catalogs["atencion" if channel == "vip" else "vip"]
+    prompt_off = trace_off.get(turn_off.turn_id, "prompt_text")
+    assert retrieved_off.get("knowledge.persona_facts")
+    assert retrieved_off.get("knowledge.policy")
+    assert retrieved_off.get("knowledge.operacion")
+    assert any(f["hecho"] in prompt_off for f in cat["persona_facts"])
+    assert any(p["regla"] in prompt_off for p in cat["policies"])
+    assert cat["operacion"][0]["hecho"] in prompt_off
+    assert other["operacion"][0]["hecho"] not in prompt_off
+    p_off = prompt_off.encode()
+    p_on = trace_on.get(turn_on.turn_id, "prompt_text").encode()
+    assert p_off == p_on
+    assert [c[1].get("messages") for c in llm_off.calls] == [
+        c[1].get("messages") for c in llm_on.calls
+    ]
+    assert retrieved_off == trace_on.get(turn_on.turn_id, "retrieved")
+    assert _decision_dump(dec_off) == _decision_dump(dec_on)
+
+
+@pytest.mark.asyncio
+async def test_turn_returns_before_shadow_task_finishes() -> None:
+    from diana.cognitive.persona_semantic import PersonaSemanticShadow
+
+    provider = _ChannelCatalogProvider(_shadow_catalogs())
+    gate = asyncio.Event()
+    shadow = PersonaSemanticShadow(_HashEmbedder(gate), provider)
+    _, _, decision, _ = await asyncio.wait_for(
+        _run_catalog_turn("vip", shadow, provider), timeout=1.0
+    )
+    assert decision.action == "approve"
+    task = shadow._tasks["vip"]  # noqa: SLF001
+    assert not task.done()  # the shadow is still waiting on the embedder
+    gate.set()
+    await asyncio.wait_for(task, 1.0)
+    assert task.done() and task.exception() is None

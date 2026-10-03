@@ -7,6 +7,102 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+El modelo de búsqueda se precarga al arrancar y las reglas aprendidas sin vector se reparan solas — 2026-10-02
+
+El modelo que convierte texto en vectores (para buscar memorias, reglas aprendidas y ejemplos por significado) se cargaba recién con el primer mensaje VIP, y ese mensaje esperaba unos 12 s. Además, si el modelo fallaba al aprender una regla, la regla quedaba guardada con un vector vacío y la búsqueda por significado nunca la encontraba.
+
+- Al arrancar, el modelo se carga en segundo plano: el bot empieza a atender de inmediato y el primer mensaje ya no paga la espera. Si la precarga falla, el bot sigue funcionando y el modelo se carga con el primer mensaje, como antes.
+- Al aprender una regla, si el vector falla se reintenta una vez; si vuelve a fallar, la regla se guarda marcada como pendiente (log `policy_embedding_pending`).
+- Al arrancar y luego cada 30 min, una reparación rellena el vector de las reglas activas que quedaron pendientes (log `policy_embedding_repair` con encontradas / reparadas / fallidas; nivel WARNING si alguna falló). Nunca escribe un vector vacío.
+- Sin migración y sin interruptor nuevo. En el primer arranque solo se escribe la columna `embedding` de las reglas activas que tienen el marcador de vector vacío; nada más cambia.
+- Qué vigilar en los logs: `embedding_warmup_done` / `embedding_warmup_failed`, `policy_embedding_repair` y `policy_embedding_pending`.
+
+---
+
+
+Medición en sombra de búsqueda semántica en Personalidad (apagada por defecto) — 2026-10-02
+
+Hoy Diana encuentra los Datos personales, Políticas y datos de Operación por temas y alias exactos. Antes de decidir si conviene buscarlos también por significado, hace falta medir qué encontraría esa búsqueda sin arriesgar las respuestas.
+
+- Con `FEATURE_PERSONA_SEMANTIC_SHADOW=true`, en segundo plano y después de cada turno, se compara el mensaje con el catálogo del canal (VIP / atención por separado) y se registra en el log `persona_semantic_shadow` solo qué elementos se parecen más (ids y puntaje) y si ya se habían recuperado.
+- Solo mide: no cambia lo que Diana responde ni el prompt, y el turno nunca lo espera.
+- No guarda texto: ni el mensaje del cliente ni las notas privadas aparecen en el log, y no se escribe nada en la base de datos.
+- Si el modelo de embeddings aún no está cargado, la medición se salta.
+- Apagado por defecto. Encenderlo requiere el arranque en segundo plano del modelo (incluido en este mismo cambio).
+
+---
+
+
+Personalidad y reglas: escribe con tus palabras y revisa antes de guardar — 2026-10-02
+
+Agregar un dato, una política, un patrón de voz, un dato de Operación o un bloque de agenda exigía escribir el formato con `|` exacto, y lo que se escribía se guardaba al instante sin verlo antes.
+
+- Ahora se puede escribir con tus palabras. El texto va al mismo proveedor de IA que usa Diana, con una espera máxima de 10 s; si no responde (o propone algo inválido), se arma una propuesta sin IA.
+- Antes de guardar siempre aparece una vista previa con ✅ Guardar, ✏️ Corregir, ➕ Nota privada (solo Datos personales) y ✖️ Cancelar. Nada se guarda sin tocar Guardar.
+- La nota privada nunca se envía a la IA, Diana no la usa para responder y la vista previa no muestra su texto. Editar un dato con tus palabras conserva su nota.
+- Cómo se reconoce una nota privada en Datos personales, tanto en el texto libre como en el formato `|` (Políticas, Patrones de voz, Operación y Agenda usan las mismas grafías, pero una regla de rechazo más amplia, explicada más abajo):
+  - «Nota privada» seguido de «:» cuenta como marcador en cualquier parte del texto, también entre paréntesis o comillas. Ejemplos: «Laura tiene gastritis, nota privada: no lo menciones», «(Nota privada: se llama Juan)».
+  - «Nota privada» seguido de un guion («-», «–», «—») solo cuenta al inicio del texto o del campo, o justo después de un punto, un punto y coma o un salto de línea. Ejemplo: «Tengo un hermano. Nota privada - se llama Juan».
+  - También cuenta «(nota privada)» entre paréntesis, con o sin «:» después. Ejemplo: «Laura tiene gastritis (nota privada) no lo menciones».
+  - Se reconocen el plural, «privado», mayúsculas, «nota_privada», «nota-privada», letras de ancho completo, caracteres invisibles y cualquier tipo de salto de línea.
+  - Una mención con guion en medio de una frase («Guardo mis notas privadas - las releo») no es marcador en Datos personales.
+- Todo lo que escribes se guarda tal cual: «1º», «nº», «m²», «½», emojis y letras de ancho completo no se cambian. La regla anterior solo se usa para encontrar el marcador.
+- En Datos personales, lo que sigue al marcador se guarda como nota privada y lo anterior como hecho, tanto en el texto libre como en el 3.er campo del formato `|`. La nota nunca se envía a la IA.
+- En el texto libre de Datos personales, si se menciona una nota privada sin marcador, el panel pide aclararlo y no envía nada a la IA. En el formato `|`, esa mención es texto normal.
+- Cómo habla Diana, Reglas de tono, Respuestas libres de Agenda y Zona horaria no revisan notas privadas: lo que escribas ahí se guarda directo. No escribas notas privadas en esas secciones.
+- Al editar, el panel solo indica que el dato tiene nota (no muestra su texto). La nota agregada se conserva al Corregir.
+- La vista previa muestra el canal. Cambiar de canal cierra cualquier alta, edición o vista previa abierta.
+- Un dato cuyo tema apagaría un alias de Operación existente no se guarda (el panel explica por qué).
+- El formato `|` funciona como antes y ahora también muestra una vista previa. En Datos personales, el 4.º campo (`id | temas | hecho | nota`) se guarda como nota privada tal cual.
+- Políticas, Patrones de voz, Operación y Agenda no tienen nota privada. Se rechaza cualquier texto en que «nota privada» vaya seguida de «:» o de un guion en cualquier parte, o que traiga «(nota privada)», tanto en el texto libre como en el formato `|`, porque Diana podría decirlo. Mencionar «nota privada» sin «:», guion ni paréntesis sí se acepta.
+- Quedan casos conocidos que no se reconocen como nota privada (por ejemplo sinónimos como «Privado:», letras parecidas de otros alfabetos o las secciones que se guardan directo). Se atenderán en un pool aparte; el detalle está en `docs/PRODUCT_OWNER_PERSONALIDAD.md`.
+- No hay interruptor nuevo.
+
+---
+
+
+Los temas de Personalidad se guardan siempre en forma canónica — 2026-10-02
+
+Los temas de Datos personales y Políticas, y los tags de Patrones de voz, podían quedar guardados como los escribía la dueña ("Cariño", "Cumpleaños Mamá", o un tema suelto en vez de lista), y la revisión de alias de Operación se hacía en dos sitios distintos (panel y servicio).
+
+- El primer guardado de cada canal reescribe los temas y tags a la forma canónica (sin acentos, minúsculas y con `_`). Por ejemplo, los tags `cariño`/`cariñosa` de 4 patrones de VIP pasan a `carino`/`carinosa`. Diana ya los leía así, así que sus respuestas no cambian.
+- Los alias de Operación no se reescriben.
+- Los alias repetidos ("El Diván, diván") se guardan una sola vez, con la primera forma escrita.
+- Toda la validación de un guardado pasa por un solo camino, el mismo para el panel y para el servicio.
+- El aviso de vocabulario recortado del Analyst baja a INFO: con catálogos grandes es lo esperado, no un problema.
+
+---
+
+
+"⚙️ Operación" reconoce los alias sin artículo y avisa de los que no usa — 2026-10-02
+
+Con Operación encendida había huecos: si el alias era "El Diván" o "el mayordomo", el cliente tenía que escribir el artículo ("tu diván" o "mayordomo" a secas no disparaban). Alias como "mi familia" se aceptaban aunque chocaban con un tema de Datos personales; los nombres propios cortos ("Ana", "Max") no se podían usar; con tres datos y tope 2, "Lucien" quedaba fuera frente a frases más largas; y los alias guardados que Diana ignoraba no se veían en ningún lado.
+
+- Los artículos y palabras de relleno al inicio o al final del alias son opcionales: "El Diván" responde a "diván" y "tu diván", y "el mayordomo" a "mayordomo". Las del medio se conservan ("el canal de ventas"). "Luciena" sigue sin coincidir. Ojo: si el alias es "la casa", ahora dispara con cualquier "casa".
+- La regla de alias se aplica a lo que realmente se busca: "mi familia" choca con el tema "familia" y "el bot" es muy corto.
+- Se permiten alias de 3 letras si son un nombre propio escrito con mayúscula ("Ana", "Max"). Las palabras comunes de 3 letras se rechazan aunque lleven mayúscula ("Sol", "Mar", "Leo"), porque el cliente escribe "hace sol" o "leo un libro".
+- Con el tope por turno, gana el dato cuyo alias es más específico (más letras, luego más palabras, luego el orden de la lista).
+- Al guardar solo se revisan los alias nuevos o cambiados. Un alias viejo que ya no cumple la regla no impide guardar otras secciones: Diana lo ignora y el panel lo marca con ⚠️ y explica por qué en el detalle del dato. Cada canal (VIP / atención) se revisa con su propio catálogo.
+- En saludos, check-ins y preguntas repetidas Diana no usa Operación, y la traza del turno ya no dice que inyectó algo. Esa traza sigue sin guardarse en la base de datos.
+- Sin interruptor nuevo: todo sigue detrás de `FEATURE_PERSONA_OPERACION_ENABLED`. Los alias guardados no se reescriben.
+
+---
+
+
+Las "Políticas" y los "Patrones de voz" del panel ahora sí llegan a Diana — 2026-10-02
+
+Lo que la dueña captura en Personalidad y reglas → Políticas y → Patrones de voz se guardaba bien, pero el Analyst solo podía elegir temas de una lista fija escrita en el código. En atención, una pregunta de precios, costos o citas no tenía un tema válido: la regla correcta no se recuperaba y el turno caía en zona gris ("no encontré doctrina") aunque la regla existía. Además, "Precios especiales" no era igual a `precios_especiales`, ni "cariño" a `carino`.
+
+Ahora el Analyst recibe en cada turno, además de los temas de Datos personales, los temas de Políticas y los tags de Patrones de voz del catálogo activo de ese canal, que ya viene cacheado, sin consultas extra. Se normalizan igual que los Datos personales al guardar y al comparar (sin acentos, en minúsculas y con `_`). Los datos ya guardados siguen funcionando sin migración.
+
+- VIP y atención siguen aisladas: cada canal ve solo su propio vocabulario. En atención, el Analyst sabe que la lista fija de temas de política del prompt es del canal VIP.
+- Hasta 60 términos por turno en total, repartidos de forma justa entre Datos personales, Políticas y Patrones de voz: ningún tipo puede dejar fuera a otro aunque el catálogo crezca. Si hay que recortar, cada sección conserva sus primeros términos y se registra `analyst_catalog_vocab_truncated` con lo que se quedó fuera de cada una.
+- Efecto esperado: menos consultas de zona gris "falsas" en atención, porque más turnos se evalúan con una regla real. Sin interruptor nuevo; el prompt base del Analyst no cambia, lo nuevo se agrega al final según el canal.
+- La señal emocional "revelación de vida" reconoce el tema con o sin acento (`extrañar` / `extranar`).
+
+---
+
+
 Nueva sección "⚙️ Operación" en Personalidad y reglas — 2026-10-01
 
 Diana no sabía cómo se llaman las piezas del propio negocio: si un cliente preguntaba "¿quién es Lucien?" o mencionaba el "canal VIP", el modelo improvisaba o el evaluador lo marcaba como inventado. Estos datos no son biografía, así que meterlos en Datos personales ensuciaba los temas del Analyst y la zona gris.
@@ -16,7 +112,7 @@ Ahora hay una lista aparte, `operacion` (`id | alias1, alias2 | hecho`, por cana
 - Flag `FEATURE_PERSONA_OPERACION_ENABLED` (apagado por defecto: el prompt queda idéntico byte a byte). Tope `PERSONA_OPERACION_MAX_PER_TURN` (por defecto 2).
 - El tokenizador quita puntuación (¿?¡!), acentos y mayúsculas: "¿Quién es Lucien?" coincide, pero "Luciena" no.
 - Al guardar se rechazan los alias de menos de 4 letras, las palabras comunes (canal, bot, admin, hola…) y los que chocan con temas de Datos personales.
-- VIP y atención están aisladas: atención nunca usa la operación de VIP. La traza guarda `operacion_match` con el alias que coincidió y los ids inyectados.
+- VIP y atención están aisladas: atención nunca usa la operación de VIP. El Director anota `operacion_match` (alias que coincidió e ids inyectados) solo en la traza en memoria del turno: esa clave no llega a la base de datos (`pipeline_traces` no tiene columna para ella).
 - La lista puede quedar vacía. Las versiones anteriores no tienen la clave, así que restaurarlas deja Operación vacía (el panel lo avisa).
 
 ---

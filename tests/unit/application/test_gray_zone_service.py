@@ -723,3 +723,81 @@ async def test_create_query_persists_proposal_fields(
     assert kwargs["proposed_reply"] == "Sí, con 3 o más te hago 10%"
     assert kwargs["proposal_source"] == "gray_zone_proposal"
     assert result is fake_row
+
+
+# --- D2 (hardener/persona-reglas ítem 3): embed retry + pending marker ---
+
+
+def _live_policy_service(query_repo, vip_store, staging_repo, distiller, embedder):
+    policies_repo = AsyncMock()
+    policies_repo.find_active_by_source_query_id = AsyncMock(return_value=None)
+    policies_repo.insert.return_value = SimpleNamespace(id=uuid4())
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=policies_repo,
+        embedder=embedder,
+    )
+    return service, policies_repo
+
+
+@pytest.mark.asyncio
+async def test_persist_live_policy_retries_embed_before_insert(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+) -> None:
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id, status="open", vip_id=vip_record.id,
+        question="¿Hay descuento?", draft="borrador",
+    )
+    embedder = AsyncMock()
+    embedder.embed.side_effect = [RuntimeError("cold"), [0.1] * 384]
+    service, policies_repo = _live_policy_service(
+        query_repo, vip_store, staging_repo, distiller, embedder
+    )
+
+    await service.persist_live_policy(
+        query_id, "Ofrecer 10% en 3+", vip_id=vip_record.id, scope="vip"
+    )
+
+    assert policies_repo.insert.await_args.kwargs["embedding"] == [0.1] * 384
+    embedder.warmup.assert_awaited_once()
+    assert embedder.embed.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_persist_live_policy_marks_pending_when_embed_keeps_failing(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id, status="open", vip_id=vip_record.id,
+        question="¿Hay descuento?", draft="borrador",
+    )
+    embedder = AsyncMock()
+    embedder.embed.side_effect = RuntimeError("down")
+    service, policies_repo = _live_policy_service(
+        query_repo, vip_store, staging_repo, distiller, embedder
+    )
+
+    with caplog.at_level(logging.WARNING, logger="diana.application"):
+        await service.persist_live_policy(
+            query_id, "Ofrecer 10% en 3+", vip_id=vip_record.id, scope="vip"
+        )
+
+    assert policies_repo.insert.await_args.kwargs["embedding"] is None
+    pending = [r for r in caplog.records if r.getMessage() == "policy_embedding_pending"]
+    assert pending and pending[0].levelno == logging.WARNING
+    assert pending[0].source == "gray_zone_live"
+    assert pending[0].reason == "embed_failed"

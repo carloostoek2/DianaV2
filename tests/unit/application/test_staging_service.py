@@ -868,3 +868,53 @@ async def test_save_correction_inserts_when_sandbox_inactive(
     )
     assert result is fake_row
     repos["staging"].insert.assert_awaited_once()
+
+
+# --- D2 (hardener/persona-reglas ítem 3): embed retry + pending marker ---
+
+
+@pytest.mark.asyncio
+async def test_promote_to_policy_retries_embed_before_insert(
+    service: StagingService,
+    repos: dict[str, AsyncMock],
+    embedder: AsyncMock,
+) -> None:
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload={}
+    )
+    repos["policies"].insert.return_value = _fake_orm_policy()
+    embedder.embed.side_effect = [RuntimeError("cold"), [0.1] * 384]
+
+    await service.promote_to_policy(
+        candidate_id=candidate_id, trigger="test trigger", rule="test rule"
+    )
+
+    assert repos["policies"].insert.await_args.kwargs["embedding"] == [0.1] * 384
+    embedder.warmup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_promote_to_policy_marks_pending_when_embed_keeps_failing(
+    service: StagingService,
+    repos: dict[str, AsyncMock],
+    embedder: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id, payload={}
+    )
+    repos["policies"].insert.return_value = _fake_orm_policy()
+    embedder.embed.side_effect = RuntimeError("down")
+
+    with caplog.at_level(logging.WARNING, logger="diana.application"):
+        await service.promote_to_policy(
+            candidate_id=candidate_id, trigger="test trigger", rule="test rule"
+        )
+
+    assert repos["policies"].insert.await_args.kwargs["embedding"] is None
+    pending = [r for r in caplog.records if r.getMessage() == "policy_embedding_pending"]
+    assert pending and pending[0].source == "staging_promote"

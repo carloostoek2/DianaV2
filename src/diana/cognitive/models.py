@@ -154,6 +154,11 @@ class AnalystInput(BaseModel):
     # (owner-editable "Datos personales"). Injected so owner-added temas are
     # reachable by the PersonaFactsRetriever. Empty → legacy fixed prompt.
     catalog_topics: list[str] = Field(default_factory=list)
+    # Normalized Políticas temas / Patrones de voz tags of the SAME active
+    # catalog (same channel). Separate from catalog_topics because each block
+    # activates a different needs_* flag. Empty → no extra addendum block.
+    policy_topics: list[str] = Field(default_factory=list)
+    voice_tags: list[str] = Field(default_factory=list)
 
 
 class Comprehension(BaseModel):

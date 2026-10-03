@@ -40,6 +40,7 @@ from diana.application.memory_backfill_queue import MemoryBackfillQueue
 from diana.application.mood_engine import MoodEngine
 from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.persona_catalog_provider import PersonaCatalogProvider
+from diana.application.persona_rule_drafter import PersonaRuleDrafter
 from diana.application.promo_service import PromoService
 from diana.application.recontact_personalizer import RecontactPersonalizer
 from diana.application.recontact_service import (
@@ -78,6 +79,7 @@ from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.director import ANALYST_HISTORY_LIMIT, CognitiveDirector
+from diana.cognitive.persona_semantic import PersonaSemanticShadow
 from diana.cognitive.repetition_guard import RepetitionGuard
 from diana.cognitive.template_gate import (
     PhaticLightContext,
@@ -392,6 +394,10 @@ class AppContainer:
     # Fase 6 (vínculo Lucien→Diana): link coordinator (built ALWAYS — consumed
     # via dispatcher gated by feature_link_enabled).
     link_coordinator: LinkCoordinator | None = None
+    # hardener/persona-reglas ítem 3 (D1/D2): shared embedder (boot warmup job)
+    # and policies repo (zero-vector repair) exposed for main.py.
+    embedding_svc: Any | None = None
+    policies_repo: Any | None = None
 
 
 def build_app(
@@ -558,7 +564,9 @@ def build_app(
         )
 
     # F2 knowledge services (Item 1)
-    embedding_svc = EmbeddingService()  # lazy, no model load at boot
+    # Loaded in background at boot (EmbeddingWarmupJob, main.py); embed() still
+    # lazy-loads if the warmup has not finished or failed.
+    embedding_svc = EmbeddingService()
     memories_repo = MemoriesRepo(sf)
     policies_repo = PoliciesRepo(sf)
     examples_repo = ExamplesRepo(sf)
@@ -812,11 +820,21 @@ def build_app(
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
         owner_telegram_id=settings.owner_telegram_id,
         clock=clock.now,
+        # hardener/persona-reglas ítem 3 (C2): plain-text → item draft for the
+        # panel (no flag; deterministic fallback when the LLM fails/times out).
+        rule_drafter=PersonaRuleDrafter(llm=provider),
     )
     persona_catalog_provider = PersonaCatalogProvider(
         persona_admin_service=persona_admin_service,
     )
     persona_admin_service.set_on_change(persona_catalog_provider.invalidate)
+    # FEATURE_PERSONA_SEMANTIC_SHADOW (SHADOW — only measures, never changes the
+    # prompt): off → no shadow object at all (Director hook is a no-op).
+    persona_semantic_shadow = (
+        PersonaSemanticShadow(embedding_svc, persona_catalog_provider)
+        if settings.feature_persona_semantic_shadow
+        else None
+    )
 
     # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: system-generated RULE proposal for
     # gray-zone consults. Built whenever the gray-zone feature is on; the
@@ -1058,6 +1076,7 @@ def build_app(
         force_profile_when_notes=settings.feature_force_profile_when_notes,
         profiles_repo=profiles_repo,
         feature_persona_operacion_enabled=settings.feature_persona_operacion_enabled,
+        persona_semantic_shadow=persona_semantic_shadow,
     )
 
     learning = LearningService(traces)
@@ -1546,6 +1565,8 @@ def build_app(
         trust_budget_wired=settings.feature_trust_budget,
         vip_trust_budget_repo=vip_trust_budget_repo,
         link_coordinator=link_coordinator,
+        embedding_svc=embedding_svc,
+        policies_repo=policies_repo,
     )
 
 
