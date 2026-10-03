@@ -7,6 +7,19 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+El modelo de búsqueda se precarga al arrancar y las reglas aprendidas sin vector se reparan solas — 2026-10-02
+
+El modelo que convierte texto en vectores (para buscar memorias, reglas aprendidas y ejemplos por significado) se cargaba recién con el primer mensaje VIP, y ese mensaje esperaba unos 12 s. Además, si el modelo fallaba al aprender una regla, la regla quedaba guardada con un vector vacío y la búsqueda por significado nunca la encontraba.
+
+- Al arrancar, el modelo se carga en segundo plano: el bot empieza a atender de inmediato y el primer mensaje ya no paga la espera. Si la precarga falla, el bot sigue funcionando y el modelo se carga con el primer mensaje, como antes.
+- Al aprender una regla, si el vector falla se reintenta una vez; si vuelve a fallar, la regla se guarda marcada como pendiente (log `policy_embedding_pending`).
+- Al arrancar y luego cada 30 min, una reparación rellena el vector de las reglas activas que quedaron pendientes (log `policy_embedding_repair` con encontradas / reparadas / fallidas; nivel WARNING si alguna falló). Nunca escribe un vector vacío.
+- Sin migración y sin interruptor nuevo. En el primer arranque solo se escribe la columna `embedding` de las reglas activas que tienen el marcador de vector vacío; nada más cambia.
+- Qué vigilar en los logs: `embedding_warmup_done` / `embedding_warmup_failed`, `policy_embedding_repair` y `policy_embedding_pending`.
+
+---
+
+
 Medición en sombra de búsqueda semántica en Personalidad (apagada por defecto) — 2026-10-02
 
 Hoy Diana encuentra los Datos personales, Políticas y datos de Operación por temas y alias exactos. Antes de decidir si conviene buscarlos también por significado, hace falta medir qué encontraría esa búsqueda sin arriesgar las respuestas.
@@ -27,6 +40,9 @@ Agregar un dato, una política, un patrón de voz, un dato de Operación o un bl
 - Ahora se puede escribir con tus palabras. El texto va al mismo proveedor de IA que usa Diana, con una espera máxima de 10 s; si no responde (o propone algo inválido), se arma una propuesta sin IA.
 - Antes de guardar siempre aparece una vista previa con ✅ Guardar, ✏️ Corregir, ➕ Nota privada (solo Datos personales) y ✖️ Cancelar. Nada se guarda sin tocar Guardar.
 - La nota privada nunca se envía a la IA, Diana no la usa para responder y la vista previa no muestra su texto. Editar un dato con tus palabras conserva su nota.
+- Si escribes «Nota privada: …» dentro del texto, esa parte se guarda como nota y no se envía a la IA. Al editar, el panel solo indica que el dato tiene nota (no muestra su texto). La nota agregada se conserva al Corregir.
+- La vista previa muestra el canal. Cambiar de canal cierra cualquier alta, edición o vista previa abierta.
+- Un dato cuyo tema apagaría un alias de Operación existente no se guarda (el panel explica por qué).
 - El formato `|` sigue igual, pero ahora también muestra una vista previa.
 - La vista previa se guarda en el canal (VIP / atención) donde se escribió; cambiar de canal la descarta.
 - No hay interruptor nuevo.

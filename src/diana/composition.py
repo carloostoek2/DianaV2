@@ -564,7 +564,9 @@ def build_app(
         )
 
     # F2 knowledge services (Item 1)
-    embedding_svc = EmbeddingService()  # lazy, no model load at boot
+    # Loaded in background at boot (EmbeddingWarmupJob, main.py); embed() still
+    # lazy-loads if the warmup has not finished or failed.
+    embedding_svc = EmbeddingService()
     memories_repo = MemoriesRepo(sf)
     policies_repo = PoliciesRepo(sf)
     examples_repo = ExamplesRepo(sf)
