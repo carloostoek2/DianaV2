@@ -67,3 +67,33 @@ async def test_no_repair_service_is_noop() -> None:
     assert job._repair is None  # noqa: SLF001
     await job._repair_pass()  # noqa: SLF001  (no lanza)
     assert DEFAULT_REPAIR_INTERVAL_SECONDS == 1800.0
+
+
+# --- D2: repair pass at boot and periodically ---
+
+
+class _FakeRepair:
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+        self.count = 0
+
+    async def repair_once(self, *, limit: int = 50) -> dict[str, int]:
+        self.calls.append("repair")
+        self.count += 1
+        return {"found": 0, "repaired": 0, "failed": 0}
+
+
+async def test_repair_runs_right_after_warmup() -> None:
+    emb = _FakeEmbedder()
+    repair = _FakeRepair(emb.calls)
+    job = EmbeddingWarmupJob(emb, repair=repair, interval_seconds=10.0)
+    await _run_then_stop(job, delay=0.02)
+    assert emb.calls[:2] == ["warmup", "repair"]
+
+
+async def test_repair_runs_periodically() -> None:
+    emb = _FakeEmbedder()
+    repair = _FakeRepair([])
+    job = EmbeddingWarmupJob(emb, repair=repair, interval_seconds=0.01)
+    await _run_then_stop(job, delay=0.1)
+    assert repair.count >= 2

@@ -6,7 +6,9 @@ waits for the ~12 s model load (which itself runs in a worker thread inside
 ``EmbeddingService``). A failed warmup is logged and the bot keeps working:
 the lazy load inside ``embed()`` is still available.
 
-After the warmup the job keeps an optional periodic repair pass (wired in D2).
+After the warmup the job runs an optional repair pass (D2): right away at
+boot and then every ``interval_seconds``, re-embedding policies that still
+carry the zero-vector marker.
 """
 
 from __future__ import annotations
@@ -57,6 +59,18 @@ class EmbeddingWarmupJob:
     async def _repair_pass(self) -> None:
         if self._repair is None:
             return
+        try:
+            await asyncio.wait_for(
+                self._repair.repair_once(limit=self._repair_limit),
+                timeout=self._interval,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "embedding_repair_timeout",
+                extra={"timeout_seconds": self._interval},
+            )
+        except Exception:
+            logger.exception("embedding_repair_failed")
 
     def stop(self) -> None:
         self._stop_event.set()

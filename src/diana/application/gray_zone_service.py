@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
+from diana.application.policy_embedding import embed_policy_text, policy_embedding_text
 from diana.application.ports import VipStore
 from diana.cognitive.policy_distiller import PolicyDistiller
 from diana.infrastructure.db.repositories.gray_zone import GrayZoneQueryRepo
@@ -168,15 +169,18 @@ class GrayZoneService:
                 return existing
 
         trigger = _trigger_from_rule(rule, getattr(query, "question", "") or "")
-        embedding: list[float] | None = None
-        if self._embedder is not None:
-            try:
-                embedding = await self._embedder.embed(f"{trigger}\n{rule}")
-            except Exception:
-                logger.exception(
-                    "gray_zone_live_policy_embed_failed",
-                    extra={"query_id": str(query_id)},
-                )
+        embedding = await embed_policy_text(
+            self._embedder, policy_embedding_text(trigger, rule)
+        )
+        if embedding is None:
+            logger.warning(
+                "policy_embedding_pending",
+                extra={
+                    "query_id": str(query_id),
+                    "source": "gray_zone_live",
+                    "reason": "no_embedder" if self._embedder is None else "embed_failed",
+                },
+            )
 
         policy = await self._policies.insert(
             trigger_description=trigger,

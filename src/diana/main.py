@@ -8,6 +8,7 @@ import sys
 
 from diana.application.logformat import ColorExtraFormatter
 from diana.application.missed_message_recovery import recover_missed_updates
+from diana.application.policy_embedding import PolicyEmbeddingRepairService
 from diana.composition import (
     AppContainer,
     build_app,
@@ -176,7 +177,10 @@ def _setup_embedding_warmup_job(app: AppContainer) -> asyncio.Task | None:
     if app.embedding_svc is None:
         logger.info("embedding_warmup_job_skipped_no_embedder")
         return None
-    job = EmbeddingWarmupJob(app.embedding_svc)
+    repair = None
+    if app.policies_repo is not None:
+        repair = PolicyEmbeddingRepairService(app.policies_repo, app.embedding_svc)
+    job = EmbeddingWarmupJob(app.embedding_svc, repair=repair)
     task = asyncio.create_task(job.start())
     logger.info("embedding_warmup_job_started")
     return task
