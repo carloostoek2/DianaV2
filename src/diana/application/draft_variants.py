@@ -741,6 +741,9 @@ class DraftVariantService:
                 text=vip_text,
                 telegram_message_id=locked.trigger_message_id,
                 business_connection_id=locked.business_connection_id,
+                channel_type=(
+                    "atencion" if turn.channel_type == "atencion" else "vip"
+                ),
             )
             hint = read_regen_hint(locked.evaluation)
             knowledge_overrides = (

@@ -103,6 +103,18 @@ Ahora el Analyst recibe en cada turno, además de los temas de Datos personales,
 ---
 
 
+Regenerar un borrador respeta el canal de donde vino — 2026-10-02
+
+Cuando la dueña pulsaba 🔄 Regenerar (o 💡 Contexto para regen) sobre un borrador, Diana lo rehacía siempre como si la conversación fuera del canal VIP. Si el borrador venía de atención general, el nuevo salía con la persona, las reglas, los datos, la voz y el horario de VIP: a un prospecto se le contestaba como a un suscriptor VIP. Eso rompía la separación entre VIP y atención, justo en el momento en que la dueña estaba tratando de mejorar la respuesta.
+
+Ahora la regeneración usa el canal del mensaje que originó el borrador. Ese dato ya se guardaba con cada turno, así que no hizo falta migración ni cambio en la base. Un borrador de atención se rehace con la persona y el catálogo de atención, y uno de VIP sigue exactamente igual que antes.
+
+- Aplica a los dos botones: 🔄 Regenerar y 💡 Contexto para regen. En el segundo, el contexto temporal que escribe la dueña se sigue usando y se limpia después, como antes.
+- Sin interruptor nuevo: es la corrección de un comportamiento que ya existía. Los botones, textos y avisos no cambian.
+- Los turnos antiguos sin canal claro se tratan como VIP, igual que en la reanudación de un falso positivo.
+
+---
+
 Nueva sección "⚙️ Operación" en Personalidad y reglas — 2026-10-01
 
 Diana no sabía cómo se llaman las piezas del propio negocio: si un cliente preguntaba "¿quién es Lucien?" o mencionaba el "canal VIP", el modelo improvisaba o el evaluador lo marcaba como inventado. Estos datos no son biografía, así que meterlos en Datos personales ensuciaba los temas del Analyst y la zona gris.
