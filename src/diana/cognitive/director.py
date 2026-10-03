@@ -444,18 +444,8 @@ class CognitiveDirector:
             turn, comprehension
         )
         await self._store(turn_id, "comprehension", comprehension)
-        if operacion_hits:
-            await self._store(
-                turn_id,
-                "operacion_match",
-                {
-                    "channel_type": turn.channel_type,
-                    "matched": [
-                        {"id": hit.id, "alias": hit.alias} for hit in operacion_hits
-                    ],
-                    "injected_ids": [hit.id for hit in operacion_hits],
-                },
-            )
+        # operacion_match is traced right before EVERY exit below (early exits
+        # never inject; see _store_operacion_match).
         logger.info(
             "🧠 Comprensión — intent: %s | emoción: %s | urgencia: %s | riesgo: %s",
             comprehension.intent,
@@ -489,6 +479,7 @@ class CognitiveDirector:
                     )
                     await self._store(turn_id, "generated_text", draft)
                     await self._store(turn_id, "decision", decision)
+                    await self._store_operacion_match(turn, operacion_hits, injected=False)
                     return decision
 
         # Post-Analyst check-in cut: pools + light context; send when phatic_auto_send.
@@ -532,6 +523,7 @@ class CognitiveDirector:
                         )
                         await self._store(turn_id, "generated_text", draft)
                         await self._store(turn_id, "decision", decision)
+                        await self._store_operacion_match(turn, operacion_hits, injected=False)
                         return decision
 
         # H4: 3+ consecutive same intent → Decision-only escalate (no Planner+).
@@ -566,6 +558,7 @@ class CognitiveDirector:
                     mode_restriction_applied=None,
                 )
                 await self._store(turn_id, "decision", decision)
+                await self._store_operacion_match(turn, operacion_hits, injected=False)
                 return decision
 
         await self._status.transition(turn_id, TurnStatus.PLANNING)
@@ -574,6 +567,11 @@ class CognitiveDirector:
         timings["planner_ms"] = tc.elapsed_ms
         await self._store(turn_id, "plan", plan)
         logger.info("🗺️ Plan — capacidades: %s", ", ".join(plan.capabilities))
+        # Retrieval injects the trigger's hits only when the plan asks for
+        # knowledge.operacion (Planner 1:1 with needs_operacion): trace exactly that.
+        await self._store_operacion_match(
+            turn, operacion_hits, injected=_OPERACION_CAPABILITY in plan.capabilities
+        )
 
         await self._status.transition(turn_id, TurnStatus.RETRIEVING)
         retrieved: dict[str, Any | None] = {}
@@ -952,6 +950,29 @@ class CognitiveDirector:
                 update={"needs_operacion": bool(hits)}
             )
         return comprehension, hits
+
+    async def _store_operacion_match(
+        self, turn: IncomingTurn, hits: list[Any], *, injected: bool
+    ) -> None:
+        """Trace ``operacion_match`` honestly; no-op without hits.
+
+        Early exits (saludo / check-in / H4) call it with ``injected=False``
+        (``injected_ids == []``); the retrieval path with the ids it really
+        injects. In-process trace only: ``SqlTraceStore`` drops keys that are
+        not in ``TRACE_KEY_TO_COLUMN``, so this never reaches the database.
+        """
+        if not hits:
+            return
+        await self._store(
+            turn.turn_id,
+            "operacion_match",
+            {
+                "channel_type": turn.channel_type,
+                "matched": [{"id": hit.id, "alias": hit.alias} for hit in hits],
+                "injected_ids": [hit.id for hit in hits] if injected else [],
+                "injected": injected,
+            },
+        )
 
     async def _store(self, turn_id: UUID, key: str, value: Any) -> None:
         await self._trace.store(turn_id, key, to_jsonable(value))

@@ -7,6 +7,21 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+"⚙️ Operación" reconoce los alias sin artículo y avisa de los que no usa — 2026-10-02
+
+Con Operación encendida había huecos: si el alias era "El Diván" o "el mayordomo", el cliente tenía que escribir el artículo ("tu diván" o "mayordomo" a secas no disparaban). Alias como "mi familia" se aceptaban aunque chocaban con un tema de Datos personales; los nombres propios cortos ("Ana", "Max") no se podían usar; con tres datos y tope 2, "Lucien" quedaba fuera frente a frases más largas; y los alias guardados que Diana ignoraba no se veían en ningún lado.
+
+- Los artículos y palabras de relleno al inicio o al final del alias son opcionales: "El Diván" responde a "diván" y "tu diván", y "el mayordomo" a "mayordomo". Las del medio se conservan ("el canal de ventas"). "Luciena" sigue sin coincidir. Ojo: si el alias es "la casa", ahora dispara con cualquier "casa".
+- La regla de alias se aplica a lo que realmente se busca: "mi familia" choca con el tema "familia" y "el bot" es muy corto.
+- Se permiten alias de 3 letras si son un nombre propio escrito con mayúscula ("Ana", "Max"). Las palabras comunes de 3 letras se rechazan aunque lleven mayúscula ("Sol", "Mar", "Leo"), porque el cliente escribe "hace sol" o "leo un libro".
+- Con el tope por turno, gana el dato cuyo alias es más específico (más letras, luego más palabras, luego el orden de la lista).
+- Al guardar solo se revisan los alias nuevos o cambiados. Un alias viejo que ya no cumple la regla no impide guardar otras secciones: Diana lo ignora y el panel lo marca con ⚠️ y explica por qué en el detalle del dato. Cada canal (VIP / atención) se revisa con su propio catálogo.
+- En saludos, check-ins y preguntas repetidas Diana no usa Operación, y la traza del turno ya no dice que inyectó algo. Esa traza sigue sin guardarse en la base de datos.
+- Sin interruptor nuevo: todo sigue detrás de `FEATURE_PERSONA_OPERACION_ENABLED`. Los alias guardados no se reescriben.
+
+---
+
+
 Las "Políticas" y los "Patrones de voz" del panel ahora sí llegan a Diana — 2026-10-02
 
 Lo que la dueña captura en Personalidad y reglas → Políticas y → Patrones de voz se guardaba bien, pero el Analyst solo podía elegir temas de una lista fija escrita en el código. En atención, una pregunta de precios, costos o citas no tenía un tema válido: la regla correcta no se recuperaba y el turno caía en zona gris ("no encontré doctrina") aunque la regla existía. Además, "Precios especiales" no era igual a `precios_especiales`, ni "cariño" a `carino`.
@@ -29,7 +44,7 @@ Ahora hay una lista aparte, `operacion` (`id | alias1, alias2 | hecho`, por cana
 - Flag `FEATURE_PERSONA_OPERACION_ENABLED` (apagado por defecto: el prompt queda idéntico byte a byte). Tope `PERSONA_OPERACION_MAX_PER_TURN` (por defecto 2).
 - El tokenizador quita puntuación (¿?¡!), acentos y mayúsculas: "¿Quién es Lucien?" coincide, pero "Luciena" no.
 - Al guardar se rechazan los alias de menos de 4 letras, las palabras comunes (canal, bot, admin, hola…) y los que chocan con temas de Datos personales.
-- VIP y atención están aisladas: atención nunca usa la operación de VIP. La traza guarda `operacion_match` con el alias que coincidió y los ids inyectados.
+- VIP y atención están aisladas: atención nunca usa la operación de VIP. El Director anota `operacion_match` (alias que coincidió e ids inyectados) solo en la traza en memoria del turno: esa clave no llega a la base de datos (`pipeline_traces` no tiene columna para ella).
 - La lista puede quedar vacía. Las versiones anteriores no tienen la clave, así que restaurarlas deja Operación vacía (el panel lo avisa).
 
 ---

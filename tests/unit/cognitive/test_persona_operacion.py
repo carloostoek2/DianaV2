@@ -312,6 +312,7 @@ async def test_director_injects_and_traces_when_flag_on() -> None:
         "channel_type": "vip",
         "matched": [{"id": "lucien", "alias": "Lucien"}],
         "injected_ids": ["lucien"],
+        "injected": True,
     }
     prompt = trace.get(turn.turn_id, "prompt_text")
     assert "Lucien es el bot administrador del canal VIP." in prompt
