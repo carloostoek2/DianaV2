@@ -2550,3 +2550,122 @@ async def test_shadow_hook_overhead_under_10ms(monkeypatch) -> None:
     await asyncio.gather(*shadow._tasks.values())  # noqa: SLF001
     assert len(elapsed) == 1
     assert elapsed[0] < 10.0
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 (R3-1, R3-2): real PersonaSemanticShadow + live catalog
+# ---------------------------------------------------------------------------
+
+
+class _HashEmbedder:
+    """Loaded, deterministic 8-dim embedder (optionally gated on an Event)."""
+
+    model_name = "fake-hash"
+    is_loaded = True
+
+    def __init__(self, gate: asyncio.Event | None = None) -> None:
+        self.gate = gate
+        self.calls = 0
+
+    async def embed(self, text: str) -> list[float]:
+        self.calls += 1
+        if self.gate is not None:
+            await self.gate.wait()
+        import hashlib
+
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        return [b / 255.0 for b in digest[:8]]
+
+
+class _ChannelCatalogProvider:
+    def __init__(self, catalogs: dict[str, dict]) -> None:
+        self.catalogs = catalogs
+
+    async def get_catalog(self, channel_type: str = "vip"):
+        return self.catalogs.get(channel_type)
+
+
+def _shadow_catalogs() -> dict[str, dict]:
+    import copy
+
+    from diana.cognitive.persona_catalog import get_persona_atencion_catalog, get_persona_catalog
+
+    vip = copy.deepcopy(get_persona_catalog())
+    vip["operacion"] = [{"id": "lucien", "alias": ["Lucien"],
+                         "hecho": "Lucien es el bot administrador del canal VIP."}]
+    atn = copy.deepcopy(get_persona_atencion_catalog())
+    atn["operacion"] = [{"id": "pagos_bot", "alias": ["Pagobot"],
+                         "hecho": "Pagobot confirma los pagos."}]
+    return {"vip": vip, "atencion": atn}
+
+
+_SHADOW_CASES = {
+    "vip": ("¿Lucien sabe algo de tu familia y tus estudios?", ["familia", "estudios"]),
+    "atencion": ("¿Pagobot me dice los precios del contenido?", ["precios", "contenido"]),
+}
+
+
+async def _run_catalog_turn(channel: str, shadow: Any | None, provider: Any):
+    text, topics = _SHADOW_CASES[channel]
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(topics=topics, needs_policy=True, risk="medio"),
+            _profile(safety=0.5),
+        ],
+        text_responses=["Draft reply"],
+    )
+    director, trace, _ = make_director(
+        llm, persona_catalog_provider=provider, persona_semantic_shadow=shadow
+    )
+    turn = IncomingTurn(
+        turn_id=UUID("00000000-0000-0000-0000-000000000077"),
+        chat_id=42, text=text, channel_type=channel,
+    )
+    decision = await director.handle_turn(turn)
+    return trace, turn, decision, llm
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["vip", "atencion"])
+async def test_prompt_byte_identical_with_real_shadow_and_catalog(channel, caplog) -> None:
+    from diana.cognitive.persona_semantic import PersonaSemanticShadow
+
+    provider = _ChannelCatalogProvider(_shadow_catalogs())
+    trace_off, turn_off, dec_off, llm_off = await _run_catalog_turn(channel, None, provider)
+    embedder = _HashEmbedder()
+    shadow = PersonaSemanticShadow(embedder, provider)
+    with caplog.at_level("INFO"):
+        trace_on, turn_on, dec_on, llm_on = await _run_catalog_turn(channel, shadow, provider)
+        await asyncio.gather(*shadow._tasks.values())  # noqa: SLF001
+    # the real shadow ran against this channel's catalog
+    assert channel in shadow._tasks and embedder.calls > 1  # noqa: SLF001
+    assert any(r.getMessage() == "persona_semantic_shadow" and r.channel_type == channel
+               for r in caplog.records)
+    retrieved_off = trace_off.get(turn_off.turn_id, "retrieved")
+    assert retrieved_off  # the live catalog actually fed the prompt
+    p_off = trace_off.get(turn_off.turn_id, "prompt_text").encode()
+    p_on = trace_on.get(turn_on.turn_id, "prompt_text").encode()
+    assert p_off == p_on
+    assert [c[1].get("messages") for c in llm_off.calls] == [
+        c[1].get("messages") for c in llm_on.calls
+    ]
+    assert retrieved_off == trace_on.get(turn_on.turn_id, "retrieved")
+    assert _decision_dump(dec_off) == _decision_dump(dec_on)
+
+
+@pytest.mark.asyncio
+async def test_turn_returns_before_shadow_task_finishes() -> None:
+    from diana.cognitive.persona_semantic import PersonaSemanticShadow
+
+    provider = _ChannelCatalogProvider(_shadow_catalogs())
+    gate = asyncio.Event()
+    shadow = PersonaSemanticShadow(_HashEmbedder(gate), provider)
+    _, _, decision, _ = await asyncio.wait_for(
+        _run_catalog_turn("vip", shadow, provider), timeout=1.0
+    )
+    assert decision.action == "approve"
+    task = shadow._tasks["vip"]  # noqa: SLF001
+    assert not task.done()  # the shadow is still waiting on the embedder
+    gate.set()
+    await asyncio.wait_for(task, 1.0)
+    assert task.done() and task.exception() is None
