@@ -7,6 +7,19 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Medición en sombra de búsqueda semántica en Personalidad (apagada por defecto) — 2026-10-02
+
+Hoy Diana encuentra los Datos personales, Políticas y datos de Operación por temas y alias exactos. Antes de decidir si conviene buscarlos también por significado, hace falta medir qué encontraría esa búsqueda sin arriesgar las respuestas.
+
+- Con `FEATURE_PERSONA_SEMANTIC_SHADOW=true`, en segundo plano y después de cada turno, se compara el mensaje con el catálogo del canal (VIP / atención por separado) y se registra en el log `persona_semantic_shadow` solo qué elementos se parecen más (ids y puntaje) y si ya se habían recuperado.
+- Solo mide: no cambia lo que Diana responde ni el prompt, y el turno nunca lo espera.
+- No guarda texto: ni el mensaje del cliente ni las notas privadas aparecen en el log, y no se escribe nada en la base de datos.
+- Si el modelo de embeddings aún no está cargado, la medición se salta.
+- Apagado por defecto. Encenderlo requiere el arranque en segundo plano del modelo (incluido en este mismo cambio).
+
+---
+
+
 Personalidad y reglas: escribe con tus palabras y revisa antes de guardar — 2026-10-02
 
 Agregar un dato, una política, un patrón de voz, un dato de Operación o un bloque de agenda exigía escribir el formato con `|` exacto, y lo que se escribía se guardaba al instante sin verlo antes.

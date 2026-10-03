@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -34,6 +34,7 @@ from diana.cognitive.template_gate import TemplateGate, TemplateRule
 from unittest.mock import AsyncMock, MagicMock
 from diana.cognitive.registry import build_default_registry
 from diana.llm.fake import FakeLLM
+import asyncio
 import random
 
 IA_TEMPLATE = "jsjsj si y sólo vivo en tu mente 😏"
@@ -137,6 +138,7 @@ def make_director(
     phatic_auto_send: bool = False,
     checkin_cut: Any | None = None,
     phatic_context_provider: Any | None = None,
+    persona_semantic_shadow: Any | None = None,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -156,6 +158,8 @@ def make_director(
         director_kwargs["checkin_cut"] = checkin_cut
     if phatic_context_provider is not None:
         director_kwargs["phatic_context_provider"] = phatic_context_provider
+    if persona_semantic_shadow is not None:
+        director_kwargs["persona_semantic_shadow"] = persona_semantic_shadow
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),
@@ -2399,3 +2403,150 @@ async def test_catalog_vocabulary_is_uncapped_budget_lives_in_analyst() -> None:
     director, _, _ = make_director(llm, persona="Boot", persona_catalog_provider=provider)
     facts, pols, voz = await director._catalog_vocabulary("vip")
     assert (len(facts), len(pols), len(voz)) == (70, 70, 70)
+
+
+
+# ---------------------------------------------------------------------------
+# E1 (hardener/persona-reglas ítem 3): semantic shadow hook
+# ---------------------------------------------------------------------------
+
+
+class _SpyShadow:
+    def __init__(self, *, boom: bool = False) -> None:
+        self.snapshots: list[Any] = []
+        self._boom = boom
+
+    def schedule(self, snapshot: Any) -> bool:
+        if self._boom:
+            raise RuntimeError("shadow exploded")
+        self.snapshots.append(snapshot)
+        return True
+
+
+def _shadow_llm() -> FakeLLM:
+    return FakeLLM(
+        structured_responses=[
+            _comprehension(risk="medio", needs_history=True),
+            _profile(safety=0.5),
+        ],
+        text_responses=["Draft reply for VIP"],
+    )
+
+
+def _decision_dump(decision: Decision) -> dict:
+    return decision.model_dump(mode="json")
+
+
+async def _run_shadow_turn(shadow: Any | None, text: str = "hola Diana, ¿cómo va todo?"):
+    llm = _shadow_llm()
+    director, trace, _ = make_director(llm, persona_semantic_shadow=shadow)
+    turn = IncomingTurn(
+        turn_id=UUID("00000000-0000-0000-0000-000000000042"), chat_id=42, text=text
+    )
+    decision = await director.handle_turn(turn)
+    return director, trace, turn, decision, llm
+
+
+@pytest.mark.asyncio
+async def test_shadow_off_by_default_no_schedule() -> None:
+    director, *_ = make_director(_shadow_llm())
+    assert director._persona_semantic_shadow is None  # noqa: SLF001
+    _, trace, turn, decision, _ = await _run_shadow_turn(None)
+    assert decision.action == "approve"
+
+
+@pytest.mark.asyncio
+async def test_prompt_and_decision_byte_identical_with_shadow_on() -> None:
+    _, trace_off, turn_off, dec_off, llm_off = await _run_shadow_turn(None)
+    spy = _SpyShadow()
+    _, trace_on, turn_on, dec_on, llm_on = await _run_shadow_turn(spy)
+    assert len(spy.snapshots) == 1  # the hook ran
+    p_off = trace_off.get(turn_off.turn_id, "prompt_text").encode()
+    p_on = trace_on.get(turn_on.turn_id, "prompt_text").encode()
+    assert p_off == p_on
+    assert _decision_dump(dec_off) == _decision_dump(dec_on)
+    assert [c[1].get("messages") for c in llm_off.calls] == [
+        c[1].get("messages") for c in llm_on.calls
+    ]
+    assert trace_off.get(turn_off.turn_id, "retrieved") == trace_on.get(turn_on.turn_id, "retrieved")
+
+
+@pytest.mark.asyncio
+async def test_shadow_schedule_exception_does_not_change_turn(caplog) -> None:
+    _, _, _, dec_off, _ = await _run_shadow_turn(None)
+    with caplog.at_level("WARNING", logger="diana.cognitive"):
+        _, _, _, dec_on, _ = await _run_shadow_turn(_SpyShadow(boom=True))
+    assert _decision_dump(dec_off) == _decision_dump(dec_on)
+    assert any(r.getMessage() == "persona_semantic_shadow_schedule_failed" for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_shadow_not_scheduled_on_early_exits() -> None:
+    # Saludo puro
+    spy = _SpyShadow()
+    llm = FakeLLM(structured_responses=[_saludo_comprehension()], text_responses=[])
+    director, *_ = make_director(
+        llm, pure_greeting_cut=lambda text, comp: True, saludo_response_pool=list(SALUDO_POOL),
+        saludo_rng=random.Random(0), persona_semantic_shadow=spy,
+    )
+    decision = await director.handle_turn(_turn(text="hola"))
+    assert decision.reason.startswith("plantilla_saludo")
+    # Check-in
+    llm = FakeLLM(structured_responses=[_comprehension()], text_responses=[])
+    director, *_ = make_director(
+        llm, checkin_cut=lambda text, comp: True, persona_semantic_shadow=spy,
+    )
+    decision = await director.handle_turn(_turn(text="¿cómo estás?"))
+    assert decision.reason.startswith("plantilla_checkin_")
+    # H4 (pregunta repetida)
+    intents = InMemoryRecentIntents()
+    intents.seed(42, ["precio", "precio"])
+    llm = FakeLLM(structured_responses=[_comprehension(intent="precio")], text_responses=[])
+    director, *_ = make_director(
+        llm, recent_intents=intents, repetition_guard=RepetitionGuard(threshold=3),
+        persona_semantic_shadow=spy,
+    )
+    decision = await director.handle_turn(_turn(text="otra vez el precio"))
+    assert decision.reason == "pregunta_repetida"
+    assert spy.snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_shadow_hook_overhead_under_10ms(monkeypatch) -> None:
+    import time as _time
+
+    from diana.cognitive import director as director_mod
+    from diana.cognitive.persona_semantic import PersonaSemanticShadow
+
+    class _Emb:
+        model_name = "fake-mini"
+        is_loaded = True
+
+        async def embed(self, text):
+            return [1.0, 0.0, 0.0]
+
+    class _Prov:
+        async def get_catalog(self, channel):
+            return None
+
+    shadow = PersonaSemanticShadow(_Emb(), _Prov())
+    elapsed: list[float] = []
+    real_build = director_mod.build_shadow_snapshot
+    real_schedule = shadow.schedule
+
+    def timed_build(*args, **kwargs):
+        timed_build.t0 = _time.perf_counter()
+        return real_build(*args, **kwargs)
+
+    def timed_schedule(snapshot):
+        try:
+            return real_schedule(snapshot)
+        finally:
+            elapsed.append((_time.perf_counter() - timed_build.t0) * 1000)
+
+    monkeypatch.setattr(director_mod, "build_shadow_snapshot", timed_build)
+    shadow.schedule = timed_schedule  # type: ignore[method-assign]
+    await _run_shadow_turn(shadow)
+    await asyncio.gather(*shadow._tasks.values())  # noqa: SLF001
+    assert len(elapsed) == 1
+    assert elapsed[0] < 10.0

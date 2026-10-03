@@ -79,6 +79,7 @@ from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
 from diana.cognitive.director import ANALYST_HISTORY_LIMIT, CognitiveDirector
+from diana.cognitive.persona_semantic import PersonaSemanticShadow
 from diana.cognitive.repetition_guard import RepetitionGuard
 from diana.cognitive.template_gate import (
     PhaticLightContext,
@@ -825,6 +826,13 @@ def build_app(
         persona_admin_service=persona_admin_service,
     )
     persona_admin_service.set_on_change(persona_catalog_provider.invalidate)
+    # FEATURE_PERSONA_SEMANTIC_SHADOW (SHADOW — only measures, never changes the
+    # prompt): off → no shadow object at all (Director hook is a no-op).
+    persona_semantic_shadow = (
+        PersonaSemanticShadow(embedding_svc, persona_catalog_provider)
+        if settings.feature_persona_semantic_shadow
+        else None
+    )
 
     # FEATURE_GRAY_ZONE_PROPOSAL_ENABLED: system-generated RULE proposal for
     # gray-zone consults. Built whenever the gray-zone feature is on; the
@@ -1066,6 +1074,7 @@ def build_app(
         force_profile_when_notes=settings.feature_force_profile_when_notes,
         profiles_repo=profiles_repo,
         feature_persona_operacion_enabled=settings.feature_persona_operacion_enabled,
+        persona_semantic_shadow=persona_semantic_shadow,
     )
 
     learning = LearningService(traces)

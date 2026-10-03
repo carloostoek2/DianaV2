@@ -52,6 +52,7 @@ from diana.cognitive.template_gate import (
     detect_phatic_subtype,
     pick_checkin_reply,
 )
+from diana.cognitive.persona_semantic import build_shadow_snapshot
 from diana.cognitive.planner import Planner
 
 from diana.cognitive.ports import (
@@ -249,6 +250,10 @@ class CognitiveDirector:
         # knowledge.operacion. Injected bool — never import Settings here.
         # False → pipeline (and prompt) byte-identical to the pre-feature path.
         feature_persona_operacion_enabled: bool = False,
+        # FEATURE_PERSONA_SEMANTIC_SHADOW (SHADOW — only measures): duck-typed
+        # PersonaSemanticShadow; gets a snapshot of strings after retrieval and
+        # runs in background. None (default) → no hook at all.
+        persona_semantic_shadow: Any | None = None,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -284,6 +289,7 @@ class CognitiveDirector:
         self._feature_persona_operacion_enabled = bool(
             feature_persona_operacion_enabled
         )
+        self._persona_semantic_shadow = persona_semantic_shadow
 
     async def _resolve_persona(
         self, channel_type: str = "vip"
@@ -596,6 +602,16 @@ class CognitiveDirector:
             # signals "retrieval ran with no capabilities" vs "retrieval had
             # a pre-loop exception" (in which case the turn is failed anyway).
             await self._store(turn_id, "retrieved", retrieved)
+
+        # SHADOW (E1): fire-and-forget; the turn never awaits nor reads it and
+        # nothing it does can change the prompt, retrieved map or trace.
+        if self._persona_semantic_shadow is not None:
+            try:
+                self._persona_semantic_shadow.schedule(
+                    build_shadow_snapshot(turn, retrieved, operacion_hits)
+                )
+            except Exception:
+                logger.warning("persona_semantic_shadow_schedule_failed", exc_info=True)
 
         # Aggregate retriever timings by type (only when no exception occurred).
         if retriever_timings:
