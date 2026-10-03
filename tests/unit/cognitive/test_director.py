@@ -2600,23 +2600,54 @@ def _shadow_catalogs() -> dict[str, dict]:
 
 
 _SHADOW_CASES = {
-    "vip": ("¿Lucien sabe algo de tu familia y tus estudios?", ["familia", "estudios"]),
+    "vip": (
+        "¿Lucien sabe algo de tu familia y tus estudios de psicología?",
+        ["familia", "estudios", "psicologia"],
+    ),
     "atencion": ("¿Pagobot me dice los precios del contenido?", ["precios", "contenido"]),
 }
+
+
+def _catalog_director(llm: FakeLLM, provider: Any, shadow: Any | None):
+    """Director whose persona_facts / policy / operacion retrievers read ``provider``.
+
+    Review round 2 (R2-4): the catalog content must really reach the prompt so
+    the byte-identity check can catch a shadow that alters what feeds it.
+    """
+    history = InMemoryMessageHistory()
+    trace = InMemoryTraceStore()
+    kwargs: dict = {}
+    if shadow is not None:
+        kwargs["persona_semantic_shadow"] = shadow
+    director = CognitiveDirector(
+        analyst=Analyst(llm),
+        planner=Planner(),
+        registry=build_default_registry(history, persona_catalog_provider=provider),
+        context_builder=ContextBuilder(),
+        generator=Generator(llm),
+        evaluator=Evaluator(llm),
+        decider=Decider(),
+        trace=trace,
+        persona="You are Diana.",
+        history=history,
+        persona_catalog_provider=provider,
+        feature_persona_operacion_enabled=True,
+        **kwargs,
+    )
+    return director, trace
 
 
 async def _run_catalog_turn(channel: str, shadow: Any | None, provider: Any):
     text, topics = _SHADOW_CASES[channel]
     llm = FakeLLM(
         structured_responses=[
-            _comprehension(topics=topics, needs_policy=True, risk="medio"),
+            _comprehension(topics=topics, needs_policy=True, needs_persona_facts=True,
+                           risk="medio"),
             _profile(safety=0.5),
         ],
         text_responses=["Draft reply"],
     )
-    director, trace, _ = make_director(
-        llm, persona_catalog_provider=provider, persona_semantic_shadow=shadow
-    )
+    director, trace = _catalog_director(llm, provider, shadow)
     turn = IncomingTurn(
         turn_id=UUID("00000000-0000-0000-0000-000000000077"),
         chat_id=42, text=text, channel_type=channel,
@@ -2642,8 +2673,18 @@ async def test_prompt_byte_identical_with_real_shadow_and_catalog(channel, caplo
     assert any(r.getMessage() == "persona_semantic_shadow" and r.channel_type == channel
                for r in caplog.records)
     retrieved_off = trace_off.get(turn_off.turn_id, "retrieved")
-    assert retrieved_off  # the live catalog actually fed the prompt
-    p_off = trace_off.get(turn_off.turn_id, "prompt_text").encode()
+    # R2-4: real catalog content of THIS channel feeds the prompt
+    catalogs = _shadow_catalogs()
+    cat, other = catalogs[channel], catalogs["atencion" if channel == "vip" else "vip"]
+    prompt_off = trace_off.get(turn_off.turn_id, "prompt_text")
+    assert retrieved_off.get("knowledge.persona_facts")
+    assert retrieved_off.get("knowledge.policy")
+    assert retrieved_off.get("knowledge.operacion")
+    assert any(f["hecho"] in prompt_off for f in cat["persona_facts"])
+    assert any(p["regla"] in prompt_off for p in cat["policies"])
+    assert cat["operacion"][0]["hecho"] in prompt_off
+    assert other["operacion"][0]["hecho"] not in prompt_off
+    p_off = prompt_off.encode()
     p_on = trace_on.get(turn_on.turn_id, "prompt_text").encode()
     assert p_off == p_on
     assert [c[1].get("messages") for c in llm_off.calls] == [
