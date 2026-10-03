@@ -38,8 +38,10 @@ class EmbeddingService:
         self._model_name = model_name
         self._max_input_chars = int(max_input_chars)
         self._model = None  # lazy-loaded on first embed()
-        # Python >= 3.10: Lock() does not bind to a loop at construction time.
-        self._load_lock = asyncio.Lock()
+        # Review round 1 (M1): ONE shared load task. Callers await it through
+        # asyncio.shield, so cancelling a caller (e.g. a turn timeout) never
+        # cancels the load and never starts a second one.
+        self._load_task: asyncio.Task[Any] | None = None
 
     @property
     def is_loaded(self) -> bool:
@@ -55,15 +57,27 @@ class EmbeddingService:
 
         return SentenceTransformer(self._model_name)
 
+    async def _load_and_cache(self) -> Any:
+        model = await asyncio.to_thread(self._load_model)
+        self._model = model
+        return model
+
     async def _ensure_model(self) -> Any:
-        """Load the model once, off the event loop thread (lock + double check)."""
+        """Load the model once, off the event loop thread (shared shielded task).
+
+        A failed load is not cached: the next caller starts a new attempt.
+        """
         model = self._model
         if model is not None:
             return model
-        async with self._load_lock:
-            if self._model is None:
-                self._model = await asyncio.to_thread(self._load_model)
-            return self._model
+        task = self._load_task
+        if task is None or (task.done() and (task.cancelled() or task.exception() is not None)):
+            task = asyncio.ensure_future(self._load_and_cache())
+            # Retrieve the outcome even when every waiter was cancelled
+            # (no "Task exception was never retrieved" noise).
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            self._load_task = task
+        return await asyncio.shield(task)
 
     async def warmup(self) -> None:
         """Pre-load the model and run one dummy encode.

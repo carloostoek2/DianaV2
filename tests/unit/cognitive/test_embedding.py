@@ -169,3 +169,51 @@ async def test_loop_stays_responsive_during_load() -> None:
         svc = EmbeddingService()
         await asyncio.gather(_warm(svc), _tick())
     assert order == ["tick", "warm"]
+
+
+
+# --- Review round 1 (M1): cancelling a caller never loads the model twice ----
+
+
+@pytest.mark.asyncio
+async def test_cancelled_first_caller_does_not_cause_a_second_load() -> None:
+    loads = 0
+    started = threading.Event()
+
+    def _ctor(name):
+        nonlocal loads
+        loads += 1
+        started.set()
+        time.sleep(0.1)
+        return MagicMock(encode=lambda t: np.zeros(384))
+
+    with patch("sentence_transformers.SentenceTransformer", side_effect=_ctor):
+        svc = EmbeddingService()
+        first = asyncio.create_task(svc.embed("a"))
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        second = await svc.embed("b")
+    assert loads == 1 and svc.is_loaded and len(second) == 384
+
+
+@pytest.mark.asyncio
+async def test_failed_load_is_retried_by_the_next_caller() -> None:
+    calls = 0
+
+    def _ctor(name):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("model files missing")
+        return MagicMock(encode=lambda t: np.zeros(384))
+
+    with patch("sentence_transformers.SentenceTransformer", side_effect=_ctor):
+        svc = EmbeddingService()
+        with pytest.raises(OSError):
+            await svc.embed("a")
+        assert not svc.is_loaded
+        await svc.embed("b")
+    assert calls == 2 and svc.is_loaded
