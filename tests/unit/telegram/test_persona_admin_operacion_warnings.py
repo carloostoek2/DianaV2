@@ -258,8 +258,15 @@ async def test_wizard_edits_a_dato_personal_despite_legacy_operacion_alias() -> 
     bot.edit_message_text = AsyncMock()
     session = MenuSession(kind="persona_edit", persona_section="fact", persona_target=fact["id"],
                           last_bot_message_id=1, last_chat_id=42, persona_channel="vip")
-    await handle_persona_edit_text(msg, bot, session, svc, MenuSessionStore())
-    assert "✅ Guardado como versión v2" in str(bot.edit_message_text.call_args.kwargs.get("text", ""))
+    sessions = MenuSessionStore()
+    await handle_persona_edit_text(msg, bot, session, svc, sessions)
+    assert sessions.get(_OWNER_ID).persona_draft is not None  # C3: preview first
+    tap = _msg()
+    await dispatch_personalidad(
+        tap, parsed=MenuCallback(category="personalidad", action="draft_save"),
+        actor_id=_OWNER_ID, persona_admin=svc, sessions=sessions,
+    )
+    assert "✅ Guardado como versión v2" in _shown(tap)
     active = await store.get_active(channel_type="vip")
     assert active.payload["persona_facts"][0]["hecho"] == "Hecho editado."
     assert active.payload["operacion"] == legacy["operacion"]

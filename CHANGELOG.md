@@ -7,6 +7,20 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Personalidad y reglas: escribe con tus palabras y revisa antes de guardar — 2026-10-02
+
+Agregar un dato, una política, un patrón de voz, un dato de Operación o un bloque de agenda exigía escribir el formato con `|` exacto, y lo que se escribía se guardaba al instante sin verlo antes.
+
+- Ahora se puede escribir con tus palabras. El texto va al mismo proveedor de IA que usa Diana, con una espera máxima de 10 s; si no responde (o propone algo inválido), se arma una propuesta sin IA.
+- Antes de guardar siempre aparece una vista previa con ✅ Guardar, ✏️ Corregir, ➕ Nota privada (solo Datos personales) y ✖️ Cancelar. Nada se guarda sin tocar Guardar.
+- La nota privada nunca se envía a la IA, Diana no la usa para responder y la vista previa no muestra su texto. Editar un dato con tus palabras conserva su nota.
+- El formato `|` sigue igual, pero ahora también muestra una vista previa.
+- La vista previa se guarda en el canal (VIP / atención) donde se escribió; cambiar de canal la descarta.
+- No hay interruptor nuevo.
+
+---
+
+
 Los temas de Personalidad se guardan siempre en forma canónica — 2026-10-02
 
 Los temas de Datos personales y Políticas, y los tags de Patrones de voz, podían quedar guardados como los escribía la dueña ("Cariño", "Cumpleaños Mamá", o un tema suelto en vez de lista), y la revisión de alias de Operación se hacía en dos sitios distintos (panel y servicio).

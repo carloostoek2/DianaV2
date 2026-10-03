@@ -128,6 +128,9 @@ class MenuSession:
     persona_section: str | None = None
     persona_target: str | None = None
     persona_channel: str = "vip"
+    # hardener/persona-reglas ítem 3 (C3): pending preview of a panel item
+    # ({channel, op, target, item, source, awaiting}); None = no preview.
+    persona_draft: dict[str, Any] | None = None
     event_body: str | None = None
     event_start_at: datetime | None = None
     event_end_at: datetime | None = None

@@ -24,7 +24,35 @@ Desde **/menu → 🎭 Personalidad y reglas**, la dueña revisa y edita cómo h
 | 🗣️ Patrones de voz | Ídem (formato `id \| tag1, tag2 \| patron \| uso`) |
 | 📜 Políticas de conducta | Ídem (formato `id \| tema1, tema2 \| regla`) |
 | 🗓️ Agenda | Bloques (`dias \| inicio \| fin \| actividad`), respuestas libres y zona horaria |
+| ⚙️ Operación | Datos internos del negocio que Diana recibe solo cuando el cliente menciona un alias (formato `id \| alias1, alias2 \| hecho`) |
 | 🕘 Historial | Lista de versiones con fecha y botón de restauración (con confirmación) |
+
+### Escribir con tus palabras y revisar antes de guardar
+
+En **Datos personales, Políticas, Patrones de voz, Operación y Bloques de agenda**
+ya no hace falta el formato con `|`: la dueña escribe la regla con sus palabras
+("tengo un perro que se llama Toby") y el bot arma una **vista previa** con el
+elemento propuesto (id, temas, texto). Nada se guarda hasta tocar un botón:
+
+- **✅ Guardar**: guarda el elemento tal como se ve, como versión nueva.
+- **✏️ Corregir**: descarta la propuesta y pide el texto de nuevo. Escribir otro
+  texto mientras se ve la vista previa hace lo mismo.
+- **➕ Nota privada** (solo Datos personales): agrega una nota que Diana **no usa
+  para responder** y que **nunca se envía a la IA**. La vista previa solo dice
+  "🔒 Nota privada: sí", sin mostrar el texto. Al editar un dato con tus palabras,
+  su nota privada se conserva.
+- **✖️ Cancelar**: vuelve a la lista sin guardar.
+
+Cómo se arma la propuesta: el texto va al mismo proveedor de IA que usa Diana,
+con una espera máxima de 10 segundos y solo con lo necesario (la sección, el
+texto, los temas ya usados, los ids existentes y, si se edita, los campos
+públicos de ese elemento). Si la IA no responde o propone algo inválido, se arma
+una propuesta sin IA. El formato con `|` sigue funcionando igual y también pasa
+por la vista previa. La propuesta se valida igual que un guardado (temas en forma
+canónica, alias de Operación permitidos) antes de mostrarse. La vista previa
+pertenece al canal (VIP / atención) donde se escribió: cambiar de canal la
+descarta. "Cómo habla Diana", Reglas de tono, Respuestas libres y Zona horaria
+se siguen guardando directo.
 
 ## Reglas del producto (no negociables)
 

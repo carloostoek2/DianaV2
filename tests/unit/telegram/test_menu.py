@@ -1741,3 +1741,16 @@ async def test_config_llm_reset_clears_override() -> None:
     )
     assert store.set_calls == [{}]
     assert "restablecido" in msg.edit_text.call_args[0][0]
+
+
+
+def test_menu_session_persona_draft_defaults_to_none() -> None:
+    """hardener/persona-reglas ítem 3 (C3): the preview draft lives in the session."""
+    from diana.telegram.handlers.menu import MenuSession
+
+    sessions = MenuSessionStore()
+    sessions.start(1, "persona_edit")
+    assert sessions.get(1).persona_draft is None
+    assert MenuSession(kind="persona_edit").persona_draft is None
+    sessions.start(1, "persona_edit", persona_draft={"op": "fact"})
+    assert sessions.get(1).persona_draft == {"op": "fact"}

@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from diana.application.persona_admin_service import prepare_persona_payload
+from diana.application.persona_rule_drafter import RuleDraft, fallback_draft
 from diana.application.ports import PersonaVersionRecord
 from diana.cognitive.operacion import alias_issues
 from diana.cognitive.persona_catalog import get_persona_catalog
@@ -53,6 +54,7 @@ class _FakePersonaAdmin:
         self.last_save_channel_type: str | None = None
         self.last_restore_channel_type: str | None = None
         self.last_list_channel_type: str | None = None
+        self.draft_calls: list[tuple[str, str, str]] = []
 
     async def get_current_persona(self, channel_type: str = "vip") -> dict | None:
         self.last_channel_type = channel_type
@@ -61,6 +63,10 @@ class _FakePersonaAdmin:
         if channel_type == "vip":
             return self.current
         return None
+
+    async def draft_rule(self, op, text, *, catalog, target=None, channel_type="vip"):
+        self.draft_calls.append((op, text, channel_type))
+        return RuleDraft(fallback_draft(op, text, catalog=catalog, target=target), "fallback")
 
     async def prepare_persona(self, payload, channel_type="vip"):
         prev = self.channel_currents.get(channel_type) or (self.current if channel_type == "vip" else None)
@@ -487,8 +493,11 @@ async def test_wizard_append_rule_saves_version() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wizard_invalid_format_does_not_save() -> None:
+async def test_wizard_free_text_fact_previews_without_saving() -> None:
+    # C3: text without pipes is a valid free-text draft (preview, no save);
+    # rejection is covered by test_invalid_draft_is_rejected_before_preview.
     service = _FakePersonaAdmin(_base_catalog())
+    sessions = _sessions()
     msg = AsyncMock()
     msg.text = "mal formato sin pipes"
     msg.from_user = AsyncMock()
@@ -496,11 +505,9 @@ async def test_wizard_invalid_format_does_not_save() -> None:
     msg.answer = AsyncMock()
     bot = _bot()
 
-    await handle_persona_edit_text(msg, bot, _session("fact"), service, _sessions())
+    await handle_persona_edit_text(msg, bot, _session("fact"), service, sessions)
     assert service.saved == []
-    # error feedback shown (strict)
-    assert bot.edit_message_text.await_count == 1
-    assert "formato" in str(bot.edit_message_text.call_args.kwargs.get("text", ""))
+    assert sessions.get(_OWNER_ID).persona_draft is not None
 
 
 @pytest.mark.asyncio
@@ -760,7 +767,10 @@ async def test_wizard_edit_replace_by_index_and_by_id() -> None:
     msg2.from_user = AsyncMock()
     msg2.from_user.id = _OWNER_ID
     msg2.answer = AsyncMock()
-    await handle_persona_edit_text(msg2, bot, _session("fact", target=target_id), service, _sessions())
+    sessions = _sessions()
+    await handle_persona_edit_text(msg2, bot, _session("fact", target=target_id), service, sessions)
+    assert len(service.saved) == 1  # preview only
+    await _tap(service, sessions, "draft_save")
     edited = next(f for f in service.saved[1]["persona_facts"] if f["id"] == target_id)
     assert edited["hecho"] == "Hecho editado por wizard"
 
@@ -811,7 +821,10 @@ async def test_wizard_pattern_via_handler_saves() -> None:
     msg.chat.id = 42
     bot = _bot()
 
-    await handle_persona_edit_text(msg, bot, _session("pattern"), service, _sessions())
+    sessions = _sessions()
+    await handle_persona_edit_text(msg, bot, _session("pattern"), service, sessions)
+    assert service.saved == []  # preview first
+    await _tap(service, sessions, "draft_save")
     assert len(service.saved) == 1
     last = service.saved[0]["voice_patterns"][-1]
     assert last == {"id": "nuevo_patron", "tags": ["risa", "casual"], "patron": "jsjs", "uso": "Reemplaza jaja"}
@@ -1236,7 +1249,10 @@ async def test_operacion_wizard_add_then_delete_last_item() -> None:
     msg.from_user = AsyncMock()
     msg.from_user.id = _OWNER_ID
     msg.answer = AsyncMock()
-    await handle_persona_edit_text(msg, _bot(), _session("operacion"), service, _sessions())
+    sessions = _sessions()
+    await handle_persona_edit_text(msg, _bot(), _session("operacion"), service, sessions)
+    assert service.saved == []  # preview first
+    await _tap(service, sessions, "draft_save")
     assert service.saved[-1]["operacion"] == [
         {"id": "lucien", "alias": ["Lucien", "el mayordomo"],
          "hecho": "Lucien es el bot administrador."}
@@ -1281,3 +1297,251 @@ def test_parse_operacion_dedups_by_alias_core() -> None:
 
     item = _parse_operacion("x | El Diván, diván, tu diván | h")
     assert item["alias"] == ["El Diván"]
+
+
+
+# ---------------------------------------------------------------------------
+# C3 (hardener/persona-reglas ítem 3): mandatory preview
+# ---------------------------------------------------------------------------
+
+from diana.telegram.handlers.persona_admin import _DRAFT_EXPIRED  # noqa: E402
+from diana.telegram.keyboards import menu_persona_draft_keyboard  # noqa: E402
+
+
+async def _tap(service, sessions, action, extra=None):
+    m = _msg()
+    await dispatch_personalidad(m, parsed=_parsed(action, extra), actor_id=_OWNER_ID,
+                                persona_admin=service, sessions=sessions)
+    return m
+
+
+def _text_msg(text: str) -> AsyncMock:
+    msg = AsyncMock()
+    msg.text = text
+    msg.from_user = AsyncMock()
+    msg.from_user.id = _OWNER_ID
+    msg.answer = AsyncMock()
+    msg.message_id = 1
+    msg.chat = AsyncMock()
+    msg.chat.id = 42
+    return msg
+
+
+def _shown(m: AsyncMock) -> str:
+    return _shown_text(m)
+
+
+def _bot_text(bot: AsyncMock) -> str:
+    return str(bot.edit_message_text.call_args.kwargs.get("text", ""))
+
+
+def _bot_datas(bot: AsyncMock) -> list[str]:
+    kb = bot.edit_message_text.call_args.kwargs.get("reply_markup")
+    return [b.callback_data for row in kb.inline_keyboard for b in row] if kb else []
+
+
+async def _preview(section, text, *, channel="vip", target=None, service=None, sessions=None):
+    service = service or _FakePersonaAdmin(_base_catalog())
+    sessions = sessions or _sessions()
+    session = _session(section, target=target)
+    session.persona_channel = channel
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg(text), bot, session, service, sessions)
+    return service, sessions
+
+
+def _live_session(sessions):
+    return sessions.get(_OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_pipe_text_shows_preview_and_does_not_save():
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    msg = _text_msg("nuevo_patron | risa, casual | jsjs | Reemplaza jaja")
+    await handle_persona_edit_text(msg, _bot(), _session("pattern"), service, sessions)
+    assert service.saved == [] and service.draft_calls == []
+    draft = sessions.get(_OWNER_ID).persona_draft
+    assert draft["item"] == {"id": "nuevo_patron", "tags": ["risa", "casual"],
+                             "patron": "jsjs", "uso": "Reemplaza jaja"}
+    assert draft["channel"] == "vip" and draft["source"] == "formato"
+
+
+@pytest.mark.asyncio
+async def test_guardar_saves_draft_item_once():
+    service, sessions = await _preview("pattern", "nuevo_patron | risa | jsjs | uso")
+    m = await _tap(service, sessions, "draft_save")
+    assert len(service.saved) == 1
+    assert service.saved[0]["voice_patterns"][-1]["id"] == "nuevo_patron"
+    assert "versión v1" in _shown(m)
+    assert sessions.get(_OWNER_ID).persona_draft is None
+    # a second tap finds no draft → nothing saved twice
+    m2 = await _tap(service, sessions, "draft_save")
+    assert len(service.saved) == 1
+    assert _DRAFT_EXPIRED in _shown(m2)
+
+
+@pytest.mark.asyncio
+async def test_guardar_uses_draft_channel_even_if_session_channel_changed():
+    service, sessions = await _preview(
+        "policy", "nueva_pol | precios | No doy precios por chat", channel="atencion"
+    )
+    _live_session(sessions).persona_channel = "vip"
+    await _tap(service, sessions, "draft_save")
+    assert service.last_save_channel_type == "atencion"
+
+
+@pytest.mark.asyncio
+async def test_channel_switch_discards_draft():
+    service, sessions = await _preview("pattern", "nuevo_patron | risa | jsjs | uso")
+    await _tap(service, sessions, "channel", "atencion")
+    m = await _tap(service, sessions, "draft_save")
+    assert _DRAFT_EXPIRED in _shown(m)
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_guardar_without_draft_shows_expired():
+    service = _FakePersonaAdmin(_base_catalog())
+    m = await _tap(service, _sessions(), "draft_save")
+    assert _DRAFT_EXPIRED in _shown(m)
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_free_text_uses_service_drafter_and_previews():
+    text = "tengo un perro que se llama Toby"
+    service, sessions = await _preview("fact", text)
+    assert service.draft_calls == [("fact", text, "vip")]
+    draft = _live_session(sessions).persona_draft
+    assert draft["source"] == "fallback"
+    assert draft["item"]["hecho"] == text
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_draft_is_rejected_before_preview():
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg("x | admin | hecho"), bot, _session("operacion"),
+                                   service, sessions)
+    text = _bot_text(bot)
+    assert text.startswith("❌") and "común" in text
+    assert getattr(sessions.get(_OWNER_ID), "persona_draft", None) is None
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_corregir_clears_draft_and_keeps_section():
+    service, sessions = await _preview("pattern", "nuevo_patron | risa | jsjs | uso")
+    m = await _tap(service, sessions, "draft_fix")
+    live = _live_session(sessions)
+    assert live.persona_draft is None
+    assert live.persona_section == "pattern"
+    assert "Envíame el texto corregido" in _shown(m)
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_text_during_preview_acts_as_corregir():
+    service, sessions = await _preview("pattern", "nuevo_patron | risa | jsjs | uso")
+    live = sessions.pop(_OWNER_ID)  # the router pops the session before the handler
+    await handle_persona_edit_text(_text_msg("otro_patron | risa | jeje | uso"), _bot(), live,
+                                   service, sessions)
+    draft = _live_session(sessions).persona_draft
+    assert draft["item"]["id"] == "otro_patron"
+    assert service.saved == []
+
+
+@pytest.mark.asyncio
+async def test_nota_privada_button_only_for_facts():
+    _, s_pat = await _preview("pattern", "nuevo_patron | risa | jsjs | uso")
+    bot_fact = _bot()
+    svc = _FakePersonaAdmin(_base_catalog())
+    await handle_persona_edit_text(_text_msg("nuevo_dato | familia | Tengo un hermano"),
+                                   bot_fact, _session("fact"), svc, _sessions())
+    bot_pat = _bot()
+    await handle_persona_edit_text(_text_msg("nuevo_patron | risa | jsjs | uso"),
+                                   bot_pat, _session("pattern"), svc, _sessions())
+    assert encode_menu_persona("draft_nota") in _bot_datas(bot_fact)
+    assert encode_menu_persona("draft_nota") not in _bot_datas(bot_pat)
+    assert encode_menu_persona("draft_save") in _bot_datas(bot_pat)
+
+
+@pytest.mark.asyncio
+async def test_nota_privada_saved_without_llm():
+    service, sessions = await _preview("fact", "nuevo_dato | familia | Tengo un hermano")
+    await _tap(service, sessions, "draft_nota")
+    assert _live_session(sessions).persona_draft["awaiting"] == "nota"
+    calls_before = list(service.draft_calls)
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("SECRETO"), _bot(), live, service, sessions)
+    draft = _live_session(sessions).persona_draft
+    assert draft["item"]["nota_privada"] == "SECRETO"
+    assert draft["awaiting"] is None
+    assert service.draft_calls == calls_before
+    await _tap(service, sessions, "draft_save")
+    saved = service.saved[-1]["persona_facts"][-1]
+    assert saved["id"] == "nuevo_dato" and saved["nota_privada"] == "SECRETO"
+
+
+@pytest.mark.asyncio
+async def test_preview_never_shows_nota_text():
+    service, sessions = await _preview("fact", "nuevo_dato | familia | Tengo un hermano")
+    await _tap(service, sessions, "draft_nota")
+    live = sessions.pop(_OWNER_ID)
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg("SECRETO"), bot, live, service, sessions)
+    shown = _bot_text(bot)
+    assert "SECRETO" not in shown
+    assert "🔒 Nota privada: sí" in shown
+
+
+@pytest.mark.asyncio
+async def test_free_text_edit_keeps_existing_nota_privada():
+    import copy
+
+    cat = copy.deepcopy(_base_catalog())
+    target = cat["persona_facts"][0]["id"]
+    cat["persona_facts"][0]["nota_privada"] = "NOTA-VIEJA"
+    service = _FakePersonaAdmin(cat)
+    _, sessions = await _preview("fact", "ahora estudio una maestría", target=target,
+                                 service=service)
+    draft = _live_session(sessions).persona_draft
+    assert draft["item"]["id"] == target
+    assert draft["item"]["nota_privada"] == "NOTA-VIEJA"
+    assert all("NOTA-VIEJA" not in call[1] for call in service.draft_calls)
+
+
+@pytest.mark.asyncio
+async def test_pipe_with_fourth_part_still_sets_nota():
+    _, sessions = await _preview("fact", "nuevo_dato | familia | Tengo un hermano | nota")
+    assert _live_session(sessions).persona_draft["item"]["nota_privada"] == "nota"
+
+
+@pytest.mark.asyncio
+async def test_cancelar_returns_to_section_list_without_saving():
+    service, sessions = await _preview("pattern", "nuevo_patron | risa | jsjs | uso")
+    m = await _tap(service, sessions, "draft_cancel")
+    assert service.saved == []
+    assert _live_session(sessions).persona_draft is None
+    assert "🗣️ Patrones de voz" in _shown(m)
+
+
+@pytest.mark.asyncio
+async def test_free_text_sections_still_save_directly():
+    service, sessions = await _preview("rule", "Regla directa sin vista previa")
+    assert len(service.saved) == 1
+    assert service.draft_calls == []
+    assert service.saved[0]["voz_configurada"]["reglas_estilo"][-1] == "Regla directa sin vista previa"
+
+
+def test_draft_keyboard_callbacks_fit_64_bytes_and_toggle_nota():
+    with_nota = menu_persona_draft_keyboard(allow_nota=True)
+    without = menu_persona_draft_keyboard(allow_nota=False)
+    datas = [b.callback_data for row in with_nota.inline_keyboard for b in row]
+    assert all(len(d.encode("utf-8")) <= 64 for d in datas)
+    assert datas == [encode_menu_persona(a) for a in
+                     ("draft_save", "draft_fix", "draft_nota", "draft_cancel")]
+    datas2 = [b.callback_data for row in without.inline_keyboard for b in row]
+    assert encode_menu_persona("draft_nota") not in datas2
+    assert len(datas2) == 3

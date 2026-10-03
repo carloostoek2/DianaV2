@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from copy import deepcopy
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -39,6 +40,7 @@ from diana.telegram.keyboards import (
     encode_menu_persona,
     menu_back_keyboard,
     menu_persona_confirm_restore_keyboard,
+    menu_persona_draft_keyboard,
     menu_persona_list_keyboard,
     menu_personalidad_keyboard,
 )
@@ -82,6 +84,8 @@ _ADD_PROMPTS: dict[str, str] = {
         "id | tema1, tema2 | hecho\n"
         "Ej: estudios | psicologia, trayectoria | Termino la carrera de psicología.\n"
         "Los temas se guardan sin acentos y con _ (\"Motivación personal\" → motivacion_personal).\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "fact_edit": (
@@ -92,6 +96,8 @@ _ADD_PROMPTS: dict[str, str] = {
         "🗣️ Envíame el patrón de voz con este formato:\n"
         "id | tag1, tag2 | patron | uso\n"
         "Ej: conector_o_sea | conector, explicacion | o sea | Conector natural.\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "pattern_edit": (
@@ -102,6 +108,8 @@ _ADD_PROMPTS: dict[str, str] = {
         "📜 Envíame la política con este formato:\n"
         "id | tema1, tema2 | regla\n"
         "Ej: no_consultas | psicologia | No doy consultas clínicas.\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "policy_edit": (
@@ -112,6 +120,8 @@ _ADD_PROMPTS: dict[str, str] = {
         "🗓️ Envíame el bloque de agenda con este formato:\n"
         "dias1, dias2 | inicio | fin | actividad\n"
         "Ej: lunes, martes | 09:00 | 12:00 | en el servicio social\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "bloque_edit": (
@@ -135,6 +145,8 @@ _ADD_PROMPTS: dict[str, str] = {
         "Alias de mínimo 4 letras (3 si es un nombre propio con mayúscula, como "
         "«Ana»), sin palabras comunes (canal, bot, admin, hola, sol, mar…) ni temas "
         "de Datos personales.\n"
+        "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
+        "de guardar. El formato con | sigue funcionando.\n"
         "Usa /cancelar para abortar."
     ),
     "operacion_edit": (
@@ -147,6 +159,21 @@ _ADD_PROMPTS: dict[str, str] = {
         "🗓️ Envíame la zona horaria nueva (ej: America/Mexico_City).\n"
         "Usa /cancelar para abortar."
     ),
+}
+
+# hardener/persona-reglas ítem 3 (C3): item sections that go through a
+# mandatory preview (Guardar / Corregir / ➕ Nota privada / Cancelar). The
+# free-text sections (persona, rule, default, timezone) keep saving directly.
+_PREVIEW_SECTIONS = frozenset({"fact", "policy", "pattern", "operacion", "bloque"})
+_DRAFT_EXPIRED = "Esta vista previa expiró. Vuelve a escribir la regla."
+_NOTA_PROMPT = (
+    "Escribe la nota privada. Diana no la usa para responder y no se envía a la IA."
+)
+_ITEM_SECTION_KEY = {
+    "fact": "persona_facts",
+    "policy": "policies",
+    "pattern": "voice_patterns",
+    "operacion": OPERACION_KEY,
 }
 
 # Sections whose items have ids (fact/pattern/policy) vs indexed (rule/bloque/default).
@@ -458,6 +485,154 @@ def _apply_typed_item(
     return _replace_item(items, extra, new_item, by_id=by_id)
 
 
+# ---------------------------------------------------------------------------
+# C3 — structured items (preview + Guardar share ONE apply path)
+# ---------------------------------------------------------------------------
+
+
+def _extract_item(
+    nuevo: dict[str, Any], op: str, extra: str | None, *, base: dict[str, Any]
+) -> dict[str, Any]:
+    """The item added/edited by ``apply_persona_edit`` (last one when appending).
+
+    Edits replace in place, so the edited item sits at the position the target
+    had in ``base`` (by id for fact/policy/pattern/operacion — the id may have
+    been renamed — and by index for bloque).
+    """
+    if op == "bloque":
+        items = list((nuevo.get("schedule") or {}).get("bloques") or [])
+        if extra is None:
+            return dict(items[-1])
+        return dict(items[int(extra)])
+    key = _ITEM_SECTION_KEY[op]
+    items = list(nuevo.get(key) or [])
+    if extra is None:
+        return dict(items[-1])
+    base_items = list(base.get(key) or [])
+    for idx, item in enumerate(base_items):
+        if str(item.get("id")) == str(extra):
+            return dict(items[idx])
+    raise ValueError("no se encontró el elemento")
+
+
+def apply_persona_item(
+    base: dict[str, Any], op: str, extra: str | None, item: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply an already-structured item (append / replace) — same semantics as
+    :func:`apply_persona_edit`. Single point used by the preview and Guardar."""
+    nuevo = dict(base)
+    item = dict(item)
+    if op == "bloque":
+        schedule = deepcopy(nuevo.get("schedule") or {})
+        bloques = list(schedule.get("bloques") or [])
+        schedule["bloques"] = _replace_item(bloques, extra, item, by_id=False)
+        nuevo["schedule"] = schedule
+        return nuevo
+    if op not in _ITEM_SECTION_KEY:
+        raise ValueError(f"operación de personalidad desconocida: {op}")
+    key = _ITEM_SECTION_KEY[op]
+    items = list(deepcopy(nuevo.get(key) or []))
+    new_id = str(item.get("id"))
+    if any(str(existing.get("id")) == new_id for existing in items):
+        if extra is None or str(extra) != new_id:
+            raise ValueError("ya existe un elemento con ese id")
+    nuevo[key] = _replace_item(items, extra, item, by_id=True)
+    return nuevo
+
+
+def _keep_existing_nota(
+    item: dict[str, Any], base: dict[str, Any], op: str, extra: str | None
+) -> None:
+    """G-C1: editing a fact with free text keeps its nota_privada (local only)."""
+    if op != "fact" or extra is None or "nota_privada" in item:
+        return
+    for existing in base.get("persona_facts") or []:
+        if isinstance(existing, dict) and str(existing.get("id")) == str(extra):
+            if existing.get("nota_privada"):
+                item["nota_privada"] = existing["nota_privada"]
+            return
+
+
+def _draft_preview(
+    op: str, item: dict[str, Any], source: str, issues: Sequence[Any] = ()
+) -> str:
+    """Product-language preview. Shows that a private note exists, never its text."""
+    origin = "formato |" if source == "formato" else "propuesta automática"
+    lines = [f"👀 Vista previa ({origin})", ""]
+    if op == "fact":
+        lines += [
+            "👤 Dato personal",
+            f"id: {item.get('id')}",
+            f"Temas: {', '.join(item.get('tema') or [])}",
+            f"Hecho: {_truncate(item.get('hecho', ''), 1500)}",
+        ]
+        if item.get("nota_privada"):
+            lines.append("🔒 Nota privada: sí")
+    elif op == "policy":
+        lines += [
+            "📜 Política de conducta",
+            f"id: {item.get('id')}",
+            f"Temas: {', '.join(item.get('tema') or [])}",
+            f"Regla: {_truncate(item.get('regla', ''), 1500)}",
+        ]
+    elif op == "pattern":
+        lines += [
+            "🗣️ Patrón de voz",
+            f"id: {item.get('id')}",
+            f"Tags: {', '.join(item.get('tags') or [])}",
+            f"Patrón: {_truncate(item.get('patron', ''), 1000)}",
+            f"Uso: {_truncate(item.get('uso', ''), 500)}",
+        ]
+    elif op == "operacion":
+        lines += [
+            "⚙️ Operación",
+            f"id: {item.get('id')}",
+            f"Alias: {', '.join(item.get('alias') or [])}",
+            f"Hecho: {_truncate(item.get('hecho', ''), 1500)}",
+        ]
+        own = [i for i in issues if str(getattr(i, "id", "")) == str(item.get("id"))]
+        if own:
+            lines.append(_OPERACION_IGNORED_HEADER.strip("\n"))
+            lines += [f"• {i.reason}" for i in own]
+    elif op == "bloque":
+        lines += [
+            "🗓️ Bloque de agenda",
+            f"Días: {', '.join(item.get('dias') or [])}",
+            f"Horario: {item.get('inicio')}–{item.get('fin')}",
+            f"Actividad: {_truncate(item.get('actividad', ''), 1000)}",
+        ]
+    lines += ["", "¿Lo guardo?"]
+    return "\n".join(lines)
+
+
+async def _show_draft(
+    bot: Bot,
+    message: Message,
+    session: Any,
+    sessions: Any,
+    draft: dict[str, Any],
+    issues: Sequence[Any] = (),
+) -> None:
+    """Persist the draft in the session (the router popped it) and show it."""
+    sessions.start(
+        message.from_user.id,
+        "persona_edit",
+        persona_section=draft["op"],
+        persona_target=draft["target"],
+        persona_channel=draft["channel"],
+        persona_draft=draft,
+        last_bot_message_id=getattr(session, "last_bot_message_id", None),
+        last_chat_id=getattr(session, "last_chat_id", None),
+    )
+    await _edit_or_answer(
+        bot,
+        _draft_preview(draft["op"], draft["item"], draft["source"], issues),
+        session=session,
+        fallback=message,
+        keyboard=menu_persona_draft_keyboard(allow_nota=draft["op"] == "fact"),
+    )
+
+
 def _parse_fact(text: str | None) -> dict[str, Any]:
     parts = [p.strip() for p in (text or "").split("|")]
     if len(parts) < 3:
@@ -747,6 +922,7 @@ async def dispatch_personalidad(
             sess = sessions.get(actor_id)
             if sess is not None:
                 sess.persona_channel = extra
+                sess.persona_draft = None  # G-C8: a preview never crosses channels
             else:
                 sessions.start(actor_id, "persona_edit", persona_channel=extra)
         logger.info(
@@ -757,6 +933,13 @@ async def dispatch_personalidad(
             message,
             MENU_CATEGORY_TEXT["personalidad"],
             menu_personalidad_keyboard(active_channel=extra),
+        )
+        return
+
+    if action in ("draft_save", "draft_fix", "draft_nota", "draft_cancel"):
+        await _dispatch_draft_action(
+            message, action=action, actor_id=actor_id,
+            persona_admin=persona_admin, sessions=sessions,
         )
         return
 
@@ -1039,6 +1222,96 @@ async def dispatch_personalidad(
     await _show(message, "Esa opción de personalidad no está disponible.", back)
 
 
+async def _dispatch_draft_action(
+    message: Message,
+    *,
+    action: str,
+    actor_id: int,
+    persona_admin: PersonaAdminService,
+    sessions: Any,
+) -> None:
+    """C3 preview buttons: Guardar / Corregir / ➕ Nota privada / Cancelar."""
+    back = menu_back_keyboard(_PERSONA_BACK)
+    sess = sessions.get(actor_id) if sessions is not None else None
+    draft = getattr(sess, "persona_draft", None) if sess is not None else None
+    if not draft:
+        await _show(message, _DRAFT_EXPIRED, back)
+        return
+    ch = draft["channel"]
+    op = draft["op"]
+    target = draft["target"]
+
+    if action == "draft_save":
+        base = await load_current(persona_admin, channel_type=ch)
+        try:
+            nuevo = apply_persona_item(base, op, target, draft["item"])
+            record = await persona_admin.save_persona(actor_id, nuevo, channel_type=ch)
+        except ValueError as exc:
+            # Keep the draft so the owner can Corregir / Cancelar.
+            await _show(
+                message, f"❌ No se guardó: {exc}",
+                menu_persona_draft_keyboard(allow_nota=op == "fact"),
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "persona_save_failed",
+                extra={"actor_id": actor_id, "error": type(exc).__name__},
+                exc_info=True,
+            )
+            await _show(
+                message, "❌ Error inesperado al guardar.",
+                menu_persona_draft_keyboard(allow_nota=op == "fact"),
+            )
+            return
+        sessions.start(actor_id, "persona_edit", persona_channel=ch)
+        await _show(
+            message,
+            f"✅ Guardado como versión v{record.version}. Los cambios ya están activos.",
+            back,
+        )
+        return
+
+    if action == "draft_fix":
+        sessions.start(
+            actor_id,
+            "persona_edit",
+            persona_section=op,
+            persona_target=target,
+            persona_channel=ch,
+            last_bot_message_id=message.message_id,
+            last_chat_id=message.chat.id,
+        )
+        prompt = (_ADD_PROMPTS.get(f"{op}_edit") if target is not None else None) or _ADD_PROMPTS.get(
+            op, "Envíame el valor nuevo."
+        )
+        await _show(message, f"Envíame el texto corregido.\n\n{prompt}", None)
+        return
+
+    if action == "draft_nota":
+        if op != "fact":
+            await _show(
+                message, "La nota privada solo aplica a Datos personales.",
+                menu_persona_draft_keyboard(allow_nota=False),
+            )
+            return
+        sess.persona_draft = {**draft, "awaiting": "nota"}
+        sess.last_bot_message_id = message.message_id
+        sess.last_chat_id = message.chat.id
+        await _show(message, _NOTA_PROMPT, None)
+        return
+
+    # draft_cancel
+    sessions.start(actor_id, "persona_edit", persona_channel=ch)
+    await dispatch_personalidad(
+        message,
+        parsed=SimpleNamespace(action=_section_list_action(op), extra=None),
+        actor_id=actor_id,
+        persona_admin=persona_admin,
+        sessions=sessions,
+    )
+
+
 def _section_list_action(op: str) -> str:
     """Map a SINGULAR op name to its plural section-list action (rule→rules…)."""
     return {
@@ -1113,6 +1386,13 @@ async def handle_persona_edit_text(
         return
     op = section
 
+    if op in _PREVIEW_SECTIONS:
+        await _handle_preview_text(
+            message, bot, session, persona_admin, sessions,
+            op=op, extra=extra, channel=channel, text=text,
+        )
+        return
+
     base = await load_current(persona_admin, channel_type=channel)
     try:
         nuevo = apply_persona_edit(base, op, extra, text)
@@ -1151,6 +1431,63 @@ async def handle_persona_edit_text(
     )
 
 
+async def _handle_preview_text(
+    message: Message,
+    bot: Bot,
+    session: Any,
+    persona_admin: PersonaAdminService,
+    sessions: Any,
+    *,
+    op: str,
+    extra: str | None,
+    channel: str,
+    text: str,
+) -> None:
+    """C3: build (or amend) the preview of an item; never saves."""
+    draft_in = getattr(session, "persona_draft", None) or {}
+    if draft_in.get("awaiting") == "nota":
+        # ➕ Nota privada: plain local text, no LLM involved.
+        item = dict(draft_in["item"])
+        item["nota_privada"] = text
+        await _show_draft(
+            bot, message, session, sessions, {**draft_in, "item": item, "awaiting": None}
+        )
+        return
+    # Any other text while a preview is open acts as "Corregir": new draft.
+    base = await load_current(persona_admin, channel_type=channel)
+    try:
+        if "|" in text:
+            # G-C4: the pipe format yields exactly the same item as before.
+            item = _extract_item(
+                apply_persona_edit(base, op, extra, text), op, extra, base=base
+            )
+            source = "formato"
+        else:
+            draft = await persona_admin.draft_rule(
+                op, text, catalog=base, target=extra, channel_type=channel
+            )
+            item, source = dict(draft.item), draft.source
+            _keep_existing_nota(item, base, op, extra)  # G-C1
+        # Same validation save_persona runs (canonical temas, shape, alias policy).
+        prepared = await persona_admin.prepare_persona(
+            apply_persona_item(base, op, extra, item), channel_type=channel
+        )
+    except ValueError as exc:
+        await _restart_persona_wizard(sessions, message, op, extra, channel)
+        await _edit_or_answer(
+            bot, f"❌ {exc}\n\nEnvíame el texto corregido o usa /cancelar.",
+            session=session, fallback=message, keyboard=None,
+        )
+        return
+    issues = persona_admin.operacion_alias_issues(prepared) if op == "operacion" else []
+    await _show_draft(
+        bot, message, session, sessions,
+        {"channel": channel, "op": op, "target": extra, "item": item,
+         "source": source, "awaiting": None},
+        issues,
+    )
+
+
 async def _restart_persona_wizard(
     sessions: Any,
     message: Message,
@@ -1172,6 +1509,7 @@ async def _restart_persona_wizard(
 
 __all__ = [
     "apply_persona_edit",
+    "apply_persona_item",
     "dispatch_personalidad",
     "handle_persona_edit_text",
     "load_current",

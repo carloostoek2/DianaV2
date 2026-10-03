@@ -1892,6 +1892,26 @@ def menu_persona_confirm_restore_keyboard(version_id: str) -> InlineKeyboardMark
     )
 
 
+def menu_persona_draft_keyboard(*, allow_nota: bool) -> InlineKeyboardMarkup:
+    """Preview of a panel item (C3): Guardar / Corregir / ➕ Nota privada / Cancelar."""
+    fix_row = [
+        InlineKeyboardButton(text="✏️ Corregir", callback_data=encode_menu_persona("draft_fix")),
+    ]
+    if allow_nota:
+        fix_row.append(
+            InlineKeyboardButton(
+                text="➕ Nota privada", callback_data=encode_menu_persona("draft_nota")
+            )
+        )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Guardar", callback_data=encode_menu_persona("draft_save"))],
+            fix_row,
+            [InlineKeyboardButton(text="✖️ Cancelar", callback_data=encode_menu_persona("draft_cancel"))],
+        ]
+    )
+
+
 def menu_review_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -2096,6 +2116,7 @@ __all__ = [
     "menu_pause_duration_keyboard",
     "menu_personalidad_keyboard",
     "menu_persona_confirm_restore_keyboard",
+    "menu_persona_draft_keyboard",
     "menu_persona_list_keyboard",
     "menu_vip_detail_keyboard",
     "menu_vip_list_keyboard",
