@@ -123,7 +123,7 @@ def _catalog_addendum(
     temas, pol, voz = fact_in[:lim_fact], pol_in[:lim_pol], voz_in[:lim_voz]
     dropped = (len(fact_in) - len(temas)) + (len(pol_in) - len(pol)) + (len(voz_in) - len(voz))
     if dropped:
-        logger.warning(
+        logger.info(
             "analyst_catalog_vocab_truncated",
             extra={
                 "channel_type": channel_type,

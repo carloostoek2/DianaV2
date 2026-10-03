@@ -15,9 +15,13 @@ from uuid import uuid4
 
 import pytest
 
-from diana.application.persona_admin_service import PersonaAdminService
+import inspect
+
+from diana.application.persona_admin_service import PersonaAdminService, prepare_persona_payload
+from diana.cognitive.operacion import alias_issues
 from diana.cognitive.persona_catalog import get_persona_atencion_catalog, get_persona_catalog
 from diana.telegram.handlers.menu import MenuCallback, MenuSession, MenuSessionStore
+from diana.telegram.handlers import persona_admin as persona_admin_module
 from diana.telegram.handlers.persona_admin import (
     _ADD_PROMPTS,
     _edit_current_value,
@@ -77,6 +81,9 @@ class _Admin:
         self.requested.append(channel_type)
         return self.by_channel.get(channel_type)
 
+    def operacion_alias_issues(self, catalog: dict) -> list[Any]:
+        return alias_issues(catalog)
+
 
 def _sessions(channel: str) -> MenuSessionStore:
     sessions = MenuSessionStore()
@@ -97,24 +104,24 @@ async def _dispatch(admin: _Admin, channel: str, action: str, extra: str | None 
 
 
 def test_list_marks_items_with_ignored_aliases() -> None:
-    labels = dict(_section_items(_vip(), "operacion"))
+    labels = dict(_section_items(_vip(), "operacion", issues=alias_issues(_vip())))
     assert labels["lucien"].startswith("⚠️ lucien")
     assert labels["canal_vip"].startswith("⚙️ canal_vip")
 
 
 def test_detail_explains_each_ignored_alias_in_product_language() -> None:
-    detail = _item_full_text(_vip(), "operacion", "lucien")
+    detail = _item_full_text(_vip(), "operacion", "lucien", issues=alias_issues(_vip()))
     assert detail is not None
     assert "Alias: Lucien, mi familia, mi negocio" in detail
     assert "⚠️ Alias que Diana no usa" in detail
     assert "• el alias «mi familia» choca con un tema de Datos personales" in detail
     assert "mi negocio»" not in detail.split("⚠️", 1)[1]  # en VIP "negocio" no es tema
-    clean = _item_full_text(_vip(), "operacion", "canal_vip")
+    clean = _item_full_text(_vip(), "operacion", "canal_vip", issues=alias_issues(_vip()))
     assert clean is not None and "⚠️" not in clean
 
 
 def test_edit_prompt_current_value_also_shows_the_warning() -> None:
-    current = _edit_current_value(_vip(), "operacion", "lucien")
+    current = _edit_current_value(_vip(), "operacion", "lucien", issues=alias_issues(_vip()))
     assert current is not None and "«mi familia»" in current and "⚠️" in current
 
 
@@ -149,27 +156,61 @@ async def test_list_note_only_when_the_channel_has_ignored_aliases() -> None:
 # --- G2 en el panel -------------------------------------------------------------------
 
 
+def _edit_and_prepare(base: dict, op: str, extra: str | None, text: str) -> dict:
+    """Panel edit + the single write-path validation (R-1, same as the service)."""
+    return prepare_persona_payload(apply_persona_edit(base, op, extra, text), previous=base)
+
+
 def test_editing_an_item_keeps_legacy_aliases_but_rejects_new_bad_ones() -> None:
     base = _vip()
-    edited = apply_persona_edit(
+    edited = _edit_and_prepare(
         base, "operacion", "lucien", "lucien | Lucien, mi familia, mi negocio | Lucien administra el VIP."
     )
     assert edited["operacion"][0]["hecho"] == "Lucien administra el VIP."
     with pytest.raises(ValueError, match="común"):
-        apply_persona_edit(base, "operacion", "lucien", "lucien | Lucien, mi familia, Sol | hecho")
+        _edit_and_prepare(base, "operacion", "lucien", "lucien | Lucien, mi familia, Sol | hecho")
     with pytest.raises(ValueError, match="Datos personales"):
-        apply_persona_edit(base, "operacion", None, "otro | mi familia | hecho")
+        _edit_and_prepare(base, "operacion", None, "otro | mi familia | hecho")
 
 
 @pytest.mark.parametrize(("alias", "ok"), [("Ana", True), ("ana", False), ("Leo", False)])
 def test_panel_three_letter_aliases(alias: str, ok: bool) -> None:
     text = f"ana | {alias} | Ana lleva la agenda."
+    base = get_persona_catalog()
     if ok:
-        added = apply_persona_edit(get_persona_catalog(), "operacion", None, text)
+        added = _edit_and_prepare(base, "operacion", None, text)
         assert added["operacion"][-1]["alias"] == ["Ana"]  # se guarda tal cual
     else:
         with pytest.raises(ValueError):
-            apply_persona_edit(get_persona_catalog(), "operacion", None, text)
+            _edit_and_prepare(base, "operacion", None, text)
+
+
+def test_panel_no_longer_validates_operacion_semantics() -> None:
+    # R-1: the panel only parses; the alias policy lives in the service path.
+    edited = apply_persona_edit(_vip(), "operacion", None, "otro | mi familia | hecho")
+    assert edited["operacion"][-1]["alias"] == ["mi familia"]
+    assert "validate_operacion_semantics" not in inspect.getsource(persona_admin_module)
+
+
+class _SpyAdmin(_Admin):
+    def __init__(self, by_channel: dict[str, dict]) -> None:
+        super().__init__(by_channel)
+        self.issue_calls = 0
+
+    def operacion_alias_issues(self, catalog: dict) -> list[Any]:
+        self.issue_calls += 1
+        return alias_issues(catalog)
+
+
+async def test_alias_issues_computed_once_per_render() -> None:
+    admin = _SpyAdmin({"vip": _vip()})
+    listing = await _dispatch(admin, "vip", "operacion")
+    assert admin.issue_calls == 1
+    assert "⚠️ lucien" in str(listing) or "alias que Diana no usa" in listing
+    admin.issue_calls = 0
+    detail = await _dispatch(admin, "vip", "item", "operacion|lucien")
+    assert admin.issue_calls == 1
+    assert "«mi familia»" in detail
 
 
 class _Store:

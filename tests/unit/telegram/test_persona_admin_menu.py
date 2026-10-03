@@ -8,7 +8,9 @@ from uuid import uuid4
 
 import pytest
 
+from diana.application.persona_admin_service import prepare_persona_payload
 from diana.application.ports import PersonaVersionRecord
+from diana.cognitive.operacion import alias_issues
 from diana.cognitive.persona_catalog import get_persona_catalog
 from diana.telegram.handlers.menu import MenuSession, MenuSessionStore
 from diana.telegram.handlers.persona_admin import (
@@ -59,6 +61,13 @@ class _FakePersonaAdmin:
         if channel_type == "vip":
             return self.current
         return None
+
+    async def prepare_persona(self, payload, channel_type="vip"):
+        prev = self.channel_currents.get(channel_type) or (self.current if channel_type == "vip" else None)
+        return prepare_persona_payload(payload, previous=prev)
+
+    def operacion_alias_issues(self, catalog):
+        return alias_issues(catalog)
 
     async def save_persona(
         self, actor_id, payload: dict, channel_type: str = "vip"
@@ -1265,3 +1274,10 @@ async def test_restore_confirm_warns_about_operacion() -> None:
     await dispatch_personalidad(msg, parsed=_parsed("restore", str(uuid4())), actor_id=_OWNER_ID,
                                 persona_admin=_FakePersonaAdmin(_base_catalog()), sessions=_sessions())
     assert "Operación vacía" in _shown_text(msg)
+
+
+def test_parse_operacion_dedups_by_alias_core() -> None:
+    from diana.telegram.handlers.persona_admin import _parse_operacion
+
+    item = _parse_operacion("x | El Diván, diván, tu diván | h")
+    assert item["alias"] == ["El Diván"]

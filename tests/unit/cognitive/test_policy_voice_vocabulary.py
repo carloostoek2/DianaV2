@@ -403,7 +403,7 @@ def test_addendum_60_plus_facts_still_lists_policies_and_voice(caplog) -> None:
     facts = [f"f{i}" for i in range(70)]
     pols = [f"p{i}" for i in range(8)]
     voz = [f"v{i}" for i in range(28)]
-    with caplog.at_level("WARNING", logger="diana.cognitive"):
+    with caplog.at_level("INFO", logger="diana.cognitive"):
         out = analyst_mod._catalog_addendum("vip", facts, pols, voz)
     # Reparto justo: 60 // 3 = 20; Políticas (8) cabe; quedan 52 → 26 + 26.
     assert _listed(out, "Active catalog temas") == facts[:26]
@@ -423,7 +423,7 @@ def test_addendum_policies_never_crowded_out_by_facts_or_voice(caplog) -> None:
     facts = [f"f{i}" for i in range(200)]
     pols = [f"p{i}" for i in range(15)]
     voz = [f"v{i}" for i in range(200)]
-    with caplog.at_level("WARNING", logger="diana.cognitive"):
+    with caplog.at_level("INFO", logger="diana.cognitive"):
         out = analyst_mod._catalog_addendum("atencion", facts, pols, voz)
     assert _listed(out, "Active policy temas") == pols  # 15 <= 20: completas
     assert len(_listed(out, "Active catalog temas")) == 23  # 45 // 2 = 22, +1 sobrante
@@ -439,7 +439,7 @@ def test_addendum_at_or_under_60_is_not_truncated(caplog, n_fact, n_pol, n_voz) 
     facts = [f"f{i}" for i in range(n_fact)]
     pols = [f"p{i}" for i in range(n_pol)]
     voz = [f"v{i}" for i in range(n_voz)]
-    with caplog.at_level("WARNING", logger="diana.cognitive"):
+    with caplog.at_level("INFO", logger="diana.cognitive"):
         out = analyst_mod._catalog_addendum("vip", facts, pols, voz)
     assert _listed(out, "Active catalog temas") == facts
     assert _listed(out, "Active policy temas") == pols
@@ -472,7 +472,7 @@ def test_addendum_single_type_present_gets_full_budget(caplog, slot, header) -> 
     terms = [f"t{i}" for i in range(75)]
     groups: list[list[str]] = [[], [], []]
     groups[slot] = terms
-    with caplog.at_level("WARNING", logger="diana.cognitive"):
+    with caplog.at_level("INFO", logger="diana.cognitive"):
         out = analyst_mod._catalog_addendum("vip", *groups)
     assert _listed(out, header) == terms[:60]
     rec = _truncation_records(caplog)[0]
@@ -566,17 +566,17 @@ async def test_atencion_policy_tema_now_offered_and_avoids_doctrine_not_found(te
 
 def test_addendum_truncation_log_atencion_channel_level_and_logger(caplog) -> None:
     """G1: el log de recorte identifica el canal real (no "vip" fijo) y usa el
-    logger exacto ``diana.cognitive`` con nivel WARNING."""
+    logger exacto ``diana.cognitive`` (nivel INFO desde ítem 3 / O4)."""
     import logging
 
     facts = [f"f{i}" for i in range(70)]
-    with caplog.at_level("WARNING", logger="diana.cognitive"):
+    with caplog.at_level("INFO", logger="diana.cognitive"):
         analyst_mod._catalog_addendum("atencion", facts, ["p0"], [])
     recs = _truncation_records(caplog)
     assert len(recs) == 1
     rec = recs[0]
     assert rec.channel_type == "atencion"
-    assert rec.levelno == logging.WARNING
+    assert rec.levelno == logging.INFO
     assert rec.name == "diana.cognitive"
     assert rec.max_terms == 60
     # Reparto justo [70, 1, 0] → Políticas (1) cabe; Datos recibe el resto (59).
@@ -589,3 +589,14 @@ def test_addendum_truncation_log_atencion_channel_level_and_logger(caplog) -> No
 def test_fair_share_limits_treats_negative_sizes_as_absent() -> None:
     """G2: tamaños negativos cuentan como ausentes (0) y no consumen presupuesto."""
     assert fair_share_limits([-5, 10, 70], 60) == [0, 10, 50]
+
+
+def test_vocab_truncated_logs_at_info_not_warning(caplog) -> None:
+    """O4: el recorte del vocabulario es esperado con catálogos grandes → INFO."""
+    import logging
+
+    with caplog.at_level("INFO", logger="diana.cognitive"):
+        analyst_mod._catalog_addendum("vip", [f"f{i}" for i in range(70)], [], [])
+    recs = _truncation_records(caplog)
+    assert len(recs) == 1
+    assert recs[0].levelno == logging.INFO

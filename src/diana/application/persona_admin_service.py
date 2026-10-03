@@ -10,14 +10,20 @@ catalog (version 0 / seed).
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, Callable, Literal
 from uuid import UUID
 
 from diana.application.admin_service import OwnerAuthError
 from diana.application.ports import PersonaAdminStore, PersonaVersionRecord
-from diana.cognitive.operacion import OPERACION_KEY, validate_operacion_semantics
+from diana.cognitive.operacion import (
+    OPERACION_KEY,
+    alias_issues,
+    validate_operacion_semantics,
+)
 from diana.cognitive.persona_catalog import validate_persona_catalog
+from diana.cognitive.tags import normalize_tags
 
 logger = logging.getLogger("diana.application")
 
@@ -33,6 +39,38 @@ def _is_integrity_error(exc: BaseException) -> bool:
         if cls.__name__ == "IntegrityError":
             return True
     return False
+
+
+_CANONICAL_SECTIONS = (
+    ("persona_facts", "tema"),
+    ("policies", "tema"),
+    ("voice_patterns", "tags"),
+)
+
+
+def canonicalize_persona_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """M1: temas/tags in canonical list form. NEVER touches operacion.alias."""
+    out = deepcopy(dict(payload))
+    for section, key in _CANONICAL_SECTIONS:
+        items = out.get(section)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and key in item:
+                canon = normalize_tags(item[key])
+                if not canon:
+                    raise ValueError(f"«{item.get('id', '?')}» no tiene temas válidos")
+                item[key] = canon
+    return out
+
+
+def prepare_persona_payload(
+    payload: dict[str, Any], *, previous: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Single write-path validation (R-1): canonicalize → shape → alias policy."""
+    validated = validate_persona_catalog(canonicalize_persona_payload(payload))
+    validate_operacion_semantics(validated, previous=previous)
+    return validated
 
 
 def _assert_channel(channel_type: str) -> ChannelType:
@@ -99,27 +137,39 @@ class PersonaAdminService:
                 f"actor_id {actor_id!r} is not the configured owner"
             )
 
+    async def prepare_persona(
+        self, payload: dict[str, Any], channel_type: str = "vip"
+    ) -> dict[str, Any]:
+        """Validate a catalog exactly as ``save_persona`` would, without writing.
+
+        Canonical temas/tags (M1) → shape (same as the static loader) → alias
+        policy for "operacion" (length / common words / collision with
+        persona_facts temas), applied ONLY to the aliases that are new vs the
+        active version of THIS channel: an alias stored under an older, looser
+        policy never blocks saving another section (the runtime ignores it and
+        the panel warns). Read path stays shape-only so a policy change never
+        invalidates an already-active catalog.
+        """
+        _assert_channel(channel_type)
+        previous: dict[str, Any] | None = None
+        if payload.get(OPERACION_KEY):
+            active = await self._store.get_active(channel_type=channel_type)
+            previous = active.payload if active is not None else None
+        return prepare_persona_payload(payload, previous=previous)
+
+    def operacion_alias_issues(self, catalog: dict[str, Any] | None) -> list[Any]:
+        """Stored "operacion" aliases the runtime ignores (panel warnings)."""
+        return alias_issues(catalog)
+
     async def save_persona(
         self,
         actor_id: int | None,
         payload: dict[str, Any],
         channel_type: str = "vip",
     ) -> PersonaVersionRecord:
-        """Validate the full catalog, persist it as a new active version."""
+        """Validate the full catalog (``prepare_persona``), persist it as a new active version."""
         self._assert_owner(actor_id)
-        _assert_channel(channel_type)
-        validated = validate_persona_catalog(dict(payload))
-        # Write-path-only alias policy for "operacion" (length / common words /
-        # collision with persona_facts temas), applied ONLY to the aliases that
-        # are new vs the active version of THIS channel: an alias stored under
-        # an older, looser policy never blocks saving another section (the
-        # runtime ignores it and the panel warns). Read path stays shape-only
-        # so a policy change never invalidates an already-active catalog.
-        previous: dict[str, Any] | None = None
-        if validated.get(OPERACION_KEY):
-            active = await self._store.get_active(channel_type=channel_type)
-            previous = active.payload if active is not None else None
-        validate_operacion_semantics(validated, previous=previous)
+        validated = await self.prepare_persona(payload, channel_type)
         # GLOBAL version counter: ``uq_persona_versions_version`` is a unique
         # index over ``version`` across every channel, so next_version must be
         # computed from ALL versions (PLAN A2), not per channel — otherwise a

@@ -50,6 +50,7 @@ from diana.cognitive.tags import catalog_fact_topics, tokenize_words
 from diana.config.settings import Settings
 from diana.llm.deepseek import schema_hint_for_llm
 from diana.llm.fake import FakeLLM
+from diana.application.persona_admin_service import prepare_persona_payload
 from diana.telegram.handlers.persona_admin import (
     _item_full_text,
     _section_items,
@@ -460,8 +461,13 @@ def test_panel_add_edit_delete_including_last_item() -> None:
     ],
 )
 def test_panel_rejects_bad_input(text: str, msg: str) -> None:
+    # Parse errors come from the panel; alias-policy errors from the single
+    # write path (R-1, PersonaAdminService.prepare_persona).
+    base = deepcopy(get_persona_catalog())
     with pytest.raises(ValueError, match=msg):
-        apply_persona_edit(deepcopy(get_persona_catalog()), "operacion", None, text)
+        prepare_persona_payload(
+            apply_persona_edit(base, "operacion", None, text), previous=base
+        )
 
 
 def test_panel_list_and_detail_render() -> None:

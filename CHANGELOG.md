@@ -7,6 +7,19 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Los temas de Personalidad se guardan siempre en forma canónica — 2026-10-02
+
+Los temas de Datos personales y Políticas, y los tags de Patrones de voz, podían quedar guardados como los escribía la dueña ("Cariño", "Cumpleaños Mamá", o un tema suelto en vez de lista), y la revisión de alias de Operación se hacía en dos sitios distintos (panel y servicio).
+
+- El primer guardado de cada canal reescribe los temas y tags a la forma canónica (sin acentos, minúsculas y con `_`). Por ejemplo, los tags `cariño`/`cariñosa` de 4 patrones de VIP pasan a `carino`/`carinosa`. Diana ya los leía así, así que sus respuestas no cambian.
+- Los alias de Operación no se reescriben.
+- Los alias repetidos ("El Diván, diván") se guardan una sola vez, con la primera forma escrita.
+- Toda la validación de un guardado pasa por un solo camino, el mismo para el panel y para el servicio.
+- El aviso de vocabulario recortado del Analyst baja a INFO: con catálogos grandes es lo esperado, no un problema.
+
+---
+
+
 "⚙️ Operación" reconoce los alias sin artículo y avisa de los que no usa — 2026-10-02
 
 Con Operación encendida había huecos: si el alias era "El Diván" o "el mayordomo", el cliente tenía que escribir el artículo ("tu diván" o "mayordomo" a secas no disparaban). Alias como "mi familia" se aceptaban aunque chocaban con un tema de Datos personales; los nombres propios cortos ("Ana", "Max") no se podían usar; con tres datos y tope 2, "Lucien" quedaba fuera frente a frases más largas; y los alias guardados que Diana ignoraba no se veían en ningún lado.

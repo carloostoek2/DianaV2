@@ -14,6 +14,7 @@ cycle; it duck-types the session store and session objects.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
 from uuid import UUID
@@ -25,8 +26,7 @@ from diana.application.persona_admin_service import PersonaAdminService
 from diana.cognitive.operacion import (
     OPERACION_ID_MAX_BYTES,
     OPERACION_KEY,
-    alias_issues,
-    validate_operacion_semantics,
+    alias_core,
 )
 from diana.cognitive.persona_catalog import (
     get_persona_atencion_catalog,
@@ -428,11 +428,9 @@ def apply_persona_edit(
             list(nuevo.get(OPERACION_KEY) or []), op, extra, text,
             parser=_parse_operacion, by_id=True, allow_empty=True,
         )
-        if op == "operacion":
-            # Alias policy (min length, common words, persona_facts temas) for
-            # the aliases this edit adds; the ones already stored never block
-            # (they are flagged with ⚠️ in the list/detail instead).
-            validate_operacion_semantics(nuevo, previous=base)
+        # Alias policy (min length, common words, persona_facts temas) is NOT
+        # applied here: it runs once in PersonaAdminService.prepare_persona
+        # (R-1, single write path), which the wizard calls before saving.
         return nuevo
 
     raise ValueError(f"operación de personalidad desconocida: {op}")
@@ -491,9 +489,14 @@ def _parse_operacion(text: str | None) -> dict[str, Any]:
         raise ValueError("id, alias y hecho no pueden estar vacíos")
     if len(op_id.encode("utf-8")) > OPERACION_ID_MAX_BYTES:
         raise ValueError("el id es demasiado largo (máximo 24 bytes)")
+    # Dedup by alias core ("El Diván, diván, tu diván" → one alias); keep the
+    # first written form.
     alias_list: list[str] = []
+    seen: set[tuple[str, ...]] = set()
     for alias in _split_topics(aliases):
-        if alias not in alias_list:
+        core = alias_core(alias) or (alias.casefold(),)
+        if core not in seen:
+            seen.add(core)
             alias_list.append(alias)
     if not alias_list:
         raise ValueError("agrega al menos un alias")
@@ -537,7 +540,9 @@ def _parse_policy(text: str | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str]]:
+def _section_items(
+    catalog: dict[str, Any], section: str, *, issues: Sequence[Any] = ()
+) -> list[tuple[str, str]]:
     voz = catalog.get("voz_configurada") or {}
     if section == "rules":
         rules = voz.get("reglas_estilo") or []
@@ -577,7 +582,7 @@ def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str
         return [(str(i), f"💬 {_truncate(d, 70)}") for i, d in enumerate(defaults)]
     if section == "operacion":
         items = catalog.get(OPERACION_KEY) or []
-        flagged = {issue.id for issue in alias_issues(catalog)}
+        flagged = {issue.id for issue in issues}
         return [
             (
                 str(o.get("id")),
@@ -590,7 +595,9 @@ def _section_items(catalog: dict[str, Any], section: str) -> list[tuple[str, str
     return []
 
 
-def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | None:
+def _item_full_text(
+    catalog: dict[str, Any], section: str, key: str, *, issues: Sequence[Any] = ()
+) -> str | None:
     """Render the FULL content of one item (no truncation) for detail/edit views.
 
     Returns None when the item does not exist.
@@ -672,7 +679,7 @@ def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | No
             if isinstance(o, dict) and str(o.get("id")) == key:
                 alias = ", ".join(o.get("alias") or [])
                 text = f"⚙️ {o.get('id')}\nAlias: {alias}\nHecho: {o.get('hecho')}"
-                ignored = [i for i in alias_issues(catalog) if i.id == key]
+                ignored = [i for i in issues if i.id == key]
                 if ignored:
                     text += _OPERACION_IGNORED_HEADER + "".join(
                         f"\n• {i.reason}" for i in ignored
@@ -684,7 +691,11 @@ def _item_full_text(catalog: dict[str, Any], section: str, key: str) -> str | No
 
 
 def _edit_current_value(
-    catalog: dict[str, Any], section: str, extra: str | None
+    catalog: dict[str, Any],
+    section: str,
+    extra: str | None,
+    *,
+    issues: Sequence[Any] = (),
 ) -> str | None:
     """Current value to show inside an edit prompt (full text; None = new item)."""
     voz = catalog.get("voz_configurada") or {}
@@ -694,13 +705,17 @@ def _edit_current_value(
         return str((catalog.get("schedule") or {}).get("timezone") or "")
     if section in ("rule", "fact", "pattern", "policy", "bloque", "default", "operacion"):
         # _item_full_text keys on the PLURAL list-section name (rules/facts/…)
-        return _item_full_text(catalog, _section_list_action(section), extra or "")
+        return _item_full_text(
+            catalog, _section_list_action(section), extra or "", issues=issues
+        )
     return None
 
 
-def _item_detail(catalog: dict[str, Any], section: str, extra: str) -> str:
+def _item_detail(
+    catalog: dict[str, Any], section: str, extra: str, *, issues: Sequence[Any] = ()
+) -> str:
     """Full-content detail view for a tapped item (review round fix: no truncation)."""
-    full = _item_full_text(catalog, section, extra)
+    full = _item_full_text(catalog, section, extra, issues=issues)
     return full if full is not None else "(no se encontró el elemento)"
 
 
@@ -879,7 +894,11 @@ async def dispatch_personalidad(
             "operacion": "operacion",
         }[action]
         catalog = await load_current(persona_admin, channel_type=channel)
-        raw_items = _section_items(catalog, section)
+        # R-2: alias issues computed ONCE per render and passed down.
+        issues = (
+            persona_admin.operacion_alias_issues(catalog) if section == "operacion" else []
+        )
+        raw_items = _section_items(catalog, section, issues=issues)
         # Item callbacks carry section|key so the detail view knows the context.
         # Cap at 40 rows: Telegram inline keyboards allow at most 100 buttons
         # and the add/back rows consume 2 — a huge section must stay renderable.
@@ -891,7 +910,7 @@ async def dispatch_personalidad(
             "operacion": "operacion_add",
         }[action]
         empty_note = _OPERACION_RESTORE_NOTE if action == "operacion" else ""
-        if action == "operacion" and alias_issues(catalog):
+        if action == "operacion" and issues:
             empty_note = _OPERACION_IGNORED_LIST_NOTE + empty_note
         if not items:
             await _show(
@@ -936,7 +955,10 @@ async def dispatch_personalidad(
             await _show(message, "Elemento inválido.", back)
             return
         catalog = await load_current(persona_admin, channel_type=channel)
-        detail = _item_detail(catalog, section, item_key)
+        issues = (
+            persona_admin.operacion_alias_issues(catalog) if section == "operacion" else []
+        )
+        detail = _item_detail(catalog, section, item_key, issues=issues)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -1003,7 +1025,12 @@ async def dispatch_personalidad(
         # review it before fine-tuning (product requirement: no truncation).
         if action.endswith("_edit") or action == "persona_edit" or action == "timezone_edit":
             catalog = await load_current(persona_admin, channel_type=channel)
-            current = _edit_current_value(catalog, section, extra)
+            issues = (
+                persona_admin.operacion_alias_issues(catalog)
+                if section == "operacion"
+                else []
+            )
+            current = _edit_current_value(catalog, section, extra, issues=issues)
             if current is not None:
                 prompt = f"{prompt}\n\n📄 Actual:\n{current}"
         await _show(message, prompt, None)
@@ -1089,6 +1116,9 @@ async def handle_persona_edit_text(
     base = await load_current(persona_admin, channel_type=channel)
     try:
         nuevo = apply_persona_edit(base, op, extra, text)
+        # R-1: the same validation save_persona runs (canonical temas, shape,
+        # alias policy vs the active version of this channel).
+        await persona_admin.prepare_persona(nuevo, channel_type=channel)
     except ValueError as exc:
         await _restart_persona_wizard(sessions, message, section, extra, channel)
         await _edit_or_answer(
