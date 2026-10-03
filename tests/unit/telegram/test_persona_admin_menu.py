@@ -1969,7 +1969,8 @@ async def test_r2_1_pipe_hecho_with_inline_nota_keeps_it_private():
 
 
 def test_r2_1_parse_fact_fourth_field_and_inline_nota():
-    assert _parse_fact("a | t | h | Nota privada: n4")["nota_privada"] == "n4"
+    # R3-1: the 4th field is the note exactly as written (classic behavior)
+    assert _parse_fact("a | t | h | Nota privada: n4")["nota_privada"] == "Nota privada: n4"
     both = _parse_fact("a | t | h. nota_privada: n3 | n4")
     assert both["hecho"] == "h." and both["nota_privada"] == "n4 · n3"
 
@@ -1990,6 +1991,9 @@ async def test_r2_1_pipe_with_nota_rejected_outside_facts():
 @pytest.mark.parametrize("marker", [
     "Nota privada:", "nota privada -", "Nota privada —", "Nota privada：",
     "(nota privada)", "(Nota privada):", "nota_privada:", "NOTA PRIVADA:",
+    # R3-3: spellings that escaped the round-2 pattern
+    "Notas privadas:", "nota-privada:", "NOTA  PRIVADO -", "NotaPrivada:", "Nota‐privada:",
+    "Nota privado:", "nota‑privada —",
 ])
 async def test_r2_2_marker_variants_never_reach_the_drafter(marker):
     service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
@@ -2079,3 +2083,100 @@ async def test_r2_3_each_new_preview_rotates_the_token():
     assert _live_session(sessions).persona_draft["token"] != first
     m = await _tap(service, sessions, "draft_save", first)
     assert _DRAFT_STALE in _shown(m) and service.saved == []
+
+
+# ---------------------------------------------------------------------------
+# Review round 3 — R3-1 (no over-rejection in |), R3-3 (spellings), R3-2 (hints)
+# ---------------------------------------------------------------------------
+
+from diana.telegram.handlers.persona_admin import (  # noqa: E402
+    _NOTA_NOT_IN_SECTION,
+    _split_pipe_hecho,
+)
+
+
+async def _pipe_preview(section: str, text: str):
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg(text), bot, _session(section), service, sessions)
+    draft = getattr(_live_session(sessions), "persona_draft", None)
+    return service, draft, _bot_text(bot)
+
+
+@pytest.mark.asyncio
+async def test_r3_1_pipe_fourth_field_mentioning_nota_privada_is_taken_as_is():
+    _, draft, _ = await _pipe_preview(
+        "fact", "diario | escritura | Escribo un diario | es mi nota privada más vieja")
+    assert draft["item"]["hecho"] == "Escribo un diario"
+    assert draft["item"]["nota_privada"] == "es mi nota privada más vieja"
+
+
+@pytest.mark.asyncio
+async def test_r3_1_pipe_hecho_that_only_mentions_nota_privada_is_a_normal_hecho():
+    service, draft, _ = await _pipe_preview(
+        "fact", "diario | escritura | Guardo una nota privada en mi diario")
+    assert draft["item"]["hecho"] == "Guardo una nota privada en mi diario"
+    assert "nota_privada" not in draft["item"]
+    assert service.draft_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("section", "text"), [
+    ("policy", "pol_priv | privacidad | Nunca revelo una nota privada de un cliente"),
+    ("pattern", "pat_priv | privacidad | mis notas privadas | Cuando hablo de mi diario"),
+    ("operacion", "diario_bot | Diariobot | Diariobot guarda notas privadas del equipo"),
+])
+async def test_r3_1_other_sections_accept_a_plain_mention_in_pipe(section, text):
+    _, draft, shown = await _pipe_preview(section, text)
+    assert draft is not None and "item" in draft, shown
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("section", ["policy", "pattern"])
+async def test_r3_1_other_sections_accept_a_plain_mention_in_free_text(section):
+    text = "Nunca revelo una nota privada de un cliente"
+    service, draft, shown = await _pipe_preview(section, text)
+    assert service.draft_calls == [(section, text, "vip")]
+    assert draft is not None and "item" in draft, shown
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("section", "text"), [
+    ("policy", "pol | precios | No doy precios. Nota privada: SECRETO"),
+    ("pattern", "pat | risa | jsjs | uso. Notas privadas - SECRETO"),
+    ("operacion", "op_x | Diariobot | Diariobot ayuda. nota_privada: SECRETO"),
+    ("policy", "No doy precios. Nota privada: SECRETO"),  # free text
+    ("pattern", "uso jsjs (nota privada) SECRETO"),        # free text
+])
+async def test_r3_1_other_sections_reject_only_the_marker_form(section, text):
+    service, draft, shown = await _pipe_preview(section, text)
+    assert shown.startswith("❌") and _NOTA_NOT_IN_SECTION in shown
+    assert "SECRETO" not in shown and service.draft_calls == []
+    assert draft is None
+
+
+@pytest.mark.parametrize(("hecho", "expected"), [
+    ("Tengo un perro. Notas privadas: vive lejos", ("Tengo un perro.", "vive lejos")),
+    ("Tengo un perro nota-privada: vive lejos", ("Tengo un perro", "vive lejos")),
+    ("Tengo un perro. NOTA  PRIVADO - vive lejos", ("Tengo un perro.", "vive lejos")),
+    ("Tengo un perro — Nota privada ‐ vive lejos", ("Tengo un perro", "vive lejos")),
+    ("Tengo un perro (nota privada) vive lejos", ("Tengo un perro (nota privada) vive lejos", None)),
+    ("Guardo una nota privada en mi diario", ("Guardo una nota privada en mi diario", None)),
+])
+def test_r3_1_r3_3_pipe_hecho_splits_only_on_colon_or_dash_markers(hecho, expected):
+    assert _split_pipe_hecho(hecho) == expected
+
+
+def test_r3_2_private_note_hints_are_unified_and_only_for_datos():
+    assert "«➕ Nota privada»" in _PRIVATE_NOTE_HINT and "Nota privada:" in _PRIVATE_NOTE_HINT
+    for key in ("pattern", "pattern_edit", "policy", "policy_edit", "operacion",
+                "operacion_edit", "bloque", "bloque_edit"):
+        assert "privad" not in _ADD_PROMPTS[key].lower(), key
+    assert "Nota privada:" not in _NOTA_NOT_IN_SECTION
+    assert "➕" not in _NOTA_NOT_IN_SECTION
+
+
+@pytest.mark.asyncio
+async def test_r3_2_fact_no_separator_error_uses_the_same_hint():
+    _, _, shown = await _pipe_preview("fact", "Tengo un hermano, nota privada vive lejos")
+    assert _PRIVATE_NOTE_HINT.strip() in shown

@@ -40,10 +40,11 @@ Agregar un dato, una política, un patrón de voz, un dato de Operación o un bl
 - Ahora se puede escribir con tus palabras. El texto va al mismo proveedor de IA que usa Diana, con una espera máxima de 10 s; si no responde (o propone algo inválido), se arma una propuesta sin IA.
 - Antes de guardar siempre aparece una vista previa con ✅ Guardar, ✏️ Corregir, ➕ Nota privada (solo Datos personales) y ✖️ Cancelar. Nada se guarda sin tocar Guardar.
 - La nota privada nunca se envía a la IA, Diana no la usa para responder y la vista previa no muestra su texto. Editar un dato con tus palabras conserva su nota.
-- Si escribes «Nota privada: …» dentro del texto, esa parte se guarda como nota y no se envía a la IA. Al editar, el panel solo indica que el dato tiene nota (no muestra su texto). La nota agregada se conserva al Corregir.
+- En un Dato personal escrito con tus palabras, lo que va después de «Nota privada:» se guarda como nota y no se envía a la IA. También sirven «-» o «—» en lugar de los dos puntos, «(nota privada)», el plural y «nota_privada». Si el texto menciona una nota privada sin separador, el panel pide aclararlo y no envía nada. Al editar, el panel solo indica que el dato tiene nota (no muestra su texto). La nota agregada se conserva al Corregir.
 - La vista previa muestra el canal. Cambiar de canal cierra cualquier alta, edición o vista previa abierta.
 - Un dato cuyo tema apagaría un alias de Operación existente no se guarda (el panel explica por qué).
-- El formato `|` sigue igual, pero ahora también muestra una vista previa.
+- El formato `|` funciona como antes y ahora también muestra una vista previa. En Datos personales, el 4.º campo (`id | temas | hecho | nota`) se guarda como nota privada tal cual. Además, si el 3.er campo trae «Nota privada:» o «Nota privada -», lo que sigue se guarda como nota y no como hecho. Mencionar «nota privada» sin ese marcador es texto normal.
+- Políticas, Patrones de voz y Operación no tienen nota privada. Un texto con el marcador «Nota privada:» o «Nota privada -» se rechaza, porque Diana podría decirlo. Mencionar «nota privada» sin marcador sí se acepta.
 - La vista previa se guarda en el canal (VIP / atención) donde se escribió; cambiar de canal la descarta.
 - No hay interruptor nuevo.
 

@@ -74,25 +74,34 @@ _FREE_TEXT_HINT = (
     "Puedes escribirlo con tus palabras: te muestro una vista previa antes "
     "de guardar. El formato con | sigue funcionando.\n"
 )
+# Review round 3 (R3-2): ONE private-note hint for Datos personales, used by
+# the prompts and by the errors (other sections have no private note).
 _PRIVATE_NOTE_HINT = (
-    "Si hay algo privado (que Diana no debe decir), no lo escribas aquí: "
-    "después de la vista previa toca «➕ Nota privada» "
-    "(o usa id | temas | hecho | nota).\n"
+    "Lo privado (que Diana no debe decir) va aparte: toca «➕ Nota privada» "
+    "en la vista previa, ponlo en el 4.º campo (id | temas | hecho | nota) "
+    "o escríbelo al final después de «Nota privada:».\n"
 )
 # Review round 1 (M2): the edit prompt only says a private note exists.
 _NOTA_HIDDEN_LINE = "🔒 Tiene nota privada (no se muestra aquí; se conserva al editar)"
-# Review round 2 (R2-2): "Nota privada:" / "：" / "-" / "–" / "—", "(nota privada)"
-# and the catalog key spelling "nota_privada:". A mention without a separator
-# is rejected (it would otherwise reach the LLM / the public hecho).
+# Review round 3 (R3-3): one spelling-tolerant word pattern ("Notas privadas",
+# "nota-privada", "NOTA  PRIVADO", "nota_privada", Unicode hyphens…).
+_NOTA_WORD = r"\bnotas?[\s_\-‐‑]*privad[ao]s?\b"
+_NOTA_SEP = r"[:：\-‐‑–—]"
+# | format and the other sections: only "<word> :" / "<word> -" is a marker.
+_NOTA_SEP_MARKER_RE = re.compile(_NOTA_WORD + r"\s*" + _NOTA_SEP, re.IGNORECASE)
+# Free text (goes to the LLM): also "(nota privada)".
 _NOTA_MARKER_RE = re.compile(
-    r"\(\s*nota[\s_]+privada\s*\)\s*[:：\-–—]?|\bnota[\s_]+privada\s*[:：\-–—]",
+    r"\(\s*" + _NOTA_WORD + r"\s*\)\s*" + _NOTA_SEP + r"?|" + _NOTA_WORD + r"\s*" + _NOTA_SEP,
     re.IGNORECASE,
 )
-_NOTA_MENTION_RE = re.compile(r"\bnota[\s_]+privada\b", re.IGNORECASE)
+_NOTA_MENTION_RE = re.compile(_NOTA_WORD, re.IGNORECASE)
 _NOTA_PREVIEW_LINE = "🔒 Nota privada: sí"
 _NOTA_NO_SEPARATOR = (
-    "Para guardar algo privado escribe «Nota privada: …» al final del texto, "
-    "o toca «➕ Nota privada» en la vista previa."
+    "No sé qué parte del texto es privada. " + _PRIVATE_NOTE_HINT.strip()
+)
+_NOTA_NOT_IN_SECTION = (
+    "Esta sección no tiene notas privadas (solo Datos personales las tienen): "
+    "Diana puede usar todo lo que escribas aquí. Quita la parte privada."
 )
 _DRAFT_STALE = (
     "Ese botón es de una vista previa anterior y ya no vale. "
@@ -615,6 +624,20 @@ def _split_private_note(text: str) -> tuple[str, str | None]:
     return public, nota or None
 
 
+def _split_pipe_hecho(hecho: str) -> tuple[str, str | None]:
+    """| format (R3-1): split only on an explicit "Nota privada:" / "-" marker.
+
+    A plain mention ("Guardo una nota privada en mi diario") is a normal hecho.
+    """
+    hecho = _strip_own_placeholders(hecho or "").strip()
+    match = _NOTA_SEP_MARKER_RE.search(hecho)
+    if match is None:
+        return hecho, None
+    public = hecho[: match.start()].strip(" \t\n,;:-—–")
+    nota = hecho[match.end():].strip(" \t\n:：-‐‑–—")
+    return public, nota or None
+
+
 def _keep_existing_nota(
     item: dict[str, Any], base: dict[str, Any], op: str, extra: str | None
 ) -> None:
@@ -731,8 +754,8 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     if len(parts) < 3:
         raise ValueError("formato: id | tema1, tema2 | hecho")
     fact_id, temas, hecho = parts[:3]
-    # R2-1: a "Nota privada: …" inside the hecho field stays private too.
-    hecho, inline_nota = _split_private_note(hecho)
+    # R2-1 / R3-1: "Nota privada: …" inside the hecho field stays private too.
+    hecho, inline_nota = _split_pipe_hecho(hecho)
     if not fact_id or not temas or not hecho:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     if len(fact_id.encode("utf-8")) > 24:
@@ -745,15 +768,12 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     if not tema_list:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     item: dict[str, Any] = {"id": fact_id, "tema": tema_list, "hecho": hecho}
-    notas = []
-    if len(parts) > 3 and parts[3].strip():
-        fourth = "|".join(parts[3:]).strip()
-        lead, marked = _split_private_note(fourth)
-        notas.append(" ".join(x for x in (lead, marked) if x))
+    # R3-1: the 4th field is the note, taken as-is (classic behavior).
+    notas = [parts[3].strip()] if len(parts) > 3 and parts[3].strip() else []
     if inline_nota:
         notas.append(inline_nota)
-    if any(notas):
-        item["nota_privada"] = " · ".join(n for n in notas if n)
+    if notas:
+        item["nota_privada"] = " · ".join(notas)
     return item
 
 
@@ -1614,11 +1634,8 @@ async def _handle_preview_text(
     try:
         base = await load_current(persona_admin, channel_type=channel)
         if "|" in text:
-            if op != "fact" and _NOTA_MENTION_RE.search(text):
-                raise ValueError(
-                    "La nota privada solo aplica a Datos personales. "
-                    "Quita «Nota privada» del texto."
-                )
+            if op != "fact" and _NOTA_SEP_MARKER_RE.search(text):
+                raise ValueError(_NOTA_NOT_IN_SECTION)  # R3-1: marker only
             # G-C4: the pipe format yields exactly the same item as before.
             item = _extract_item(
                 apply_persona_edit(base, op, extra, text), op, extra, base=base
@@ -1675,12 +1692,13 @@ async def _draft_free_text(
     """Free text → (item, source, prepared catalog). Raises ``ValueError``."""
     # M2/S2: a "Nota privada: …" segment stays local — it never reaches
     # the LLM, the deterministic fallback or the public hecho.
-    public, nota = _split_private_note(text)
-    if nota is not None and op != "fact":
-        raise ValueError(
-            "La nota privada solo aplica a Datos personales. "
-            "Quita «Nota privada:» del texto."
-        )
+    if op == "fact":
+        public, nota = _split_private_note(text)  # mention w/o separator → reject
+    else:
+        # R3-1: no private notes here; reject only the marker form.
+        if _NOTA_MARKER_RE.search(text):
+            raise ValueError(_NOTA_NOT_IN_SECTION)
+        public, nota = _strip_own_placeholders(text).strip(), None
     if not public:
         raise ValueError("Escribe el dato antes de «Nota privada:».")
 
