@@ -562,3 +562,20 @@ async def test_draft_rule_rejects_unknown_channel() -> None:
     service = _make_service(_MemoryPersonaAdminStore())
     with pytest.raises(ValueError, match="unknown channel_type"):
         await service.draft_rule("policy", "x", catalog=_valid_catalog(), channel_type="otro")
+
+
+
+# Review round 2 (R2-7): deterministic draft through the service, channel-checked.
+
+
+def test_fallback_rule_is_deterministic_and_channel_checked():
+    from diana.cognitive.persona_catalog import get_persona_catalog
+
+    svc = PersonaAdminService(
+        payload_store=None, feature_persona_admin_enabled=True, owner_telegram_id=1
+    )
+    draft = svc.fallback_rule("policy", "Nunca hablo de mi ex", catalog=get_persona_catalog(),
+                              channel_type="atencion")
+    assert draft.source == "fallback" and draft.item["regla"] == "Nunca hablo de mi ex"
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        svc.fallback_rule("policy", "x", catalog=None, channel_type="otro")

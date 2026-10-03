@@ -56,6 +56,7 @@ class _FakePersonaAdmin:
         self.last_list_channel_type: str | None = None
         self.draft_calls: list[tuple[str, str, str]] = []
         self.draft_catalogs: list[dict] = []
+        self.fallback_calls: list[tuple[str, str, str]] = []
         self.draft_override = None  # async (op, text, catalog, target) -> RuleDraft
 
     async def get_current_persona(self, channel_type: str = "vip") -> dict | None:
@@ -71,6 +72,10 @@ class _FakePersonaAdmin:
         self.draft_catalogs.append(catalog)
         if self.draft_override is not None:
             return await self.draft_override(op, text, catalog, target)
+        return RuleDraft(fallback_draft(op, text, catalog=catalog, target=target), "fallback")
+
+    def fallback_rule(self, op, text, *, catalog, target=None, channel_type="vip"):
+        self.fallback_calls.append((op, text, channel_type))
         return RuleDraft(fallback_draft(op, text, catalog=catalog, target=target), "fallback")
 
     async def prepare_persona(self, payload, channel_type="vip"):
@@ -1779,6 +1784,9 @@ async def test_g2_llm_draft_failing_catalog_validation_falls_back():
     assert draft["source"] == "fallback"
     assert draft["item"] == {"dias": ["lunes", "miercoles"], "inicio": "09:00",
                              "fin": "12:00", "actividad": "gimnasio"}
+    # R2-7: the retry goes through the service (channel-checked), not the drafter module
+    assert service.fallback_calls == [
+        ("bloque", "lunes y miércoles de 9:00 a 12:00 gimnasio", "vip")]
 
 
 @pytest.mark.asyncio

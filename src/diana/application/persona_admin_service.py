@@ -16,7 +16,11 @@ from typing import Any, Callable, Literal
 from uuid import UUID
 
 from diana.application.admin_service import OwnerAuthError
-from diana.application.persona_rule_drafter import PersonaRuleDrafter, RuleDraft
+from diana.application.persona_rule_drafter import (
+    PersonaRuleDrafter,
+    RuleDraft,
+    fallback_draft,
+)
 from diana.application.ports import PersonaAdminStore, PersonaVersionRecord
 from diana.cognitive.operacion import (
     OPERACION_KEY,
@@ -172,6 +176,22 @@ class PersonaAdminService:
         """Draft ONE panel item from plain text (C2). Never touches the store."""
         _assert_channel(channel_type)
         return await self._rule_drafter.draft(op, text, catalog=catalog, target=target)
+
+    def fallback_rule(
+        self,
+        op: str,
+        text: str,
+        *,
+        catalog: dict[str, Any] | None,
+        target: str | None = None,
+        channel_type: str = "vip",
+    ) -> RuleDraft:
+        """Deterministic draft (no LLM), same channel check as :meth:`draft_rule`.
+
+        Review round 2 (R2-7): the panel's G2 retry goes through the service.
+        """
+        _assert_channel(channel_type)
+        return RuleDraft(fallback_draft(op, text, catalog=catalog, target=target), "fallback")
 
     def operacion_alias_issues(self, catalog: dict[str, Any] | None) -> list[Any]:
         """Stored "operacion" aliases the runtime ignores (panel warnings)."""

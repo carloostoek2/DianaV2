@@ -25,7 +25,6 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from diana.application.persona_admin_service import PersonaAdminService
-from diana.application.persona_rule_drafter import fallback_draft
 from diana.cognitive.operacion import (
     OPERACION_ID_MAX_BYTES,
     OPERACION_KEY,
@@ -1710,8 +1709,10 @@ async def _draft_free_text(
             "persona_rule_draft_validation_fallback",
             extra={"op": op, "error": type(exc).__name__},
         )
-        item = _finish(fallback_draft(op, public, catalog=base, target=extra))
-        source = "fallback"
+        fallback = persona_admin.fallback_rule(
+            op, public, catalog=base, target=extra, channel_type=channel
+        )
+        item, source = _finish(fallback.item), fallback.source
         prepared = await persona_admin.prepare_persona(
             apply_persona_item(base, op, extra, item), channel_type=channel
         )
