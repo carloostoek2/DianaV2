@@ -40,7 +40,7 @@ Agregar un dato, una política, un patrón de voz, un dato de Operación o un bl
 - Ahora se puede escribir con tus palabras. El texto va al mismo proveedor de IA que usa Diana, con una espera máxima de 10 s; si no responde (o propone algo inválido), se arma una propuesta sin IA.
 - Antes de guardar siempre aparece una vista previa con ✅ Guardar, ✏️ Corregir, ➕ Nota privada (solo Datos personales) y ✖️ Cancelar. Nada se guarda sin tocar Guardar.
 - La nota privada nunca se envía a la IA, Diana no la usa para responder y la vista previa no muestra su texto. Editar un dato con tus palabras conserva su nota.
-- Cómo se reconoce una nota privada dentro del texto (la misma regla en el texto libre y en el formato `|` de Datos personales, Políticas, Patrones de voz, Operación y Agenda):
+- Cómo se reconoce una nota privada en Datos personales, tanto en el texto libre como en el formato `|` (Políticas, Patrones de voz, Operación y Agenda usan las mismas grafías, pero una regla de rechazo más amplia, explicada más abajo):
   - «Nota privada» seguido de «:» cuenta como marcador en cualquier parte del texto, también entre paréntesis o comillas. Ejemplos: «Laura tiene gastritis, nota privada: no lo menciones», «(Nota privada: se llama Juan)».
   - «Nota privada» seguido de un guion («-», «–», «—») solo cuenta al inicio del texto o del campo, o justo después de un punto, un punto y coma o un salto de línea. Ejemplo: «Tengo un hermano. Nota privada - se llama Juan».
   - También cuenta «(nota privada)» entre paréntesis, con o sin «:» después. Ejemplo: «Laura tiene gastritis (nota privada) no lo menciones».
@@ -55,7 +55,7 @@ Agregar un dato, una política, un patrón de voz, un dato de Operación o un bl
 - Un dato cuyo tema apagaría un alias de Operación existente no se guarda (el panel explica por qué).
 - El formato `|` funciona como antes y ahora también muestra una vista previa. En Datos personales, el 4.º campo (`id | temas | hecho | nota`) se guarda como nota privada tal cual.
 - Políticas, Patrones de voz, Operación y Agenda no tienen nota privada. Se rechaza cualquier texto en que «nota privada» vaya seguida de «:» o de un guion en cualquier parte, o que traiga «(nota privada)», tanto en el texto libre como en el formato `|`, porque Diana podría decirlo. Mencionar «nota privada» sin «:», guion ni paréntesis sí se acepta.
-- La vista previa se guarda en el canal (VIP / atención) donde se escribió; cambiar de canal la descarta.
+- Quedan casos conocidos que no se reconocen como nota privada (por ejemplo sinónimos como «Privado:», letras parecidas de otros alfabetos o las secciones que se guardan directo). Se atenderán en un pool aparte; el detalle está en `docs/PRODUCT_OWNER_PERSONALIDAD.md`.
 - No hay interruptor nuevo.
 
 ---
@@ -101,6 +101,7 @@ Ahora el Analyst recibe en cada turno, además de los temas de Datos personales,
 - La señal emocional "revelación de vida" reconoce el tema con o sin acento (`extrañar` / `extranar`).
 
 ---
+
 
 Nueva sección "⚙️ Operación" en Personalidad y reglas — 2026-10-01
 
