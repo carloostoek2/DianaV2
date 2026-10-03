@@ -83,3 +83,23 @@ def test_menu_router_flag_gate_shadows_persona_admin() -> None:
     root = Path(diana.__file__).resolve().parent
     src = (root / "telegram" / "handlers" / "menu.py").read_text(encoding="utf-8")
     assert "persona_admin = persona_admin if feature_persona_admin_enabled else None" in src
+
+
+def test_persona_admin_service_gets_llm_drafter(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """hardener/persona-reglas ítem 3 (C2): the panel drafter uses the real provider."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:test-token-not-real")
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "999001")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://diana:diana@localhost:5432/diana"
+    )
+    monkeypatch.setenv("FEATURE_PERSONA_ADMIN_ENABLED", "true")
+
+    from diana.composition import build_app
+    from diana.config import Settings
+
+    app = build_app(Settings())
+    assert app.persona_admin is not None
+    assert app.persona_admin._rule_drafter._llm is not None  # noqa: SLF001

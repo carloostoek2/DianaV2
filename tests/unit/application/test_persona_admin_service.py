@@ -533,3 +533,32 @@ def test_operacion_alias_issues_delegates_to_pure_function() -> None:
     service = _make_service(_MemoryPersonaAdminStore())
     assert service.operacion_alias_issues(cat) == alias_issues(cat)
     assert [i.alias for i in service.operacion_alias_issues(cat)] == ["admin"]
+
+
+# --- C2: draft_rule delegates to the drafter, never touches the store ---
+
+
+class _NoTouchStore:
+    def __getattr__(self, name):  # any store access is a bug
+        raise AssertionError(f"store.{name} must not be touched by draft_rule")
+
+
+async def test_draft_rule_delegates_without_touching_store() -> None:
+    from diana.application.persona_rule_drafter import PersonaRuleDrafter, RuleDraft
+
+    service = PersonaAdminService(
+        payload_store=_NoTouchStore(),  # type: ignore[arg-type]
+        feature_persona_admin_enabled=True,
+        owner_telegram_id=OWNER_ID,
+        rule_drafter=PersonaRuleDrafter(llm=None),
+    )
+    draft = await service.draft_rule("policy", "Nunca hablo de mi ex", catalog=_valid_catalog())
+    assert isinstance(draft, RuleDraft)
+    assert draft.source == "fallback"
+    assert draft.item["regla"] == "Nunca hablo de mi ex"
+
+
+async def test_draft_rule_rejects_unknown_channel() -> None:
+    service = _make_service(_MemoryPersonaAdminStore())
+    with pytest.raises(ValueError, match="unknown channel_type"):
+        await service.draft_rule("policy", "x", catalog=_valid_catalog(), channel_type="otro")

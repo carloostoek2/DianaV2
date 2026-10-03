@@ -40,6 +40,7 @@ from diana.application.memory_backfill_queue import MemoryBackfillQueue
 from diana.application.mood_engine import MoodEngine
 from diana.application.persona_admin_service import PersonaAdminService
 from diana.application.persona_catalog_provider import PersonaCatalogProvider
+from diana.application.persona_rule_drafter import PersonaRuleDrafter
 from diana.application.promo_service import PromoService
 from diana.application.recontact_personalizer import RecontactPersonalizer
 from diana.application.recontact_service import (
@@ -816,6 +817,9 @@ def build_app(
         feature_persona_admin_enabled=settings.feature_persona_admin_enabled,
         owner_telegram_id=settings.owner_telegram_id,
         clock=clock.now,
+        # hardener/persona-reglas ítem 3 (C2): plain-text → item draft for the
+        # panel (no flag; deterministic fallback when the LLM fails/times out).
+        rule_drafter=PersonaRuleDrafter(llm=provider),
     )
     persona_catalog_provider = PersonaCatalogProvider(
         persona_admin_service=persona_admin_service,

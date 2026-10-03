@@ -16,6 +16,7 @@ from typing import Any, Callable, Literal
 from uuid import UUID
 
 from diana.application.admin_service import OwnerAuthError
+from diana.application.persona_rule_drafter import PersonaRuleDrafter, RuleDraft
 from diana.application.ports import PersonaAdminStore, PersonaVersionRecord
 from diana.cognitive.operacion import (
     OPERACION_KEY,
@@ -109,12 +110,14 @@ class PersonaAdminService:
         owner_telegram_id: int,
         clock: Callable[[], datetime] | None = None,
         on_change: Callable[[], None] | None = None,
+        rule_drafter: Any | None = None,
     ) -> None:
         self._store = payload_store
         self._enabled = bool(feature_persona_admin_enabled)
         self._owner_telegram_id = owner_telegram_id
         self._clock = clock or (lambda: datetime.now(UTC))
         self._on_change = on_change
+        self._rule_drafter = rule_drafter or PersonaRuleDrafter(llm=None)
 
     def set_on_change(self, callback: Callable[[], None] | None) -> None:
         """Register a cache-invalidation callback (hot-reload wiring)."""
@@ -156,6 +159,19 @@ class PersonaAdminService:
             active = await self._store.get_active(channel_type=channel_type)
             previous = active.payload if active is not None else None
         return prepare_persona_payload(payload, previous=previous)
+
+    async def draft_rule(
+        self,
+        op: str,
+        text: str,
+        *,
+        catalog: dict[str, Any] | None,
+        target: str | None = None,
+        channel_type: str = "vip",
+    ) -> RuleDraft:
+        """Draft ONE panel item from plain text (C2). Never touches the store."""
+        _assert_channel(channel_type)
+        return await self._rule_drafter.draft(op, text, catalog=catalog, target=target)
 
     def operacion_alias_issues(self, catalog: dict[str, Any] | None) -> list[Any]:
         """Stored "operacion" aliases the runtime ignores (panel warnings)."""
