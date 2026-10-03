@@ -1313,7 +1313,15 @@ from diana.telegram.handlers.persona_admin import _DRAFT_EXPIRED  # noqa: E402
 from diana.telegram.keyboards import menu_persona_draft_keyboard  # noqa: E402
 
 
+_DRAFT_ACTIONS = ("draft_save", "draft_fix", "draft_nota", "draft_cancel")
+
+
 async def _tap(service, sessions, action, extra=None):
+    # R2-3: preview buttons carry the token of the draft they show; tests tap
+    # the CURRENT preview unless they pass an explicit (stale) token.
+    if action in _DRAFT_ACTIONS and extra is None:
+        live = sessions.get(_OWNER_ID) if sessions is not None else None
+        extra = ((getattr(live, "persona_draft", None) or {}).get("token"))
     m = _msg()
     await dispatch_personalidad(m, parsed=_parsed(action, extra), actor_id=_OWNER_ID,
                                 persona_admin=service, sessions=sessions)
@@ -1467,9 +1475,10 @@ async def test_nota_privada_button_only_for_facts():
     bot_pat = _bot()
     await handle_persona_edit_text(_text_msg("nuevo_patron | risa | jsjs | uso"),
                                    bot_pat, _session("pattern"), svc, _sessions())
-    assert encode_menu_persona("draft_nota") in _bot_datas(bot_fact)
-    assert encode_menu_persona("draft_nota") not in _bot_datas(bot_pat)
-    assert encode_menu_persona("draft_save") in _bot_datas(bot_pat)
+    actions = lambda bot: [d.rsplit(":", 1)[0] for d in _bot_datas(bot)]  # noqa: E731 (strip token)
+    assert encode_menu_persona("draft_nota") in actions(bot_fact)
+    assert encode_menu_persona("draft_nota") not in actions(bot_pat)
+    assert encode_menu_persona("draft_save") in actions(bot_pat)
 
 
 @pytest.mark.asyncio
@@ -1547,6 +1556,11 @@ def test_draft_keyboard_callbacks_fit_64_bytes_and_toggle_nota():
     assert all(len(d.encode("utf-8")) <= 64 for d in datas)
     assert datas == [encode_menu_persona(a) for a in
                      ("draft_save", "draft_fix", "draft_nota", "draft_cancel")]
+    tok = menu_persona_draft_keyboard(allow_nota=True, token="abcd1234")
+    tok_datas = [b.callback_data for row in tok.inline_keyboard for b in row]
+    assert tok_datas == [encode_menu_persona(a, "abcd1234") for a in
+                         ("draft_save", "draft_fix", "draft_nota", "draft_cancel")]
+    assert all(len(d.encode("utf-8")) <= 64 for d in tok_datas)
     datas2 = [b.callback_data for row in without.inline_keyboard for b in row]
     assert encode_menu_persona("draft_nota") not in datas2
     assert len(datas2) == 3
@@ -1821,7 +1835,10 @@ async def test_g3_text_during_drafting_is_answered_and_session_survives():
     # second owner message: the router pops the (busy) session first
     second_msg = _text_msg("otra cosa")
     live = sessions.pop(_OWNER_ID)
-    await handle_persona_edit_text(second_msg, _bot(), live, service, sessions)
+    # R2-5: a regression must fail, not hang the suite.
+    await asyncio.wait_for(
+        handle_persona_edit_text(second_msg, _bot(), live, service, sessions), 1.0
+    )
     second_msg.answer.assert_awaited_with(_DRAFT_BUSY)
     assert _live_session(sessions).persona_draft["awaiting"] == "drafting"
     # a button tap while drafting does not save nor report "expired"
@@ -1916,3 +1933,141 @@ async def test_p3_expired_preview_never_saves():
     m = await _tap(service, sessions, "draft_save")
     assert _DRAFT_EXPIRED in _shown(m)
     assert service.saved == []
+
+
+# ---------------------------------------------------------------------------
+# Review round 2 — R2-1 (pipe), R2-2 (marker variants), R2-3 (draft token)
+# ---------------------------------------------------------------------------
+
+from diana.telegram.handlers.persona_admin import _DRAFT_STALE, _parse_fact  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_r2_1_pipe_hecho_with_inline_nota_keeps_it_private():
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(
+        _text_msg(f"perro | mascotas | Tengo un perro. Nota privada: {_NOTA_SECRET}"),
+        bot, _session("fact"), service, sessions,
+    )
+    item = _live_session(sessions).persona_draft["item"]
+    assert item["hecho"] == "Tengo un perro."
+    assert item["nota_privada"] == _NOTA_SECRET
+    assert _NOTA_SECRET not in _bot_text(bot)
+    assert service.draft_calls == []
+    await _tap(service, sessions, "draft_save")
+    saved = service.saved[-1]["persona_facts"][-1]
+    assert _NOTA_SECRET not in saved["hecho"] and saved["nota_privada"] == _NOTA_SECRET
+
+
+def test_r2_1_parse_fact_fourth_field_and_inline_nota():
+    assert _parse_fact("a | t | h | Nota privada: n4")["nota_privada"] == "n4"
+    both = _parse_fact("a | t | h. nota_privada: n3 | n4")
+    assert both["hecho"] == "h." and both["nota_privada"] == "n4 · n3"
+
+
+@pytest.mark.asyncio
+async def test_r2_1_pipe_with_nota_rejected_outside_facts():
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(
+        _text_msg(f"pol | precios | No doy precios. Nota privada: {_NOTA_SECRET}"),
+        bot, _session("policy"), service, sessions,
+    )
+    assert _bot_text(bot).startswith("❌") and "Datos personales" in _bot_text(bot)
+    assert getattr(_live_session(sessions), "persona_draft", None) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marker", [
+    "Nota privada:", "nota privada -", "Nota privada —", "Nota privada：",
+    "(nota privada)", "(Nota privada):", "nota_privada:", "NOTA PRIVADA:",
+])
+async def test_r2_2_marker_variants_never_reach_the_drafter(marker):
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    await handle_persona_edit_text(
+        _text_msg(f"Tengo un hermano mayor {marker} {_NOTA_SECRET}"),
+        _bot(), _session("fact"), service, sessions,
+    )
+    assert service.draft_calls == [("fact", "Tengo un hermano mayor", "vip")]
+    item = _live_session(sessions).persona_draft["item"]
+    assert item["nota_privada"] == _NOTA_SECRET
+    assert _NOTA_SECRET not in item["hecho"]
+
+
+@pytest.mark.asyncio
+async def test_r2_2_mention_without_separator_is_rejected_not_drafted():
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(
+        _text_msg(f"Tengo un hermano, nota privada {_NOTA_SECRET}"),
+        bot, _session("fact"), service, sessions,
+    )
+    assert service.draft_calls == []
+    assert "➕ Nota privada" in _bot_text(bot) and _NOTA_SECRET not in _bot_text(bot)
+    assert _live_session(sessions).persona_section == "fact"
+
+
+@pytest.mark.asyncio
+async def test_r2_2_pasted_panel_placeholder_lines_are_ignored():
+    """The edit prompt / preview note lines carry no secret: pasting them is harmless."""
+    cat, target = _catalog_with_nota()
+    service = _FakePersonaAdmin(cat)
+    _, sessions = await _preview(
+        "fact", f"ahora estudio una maestría\n{_NOTA_HIDDEN_LINE}\n🔒 Nota privada: sí",
+        target=target, service=service,
+    )
+    assert service.draft_calls[-1][1] == "ahora estudio una maestría"
+    assert _live_session(sessions).persona_draft["item"]["nota_privada"] == _NOTA_SECRET
+
+
+@pytest.mark.asyncio
+async def test_r2_3_buttons_carry_the_draft_token():
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg("nuevo_dato | familia | Tengo un hermano"),
+                                   bot, _session("fact"), service, sessions)
+    token = _live_session(sessions).persona_draft["token"]
+    datas = _bot_datas(bot)
+    assert datas and all(d.endswith(f":{token}") for d in datas)
+    assert all(len(d.encode("utf-8")) <= 64 for d in datas)
+
+
+@pytest.mark.asyncio
+async def test_r2_3_stale_preview_button_saves_nothing():
+    """VIP preview P1 → switch → atención preview P2 → Guardar from P1 → nothing."""
+    service = _FakePersonaAdmin(_base_catalog())
+    service.channel_currents["atencion"] = _base_catalog()
+    sessions = _sessions()
+    await handle_persona_edit_text(_text_msg("vipdato | familia | Dato VIP"), _bot(),
+                                   _session("fact"), service, sessions)
+    old_token = _live_session(sessions).persona_draft["token"]
+    await _tap(service, sessions, "channel", "atencion")
+    await _tap(service, sessions, "fact_add")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("atdato | familia | Dato atención"), _bot(),
+                                   live, service, sessions)
+    current = _live_session(sessions).persona_draft
+    assert current["token"] != old_token
+    for action in _DRAFT_ACTIONS:
+        m = await _tap(service, sessions, action, old_token)
+        assert _DRAFT_STALE in _shown(m), action
+    m = await _tap(service, sessions, "draft_save", "")
+    assert _DRAFT_STALE in _shown(m)
+    assert service.saved == []
+    assert _live_session(sessions).persona_draft["item"]["id"] == "atdato"  # untouched
+    await _tap(service, sessions, "draft_save")  # the current preview still works
+    assert service.last_save_channel_type == "atencion"
+    assert service.saved[-1]["persona_facts"][-1]["id"] == "atdato"
+
+
+@pytest.mark.asyncio
+async def test_r2_3_each_new_preview_rotates_the_token():
+    service, sessions = await _preview("fact", "nuevo_dato | familia | Tengo un hermano")
+    first = _live_session(sessions).persona_draft["token"]
+    await _tap(service, sessions, "draft_nota")
+    live = sessions.pop(_OWNER_ID)
+    await handle_persona_edit_text(_text_msg("N"), _bot(), live, service, sessions)
+    assert _live_session(sessions).persona_draft["token"] != first
+    m = await _tap(service, sessions, "draft_save", first)
+    assert _DRAFT_STALE in _shown(m) and service.saved == []

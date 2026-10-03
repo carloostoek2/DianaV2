@@ -1892,22 +1892,31 @@ def menu_persona_confirm_restore_keyboard(version_id: str) -> InlineKeyboardMark
     )
 
 
-def menu_persona_draft_keyboard(*, allow_nota: bool) -> InlineKeyboardMarkup:
-    """Preview of a panel item (C3): Guardar / Corregir / ➕ Nota privada / Cancelar."""
+def menu_persona_draft_keyboard(
+    *, allow_nota: bool, token: str | None = None
+) -> InlineKeyboardMarkup:
+    """Preview of a panel item (C3): Guardar / Corregir / ➕ Nota privada / Cancelar.
+
+    ``token`` (review round 2, R2-3) binds every button to the draft it shows:
+    ``m:personalidad:draft_save:<token>``; a button of an older preview no
+    longer matches the session draft and is discarded.
+    """
+
+    def _data(action: str) -> str:
+        return encode_menu_persona(action, token)
+
     fix_row = [
-        InlineKeyboardButton(text="✏️ Corregir", callback_data=encode_menu_persona("draft_fix")),
+        InlineKeyboardButton(text="✏️ Corregir", callback_data=_data("draft_fix")),
     ]
     if allow_nota:
         fix_row.append(
-            InlineKeyboardButton(
-                text="➕ Nota privada", callback_data=encode_menu_persona("draft_nota")
-            )
+            InlineKeyboardButton(text="➕ Nota privada", callback_data=_data("draft_nota"))
         )
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Guardar", callback_data=encode_menu_persona("draft_save"))],
+            [InlineKeyboardButton(text="✅ Guardar", callback_data=_data("draft_save"))],
             fix_row,
-            [InlineKeyboardButton(text="✖️ Cancelar", callback_data=encode_menu_persona("draft_cancel"))],
+            [InlineKeyboardButton(text="✖️ Cancelar", callback_data=_data("draft_cancel"))],
         ]
     )
 

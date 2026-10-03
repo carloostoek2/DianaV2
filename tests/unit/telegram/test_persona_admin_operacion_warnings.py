@@ -263,7 +263,8 @@ async def test_wizard_edits_a_dato_personal_despite_legacy_operacion_alias() -> 
     assert sessions.get(_OWNER_ID).persona_draft is not None  # C3: preview first
     tap = _msg()
     await dispatch_personalidad(
-        tap, parsed=MenuCallback(category="personalidad", action="draft_save"),
+        tap, parsed=MenuCallback(category="personalidad", action="draft_save",
+                                 extra=sessions.get(_OWNER_ID).persona_draft["token"]),
         actor_id=_OWNER_ID, persona_admin=svc, sessions=sessions,
     )
     assert "✅ Guardado como versión v2" in _shown(tap)

@@ -82,7 +82,23 @@ _PRIVATE_NOTE_HINT = (
 )
 # Review round 1 (M2): the edit prompt only says a private note exists.
 _NOTA_HIDDEN_LINE = "🔒 Tiene nota privada (no se muestra aquí; se conserva al editar)"
-_NOTA_MARKER_RE = re.compile(r"\bnota\s+privada\s*:", re.IGNORECASE)
+# Review round 2 (R2-2): "Nota privada:" / "：" / "-" / "–" / "—", "(nota privada)"
+# and the catalog key spelling "nota_privada:". A mention without a separator
+# is rejected (it would otherwise reach the LLM / the public hecho).
+_NOTA_MARKER_RE = re.compile(
+    r"\(\s*nota[\s_]+privada\s*\)\s*[:：\-–—]?|\bnota[\s_]+privada\s*[:：\-–—]",
+    re.IGNORECASE,
+)
+_NOTA_MENTION_RE = re.compile(r"\bnota[\s_]+privada\b", re.IGNORECASE)
+_NOTA_PREVIEW_LINE = "🔒 Nota privada: sí"
+_NOTA_NO_SEPARATOR = (
+    "Para guardar algo privado escribe «Nota privada: …» al final del texto, "
+    "o toca «➕ Nota privada» en la vista previa."
+)
+_DRAFT_STALE = (
+    "Ese botón es de una vista previa anterior y ya no vale. "
+    "Usa los botones de la vista previa más reciente."
+)
 
 _ADD_PROMPTS: dict[str, str] = {
     "persona": (
@@ -574,14 +590,30 @@ def apply_persona_item(
     return nuevo
 
 
+def _strip_own_placeholders(text: str) -> str:
+    """Drop the panel's own note lines if the owner pasted them (no secret in them)."""
+    for line in (_NOTA_HIDDEN_LINE, _NOTA_PREVIEW_LINE):
+        text = text.replace(line, " ")
+    return text
+
+
 def _split_private_note(text: str) -> tuple[str, str | None]:
-    """``"hecho … Nota privada: secreto"`` → ``("hecho …", "secreto")`` (local only)."""
-    match = _NOTA_MARKER_RE.search(text or "")
+    """``"hecho … Nota privada: secreto"`` → ``("hecho …", "secreto")`` (local only).
+
+    Raises ``ValueError`` when the text mentions a private note without a
+    recognizable separator (R2-2): never guess, never send it on.
+    """
+    text = _strip_own_placeholders(text or "")
+    match = _NOTA_MARKER_RE.search(text)
     if match is None:
-        return (text or "").strip(), None
-    public = text[: match.start()].strip(" \t\n,;:-—")
-    nota = text[match.end():].strip()
-    return public, nota
+        if _NOTA_MENTION_RE.search(text):
+            raise ValueError(_NOTA_NO_SEPARATOR)
+        return text.strip(), None
+    public = text[: match.start()].strip(" \t\n,;:-—–")
+    nota = text[match.end():].strip(" \t\n:：-–—")
+    if _NOTA_MENTION_RE.search(public):
+        raise ValueError(_NOTA_NO_SEPARATOR)
+    return public, nota or None
 
 
 def _keep_existing_nota(
@@ -621,7 +653,7 @@ def _draft_preview(
             f"Hecho: {_truncate(item.get('hecho', ''), 1500)}",
         ]
         if item.get("nota_privada"):
-            lines.append("🔒 Nota privada: sí")
+            lines.append(_NOTA_PREVIEW_LINE)
     elif op == "policy":
         lines += [
             "📜 Política de conducta",
@@ -667,7 +699,11 @@ async def _show_draft(
     draft: dict[str, Any],
     issues: Sequence[Any] = (),
 ) -> None:
-    """Persist the draft in the session (the router popped it) and show it."""
+    """Persist the draft in the session (the router popped it) and show it.
+
+    Every shown preview gets a fresh token (R2-3) that its buttons carry.
+    """
+    draft = {**draft, "token": uuid4().hex[:8]}
     sessions.start(
         message.from_user.id,
         "persona_edit",
@@ -685,7 +721,9 @@ async def _show_draft(
         ),
         session=session,
         fallback=message,
-        keyboard=menu_persona_draft_keyboard(allow_nota=draft["op"] == "fact"),
+        keyboard=menu_persona_draft_keyboard(
+            allow_nota=draft["op"] == "fact", token=draft["token"]
+        ),
     )
 
 
@@ -694,6 +732,8 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     if len(parts) < 3:
         raise ValueError("formato: id | tema1, tema2 | hecho")
     fact_id, temas, hecho = parts[:3]
+    # R2-1: a "Nota privada: …" inside the hecho field stays private too.
+    hecho, inline_nota = _split_private_note(hecho)
     if not fact_id or not temas or not hecho:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     if len(fact_id.encode("utf-8")) > 24:
@@ -706,8 +746,15 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     if not tema_list:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     item: dict[str, Any] = {"id": fact_id, "tema": tema_list, "hecho": hecho}
+    notas = []
     if len(parts) > 3 and parts[3].strip():
-        item["nota_privada"] = parts[3].strip()
+        fourth = "|".join(parts[3:]).strip()
+        lead, marked = _split_private_note(fourth)
+        notas.append(" ".join(x for x in (lead, marked) if x))
+    if inline_nota:
+        notas.append(inline_nota)
+    if any(notas):
+        item["nota_privada"] = " · ".join(n for n in notas if n)
     return item
 
 
@@ -1012,7 +1059,7 @@ async def dispatch_personalidad(
     if action in ("draft_save", "draft_fix", "draft_nota", "draft_cancel"):
         await _dispatch_draft_action(
             message, action=action, actor_id=actor_id,
-            persona_admin=persona_admin, sessions=sessions,
+            persona_admin=persona_admin, sessions=sessions, token=extra,
         )
         return
 
@@ -1302,6 +1349,7 @@ async def _dispatch_draft_action(
     actor_id: int,
     persona_admin: PersonaAdminService,
     sessions: Any,
+    token: str | None = None,
 ) -> None:
     """C3 preview buttons: Guardar / Corregir / ➕ Nota privada / Cancelar."""
     back = menu_back_keyboard(_PERSONA_BACK)
@@ -1312,6 +1360,11 @@ async def _dispatch_draft_action(
         return
     if not draft or "item" not in draft:
         await _show(message, _DRAFT_EXPIRED, back)
+        return
+    if token is None or token != draft.get("token"):
+        # R2-3: a button of an older preview never acts on the current draft.
+        logger.info("persona_draft_button_stale", extra={"actor_id": actor_id, "action": action})
+        await _show(message, _DRAFT_STALE, back)
         return
     ch = draft["channel"]
     op = draft["op"]
@@ -1326,7 +1379,7 @@ async def _dispatch_draft_action(
             # Keep the draft so the owner can Corregir / Cancelar.
             await _show(
                 message, f"❌ No se guardó: {exc}",
-                menu_persona_draft_keyboard(allow_nota=op == "fact"),
+                menu_persona_draft_keyboard(allow_nota=op == "fact", token=token),
             )
             return
         except Exception as exc:
@@ -1337,7 +1390,7 @@ async def _dispatch_draft_action(
             )
             await _show(
                 message, "❌ Error inesperado al guardar.",
-                menu_persona_draft_keyboard(allow_nota=op == "fact"),
+                menu_persona_draft_keyboard(allow_nota=op == "fact", token=token),
             )
             return
         sessions.start(actor_id, "persona_edit", persona_channel=ch)
@@ -1371,7 +1424,7 @@ async def _dispatch_draft_action(
         if op != "fact":
             await _show(
                 message, "La nota privada solo aplica a Datos personales.",
-                menu_persona_draft_keyboard(allow_nota=False),
+                menu_persona_draft_keyboard(allow_nota=False, token=token),
             )
             return
         sess.persona_draft = {**draft, "awaiting": "nota"}
@@ -1562,6 +1615,11 @@ async def _handle_preview_text(
     try:
         base = await load_current(persona_admin, channel_type=channel)
         if "|" in text:
+            if op != "fact" and _NOTA_MENTION_RE.search(text):
+                raise ValueError(
+                    "La nota privada solo aplica a Datos personales. "
+                    "Quita «Nota privada» del texto."
+                )
             # G-C4: the pipe format yields exactly the same item as before.
             item = _extract_item(
                 apply_persona_edit(base, op, extra, text), op, extra, base=base
