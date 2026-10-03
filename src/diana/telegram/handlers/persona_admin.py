@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections.abc import Sequence
 from copy import deepcopy
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from aiogram import Bot
@@ -83,18 +84,17 @@ _PRIVATE_NOTE_HINT = (
 )
 # Review round 1 (M2): the edit prompt only says a private note exists.
 _NOTA_HIDDEN_LINE = "🔒 Tiene nota privada (no se muestra aquí; se conserva al editar)"
-# Review round 3 (R3-3): one spelling-tolerant word pattern ("Notas privadas",
-# "nota-privada", "NOTA  PRIVADO", "nota_privada", Unicode hyphens…).
+# Private-note marker: see split_private_note (review round 4, single helper).
 _NOTA_WORD = r"\bnotas?[\s_\-‐‑]*privad[ao]s?\b"
-_NOTA_SEP = r"[:：\-‐‑–—]"
-# | format and the other sections: only "<word> :" / "<word> -" is a marker.
-_NOTA_SEP_MARKER_RE = re.compile(_NOTA_WORD + r"\s*" + _NOTA_SEP, re.IGNORECASE)
-# Free text (goes to the LLM): also "(nota privada)".
 _NOTA_MARKER_RE = re.compile(
-    r"\(\s*" + _NOTA_WORD + r"\s*\)\s*" + _NOTA_SEP + r"?|" + _NOTA_WORD + r"\s*" + _NOTA_SEP,
+    # (a) at the start of the field or after ".", ";" or a newline, then ":" / dash
+    r"(?:^|(?<=[.;\n]))[ \t]*(?P<lead>" + _NOTA_WORD + r")[ \t]*[:\-–—‐]"
+    # (b) in parentheses, optionally followed by ":"
+    r"|\([ \t]*(?P<paren>" + _NOTA_WORD + r")[ \t]*\)(?:[ \t]*:)?",
     re.IGNORECASE,
 )
 _NOTA_MENTION_RE = re.compile(_NOTA_WORD, re.IGNORECASE)
+_ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\u2060\ufeff\u00ad]")
 _NOTA_PREVIEW_LINE = "🔒 Nota privada: sí"
 _NOTA_NO_SEPARATOR = (
     "No sé qué parte del texto es privada. " + _PRIVATE_NOTE_HINT.strip()
@@ -598,44 +598,55 @@ def apply_persona_item(
     return nuevo
 
 
-def _strip_own_placeholders(text: str) -> str:
-    """Drop the panel's own note lines if the owner pasted them (no secret in them)."""
+def _normalize_note_text(text: str) -> str:
+    r"""NFKC + no zero-width characters (R4-4: «Ｎｏｔａ ｐｒｉｖａｄａ：», «Nota\u200bprivada:»)."""
+    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text or ""))
+
+
+def split_private_note(
+    text: str, *, path: Literal["free", "pipe"], section: str
+) -> tuple[str, str | None]:
+    r"""THE single private-note helper (review round 4). Every panel path calls it.
+
+    Contract:
+
+    1. The text is normalized with NFKC and stripped of zero-width characters
+       (and of the panel's own note lines if the owner pasted them). The
+       returned text is the normalized one.
+    2. One word pattern ``\bnotas?[\s_\-‐‑]*privad[ao]s?\b`` (any case). It is a
+       MARKER only in these forms:
+         a. at the start of the field, or right after ``.``, ``;`` or a
+            newline, followed by ``:`` or a dash (``-`` ``–`` ``—`` ``‐``);
+         b. in parentheses ``(nota privada)``, with or without a following ``:``.
+       Anything else ("Guardo mis notas privadas - las releo") is a plain mention.
+    3. ``section == "fact"`` (Datos personales), ``path`` "free" or "pipe"
+       (the hecho field): the text after the first marker is the note, the
+       text before it is the hecho → ``(hecho, nota)``. No marker → ``(text, None)``.
+       The 4th ``|`` field is the note as written and never goes through here.
+    4. Any other section (policy, pattern, operacion, bloque; ``|`` fields or
+       free text): a marker → ``ValueError(_NOTA_NOT_IN_SECTION)``; a plain
+       mention is accepted → ``(text, None)``.
+    5. Datos free text only (it goes to the LLM): a plain mention with no
+       marker — in the whole text, or left in the hecho part — →
+       ``ValueError(_NOTA_NO_SEPARATOR)``.
+    """
+    text = _normalize_note_text(text)
     for line in (_NOTA_HIDDEN_LINE, _NOTA_PREVIEW_LINE):
         text = text.replace(line, " ")
-    return text
-
-
-def _split_private_note(text: str) -> tuple[str, str | None]:
-    """``"hecho … Nota privada: secreto"`` → ``("hecho …", "secreto")`` (local only).
-
-    Raises ``ValueError`` when the text mentions a private note without a
-    recognizable separator (R2-2): never guess, never send it on.
-    """
-    text = _strip_own_placeholders(text or "")
     match = _NOTA_MARKER_RE.search(text)
+    if section != "fact":
+        if match is not None:
+            raise ValueError(_NOTA_NOT_IN_SECTION)
+        return text.strip(), None
     if match is None:
-        if _NOTA_MENTION_RE.search(text):
+        if path == "free" and _NOTA_MENTION_RE.search(text):
             raise ValueError(_NOTA_NO_SEPARATOR)
         return text.strip(), None
-    public = text[: match.start()].strip(" \t\n,;:-—–")
-    nota = text[match.end():].strip(" \t\n:：-–—")
-    if _NOTA_MENTION_RE.search(public):
+    hecho = text[: match.start()].strip(" \t\n,;:-–—‐")
+    nota = text[match.end():].strip(" \t\n:-–—‐")
+    if path == "free" and _NOTA_MENTION_RE.search(hecho):
         raise ValueError(_NOTA_NO_SEPARATOR)
-    return public, nota or None
-
-
-def _split_pipe_hecho(hecho: str) -> tuple[str, str | None]:
-    """| format (R3-1): split only on an explicit "Nota privada:" / "-" marker.
-
-    A plain mention ("Guardo una nota privada en mi diario") is a normal hecho.
-    """
-    hecho = _strip_own_placeholders(hecho or "").strip()
-    match = _NOTA_SEP_MARKER_RE.search(hecho)
-    if match is None:
-        return hecho, None
-    public = hecho[: match.start()].strip(" \t\n,;:-—–")
-    nota = hecho[match.end():].strip(" \t\n:：-‐‑–—")
-    return public, nota or None
+    return hecho, nota or None
 
 
 def _keep_existing_nota(
@@ -754,8 +765,8 @@ def _parse_fact(text: str | None) -> dict[str, Any]:
     if len(parts) < 3:
         raise ValueError("formato: id | tema1, tema2 | hecho")
     fact_id, temas, hecho = parts[:3]
-    # R2-1 / R3-1: "Nota privada: …" inside the hecho field stays private too.
-    hecho, inline_nota = _split_pipe_hecho(hecho)
+    # R2-1 / R4-1: a marked note inside the hecho field stays private too.
+    hecho, inline_nota = split_private_note(hecho, path="pipe", section="fact")
     if not fact_id or not temas or not hecho:
         raise ValueError("id, temas y hecho no pueden estar vacíos")
     if len(fact_id.encode("utf-8")) > 24:
@@ -1634,8 +1645,9 @@ async def _handle_preview_text(
     try:
         base = await load_current(persona_admin, channel_type=channel)
         if "|" in text:
-            if op != "fact" and _NOTA_SEP_MARKER_RE.search(text):
-                raise ValueError(_NOTA_NOT_IN_SECTION)  # R3-1: marker only
+            if op != "fact":
+                for field in text.split("|"):  # R4-1: marker forms only, per field
+                    split_private_note(field, path="pipe", section=op)
             # G-C4: the pipe format yields exactly the same item as before.
             item = _extract_item(
                 apply_persona_edit(base, op, extra, text), op, extra, base=base
@@ -1692,13 +1704,7 @@ async def _draft_free_text(
     """Free text → (item, source, prepared catalog). Raises ``ValueError``."""
     # M2/S2: a "Nota privada: …" segment stays local — it never reaches
     # the LLM, the deterministic fallback or the public hecho.
-    if op == "fact":
-        public, nota = _split_private_note(text)  # mention w/o separator → reject
-    else:
-        # R3-1: no private notes here; reject only the marker form.
-        if _NOTA_MARKER_RE.search(text):
-            raise ValueError(_NOTA_NOT_IN_SECTION)
-        public, nota = _strip_own_placeholders(text).strip(), None
+    public, nota = split_private_note(text, path="free", section=op)
     if not public:
         raise ValueError("Escribe el dato antes de «Nota privada:».")
 

@@ -1987,24 +1987,7 @@ async def test_r2_1_pipe_with_nota_rejected_outside_facts():
     assert getattr(_live_session(sessions), "persona_draft", None) is None
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("marker", [
-    "Nota privada:", "nota privada -", "Nota privada —", "Nota privada：",
-    "(nota privada)", "(Nota privada):", "nota_privada:", "NOTA PRIVADA:",
-    # R3-3: spellings that escaped the round-2 pattern
-    "Notas privadas:", "nota-privada:", "NOTA  PRIVADO -", "NotaPrivada:", "Nota‐privada:",
-    "Nota privado:", "nota‑privada —",
-])
-async def test_r2_2_marker_variants_never_reach_the_drafter(marker):
-    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
-    await handle_persona_edit_text(
-        _text_msg(f"Tengo un hermano mayor {marker} {_NOTA_SECRET}"),
-        _bot(), _session("fact"), service, sessions,
-    )
-    assert service.draft_calls == [("fact", "Tengo un hermano mayor", "vip")]
-    item = _live_session(sessions).persona_draft["item"]
-    assert item["nota_privada"] == _NOTA_SECRET
-    assert _NOTA_SECRET not in item["hecho"]
+# R2-2 / R3-3 marker variants: see the round-4 table (_NOTE_TABLE).
 
 
 @pytest.mark.asyncio
@@ -2091,7 +2074,6 @@ async def test_r2_3_each_new_preview_rotates_the_token():
 
 from diana.telegram.handlers.persona_admin import (  # noqa: E402
     _NOTA_NOT_IN_SECTION,
-    _split_pipe_hecho,
 )
 
 
@@ -2155,16 +2137,7 @@ async def test_r3_1_other_sections_reject_only_the_marker_form(section, text):
     assert draft is None
 
 
-@pytest.mark.parametrize(("hecho", "expected"), [
-    ("Tengo un perro. Notas privadas: vive lejos", ("Tengo un perro.", "vive lejos")),
-    ("Tengo un perro nota-privada: vive lejos", ("Tengo un perro", "vive lejos")),
-    ("Tengo un perro. NOTA  PRIVADO - vive lejos", ("Tengo un perro.", "vive lejos")),
-    ("Tengo un perro — Nota privada ‐ vive lejos", ("Tengo un perro", "vive lejos")),
-    ("Tengo un perro (nota privada) vive lejos", ("Tengo un perro (nota privada) vive lejos", None)),
-    ("Guardo una nota privada en mi diario", ("Guardo una nota privada en mi diario", None)),
-])
-def test_r3_1_r3_3_pipe_hecho_splits_only_on_colon_or_dash_markers(hecho, expected):
-    assert _split_pipe_hecho(hecho) == expected
+# R3-1 / R3-3 | hecho splits: see the round-4 table (_NOTE_TABLE).
 
 
 def test_r3_2_private_note_hints_are_unified_and_only_for_datos():
@@ -2180,3 +2153,181 @@ def test_r3_2_private_note_hints_are_unified_and_only_for_datos():
 async def test_r3_2_fact_no_separator_error_uses_the_same_hint():
     _, _, shown = await _pipe_preview("fact", "Tengo un hermano, nota privada vive lejos")
     assert _PRIVATE_NOTE_HINT.strip() in shown
+
+
+# ---------------------------------------------------------------------------
+# Review round 4 — ONE helper (split_private_note), ONE table of cases with
+# every example of rounds 1-4. Each row: (path, section, input, expected).
+#   path: "free" (texto libre) | "pipe" (a | field; the hecho for Datos) |
+#         "pipe-nota" (4th | field of a Dato: taken as written)
+#   expected: ("ok", hecho, nota) | ("reject", message)
+# ---------------------------------------------------------------------------
+
+from diana.telegram.handlers.persona_admin import (  # noqa: E402
+    _NOTA_NO_SEPARATOR,
+    split_private_note,
+)
+
+_S = "SECRETO-77"
+_NO_SEP = ("reject", _NOTA_NO_SEPARATOR)
+_NOT_HERE = ("reject", _NOTA_NOT_IN_SECTION)
+_HIDDEN = "🔒 Tiene nota privada (no se muestra aquí; se conserva al editar)"
+
+_R2_MARKERS = ["Nota privada:", "nota privada -", "Nota privada —", "Nota privada：",
+               "nota_privada:", "NOTA PRIVADA:"]
+_R3_MARKERS = ["Notas privadas:", "nota-privada:", "NOTA  PRIVADO -", "NotaPrivada:",
+               "Nota‐privada:", "Nota privado:", "nota‑privada —"]
+
+_NOTE_TABLE: list[tuple[str, str, str, tuple]] = [
+    # --- Datos · texto libre ------------------------------------------------
+    ("free", "fact", f"Tengo un hermano mayor. Nota privada: {_S}", ("ok", "Tengo un hermano mayor.", _S)),
+    ("free", "fact", "Mi mamá se llama Rosa. Nota privada: vive en Toluca",
+     ("ok", "Mi mamá se llama Rosa.", "vive en Toluca")),
+    *[("free", "fact", f"Tengo un hermano mayor. {m} {_S}", ("ok", "Tengo un hermano mayor.", _S))
+      for m in _R2_MARKERS + _R3_MARKERS],
+    *[("free", "fact", f"Tengo un hermano mayor {m} {_S}", _NO_SEP)  # mid-sentence (R4-2)
+      for m in _R2_MARKERS + _R3_MARKERS],
+    ("free", "fact", f"Tengo un hermano mayor (nota privada) {_S}", ("ok", "Tengo un hermano mayor", _S)),
+    ("free", "fact", f"Tengo un hermano mayor (Nota privada): {_S}", ("ok", "Tengo un hermano mayor", _S)),
+    ("free", "fact", f"Tengo un hermano mayor; nota privada - {_S}", ("ok", "Tengo un hermano mayor", _S)),
+    ("free", "fact", f"Tengo un hermano mayor\nNota privada: {_S}", ("ok", "Tengo un hermano mayor", _S)),
+    ("free", "fact", f"Tengo un perro. Ｎｏｔａ ｐｒｉｖａｄａ： {_S}", ("ok", "Tengo un perro.", _S)),  # R4-4
+    ("free", "fact", f"Tengo un perro.\nNota\u200bprivada: {_S}", ("ok", "Tengo un perro.", _S)),       # R4-4
+    ("free", "fact", f"Tengo un perro. No\u200cta pri\ufeffvada - {_S}", ("ok", "Tengo un perro.", _S)),
+    ("free", "fact", f"Laura tiene gastritis (nota privada) {_S}", ("ok", "Laura tiene gastritis", _S)),
+    ("free", "fact", f"Nota privada: {_S}", ("ok", "", _S)),  # caller: "Escribe el dato antes…"
+    ("free", "fact", f"Tengo un hermano, nota privada {_S}", _NO_SEP),
+    ("free", "fact", "Tengo una nota privada", _NO_SEP),
+    ("free", "fact", "Guardo una nota privada en mi diario", _NO_SEP),
+    ("free", "fact", "Guardo mis notas privadas - las releo cada año", _NO_SEP),
+    ("free", "fact", "Me gustan las notas privadas", _NO_SEP),
+    ("free", "fact", f"Guardo una nota privada. Nota privada: {_S}", _NO_SEP),
+    ("free", "fact", f"ahora estudio una maestría\n{_HIDDEN}\n🔒 Nota privada: sí",
+     ("ok", "ahora estudio una maestría", None)),
+    ("free", "fact", "tengo un perro que se llama Toby", ("ok", "tengo un perro que se llama Toby", None)),
+    # --- Datos · | (hecho field) ---------------------------------------------
+    ("pipe", "fact", f"Tengo un perro. Nota privada: {_S}", ("ok", "Tengo un perro.", _S)),
+    ("pipe", "fact", "h. nota_privada: n3", ("ok", "h.", "n3")),
+    ("pipe", "fact", "Tengo un perro. Notas privadas: vive lejos", ("ok", "Tengo un perro.", "vive lejos")),
+    ("pipe", "fact", "Tengo un perro. NOTA  PRIVADO - vive lejos", ("ok", "Tengo un perro.", "vive lejos")),
+    ("pipe", "fact", "Tengo un perro (nota privada) vive lejos", ("ok", "Tengo un perro", "vive lejos")),
+    ("pipe", "fact", "Laura tiene gastritis (nota privada) no lo menciones",
+     ("ok", "Laura tiene gastritis", "no lo menciones")),                                          # R4-1
+    ("pipe", "fact", "Tengo un hermano. (nota privada): se llama Juan",
+     ("ok", "Tengo un hermano.", "se llama Juan")),                                                # R4-1
+    ("pipe", "fact", f"Tengo un perro. Ｎｏｔａ ｐｒｉｖａｄａ： {_S}", ("ok", "Tengo un perro.", _S)),
+    ("pipe", "fact", f"Tengo un perro.\nNota\u200bprivada: {_S}", ("ok", "Tengo un perro.", _S)),
+    ("pipe", "fact", "Tengo un perro nota-privada: vive lejos",
+     ("ok", "Tengo un perro nota-privada: vive lejos", None)),     # mid-sentence: not a marker
+    ("pipe", "fact", "Tengo un perro — Nota privada ‐ vive lejos",
+     ("ok", "Tengo un perro — Nota privada ‐ vive lejos", None)),
+    ("pipe", "fact", "Guardo mis notas privadas - las releo cada año",
+     ("ok", "Guardo mis notas privadas - las releo cada año", None)),                              # R4-2
+    ("pipe", "fact", "Guardo una nota privada en mi diario",
+     ("ok", "Guardo una nota privada en mi diario", None)),                                        # R3-1
+    ("pipe", "fact", f"Guardo una nota privada. Nota privada: {_S}",
+     ("ok", "Guardo una nota privada.", _S)),
+    ("pipe", "fact", "Escribo un diario", ("ok", "Escribo un diario", None)),
+    # --- Datos · 4th | field: as written (R3-1) -------------------------------
+    ("pipe-nota", "fact", "es mi nota privada más vieja", ("ok", None, "es mi nota privada más vieja")),
+    ("pipe-nota", "fact", "Nota privada: n4", ("ok", None, "Nota privada: n4")),
+    ("pipe-nota", "fact", "nota", ("ok", None, "nota")),
+    # --- Políticas ----------------------------------------------------------
+    ("free", "policy", f"No doy precios. Nota privada: {_S}", _NOT_HERE),
+    ("free", "policy", f"No doy descuentos (nota privada): {_S}", _NOT_HERE),                      # R4-1
+    ("free", "policy", f"No doy precios. Ｎｏｔａ ｐｒｉｖａｄａ： {_S}", _NOT_HERE),               # R4-4
+    ("free", "policy", "Nunca revelo una nota privada de un cliente",
+     ("ok", "Nunca revelo una nota privada de un cliente", None)),
+    ("free", "policy", "Nunca hablo de mi ex", ("ok", "Nunca hablo de mi ex", None)),
+    ("pipe", "policy", f"No doy precios. Nota privada: {_S}", _NOT_HERE),
+    ("pipe", "policy", f"No doy descuentos (nota privada): {_S}", _NOT_HERE),                      # R4-1
+    ("pipe", "policy", "Nunca revelo una nota privada de un cliente",
+     ("ok", "Nunca revelo una nota privada de un cliente", None)),                                 # R3-1
+    # --- Patrones -----------------------------------------------------------
+    ("free", "pattern", f"uso jsjs (nota privada) {_S}", _NOT_HERE),
+    ("free", "pattern", f"uso jsjs.\nNota\u200bprivada - {_S}", _NOT_HERE),                         # R4-4
+    ("free", "pattern", "Nunca revelo una nota privada de un cliente",
+     ("ok", "Nunca revelo una nota privada de un cliente", None)),
+    ("pipe", "pattern", f"uso. Notas privadas - {_S}", _NOT_HERE),
+    ("pipe", "pattern", "mis notas privadas", ("ok", "mis notas privadas", None)),
+    # --- Operación ----------------------------------------------------------
+    ("free", "operacion", f"Lucien ayuda; nota privada: {_S}", _NOT_HERE),
+    ("free", "operacion", "Diariobot guarda notas privadas del equipo",
+     ("ok", "Diariobot guarda notas privadas del equipo", None)),
+    ("pipe", "operacion", f"Diariobot ayuda. nota_privada: {_S}", _NOT_HERE),
+    ("pipe", "operacion", "Diariobot guarda notas privadas del equipo",
+     ("ok", "Diariobot guarda notas privadas del equipo", None)),
+    # --- Agenda (bloque) ----------------------------------------------------
+    ("free", "bloque", f"lunes de 09:00 a 12:00 gimnasio (nota privada) {_S}", _NOT_HERE),
+    ("pipe", "bloque", f"en el gimnasio. Nota privada: {_S}", _NOT_HERE),
+    ("pipe", "bloque", "escribo notas privadas", ("ok", "escribo notas privadas", None)),
+]
+
+_PIPE_LINES = {  # how a single field is embedded in a real | line per section
+    "fact": "dato_t | familia | {}",
+    "policy": "pol_t | precios | {}",
+    "pattern": "pat_t | risa | {} | Reemplaza jaja",
+    "operacion": "op_t | Diariobot | {}",
+    "bloque": "lunes | 09:00 | 12:00 | {}",
+}
+
+
+def _row_id(row) -> str:
+    path, section, text, exp = row
+    return f"{path}-{section}-{exp[0]}-{text[:28]}"
+
+
+@pytest.mark.parametrize("row", _NOTE_TABLE, ids=[_row_id(r) for r in _NOTE_TABLE])
+def test_r4_note_table_helper(row):
+    path, section, text, expected = row
+    if path == "pipe-nota":
+        item = _parse_fact(f"x | familia | hecho público | {text}")
+        assert (item["hecho"], item["nota_privada"]) == ("hecho público", expected[2])
+        return
+    if expected[0] == "reject":
+        with pytest.raises(ValueError) as exc:
+            split_private_note(text, path=path, section=section)
+        assert str(exc.value) == expected[1]
+        return
+    assert split_private_note(text, path=path, section=section) == (expected[1], expected[2])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "row", [r for r in _NOTE_TABLE if r[0] != "pipe-nota"],
+    ids=[_row_id(r) for r in _NOTE_TABLE if r[0] != "pipe-nota"],
+)
+async def test_r4_note_table_through_the_panel(row):
+    """Same rows end-to-end: the handler uses the helper on every path."""
+    path, section, text, expected = row
+    message = _PIPE_LINES[section].format(text) if path == "pipe" else text
+    service, sessions = _FakePersonaAdmin(_base_catalog()), _sessions()
+    bot = _bot()
+    await handle_persona_edit_text(_text_msg(message), bot, _session(section), service, sessions)
+    shown = _bot_text(bot)
+    draft = getattr(_live_session(sessions), "persona_draft", None)
+    sent = " ".join(call[1] for call in service.draft_calls)
+    assert _S not in sent and _S not in shown  # the secret never reaches the LLM or the screen
+    if expected[0] == "reject":
+        assert shown.startswith("❌") and expected[1] in shown
+        assert service.draft_calls == [] and draft is None
+        return
+    _, hecho, nota = expected
+    assert _NOTA_NOT_IN_SECTION not in shown and _NOTA_NO_SEPARATOR not in shown
+    if path == "free":
+        if hecho:
+            assert service.draft_calls == [(section, hecho, "vip")]
+        if section == "fact" and hecho:
+            assert draft["item"].get("nota_privada") == nota
+        return
+    assert service.draft_calls == []
+    if section == "fact":
+        assert draft["item"]["hecho"] == hecho
+        assert draft["item"].get("nota_privada") == nota
+
+
+def test_r4_note_table_covers_every_path_and_section():
+    combos = {(r[0], r[1]) for r in _NOTE_TABLE}
+    for section in ("fact", "policy", "pattern", "operacion", "bloque"):
+        assert {("free", section), ("pipe", section)} <= combos, section
+    assert ("pipe-nota", "fact") in combos
