@@ -7,6 +7,19 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Diana pega los datos de pago cuando el cliente pregunta cómo pagar — 2026-10-05
+
+En atención, cuando un cliente preguntaba cómo pagar, Diana contestaba "te paso los datos" o preguntaba qué método prefería, pero no ponía la tarjeta. El número de tarjeta del negocio (en el dato `metodos_pago`) se oculta antes de enviarse al proveedor de IA y se repone solo si la respuesta lo menciona con su marcador (`[tarjeta]`); la IA lo tomaba como dato oculto y no lo copiaba.
+
+- Diana ahora sabe que `[tarjeta]` es el dato real del negocio: cuando preguntan cómo, dónde o a qué cuenta pagar, lo copia junto con el banco y el nombre del titular en el mismo mensaje, y el número real se repone antes de mandarlo. No promete mandarlos "después" ni pregunta el método si solo hay uno. No inventa datos ni los menciona fuera de una pregunta de pago.
+- El número de tarjeta sigue sin salir hacia el proveedor de IA: solo viaja el marcador.
+- Catálogo base de atención (solo respaldo e instalaciones nuevas): la política `datos_pago` pide dar tarjeta, banco y nombre en el mismo mensaje, y el patrón `clarificacion_pago` ya no pregunta el método preferido. La personalidad activa en la base no cambia sola: esos dos textos se editan desde el panel de Personalidad (atención).
+- Pendiente: una respuesta que trae la tarjeta del negocio sigue contando como "dato sensible" en la medición de calidad del texto (sale con calidad 0 en la medición de autonomía y se sugiere gravedad alta si se corrige ese borrador). No bloquea ni cambia el envío.
+- Sin migración y sin interruptor nuevo.
+
+---
+
+
 El modelo de búsqueda se precarga al arrancar y las reglas aprendidas sin vector se reparan solas — 2026-10-02
 
 El modelo que convierte texto en vectores (para buscar memorias, reglas aprendidas y ejemplos por significado) se cargaba recién con el primer mensaje VIP, y ese mensaje esperaba unos 12 s. Además, si el modelo fallaba al aprender una regla, la regla quedaba guardada con un vector vacío y la búsqueda por significado nunca la encontraba.

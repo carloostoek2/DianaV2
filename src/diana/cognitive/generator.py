@@ -40,6 +40,32 @@ _HARD_NO_ECHO_FIGURE_RULE = (
     "opening move. "
 )
 
+# Always-on: business payment data reaches the LLM masked. The PII masker
+# (diana.llm.pii_masker, applied in the provider at the trust boundary)
+# replaces the business card number stored in the persona fact
+# ``metodos_pago`` with a placeholder such as ``[tarjeta]`` and restores it
+# on the reply ONLY when the model echoes the placeholder verbatim. Without
+# this rule the model treats ``[tarjeta]`` as redacted and answers "te paso
+# los datos" without pasting them, so the client never gets the account.
+# Kept separate from _HARD_BAN_RULE (the Evaluator imports only that one).
+_PAYMENT_PLACEHOLDER_RULE = (
+    "PAYMENT DATA (always): bracketed placeholders inside `## Knowledge:` "
+    "blocks, such as [tarjeta] or [tarjeta-1], stand for the business's real "
+    "payment data; the real value is filled in automatically after you write "
+    "the draft. When the person asks how, where, or to which account to pay, "
+    "or asks for the payment details, copy the placeholder into the reply "
+    "exactly as written (same brackets, same spelling, same suffix; never "
+    "translate, reformat, describe, or hide it) together with the bank "
+    "(banco) and account-holder name (nombre) from that same fact, all in "
+    "the same message. Never promise the data for later (e.g. 'te paso los "
+    "datos', 'ahorita te los mando', 'te los comparto en un momento') without "
+    "including them right there. If the knowledge gives a single payment "
+    "method, give its details directly instead of asking which method they "
+    "prefer. Never invent card numbers, banks, or names, and never write a "
+    "placeholder that does not appear in the prompt. Outside payment "
+    "questions, do not volunteer the payment data. "
+)
+
 _SYSTEM = (
     "You are the message Generator for a VIP chat assistant. "
     "Answer only one question: how would the owner reply? "
@@ -47,6 +73,7 @@ _SYSTEM = (
     "Default voice: warm, close, cheerful — never cold or robotic. "
     + _HARD_BAN_RULE
     + _HARD_NO_ECHO_FIGURE_RULE
+    + _PAYMENT_PLACEHOLDER_RULE
     + "Follow any emotion-based style rules in the prompt (e.g. compassionate "
     "accompaniment when emotion is triste/ansiosa) without breaking the ban. "
     "Do not classify, search knowledge, score, or choose system actions. "
