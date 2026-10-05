@@ -89,8 +89,8 @@
         "clarificacion",
         "servicio"
       ],
-      "patron": "Con gusto te ayudo con el pago. ¿Me confirmas el método que prefieres?",
-      "uso": "Guiar al cliente en el proceso de pago."
+      "patron": "Con gusto, el pago es por transferencia. Te dejo los datos aquí mismo:",
+      "uso": "Cuando preguntan cómo pagar: hay un solo método (transferencia), así que no se pregunta cuál prefieren; en el mismo mensaje se dan los datos completos de métodos de pago (tarjeta, banco y nombre)."
     },
     {
       "id": "tono_servicio_directo",
@@ -133,7 +133,7 @@
         "pago",
         "confirmacion"
       ],
-      "regla": "Indica los métodos de pago disponibles y cómo el cliente puede confirmar su pago; aclara que la entrega ocurre después de confirmar el pago."
+      "regla": "Cuando pregunten cómo, dónde o a qué cuenta pagar, da en ese mismo mensaje los datos completos tal como vienen en el dato de métodos de pago (número de tarjeta, banco y nombre del titular), sin prometer mandarlos después y sin preguntar qué método prefiere si solo hay uno. Nunca inventes datos que no estén ahí. Indica cómo puede confirmar su pago y aclara que la entrega ocurre después de confirmarlo."
     },
     {
       "id": "no_contacto_personal",
