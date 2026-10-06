@@ -8,9 +8,11 @@ atencion-originated traces.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import delete
 
 from diana.application.ports import TurnRecord
 from diana.infrastructure.db.models import PipelineTrace
@@ -22,6 +24,13 @@ from diana.infrastructure.db.repositories.turns import SqlTurnStore
 _VIP_TEXT = "vip-generated-sample"
 _ATENCION_TEXT = "atencion-generated-sample"
 
+# The baseline sampler reads the OLDEST window that has generated_text. The
+# session DB can be a copy of the real database (audit/ENTORNO.md), whose VIP
+# drafts are far older than anything inserted here — so the baseline test pins
+# its own traces to a date older than any real data, making its window the one
+# under test instead of whatever production happens to hold.
+_OLDEST = datetime(2001, 1, 1, tzinfo=UTC)
+
 
 async def _insert_turn_and_trace(
     session_factory,
@@ -30,6 +39,7 @@ async def _insert_turn_and_trace(
     channel_type: str,
     generated_text: str | None = None,
     evaluation: dict | None = None,
+    created_at: datetime | None = None,
 ) -> object:
     """Create a real turn + pipeline_trace row for the given channel."""
     store = SqlTurnStore(session_factory)
@@ -44,10 +54,19 @@ async def _insert_turn_and_trace(
                 channel_type=channel_type,
                 generated_text=generated_text,
                 evaluation=evaluation,
+                **({"created_at": created_at} if created_at is not None else {}),
             )
         )
         await sess.commit()
     return turn
+
+
+async def _delete_traces(session_factory, turn_ids: list[object]) -> None:
+    if not turn_ids:
+        return
+    async with session_factory() as sess:
+        await sess.execute(delete(PipelineTrace).where(PipelineTrace.turn_id.in_(turn_ids)))
+        await sess.commit()
 
 
 @pytest.mark.db
@@ -124,21 +143,29 @@ async def test_sample_generated_texts_filters_vip_only(session_factory) -> None:
 @pytest.mark.asyncio
 async def test_sample_baseline_generated_texts_filters_vip_only(session_factory) -> None:
     """REQ-ATN-13: baseline drift window also reads VIP traces only."""
-    await _insert_turn_and_trace(
-        session_factory,
-        chat_id=107,
-        channel_type="vip",
-        generated_text=_VIP_TEXT,
-    )
-    await _insert_turn_and_trace(
-        session_factory,
-        chat_id=108,
-        channel_type="atencion",
-        generated_text=_ATENCION_TEXT,
-    )
+    traces: list[object] = []
+    try:
+        vip = await _insert_turn_and_trace(
+            session_factory,
+            chat_id=107,
+            channel_type="vip",
+            generated_text=_VIP_TEXT,
+            created_at=_OLDEST,
+        )
+        traces.append(vip.id)
+        atencion = await _insert_turn_and_trace(
+            session_factory,
+            chat_id=108,
+            channel_type="atencion",
+            generated_text=_ATENCION_TEXT,
+            created_at=_OLDEST,
+        )
+        traces.append(atencion.id)
 
-    source = SqlCalibrationDataSource(session_factory)
-    texts = await source.sample_baseline_generated_texts(baseline_weeks=4, limit=5000)
+        source = SqlCalibrationDataSource(session_factory)
+        texts = await source.sample_baseline_generated_texts(baseline_weeks=4, limit=5000)
 
-    assert _VIP_TEXT in texts
-    assert _ATENCION_TEXT not in texts
+        assert _VIP_TEXT in texts
+        assert _ATENCION_TEXT not in texts
+    finally:
+        await _delete_traces(session_factory, traces)

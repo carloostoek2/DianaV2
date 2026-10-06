@@ -11,6 +11,11 @@ intentionally left behind (untracked — pre-existing, harmless). Turn
 timestamps are placed ~30 days in the FUTURE relative to ``datetime.now(UTC)``
 so traces left by other shared-DB tests (e.g. test_calibration_data atencion
 rows) can never fall inside this test's counting window.
+
+The day keys below live in that same synthetic FUTURE window: the session DB can
+be a copy of the real database (audit/ENTORNO.md), which already carries
+``daily_message_limits`` rows on real dates — asserting on real calendar days
+would count those instead of only this test's rows.
 """
 
 from __future__ import annotations
@@ -26,9 +31,9 @@ from diana.infrastructure.db.models import DailyMessageLimit, PipelineTrace
 from diana.infrastructure.db.repositories.metrics_data import SqlMetricsDataSource
 from diana.infrastructure.db.repositories.turns import SqlTurnStore
 
-_DAY = date(2026, 8, 5)
-_OTHER_DAY = date(2026, 8, 6)
 _NOW = datetime.now(UTC) + timedelta(days=30)
+_DAY = _NOW.date()
+_OTHER_DAY = (_NOW + timedelta(days=1)).date()
 
 
 async def _insert_turn_and_trace(

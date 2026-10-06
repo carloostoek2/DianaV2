@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,100 @@ from diana.cognitive.models import Decision, EvaluationProfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# ---------------------------------------------------------------------------
+# Copia de la base real (opcional) — ver audit/ENTORNO.md y
+# scripts/refresh_e2e_copy.sh
+#
+# La suite completa crea y borra tablas (migraciones) y hace DELETE sin filtro,
+# así que NO puede correr contra la base real. En su lugar corre contra una copia
+# local: `scripts/refresh_e2e_copy.sh` la genera desde la base real (conexión del
+# .env, solo lectura) y aquí se restaura en el contenedor desechable de la sesión.
+# Sin copia, el contenedor arranca vacío y Alembic aplica las migraciones.
+# ---------------------------------------------------------------------------
+
+COPY_DUMP_ENV = "DIANA_E2E_COPY_DUMP"
+COPY_OFF_ENV = "DIANA_E2E_COPY_OFF"
+DEFAULT_COPY_DUMP = PROJECT_ROOT / "runtime" / "e2e_copy" / "diana_copy.sql"
+DB_USER = "diana_test"
+DB_PASSWORD = "diana_test"
+DB_NAME = "diana_test"
+
+
+def copy_dump_path() -> Path | None:
+    """Path of the real-DB copy to restore, or None when the copy is not in use."""
+    if os.environ.get(COPY_OFF_ENV, "").strip().lower() in {"1", "true", "yes", "on"}:
+        return None
+    raw = os.environ.get(COPY_DUMP_ENV, "").strip()
+    path = Path(raw) if raw else DEFAULT_COPY_DUMP
+    return path if path.is_file() else None
+
+
+def _restore_copy(postgres, dump: Path) -> None:
+    """Load the real-DB copy into the freshly started container.
+
+    Fails the session loudly if the copy cannot be restored: silently falling
+    back to an empty database would turn "the copy broke" into dozens of
+    mysterious test failures.
+    """
+    host = postgres.get_container_host_ip()
+    port = postgres.get_exposed_port(5432)
+    cmd = [
+        "psql",
+        "--no-psqlrc",
+        "-q",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-h",
+        host,
+        "-p",
+        str(port),
+        "-U",
+        DB_USER,
+        "-d",
+        DB_NAME,
+        "-f",
+        str(dump),
+    ]
+    env = {**os.environ, "PGPASSWORD": DB_PASSWORD}
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300)
+    except FileNotFoundError:
+        pytest.skip(
+            "Hay una copia de la base real pero falta el cliente 'psql' para "
+            f"restaurarla ({dump}). Instalá postgresql-client o corré con "
+            f"{COPY_OFF_ENV}=1 para usar un contenedor vacío."
+        )
+    if result.returncode != 0:
+        pytest.fail(
+            f"No se pudo restaurar la copia de la base real ({dump}).\n"
+            f"STDOUT:\n{result.stdout[-4000:]}\nSTDERR:\n{result.stderr[-4000:]}\n"
+            "Regenerala con ./scripts/refresh_e2e_copy.sh"
+        )
+
+
+def _container_url(postgres) -> str:
+    """Asyncpg connection URL for the session container."""
+    host = postgres.get_container_host_ip()
+    port = postgres.get_exposed_port(5432)
+    return f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{host}:{port}/{DB_NAME}"
+
+
+def pytest_report_header(config) -> str:
+    """Make the DB mode visible in the run header — never a silent difference."""
+    dump = copy_dump_path()
+    if dump is None:
+        return (
+            "e2e DB: contenedor vacío + migraciones Alembic "
+            "(sin copia de la base real; corré ./scripts/refresh_e2e_copy.sh)"
+        )
+    stat = dump.stat()
+    size_mb = stat.st_size / (1024 * 1024)
+    generated = datetime.fromtimestamp(stat.st_mtime, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"e2e DB: copia de la base real ({dump.name}, {size_mb:.1f} MB, "
+        f"generada {generated}) restaurada en el contenedor"
+    )
+
 
 # ---------------------------------------------------------------------------
 # DB infrastructure — shared by tier2 (repo tests) and tier3 (full wiring)
@@ -28,18 +123,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(scope="session")
 def pg_container():
-    """Start a pgvector-enabled PostgreSQL container for the test session."""
+    """Start a pgvector-enabled PostgreSQL container for the test session.
+
+    If a copy of the real database exists (see scripts/refresh_e2e_copy.sh) it is
+    restored into the container, so the suite runs against real data without ever
+    touching the real database.
+    """
     from testcontainers.postgres import PostgresContainer
 
     postgres = PostgresContainer(
         image="pgvector/pgvector:pg16",
         port=5432,
-        username="diana_test",
-        password="diana_test",
-        dbname="diana_test",
+        username=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME,
         driver=None,  # We use asyncpg, not psycopg2
     )
     postgres.start()
+    dump = copy_dump_path()
+    if dump is not None:
+        _restore_copy(postgres, dump)
     yield postgres
     postgres.stop()
 
@@ -47,17 +150,13 @@ def pg_container():
 @pytest.fixture(scope="session")
 def database_url(pg_container) -> str:
     """Build asyncpg-compatible connection URL from the container."""
-    host = pg_container.get_container_host_ip()
-    port = pg_container.get_exposed_port(5432)
-    return f"postgresql+asyncpg://diana_test:diana_test@{host}:{port}/diana_test"
+    return _container_url(pg_container)
 
 
 @pytest.fixture(scope="session")
 def alembic_database_url(pg_container) -> str:
     """Asyncpg URL for Alembic (env.py requires async driver)."""
-    host = pg_container.get_container_host_ip()
-    port = pg_container.get_exposed_port(5432)
-    return f"postgresql+asyncpg://diana_test:diana_test@{host}:{port}/diana_test"
+    return _container_url(pg_container)
 
 
 @pytest.fixture(scope="session")
