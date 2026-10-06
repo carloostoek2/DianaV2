@@ -106,7 +106,7 @@ pytest tests/unit/cognitive/test_decider.py \
 ### Round 2
 
 **Issues:** 5 fixed, 1 wontfix, **0 open**  
-**Fixed:** pago FNs (pagué/pagó/factura/descuento/cuánto te sale/currency tokens); hybrid IA+pago motivo; IA phrases (sos humano / eres una ai); template free-form documented + empty fallback; `is_frozen` pass-through (stack already drops frozen VIP).  
+**Fixed:** pago FNs (pagué/pagó/factura/descuento/cuánto te sale/currency tokens); hybrid IA+pago motivo; IA phrases (eres una ai); template free-form documented + empty fallback; `is_frozen` pass-through (stack already drops frozen VIP).  
 **Wontfix:** compromiso short tokens `cita`/`encuentro`/`nos vemos` — Anexo product terms (accepted FP residual).  
 **Commit:** `e6ad357` `fix(application): J.4 pago FNs, hybrid IA+pago motivo, IA phrases`  
 **Tests after R2:** 203 passed  

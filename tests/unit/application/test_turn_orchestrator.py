@@ -745,7 +745,7 @@ async def test_post_turn_memory_extraction_skipped_on_sandbox() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -3581,7 +3581,7 @@ async def test_sandbox_skips_learning_post_turn() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -3635,7 +3635,7 @@ async def test_sandbox_inactive_still_runs_learning() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -3691,7 +3691,7 @@ async def test_sandbox_autonomous_uses_configured_delivery_mode() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -3771,7 +3771,7 @@ async def test_sandbox_autonomous_uses_autonomous_delivery_mode() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -3847,7 +3847,7 @@ async def test_sandbox_respects_global_fake_delivery_mode() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -3923,7 +3923,7 @@ async def test_sandbox_consult_doctrine_demotes_when_no_vip() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {

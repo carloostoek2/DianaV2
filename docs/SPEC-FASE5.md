@@ -153,7 +153,7 @@ Cada VIP tiene una **ficha** compuesta por secciones. Cada sección es una fila 
 
 ### REQ-MEM-04 — Fuente y proceso
 1. Entrada: historial de `message_history` del `chat_id` del VIP, cronológico (reutilizar `rows_to_recent_messages`).
-2. Si el historial es corto o inexistente (VIP recién registrado): se dispara primero el seed de Telethon existente (`schedule_seed_for_new_vip`) y el backfill espera a que haya mensajes (o se ejecuta bajo demanda de la dueña).
+2. Si el historial es corto o inexistente (VIP que se acaba de registrar): se dispara primero el seed de Telethon existente (`schedule_seed_for_new_vip`) y el backfill espera a que haya mensajes (o se ejecuta bajo demanda de la dueña).
 3. Construcción del transcripto: `Diana: ...` / `VIP: ...` con `timestamp` (los marcadores de multimedia "[nota de voz]" etc. ya están en el texto).
 4. **Historial largo**: se pagina en ventanas (por ejemplo 200 mensajes por llamada) con un prompt de extracción acumulativa: cada ventana produce hechos; el último paso consolida/deduplica.
 5. El LLM devuelve JSON estructurado (usar `generate_structured` existente) con las secciones de REQ-MEM-01.

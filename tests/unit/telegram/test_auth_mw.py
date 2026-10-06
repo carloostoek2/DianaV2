@@ -300,7 +300,7 @@ async def test_sandbox_active_non_vip_passes() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -354,7 +354,7 @@ async def test_sandbox_active_vip_still_sets_vip_id() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -501,7 +501,7 @@ async def test_sandbox_inactive_non_vip_still_dropped() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -678,7 +678,7 @@ async def test_sandbox_wins() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -772,7 +772,7 @@ async def test_training_and_sandbox_do_not_set_marker() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {

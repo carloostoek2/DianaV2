@@ -324,7 +324,7 @@ async def test_sandbox_fixture_wins_over_forced_real_profile() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {

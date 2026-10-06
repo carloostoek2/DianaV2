@@ -611,7 +611,7 @@ async def test_insert_gold_example_skips_when_sandbox_active(
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -773,7 +773,7 @@ async def test_save_correction_skips_when_sandbox_active(
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -833,7 +833,7 @@ async def test_save_correction_inserts_when_sandbox_inactive(
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {

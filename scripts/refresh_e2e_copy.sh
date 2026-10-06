@@ -58,7 +58,7 @@ fi
 # --- adaptación al contenedor de pruebas ------------------------------------
 # 1) SET transaction_timeout es de Postgres 17; el contenedor es pg16 y aborta.
 # 2) CREATE SCHEMA public ya existe en el contenedor (se restaura sobre una base
-#    recién creada, no sobre un servidor vacío).
+#    que se acaba de crear, no sobre un servidor vacío).
 # 3) Las extensiones que el esquema necesita se crean antes de las tablas (el
 #    volcado de public no las incluye porque viven en otros esquemas / son del
 #    servidor de origen).

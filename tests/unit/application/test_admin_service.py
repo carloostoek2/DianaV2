@@ -70,7 +70,7 @@ _MINIMAL_SIX = {
     "intenso": {
         "label": "VIP emocional",
         "description": "",
-        "facts": {"relationship": "recién separado"},
+        "facts": {"relationship": "separado hace poco"},
         "notes": [],
     },
     "vip_largo": {
@@ -1941,7 +1941,7 @@ async def test_sandbox_draft_reason_has_marker() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -1994,7 +1994,7 @@ async def test_sandbox_approve_uses_configured_delivery_mode() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {
@@ -2063,7 +2063,7 @@ async def test_sandbox_admin_respects_fake_delivery_mode() -> None:
         "intenso": {
             "label": "VIP emocional",
             "description": "",
-            "facts": {"relationship": "recién separado"},
+            "facts": {"relationship": "separado hace poco"},
             "notes": [],
         },
         "vip_largo": {

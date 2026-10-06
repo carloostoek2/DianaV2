@@ -29,7 +29,7 @@ MINIMAL_SIX: dict[str, dict] = {
     "intenso": {
         "label": "VIP emocional",
         "description": "Emotional / sensitive",
-        "facts": {"relationship": "recién separado"},
+        "facts": {"relationship": "separado hace poco"},
         "notes": [{"date": "2026-04-22", "text": "Requiere empatía y contención"}],
     },
     "vip_largo": {

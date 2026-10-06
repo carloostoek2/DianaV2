@@ -182,7 +182,7 @@ Decisor emite action = "consult_doctrine"
          regenerado (safety_below_threshold) es fail-closed.
       4. Si regen falla / vuelve consult_doctrine / borrador vacío / escalate
          por safety del borrador regenerado:
-         → desactivar la policy recién insertada; query sigue 'open'; freeze retenido;
+         → desactivar la policy que se acaba de insertar; query sigue 'open'; freeze retenido;
            avisar a la dueña → el caso VUELVE a resolución de zona gris (query 'open' +
            freeze + DM de doctrina vigente: la dueña puede reintentar con otra regla,
            con la propuesta, o escalar). NUNCA se auto-aplica una regla que el regen

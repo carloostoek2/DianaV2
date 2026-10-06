@@ -134,7 +134,7 @@ Todas las decisiones siguientes están implementadas y activas.
 
 - `handle_mark_gold(turn_id, *, scope, actor_id, on_progress=None)` — gateado por `_require_quality_feedback()` y bloqueado para `atencion` (`AtencionPromoteBlocked`). Aprueba y entrega igual que `handle_approve` (reusando su lógica), y si la entrega no se canceló inserta un `Example` con `quality='gold'` (`insert_gold_example`) usando el draft ya aprobado (`draft_text == corrected_text`, sin corrección real). `vip_id = turn.vip_id` si `scope=='vip'`, `None` si `scope=='global'`.
 - `handle_reprimand(turn_id, corrected_text, *, mode, scope, actor_id, candidate_id=None)` — gateado por `_require_quality_feedback()` y bloqueado para `atencion`. Entrega la corrección reusando `handle_correct` (`_correct_core`) y, según `mode`:
-  - `'counter_example'`: `promote_to_counter_example` sobre el candidato recién creado, con `vip_id` según `scope`.
+  - `'counter_example'`: `promote_to_counter_example` sobre el candidato que se acaba de crear, con `vip_id` según `scope`.
   - `'policy'`: `promote_to_policy` con trigger autogenerado a partir del texto del VIP en el turno (normalizado y truncado a 80 caracteres; fallback `"reprimenda"`), `rule = corrected_text`, `scope="all"`, `vip_id` según `scope`.
 
 **Resultado:** tests unitarios de repos (con fakes, sin DB real) y de `AdminService`/`StagingService` en verde; la UI se agregó en la Fase 3.
