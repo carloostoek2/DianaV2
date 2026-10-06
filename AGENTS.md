@@ -642,7 +642,7 @@ Es el único par orden-sensible: video/voz/audio no traen `document`.
 Álbum: cada miembro llega como update propio y produce su propia fila, con el
 sufijo ` parte de álbum` → `[imagen parte de álbum]`. NUNCA "álbum de imágenes":
 con una fila por miembro, el modelo leería N álbumes distintos. Las filas
-colapsan a UNA línea recién al armar el contexto del modelo
+colapsan a UNA línea solo al armar el contexto del modelo
 (`cognitive/album_collapse.py`), no en la escritura: el historial crudo
 conserva cada timestamp real, que la lógica de frontera de memoria lee. El
 colapso anota el conteo (`[imagen parte de álbum ×30]`) y conserva la primera

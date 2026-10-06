@@ -163,7 +163,7 @@ _ACTION_REPRIMAND_CONFIRM = "rpc"   # rpc:<turn_id>:pol|ex:g|v
 
 ### `telegram/handlers/admin.py`
 
-- `handle_admin_text` lee el `mode` de la sesión de `CorrectSessionStore`: si es `"reprimand"`, guarda el texto capturado en un estado intermedio y devuelve el teclado de 4 opciones en vez de cerrar la sesión — la promoción real (`handle_reprimand`) se dispara recién cuando el owner toca uno de los 4 botones `rpc:...`.
+- `handle_admin_text` lee el `mode` de la sesión de `CorrectSessionStore`: si es `"reprimand"`, guarda el texto capturado en un estado intermedio y devuelve el teclado de 4 opciones en vez de cerrar la sesión — la promoción real (`handle_reprimand`) se dispara solo cuando el owner toca uno de los 4 botones `rpc:...`.
 
 **Resultado:** flujo completo probado en sandbox y tests de integración de `callbacks.py`/`admin.py` en verde; flag activado en producción.
 

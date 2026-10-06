@@ -22,7 +22,7 @@ En atención, cuando un cliente preguntaba cómo pagar, Diana contestaba "te pas
 
 El modelo de búsqueda se precarga al arrancar y las reglas aprendidas sin vector se reparan solas — 2026-10-02
 
-El modelo que convierte texto en vectores (para buscar memorias, reglas aprendidas y ejemplos por significado) se cargaba recién con el primer mensaje VIP, y ese mensaje esperaba unos 12 s. Además, si el modelo fallaba al aprender una regla, la regla quedaba guardada con un vector vacío y la búsqueda por significado nunca la encontraba.
+El modelo que convierte texto en vectores (para buscar memorias, reglas aprendidas y ejemplos por significado) se cargaba solo con el primer mensaje VIP, y ese mensaje esperaba unos 12 s. Además, si el modelo fallaba al aprender una regla, la regla quedaba guardada con un vector vacío y la búsqueda por significado nunca la encontraba.
 
 - Al arrancar, el modelo se carga en segundo plano: el bot empieza a atender de inmediato y el primer mensaje ya no paga la espera. Si la precarga falla, el bot sigue funcionando y el modelo se carga con el primer mensaje, como antes.
 - Al aprender una regla, si el vector falla se reintenta una vez; si vuelve a fallar, la regla se guarda marcada como pendiente (log `policy_embedding_pending`).

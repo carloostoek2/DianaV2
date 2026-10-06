@@ -74,7 +74,7 @@ territorio doctrinal", independiente de cualquier heurística de texto.
 
 **Límite:** solo cubre casos donde el sistema *ya sabía* que dudaba. Un
 incumplimiento doctrinal que el modelo emitió con confianza (sin pasar por
-zona gris) y que el owner detecta recién al corregir **no deja rastro
+zona gris) y que el owner detecta solo al corregir **no deja rastro
 estructural** — solo se ve en el texto corregido, que hoy nadie interpreta.
 
 ### 1.4 Precedente ya existente: EA-04
