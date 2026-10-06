@@ -1,0 +1,16 @@
+# Línea base de la suite e2e — 2026-10-06
+# Comando: sg docker -c "$PWD/.venv/bin/python -m pytest tests/e2e -q"
+
+........................................................................ [ 30%]
+........................................................................ [ 61%]
+........................................................................ [ 92%]
+.................                                                        [100%]
+=============================== warnings summary ===============================
+tests/e2e/tier2/test_alembic_migrations.py::test_alembic_upgrade_head_applies_cleanly
+  /home/ubuntu/repos/DianaV2/tests/e2e/conftest.py:32: DeprecationWarning: testcontainers.postgres is deprecated, use testcontainers.community.postgres instead
+    from testcontainers.postgres import PostgresContainer
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+233 passed, 1 warning in 29.93s
+
+[exited with code 0]

@@ -15,7 +15,11 @@ runtime/tessdata/
 
 .planning
 .grok
-.claude
+# .claude/ es local por defecto (memoria de agentes, worktrees), pero la skill
+# de auditoría contract-proof y sus agentes SÍ se versionan: son método del repo.
+.claude/*
+!.claude/skills/
+!.claude/agents/
 # Python bytecode / caches
 __pycache__/
 *.py[cod]
