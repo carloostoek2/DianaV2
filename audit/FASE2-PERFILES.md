@@ -27,7 +27,7 @@ es lo que se hizo, más tres cosas alrededor:
 se gana es que un dato incorrecto ya no está disfrazado de función activa, y que la próxima vez que
 algo así se desconecte, va a dejar rastro.
 
-**Verificación con efecto real:** se guardó una ficha por el mismo camino que usás vos en el menú
+**Verificación con efecto real:** se guardó una ficha por el mismo camino que se usa en el menú
 (alta del VIP → botón "añadir nota" → el texto), contra una base de datos real, y se comprobó que la
 huella guardada es la del motor real. Después se desconectó el motor a propósito **dos veces**: las
 dos veces la prueba falló y dejó el aviso. La prueba no es decorativa.
@@ -201,7 +201,7 @@ con huella real, replicando el caso real):
 | Respaldo | Contiene las columnas completas, incluido `content` y el vector anterior |
 | Solo cambia `embedding` | ✅ `content`, `tipo` y las fechas quedaron iguales |
 
-**No se ejecutó contra producción.** Comandos para correrlo vos:
+**No se ejecutó contra producción.** Comandos para ejecutarlo:
 
 ```bash
 # 1. SIMULACIÓN — lee la dirección de la base del .env. No escribe nada.

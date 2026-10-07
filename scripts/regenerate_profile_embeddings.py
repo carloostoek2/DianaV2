@@ -184,7 +184,7 @@ async def main() -> None:
                     + (f", {len(skipped)} omitida(s)" if skipped else "")
                     + ". No se escribió nada."
                 )
-                print("Para aplicarlo: agregá --apply")
+                print("Para aplicarlo: use --apply")
                 return
 
             # ---- backup before any write -------------------------------

@@ -81,14 +81,14 @@ def _restore_copy(postgres, dump: Path) -> None:
     except FileNotFoundError:
         pytest.skip(
             "Hay una copia de la base real pero falta el cliente 'psql' para "
-            f"restaurarla ({dump}). Instalá postgresql-client o corré con "
+            f"restaurarla ({dump}). Instale postgresql-client o ejecute con "
             f"{COPY_OFF_ENV}=1 para usar un contenedor vacío."
         )
     if result.returncode != 0:
         pytest.fail(
             f"No se pudo restaurar la copia de la base real ({dump}).\n"
             f"STDOUT:\n{result.stdout[-4000:]}\nSTDERR:\n{result.stderr[-4000:]}\n"
-            "Regenerala con ./scripts/refresh_e2e_copy.sh"
+            "Regénere la con ./scripts/refresh_e2e_copy.sh"
         )
 
 
@@ -105,7 +105,7 @@ def pytest_report_header(config) -> str:
     if dump is None:
         return (
             "e2e DB: contenedor vacío + migraciones Alembic "
-            "(sin copia de la base real; corré ./scripts/refresh_e2e_copy.sh)"
+            "(sin copia de la base real; ejecute ./scripts/refresh_e2e_copy.sh)"
         )
     stat = dump.stat()
     size_mb = stat.st_size / (1024 * 1024)
