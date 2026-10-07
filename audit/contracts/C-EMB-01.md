@@ -18,6 +18,19 @@ Puntos ciegos (EVIDENCIA EN CÓDIGO):
 Prueba E2:     pendiente → insertar por el flujo real (Destacar, Reprender, política, memoria, perfil) y asertar `embedding <> vector de ceros` y que el retriever lo devuelve primero para una consulta parecida.
 Sabotaje E3:   pendiente → S1 (embedder=None), S3 (embed lanza), S4 (embed devuelve ceros). Esperado: la prueba falla Y el sistema deja rastro visible.
 Vigilante E4:  propuesto → diario: `SELECT count(*) FROM <tabla> WHERE embedding = <ceros>` por tabla (examples, policies, memories, profiles); > 0 ⇒ alerta. Y: modelo de embeddings `is_loaded` en /health.
-Nivel:         E0 + evidencia estática de riesgo real
-Semáforo:      🟡 Las 4 tablas con búsqueda por parecido (memories, examples, policies, contexts): 0 ceros. profiles: 2 ceros heredados de julio (antes del motor), SIN efecto: nadie busca por parecido en profiles. Documentación afirma de más (wiki dice 'activa').
-Hallazgos:     H2 corregido: el cero en profiles es histórico (28/29-jul) e inocuo (NaN se autoexcluye). Pendiente: regenerar 2 huellas; borrar o blindar find_by_similarity huérfana; corregir wiki. Ver INVESTIGACION-B.md
+Nivel:         E3 SOLO en el tramo `profiles` (E2 + sabotaje S1/S2 ejecutados el 2026-10-07).
+               El resto del contrato (examples / policies / memories por sus flujos reales)
+               conserva su nivel previo: NO se re-verificó.
+Semáforo:      🟡 global. Tramo `profiles` cerrado y verde: camino muerto eliminado
+               (find_by_similarity sin llamador, borrada), documentación corregida en 12 lugares,
+               prueba E2 en verde y dos sabotajes que la hacen fallar. Sigue 🟡 porque las otras
+               4 tablas no se re-midieron en esta ronda y el trámite de las 2 huellas en ceros
+               queda pendiente de que la dueña lo corra.
+Hallazgos:     H2 cerrado: el cero en profiles era histórico (28/29-jul) e inocuo. Aplicado:
+               (1) find_by_similarity borrada; (2) 12 documentos corregidos; (3) script
+               scripts/regenerate_profile_embeddings.py (simulación por defecto, respaldo, --apply,
+               idempotente) — NO ejecutado contra producción; (4) `_embed_content` ahora registra
+               `profile_embedding_zeros` con motivo (no_embedder / embedder_returned_zeros /
+               empty_text) en vez de guardar ceros en silencio.
+               Pendiente aparte: ContextsRepo.find_by_similarity tiene el mismo estado de huérfana.
+               Ver audit/FASE2-PERFILES.md

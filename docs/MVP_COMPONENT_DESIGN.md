@@ -84,7 +84,7 @@ y los retrievers que en Fase 1 eran STUB ya son reales (ver §5.7).
 
 | Componente | Tratamiento en Fase 1 | Estado actual (2026-08-21) |
 |------------|------------------------|----------------------------|
-| Retrievers de memory / policy / examples / profile / schedule | **STUB** que devuelven `null` | **REAL** — memoria pgvector, perfil, política, ejemplos y schedule implementados (+ `persona_facts`, `voice_patterns`) |
+| Retrievers de memory / policy / examples / profile / schedule | **STUB** que devuelven `null` | **REAL** — memoria pgvector, política, ejemplos y schedule implementados; **perfil por PK** (no por parecido) (+ `persona_facts`, `voice_patterns`) |
 | pgvector / embeddings | No | **Implementado** — pgvector con índices HNSW + sentence-transformers local (ADR-005) |
 | Staging Area / destilación / promoción | No se escribe en bancos vivos | **Implementado** — corrección guarda en `staging_candidates`; pasa a `examples` solo tras promoción explícita |
 | Zona gris / `consult_doctrine` | Decider no puede devolverlo | **Implementado** — el Decisor emite `consult_doctrine`; congela al VIP y pregunta a la dueña (ver ARCHITECTURE §3) |
@@ -356,8 +356,8 @@ class Comprehension(BaseModel):
 ```
 
 Los flags `needs_*` **se usan**: el Planner los mapea a capacidades. En Fase 1 los STUBs devolvían `null` y
-el ContextBuilder omitía esos bloques; hoy todos los retrievers son **reales** (memoria pgvector, perfil,
-política, ejemplos, schedule) y el ContextBuilder incluye solo los bloques relevantes al turno.
+el ContextBuilder omitía esos bloques; hoy todos los retrievers son **reales** (memoria pgvector, política,
+ejemplos, schedule, y perfil **por PK**) y el ContextBuilder incluye solo los bloques relevantes al turno.
 
 ### 5.6 Planner (determinista)
 
@@ -1009,7 +1009,7 @@ La Fase 1 dejó al Director llamando a Planner + Registry, listo para crecer sin
 
 | Cambio preparado | Impacto en Director | Estado hoy |
 |------------------|---------------------|------------|
-| STUBs → Retrievers REAL + pgvector | **Cero** líneas del Director | **Implementado** — memoria pgvector, perfil, política, ejemplos, schedule reales |
+| STUBs → Retrievers REAL (+ pgvector donde aplica) | **Cero** líneas del Director | **Implementado** — memoria pgvector, política, ejemplos, schedule reales; perfil real por PK |
 | Activar `consult_doctrine` / `regenerate` | Solo Decider + umbrales | **Implementado** — zona gris y variantes de borrador activos |
 | Staging en correcciones | Solo Admin/Learning post-turno | **Implementado** — corrección → `staging_candidates` → promoción explícita |
 | Modo autónomo (`send`) | Decider + `system_config` | **Cableado, deshabilitado** — `FEATURE_AUTONOMOUS_MODE=false` + doble puerta |

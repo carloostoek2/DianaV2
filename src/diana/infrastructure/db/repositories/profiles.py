@@ -7,6 +7,7 @@ This module re-exports them and implements VIP-scoped SQL writers.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -26,7 +27,18 @@ from diana.profile_content import (
     normalize_content,
 )
 
+logger = logging.getLogger(__name__)
+
 _ZERO_EMBEDDING: list[float] = [0.0] * 384
+
+# Reason codes for ``profile_embedding_zeros``: the fingerprint was stored as
+# the all-zero vector. ``profiles`` has no similarity consumer today (the reader
+# goes by ``vip_id``), so this is a data-quality signal, not a broken turn — but
+# it must never be silent: the 2026-08 incident with examples/policies was
+# exactly this symptom going unnoticed.
+_ZEROS_NO_EMBEDDER = "no_embedder"
+_ZEROS_EMPTY_TEXT = "empty_text"
+_ZEROS_EMBEDDER_RETURNED = "embedder_returned_zeros"
 
 
 def profile_to_dict(row: Profile) -> dict:
@@ -70,11 +82,14 @@ def _content_to_embedding_text(content: dict) -> str:
 class ProfilesRepo:
     """VIP permanent profile store (BR-15: every query filters by vip_id).
 
-    The ``embedding`` column (vector(384), F2) is now real: when an
-    ``embedder`` is injected, every write recomputes the embedding of the
-    profile content so semantic similarity lookups work (``find_by_similarity``).
+    The ``embedding`` column (vector(384), F2) is real: when an ``embedder`` is
+    injected, every write recomputes the embedding of the profile content.
     Without an embedder the column falls back to zeros (backward-compatible
-    with pre-F2 callers/tests).
+    with pre-F2 callers/tests) and logs ``profile_embedding_zeros``.
+
+    There is no similarity lookup over this table: the reader
+    (``ProfileRetriever``) goes by ``vip_id``. The fingerprint is written but
+    not consumed by any retrieval path.
     """
 
     def __init__(
@@ -86,15 +101,28 @@ class ProfilesRepo:
         self._sf = session_factory
         self._embedder = embedder
 
+    def _zeros(self, reason: str, *, level: int = logging.WARNING) -> list[float]:
+        """Return the all-zero fingerprint, leaving a visible trace of why.
+
+        The stored value is unchanged (zeros keep the column NOT NULL and stay
+        backward-compatible); only the *silence* is removed. ``empty_text`` is
+        the legitimate case (the profile ended up with no content) and is kept
+        at DEBUG; the other two mean the fingerprint was never computed.
+        """
+        logger.log(level, "profile_embedding_zeros", extra={"reason": reason})
+        return list(_ZERO_EMBEDDING)
+
     async def _embed_content(self, content: dict) -> list[float]:
-        """Embed the profile content, or return zeros when no embedder."""
+        """Embed the profile content, or return zeros (logging the reason)."""
         if self._embedder is None:
-            return list(_ZERO_EMBEDDING)
+            return self._zeros(_ZEROS_NO_EMBEDDER)
         text = _content_to_embedding_text(content).strip()
         if not text:
-            return list(_ZERO_EMBEDDING)
-        vec = await self._embedder.embed(text)
-        return [float(x) for x in vec]
+            return self._zeros(_ZEROS_EMPTY_TEXT, level=logging.DEBUG)
+        vec = [float(x) for x in await self._embedder.embed(text)]
+        if not any(vec):
+            return self._zeros(_ZEROS_EMBEDDER_RETURNED)
+        return vec
 
     async def _load(self, session: AsyncSession, vip_id: UUID) -> Profile | None:
         result = await session.execute(
@@ -107,28 +135,6 @@ class ProfilesRepo:
         async with self._sf() as session:
             row = await self._load(session, vip_id)
             return profile_to_dict(row) if row else None
-
-    async def find_by_similarity(
-        self,
-        embedding: list[float],
-        *,
-        threshold: float,
-        limit: int = 10,
-    ) -> list[dict]:
-        """Return profiles whose content is semantically close to ``embedding``.
-
-        Cosine similarity > ``threshold`` (distance < ``1 - threshold``).
-        Unscoped (any VIP) by design: this is the vector feature of the
-        profile store — e.g. finding VIPs whose profile matches a topic.
-        """
-        async with self._sf() as session:
-            result = await session.execute(
-                select(Profile)
-                .where(Profile.embedding.cosine_distance(embedding) < 1 - threshold)
-                .order_by(Profile.embedding.cosine_distance(embedding))
-                .limit(limit)
-            )
-            return [profile_to_dict(row) for row in result.scalars().all()]
 
     async def set_fact(self, vip_id: UUID, key: str, value: str) -> dict:
         """Upsert row if missing; set ``facts[key]=value``; return profile dict."""

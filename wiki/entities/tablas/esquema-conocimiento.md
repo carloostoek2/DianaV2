@@ -1,7 +1,7 @@
 ---
 title: Esquema de Datos — Conocimiento (F2)
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-10-07
 type: entity
 tags: [dato, memoria, aprendizaje, politica]
 sources: [../../alembic/versions/003_f2_knowledge_tables.py, ../../alembic/versions/029_feedback_quality.py, ../../alembic/versions/027_ephemeral_events.py, ../../src/diana/infrastructure/db/models.py]
@@ -10,11 +10,11 @@ confidence: high
 
 # Esquema de Datos — Conocimiento (F2)
 
-Tablas de conocimiento (Fase 2 + extensiones 027/029). Índices HNSW con pgvector (384 dims). Las columnas de SPEC-1.1 que nunca se migraron (`example_applied`, `quality_score`, `source_staging_id`) no existen en el esquema vivo.
+Tablas de conocimiento (Fase 2 + extensiones 027/029). Índices HNSW con pgvector (384 dims) **solo en `memories`, `policies` y `examples`** — `profiles` y `contexts` tienen la columna `embedding` pero **no** índice de vector. Las columnas de SPEC-1.1 que nunca se migraron (`example_applied`, `quality_score`, `source_staging_id`) no existen en el esquema vivo.
 
 ## Tablas F2
 
-- **`profiles`** — un embedding por VIP. PK `vip_id` (FK `vips.id`); `embedding` vector(384); `content` jsonb (no `data`); `tipo` text. Recuperado por `ProfileRetriever` (knowledge.profile). **2026-08-21:** `ProfilesRepo` recibe el embedder — `set_fact`/`add_note`/`delete_fact`/`delete_note` recomputan el embedding real del contenido (ya no ceros) y el repo expone `find_by_similarity` (búsqueda semántica sobre perfiles).
+- **`profiles`** — un embedding por VIP. PK `vip_id` (FK `vips.id`); `embedding` vector(384) **sin índice HNSW**; `content` jsonb (no `data`); `tipo` text. Recuperado por `ProfileRetriever` (knowledge.profile) **por PK**, nunca por parecido. **2026-08-21:** `ProfilesRepo` recibe el embedder — `set_fact`/`add_note`/`delete_fact`/`delete_note` recomputan el embedding real del contenido (ya no ceros). **Corregido 2026-10-07:** esa huella **no se consume** en ninguna recuperación; no hay búsqueda semántica sobre perfiles (la función murió el 2026-10-07 por no tener llamador).
 - **`memories`** — hechos y preferencias por VIP, **siempre filtradas por `vip_id`** (BR-15; ver [[memoria-vip]]). `content` jsonb, `category`, `confidence`, `embedding`. F5 (022): `status` (`auto`|`pending_owner`|`approved`|`discarded`), `source_turn_id` (sin FK).
 - **`contexts`** — contexto temporal interpretado (REQ-MEM-06): `chat_id`, `vip_id` (nullable), `embedding`, `content` jsonb, `expires_at`. **2026-08-21:** implementado el repo (`ContextsRepo`) y el escritor post-turno (`ContextStoreService`, flag `FEATURE_CONTEXT_ENABLED`): tras cada turno terminal se persiste el contexto interpretado (`{"tipo":"interpretado","hechos":{...}}`) con embedding y TTL (24 h); `ContextRetriever` prefiere el snapshot no expirado con fallback a la derivación en vivo. Purga de expirados en `AgentDataPurgeJob`.
 - **`policies`** — doctrina estructurada: `trigger_description`, `rule`, `scope` (eje de canal, default `all`), `is_active`, `valid_until`, `source_query_id` (sin FK; no `created_from_gray_zone`). 029: `vip_id` nullable (FK `vips.id`, índice). `vip_id IS NULL` = global. No reutilizar `scope` para el eje VIP.

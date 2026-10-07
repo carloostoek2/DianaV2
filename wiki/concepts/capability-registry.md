@@ -1,7 +1,7 @@
 ---
 title: Capability Registry
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-10-07
 type: concept
 tags: [arquitectura, modulo, contrato]
 sources: [../../docs/REQUERIMIENTOS.md, ../../docs/SPEC-1.1.md, ../../src/diana/cognitive/registry.py]
@@ -36,7 +36,7 @@ El corazón de la **sustituibilidad** (REQ-NFR-14). El [[director-cognitivo]] no
 - **Examples (gold-first):** `find_by_similarity` ordena `quality=gold` antes que `standard`, y luego por distancia coseno. Umbral 0.7, límite 5; siempre intenta anexar 1 contraejemplo. Visibilidad: Atención ve solo globales; un VIP ve globales + las suyas ([[anti-contaminacion]]).
 - **Policies:** match estático por `tema ∩ (topics ∪ intent)` + path DB (umbral 0.8). `vip_id` es eje distinto de `scope`. En Atención el path DB fuerza `scope='all'` (nunca una política VIP-scoped). Fallo de DB no tira los hits estáticos.
 - **Context (2026-08-21):** REAL con `FEATURE_CONTEXT_ENABLED` — `waiting_for_reply_since`, `is_first_message_of_day`, `dia_semana`, `hora_actual` (America/Mexico_City). Prefiere el snapshot interpretado no expirado de la tabla `contexts` (REQ-MEM-06, escrito post-turno por `ContextStoreService`); sin fila activa o con flag OFF, deriva del historial como antes. Fallo de repo → fallback (nunca rompe el turno).
-- **Profile (2026-08-21):** `ProfilesRepo` ahora recibe el embedder: `set_fact`/`add_note`/`delete_fact`/`delete_note` recomputan el embedding real del contenido (ya no ceros) y expone `find_by_similarity` (característica vectorial de la tabla `profiles` activa).
+- **Profile (2026-08-21; corregido 2026-10-07):** `ProfilesRepo` recibe el embedder: `set_fact`/`add_note`/`delete_fact`/`delete_note` recomputan el embedding real del contenido (ya no ceros). **No hay búsqueda por parecido sobre `profiles`**: el lector (`ProfileRetriever`) va por PK (`vip_id`), y la huella se escribe pero **ningún camino de recuperación la consume**. La característica vectorial de esta tabla **no está activa**.
 - **Memory / Profile:** no fetch si `vip_id is None`.
 
 ## Límites duros

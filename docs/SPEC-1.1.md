@@ -511,7 +511,7 @@ Las tres fases del plan incremental están implementadas. Esta sección resume q
 
 Fase Cobertura implementada
 Fase 1 (MVP Supervisado) Turn Coordinator + máquina de estados del Turn, Director con cortocircuito determinista, Analista + Planificador + Constructor de Contexto + Generador + Evaluador (vector 7D) + Decisor, Behavior Engine (delay, lectura, typing), cola de aprobación en el DM de la dueña y tablas base (vips, message_history, pipeline_traces, pending_deliveries, turns, escalation_events, system_config).
-Fase 2 (MVP+) Retrievers reales con pgvector (historial, contexto, perfil, memoria, políticas, ejemplos), Staging Area con promoción explícita, zona gris con destilación de políticas y freeze, sandbox con FakeDelivery, y Behavior Engine avanzado (mensajes divididos, quirks). Tablas de memoria y aprendizaje migradas.
+Fase 2 (MVP+) Retrievers reales con pgvector (historial, contexto, memoria, políticas, ejemplos) y el retriever de **perfil por PK** (`vip_id`, sin búsqueda por parecido), Staging Area con promoción explícita, zona gris con destilación de políticas y freeze, sandbox con FakeDelivery, y Behavior Engine avanzado (mensajes divididos, quirks). Tablas de memoria y aprendizaje migradas.
 Fase 3 (Completo) Recontacto por silencio, promo no-VIP con trigger exacto, métricas de aprendizaje agregadas, calibración de umbrales (job existente; flag FEATURE_CALIBRATION_ENABLED=false) y autoenvío autónomo (ruta cableada; deshabilitado por FEATURE_AUTONOMOUS_MODE=false).
 
 ---

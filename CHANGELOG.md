@@ -335,7 +335,7 @@ Verificación: 3079 tests unitarios pasando.
 
 ---
 
-Contexto persistente y perfiles semánticos — 2026-08-21
+Contexto persistente y huellas de perfil reales — 2026-08-21
 
 Desde el principio he querido que Diana trabaje con contexto acumulado, no solamente con el historial inmediato. Ya teníamos memoria y perfiles, pero todavía había piezas del contexto que no estaban realmente integradas en la arquitectura vectorial.
 
@@ -343,7 +343,7 @@ Técnicamente, esto representa: hacer que “contexto antes que respuesta” sea
 
 - El contexto temporal ahora se persiste y se recupera mediante embeddings.
 - Los perfiles utilizan embeddings reales en lugar de vectores vacíos.
-- Añadimos recuperación semántica de perfiles.
+- ~~Añadimos recuperación semántica de perfiles.~~ **Corregido el 2026-10-07:** los perfiles **no** tienen recuperación semántica. Se escribió la huella real y se dejó una función de búsqueda por parecido, pero **ningún camino de producción la llamaba**; la lectura del perfil siempre fue por VIP. La función se eliminó el 2026-10-07 (ver `audit/FASE2-PERFILES.md`).
 - Alineamos los flags de memoria y contexto con el estado de Fase 2.
 - Los datos expirados se limpian automáticamente.
 

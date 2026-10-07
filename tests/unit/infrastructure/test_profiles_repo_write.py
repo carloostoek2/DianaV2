@@ -6,6 +6,7 @@ VIP-scoped mutators. ORM session behavior is asserted with AsyncMock fakes.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -18,6 +19,8 @@ from diana.infrastructure.db.repositories.profiles import (
     apply_set_fact,
     empty_content,
 )
+
+REPO_LOGGER = "diana.infrastructure.db.repositories.profiles"
 
 
 def test_writer_methods_exist_on_profiles_repo() -> None:
@@ -201,26 +204,47 @@ async def test_set_fact_with_embedder_writes_real_embedding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_by_similarity_returns_matching_rows() -> None:
+async def test_zeros_are_never_silent(caplog: pytest.LogCaptureFixture) -> None:
+    """Companion to the write test above.
+
+    Without an embedder the fingerprint is still stored as zeros (unchanged
+    behavior, the column is NOT NULL), but the reason now leaves a trace — the
+    symptom that went unnoticed in the 2026-08 examples/policies incident.
+    """
     vip_id = uuid4()
-    row = SimpleNamespace(
-        vip_id=vip_id,
-        tipo="summary",
-        content={"facts": {"city": "CDMX"}, "notes": []},
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
-    )
-    sf = _make_session_factory()
-    scalars = MagicMock()
-    scalars.all = MagicMock(return_value=[row])
-    sf._session.execute = AsyncMock(
-        return_value=MagicMock(scalars=MagicMock(return_value=scalars))
-    )
-    repo = ProfilesRepo(sf)
+    sf = _make_session_factory(row=None)
+    repo = ProfilesRepo(sf)  # no embedder
 
-    rows = await repo.find_by_similarity([0.0] * 384, threshold=0.7)
+    with caplog.at_level(logging.WARNING, logger=REPO_LOGGER):
+        await repo.set_fact(vip_id, "city", "CDMX")
 
-    assert len(rows) == 1
-    assert rows[0]["content"]["facts"]["city"] == "CDMX"
-    stmt = sf._session.execute.await_args.args[0]
-    assert "<=>" in str(stmt)
+    added = sf._session.add.call_args[0][0]
+    assert not any(added.embedding)
+    assert "profile_embedding_zeros" in caplog.messages
+    record = next(
+        r for r in caplog.records if r.getMessage() == "profile_embedding_zeros"
+    )
+    assert record.reason == "no_embedder"
+
+
+@pytest.mark.asyncio
+async def test_embedder_returning_zeros_is_reported(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A wired embedder that yields a null vector is not a silent success."""
+
+    class ZeroEmbedder:
+        async def embed(self, text: str) -> list[float]:
+            return [0.0] * 384
+
+    vip_id = uuid4()
+    sf = _make_session_factory(row=None)
+    repo = ProfilesRepo(sf, embedder=ZeroEmbedder())
+
+    with caplog.at_level(logging.WARNING, logger=REPO_LOGGER):
+        await repo.set_fact(vip_id, "city", "CDMX")
+
+    record = next(
+        r for r in caplog.records if r.getMessage() == "profile_embedding_zeros"
+    )
+    assert record.reason == "embedder_returned_zeros"

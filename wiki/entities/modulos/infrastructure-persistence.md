@@ -1,7 +1,7 @@
 ---
 title: Infrastructure / Persistence
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-10-07
 type: entity
 tags: [modulo, contrato]
 sources: [../../AGENTS.md, ../../src/diana/infrastructure/db/models.py, ../../alembic/versions/029_feedback_quality.py]
@@ -19,7 +19,7 @@ Capa de persistencia e infraestructura. **PostgreSQL es el único almacén durab
 ## Tecnología
 
 - SQLAlchemy 2.0 (async) + asyncpg; Pydantic v2 para validación de objetos cognitivos.
-- pgvector con índices HNSW para embeddings (Fase 2+).
+- pgvector con índices HNSW para embeddings (Fase 2+) — **solo `memories`, `policies` y `examples`**; `profiles` y `contexts` guardan la columna `embedding` sin índice de vector.
 - 34 tablas en `Base.metadata`. Head de repo: **`029_feedback_quality`** (cadena 001–029 en `alembic/versions/`). Tablas por fase: [[esquema-fase1]], [[esquema-conocimiento]], [[esquema-fase3]], [[esquema-fase4]], [[esquema-evolucion]], [[esquema-fase6]].
 
 ## Reglas

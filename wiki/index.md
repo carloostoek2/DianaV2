@@ -9,7 +9,7 @@
 - [[spec-requerimientos]] — REQUERIMIENTOS.md v2.1: qué debe cumplir el sistema (requisitos, BR, criterios AC)
 - [[spec-1-1]] — SPEC.md v1.5: contrato de diseño, stack, ADRs, modelo de datos por fase
 - [[agents-md]] — AGENTS.md v1.3: límites duros de módulo, flujos canónicos, reglas de comunicación
-- [[spec-fase2]] — Fase 2 (MVP+): memoria, zona gris, staging, sandbox, retrievers con pgvector
+- [[spec-fase2]] — Fase 2 (MVP+): memoria, zona gris, staging, sandbox, retrievers con pgvector (el de perfil va por PK, no por parecido)
 - [[spec-fase3]] — Fase 3 (Producto Completo): autónomo, recontacto, promo, calibración, métricas
 - [[spec-fase4]] — Fase 4: Atención al Cliente General (canal no-VIP), perfil de canal
 - [[spec-fase5]] — Fase 5: Perfil de VIP con memoria (backfill + mantenimiento)

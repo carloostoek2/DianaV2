@@ -45,7 +45,7 @@ Highlights of what's new and fixed in Diana, from her early releases through the
 
 ### ✨ New Features
 - **`contexts` table now fulfills its F2 design (REQ-MEM-06)**: the interpreted temporal context store (created in migration 003 but never wired) is now real. New `ContextsRepo` + post-turn `ContextStoreService` persist the chat's interpreted state (`waiting_for_reply_since`, `is_first_message_of_day`, day/time CDMX) with a 384-dim embedding and a TTL (default 24h) after every terminal turn. `ContextRetriever` prefers the non-expired persisted snapshot and falls back to the live derivation (repo failure never breaks a turn). Flag-gated by `FEATURE_CONTEXT_ENABLED` (ON in `.env`); expired rows purged by the existing `AgentDataPurgeJob`.
-- **Profiles use their vector column**: `ProfilesRepo` now receives the embedding service — `set_fact`/`add_note`/`delete_fact`/`delete_note` recompute a real content embedding (previously always zeros) and the repo exposes `find_by_similarity` for semantic profile lookup.
+- **Profiles use their vector column**: `ProfilesRepo` now receives the embedding service — `set_fact`/`add_note`/`delete_fact`/`delete_note` recompute a real content embedding (previously always zeros). The repo also exposed a `find_by_similarity` helper, but **no production path ever called it** (profiles are read by `vip_id`); it was removed on 2026-10-07. See `audit/FASE2-PERFILES.md`.
 - **`FEATURE_MEMORY_ENABLED` aligned**: the flag was already `true` in `.env` (the runtime source of truth) but the `system_config` row seeded by migration 003 still said `false`. Both are now `true` (and `FEATURE_CONTEXT_ENABLED=true` added), matching SPEC-FASE2 §3 ("Fase 2 = true").
 
 ### ✅ Tests

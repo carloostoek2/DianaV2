@@ -98,7 +98,7 @@ Las tablas ya existen en el esquema de la Fase 1 (creadas para evitar migracione
 · gray_zone_queries (consultas abiertas)
 · learning_metrics (tabla existente, grupo de Fase 3)
 
-Hoy las tablas de la Fase 2 se pueblan y consultan mediante repositorios reales: `memories` y `profiles` se escriben vía extracción post-turno (`memory_extraction_service`), backfill (`memory_backfill_service`) y actualización de perfil (`replace_vip_profile`) en cada finalización exitosa.
+Hoy las tablas de la Fase 2 se pueblan y consultan mediante repositorios reales: `memories` se escribe vía extracción post-turno (`memory_extraction_service`) y backfill (`memory_backfill_service`) en cada finalización exitosa; la síntesis de perfil (`replace_vip_profile`) escribe **`vip_profile`**, no la tabla `profiles`. La tabla `profiles` (ficha manual de la dueña) solo la escribe `ProfileAdminService` desde el menú, y se lee **por PK** — sin búsqueda por parecido.
 
 4.2 Índices requeridos (crear en Fase 2)
 
