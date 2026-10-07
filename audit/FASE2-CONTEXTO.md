@@ -18,17 +18,22 @@ esperando respuesta, si es el primer mensaje del día, qué día y a qué hora e
 |---|---|
 | ¿La función se usa en producción? | **Sí.** Hay 21 fotos guardadas, de 4 chats, y el sistema las escribe después de cada turno. La bandera está encendida y coincide en los dos lugares donde vive |
 | ¿Esa foto llega al modelo? | **Sí.** En **502 de 536 turnos** (94 %) el bloque de contexto está en el texto que recibe el modelo. En los últimos cuatro días, **todos** los turnos lo llevan |
-| ¿Responde como debería? | **No del todo.** La foto llega, pero con **datos viejos de un turno anterior** que contradicen la conversación que el modelo está leyendo en ese mismo momento |
+| ¿Responde como debería? | **No lo hacía.** La foto llegaba, pero con **datos viejos de un turno anterior** que contradecían la conversación que el modelo estaba leyendo en ese mismo momento. **Corregido y desplegado el 2026-10-07** (§8) |
 | ¿Al vencer se retira? | **Sí.** Una foto vencida no se usa: el sistema vuelve a calcular el estado desde la conversación. Verificado con prueba y sabotaje |
 | ¿La búsqueda por parecido sobre estas fotos se usa? | **No.** Igual que en las fichas: está escrita y probada, y no la llama nadie |
 
-**Qué pierde el negocio hoy:** el modelo recibe, en el 84 % de los turnos, un dato de "está esperando
-respuesta" que no corresponde. En los casos medidos donde la foto decía "no espera respuesta", la
-conversación sí la estaba esperando. Es información que en el mejor caso no aporta y en el peor
-empuja a Diana a responder como si el cliente no hubiera escrito.
+**Qué estaba perdiendo el negocio:** el modelo recibía, en el 84 % de los turnos, un dato de "está
+esperando respuesta" que no correspondía. En los casos medidos donde la foto decía "no espera
+respuesta", la conversación sí la estaba esperando. Información que en el mejor caso no aporta y en el
+peor empujaba a Diana a responder como si el cliente no hubiera escrito.
 
-**Qué NO está roto:** el mecanismo funciona (escribe, lee, vence). El problema es **qué** se guarda en
-la foto, no si se guarda.
+**Qué NO estaba roto:** el mecanismo funciona (escribe, lee, vence). El problema era **qué** se usaba
+de la foto, no si se guardaba.
+
+**El arreglo:** las cuatro claves describen el momento presente, así que ahora se calculan siempre
+desde la conversación del turno; de la foto solo se toma lo que ella sola aporta. La foto se sigue
+guardando y leyendo (el almacén del requerimiento queda intacto), y una prueba unitaria falla si esa
+lectura se desconecta.
 
 ---
 
@@ -137,7 +142,12 @@ con dos mensajes del cliente, y el bloque de contexto le decía al mismo tiempo
 
 **Contraste honesto:** la alternativa (derivar en vivo desde el historial) es exactamente lo que el
 sistema hacía antes de Fase 2, y es la que produce el valor correcto en estos 70 casos. La foto no
-está enriqueciendo la decisión: la está sustituyendo por un dato peor.
+estaba enriqueciendo la decisión: la estaba sustituyendo por un dato peor.
+
+**Causa de fondo:** las cuatro claves del bloque son hechos del **presente**. La foto se escribe al
+cerrar el turno —justo después de que Diana respondió— y se leía entera en el turno siguiente. Dos de
+esas claves ya se refrescaban en vivo (día y hora); las otras dos se tomaban congeladas. El arreglo
+(§8) extiende el refresco a las cuatro.
 
 ## 4. ¿Al retirarse deja de usarse?
 
@@ -158,9 +168,13 @@ escritor y el lector son los reales.
 Cada escenario siembra un historial que dice lo **contrario** que la foto, para que la prueba
 distinga de verdad "salió de la foto" de "salió del historial".
 
+La foto sembrada lleva además una clave que **solo** existe en ella: si el almacén dejara de leerse,
+esa clave desaparecería del prompt. Así el sabotaje de la lectura se detecta aunque sus cuatro claves
+de presente ya no la necesiten.
+
 | # | Escenario | Qué exige | Resultado |
 |---|---|---|---|
-| 1 | Bandera ON + foto vigente | El bloque que recibe el modelo sale **de la foto** (valores que contradicen el historial) | ✅ |
+| 1 | Bandera ON + foto vigente que contradice el historial | El bloque sale **del historial** (regresión del defecto) **y** la clave propia de la foto sigue llegando | ✅ |
 | 2 | Bandera ON + **solo foto vencida** | El bloque sale del historial: la foto vencida **no se usa** | ✅ |
 | 3 | Bandera OFF + foto vigente | El bloque sale del historial: la foto **no se lee** | ✅ |
 
@@ -168,20 +182,26 @@ distinga de verdad "salió de la foto" de "salió del historial".
 
 | # | Qué se desconectó | Resultado |
 |---|---|---|
-| **S1** | La inyección del almacén: `composition.py:911` → `effective_context_repo = None` | **El escenario 1 FALLA**: `AssertionError: el bloque no salió del snapshot`, y el bloque mostró los valores del historial |
+| **S1** | La inyección del almacén: `composition.py:911` → `effective_context_repo = None` | **El escenario 1 FALLA**: `AssertionError: el snapshot dejó de leerse (almacén desconectado)`. La lectura sigue cubierta por una prueba que falla si se corta |
 | **S2** | El filtro de vigencia en `find_active_by_chat` | **El escenario 2 FALLA**: `AssertionError: se siguió usando un snapshot vencido`, con los valores de la foto vencida en el bloque |
 
 Ambos revertidos (`grep -rn SABOTAJE src/` → sin resultados; `git diff src/diana/composition.py
 src/diana/infrastructure/db/repositories/contexts.py` → vacío).
 
+En el nivel unitario, `tests/unit/cognitive/test_retrievers.py` cubre lo mismo en chico:
+`test_context_retriever_live_derivation_wins_over_stale_snapshot` (las cuatro claves son las del
+historial) y `test_context_retriever_keeps_extra_keys_from_snapshot` (una clave propia de la foto
+sobrevive, y esa prueba falla si se desconoce el almacén).
+
 ## 6. Matriz de banderas
 
 | `FEATURE_CONTEXT_ENABLED` | Efecto medido |
 |---|---|
-| `true` (valor actual en `.env` y `system_config`) | La foto se escribe post-turno y se lee antes del turno siguiente; el bloque lleva los valores de la foto |
-| `false` | El almacén no se inyecta en el lector ni el escritor se activa: el bloque se deriva del historial, idéntico al comportamiento previo a Fase 2 |
+| `true` (valor actual en `.env` y `system_config`) | La foto se escribe post-turno y se lee antes del turno siguiente. El bloque se calcula del historial **y** se enriquecen las claves que solo la foto aporta (hoy, ninguna de las cuatro H.3) |
+| `false` | El almacén no se inyecta en el lector ni el escritor se activa: el bloque se deriva del historial. Idéntico al caso encendido para las cuatro claves H.3 |
 
-Medido, no supuesto: es el escenario 3 de la prueba E2.
+Tras el arreglo, las cuatro claves son **iguales con la bandera encendida y apagada** — que es justo el
+punto: no dependen de la foto. Medido, no supuesto: escenarios 1 y 3 de la prueba E2.
 
 ## 7. Límites de esta verificación
 
@@ -198,23 +218,32 @@ Medido, no supuesto: es el escenario 3 de la prueba E2.
   aplica. Hoy no es explotable, porque el alcance por chat ya separa a los VIP; queda como hallazgo
   menor de revisión.
 
-## 8. Arreglo propuesto (NO aplicado)
+## 8. Arreglo aplicado
 
-Tres caminos, de menor a mayor:
+**Opción elegida: refrescar las cuatro claves en vivo** (era la recomendada). Se evaluaron tres
+caminos:
 
 | Opción | Qué implica | Veredicto |
 |---|---|---|
-| **A. Refrescar también las dos claves de presente** en el lector (dejar la foto solo para lo que sí es histórico) | Cambio chico y localizado en `retrievers/context.py`. La foto seguiría guardándose y usándose para el resto | ✅ **Recomendado** |
-| **B. Leer la foto solo cuando el historial no alcanza** | Conserva el diseño de "no re-derivar", pero deja de sustituir un dato bueno por uno viejo | Razonable si se quiere mantener el sentido original de REQ-MEM-06 |
-| **C. Dejar de escribir la foto** | Es la más simple, pero descarta la tabla y el requerimiento entero | ❌ Desproporcionado: el gasto ya está hecho y la foto puede servir para chats sin historial |
+| **A. Refrescar también las dos claves de presente** en el lector | Cambio chico y localizado en `retrievers/context.py`. La foto sigue guardándose y leyéndose para lo que ella sola aporte | ✅ **Aplicada** |
+| B. Leer la foto solo cuando el historial no alcanza | En la práctica equivale a A: la derivación en vivo siempre está disponible | Descartada por equivalente |
+| C. Dejar de escribir la foto | Descarta la tabla y el requerimiento entero | ❌ Desproporcionada |
 
-Se recomienda **A**, y decidirlo aparte: es un cambio de comportamiento del pipeline y no se aplicó en
-esta revisión.
+**El cambio** (`src/diana/cognitive/retrievers/context.py`): la derivación en vivo se calcula siempre
+y **gana** sobre el contenido de la foto; de la foto solo sobreviven las claves que la derivación no
+produce. Antes se refrescaban dos (día y hora) y se congelaban dos; ahora se refrescan las cuatro.
+
+**Lo que esto implica, dicho sin adornos:** con las cuatro claves en vivo, la foto ya no influye en el
+bloque que recibe el modelo. El almacén del requerimiento (REQ-MEM-06) sigue escribiéndose y
+leyéndose, y sigue aportando cualquier clave propia que se le agregue en el futuro — pero hoy su
+contenido temporal **no es determinante**. Consecuencia a vigilar: si la lectura se desconectara, el
+bloque no cambiaría. Por eso la prueba exige además que una clave propia de la foto llegue al prompt
+(§5): así la desconexión se nota.
 
 **Sobre la búsqueda por parecido huérfana (`ContextsRepo.find_by_similarity`):** está en la misma
 situación que la de fichas. Se propone la misma decisión (eliminarla) si no hay plan de usar la
-búsqueda semántica de contextos. **No se eliminó**: requiere la confirmación de la dueña, igual que en
-el caso de las fichas.
+búsqueda semántica de contextos. **No se eliminó**: requiere confirmación, igual que en el caso de las
+fichas.
 
 ## 9. Vigilante propuesto (E4)
 
@@ -232,21 +261,39 @@ WHERE t.prompt_text LIKE '%knowledge.context%'
   AND t.created_at BETWEEN now() - interval '1 day' AND now() - interval '10 minutes';
 ```
 
-Se deja como **propuesta**: calibrar el umbral requiere decidir antes la opción de §8.
+Con el arreglo aplicado, el valor esperado pasa a ser **0**: cualquier aparición vuelve a ser señal de
+alerta, no ruido de fondo. Se deja como propuesta de vigilante diario.
 
 ## 10. Archivos tocados
 
 | Archivo | Cambio |
 |---|---|
+| `src/diana/cognitive/retrievers/context.py` | La derivación en vivo gana sobre la foto; la foto solo aporta sus claves propias. Docstring del lector actualizado |
+| `tests/unit/cognitive/test_retrievers.py` | Se reemplazó la prueba que fijaba el comportamiento viejo por dos: el vivo gana, y las claves propias de la foto sobreviven |
 | `tests/audit/test_C_CTX_01.py` | **Nuevo** — 3 escenarios E2 del contexto temporal |
 | `audit/FASE2-CONTEXTO.md` | Este informe |
 
-**No se tocó código de producción en esta revisión.** Los dos sabotajes se aplicaron y se revirtieron.
+Los dos sabotajes se aplicaron y se revirtieron (`grep -rn SABOTAJE src/` → sin resultados).
 
 ### Suites ejecutadas (2026-10-07)
 
 | Suite | Resultado |
 |---|---|
-| `tests/unit` | **4351 passed** |
+| `tests/unit` | **4352 passed** (una más que antes del arreglo) |
 | `tests/e2e` | **233 passed** (igual a la línea base) |
 | `tests/audit` | **7 passed** (2 de C-HIST-01, 2 de C-EMB-01, 3 de C-CTX-01) |
+
+## 11. Estado en producción
+
+Integrado a `main`, publicado en `origin/main` y con el bot reiniciado el **2026-10-07** (hash y hora
+exactos en el commit correspondiente). Verificación posterior al reinicio:
+
+| Comprobación | Resultado |
+|---|---|
+| Servicio | `active`, **0 reinicios** (sin bucle de arranque) |
+| Salud | `/health` → `{"status":"ok",...}` con base y bot en verde |
+| Errores o trazas en el arranque | Ninguno |
+
+**Verificación del arreglo con turnos reales:** se repite la medición de §3 restringida a los turnos
+**posteriores al reinicio**. Antes del arreglo el desacuerdo era del 84 %; después, el valor esperado
+es **0**.

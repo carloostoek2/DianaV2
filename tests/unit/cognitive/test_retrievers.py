@@ -164,9 +164,14 @@ class FakeContextRepo:
 
 
 @pytest.mark.asyncio
-async def test_context_retriever_prefers_persisted_snapshot_with_repo() -> None:
-    """REQ-MEM-06: with a repo wired and an active row, the retriever returns
-    the persisted interpreted facts (day/hour refreshed live)."""
+async def test_context_retriever_live_derivation_wins_over_stale_snapshot() -> None:
+    """REQ-MEM-06: the four H.3 keys describe the present moment, so a snapshot
+    written when the previous turn closed can never supply them.
+
+    The snapshot here says "not waiting for a reply" and "not the first message
+    of the day" while the history says the opposite — the live derivation must
+    win on all four keys, and the snapshot must contribute nothing extra.
+    """
     port = InMemoryMessageHistory(
         {7: [{"role": "vip", "text": "x", "timestamp": "2026-07-01T08:00:00+00:00"}]}
     )
@@ -177,10 +182,10 @@ async def test_context_retriever_prefers_persisted_snapshot_with_repo() -> None:
                 "content": {
                     "tipo": "interpretado",
                     "hechos": {
-                        "waiting_for_reply_since": "2026-07-01T08:00:00+00:00",
+                        "waiting_for_reply_since": None,
                         "is_first_message_of_day": False,
-                        "dia_semana": "miercoles",
-                        "hora_actual": "12:00",
+                        "dia_semana": "lunes",
+                        "hora_actual": "00:00",
                     },
                 }
             }
@@ -188,12 +193,37 @@ async def test_context_retriever_prefers_persisted_snapshot_with_repo() -> None:
     )
     retriever = ContextRetriever(port, clock=lambda: fixed, repo=repo)
     ctx = await retriever.fetch(_turn(7), _comprehension())
-    # Persisted temporal facts win...
+    # The history's last mappable row is the VIP's: a reply IS pending.
     assert ctx["waiting_for_reply_since"] == "2026-07-01T08:00:00+00:00"
-    assert ctx["is_first_message_of_day"] is False
-    # ...but day/hour are refreshed from the live clock (UTC 12:00 = CDMX 06:00).
+    assert ctx["is_first_message_of_day"] is True
+    # Day/hour come from the live clock (UTC 12:00 = CDMX 06:00).
     assert ctx["dia_semana"] == "miercoles"
     assert ctx["hora_actual"] == "06:00"
+
+
+@pytest.mark.asyncio
+async def test_context_retriever_keeps_extra_keys_from_snapshot() -> None:
+    """Keys the live derivation does not produce still come from the snapshot."""
+    port = InMemoryMessageHistory()
+    fixed = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
+    repo = FakeContextRepo(
+        [
+            {
+                "content": {
+                    "tipo": "interpretado",
+                    "hechos": {
+                        "waiting_for_reply_since": None,
+                        "tema_pendiente": "entrega",
+                    },
+                }
+            }
+        ]
+    )
+    retriever = ContextRetriever(port, clock=lambda: fixed, repo=repo)
+    ctx = await retriever.fetch(_turn(7), _comprehension())
+    assert ctx["tema_pendiente"] == "entrega"
+    assert set(ctx) >= {"waiting_for_reply_since", "is_first_message_of_day",
+                        "dia_semana", "hora_actual"}
 
 
 @pytest.mark.asyncio

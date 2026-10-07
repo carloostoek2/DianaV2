@@ -140,10 +140,11 @@ def interpret_context(
 class ContextRetriever:
     """H.3 conversation-state retriever.
 
-    REAL partial: derives the interpreted context from the history port, and
-    — when a ``repo`` is injected — prefers the most recent non-expired
-    persisted snapshot (``contexts`` table, REQ-MEM-06) falling back to the
-    live derivation when the table has no active row.
+    REAL partial: derives the interpreted context from the history port. When a
+    ``repo`` is injected, the most recent non-expired persisted snapshot
+    (``contexts`` table, REQ-MEM-06) is read as well, but only for keys the live
+    derivation does not produce — see ``fetch`` for why the four H.3 keys are
+    never taken from it.
     """
 
     def __init__(
@@ -166,30 +167,37 @@ class ContextRetriever:
     ) -> dict[str, Any]:
         _ = comprehension
         messages = await self._port.get_recent(turn.chat_id, limit=self._limit)
-        # Prefer a non-expired persisted snapshot when the repo is wired.
-        # The live derivation remains the fallback (and the only path when
-        # no repo is configured — byte-identical to the pre-F2 behavior).
+        fresh = interpret_context(messages, clock=self._clock)
+        # A non-expired persisted snapshot (REQ-MEM-06) may add keys the live
+        # derivation does not produce. It can NOT supply the four H.3 keys: all
+        # four describe the *present* moment (who spoke last, how many messages
+        # today, day, hour), and the snapshot was written when the PREVIOUS turn
+        # closed — right after the owner replied. Reading it back made the next
+        # turn see `waiting_for_reply_since = None` while the client had just
+        # written (measured 2026-10-07: 84% of turns disagreed with the history
+        # in the very same prompt). So the live derivation always wins, and the
+        # snapshot only contributes what it alone carries.
         if self._repo is not None:
             try:
                 rows = await self._repo.find_active_by_chat(
                     turn.chat_id, vip_id=turn.vip_id, limit=1
                 )
                 if rows:
-                    # Keep day/hour fresh; persisted temporal facts stand.
-                    fresh = interpret_context(messages, clock=self._clock)
                     content = rows[0]["content"]
                     # The store persists {"tipo": "interpretado", "hechos": {...}}
                     # (REQ-MEM-06); flatten to the H.3 shape the pipeline consumes.
                     if isinstance(content, dict) and isinstance(
                         content.get("hechos"), dict
                     ):
-                        merged = dict(content["hechos"])
+                        stored = dict(content["hechos"])
+                    elif isinstance(content, dict):
+                        stored = dict(content)
                     else:
-                        merged = dict(content)
-                    merged["dia_semana"] = fresh["dia_semana"]
-                    merged["hora_actual"] = fresh["hora_actual"]
+                        stored = {}
+                    merged = {k: v for k, v in stored.items() if k not in fresh}
+                    merged.update(fresh)
                     return merged
             except Exception:
                 # Best-effort: a repo failure never breaks the turn.
                 pass
-        return interpret_context(messages, clock=self._clock)
+        return fresh

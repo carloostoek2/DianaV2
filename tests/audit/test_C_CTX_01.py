@@ -74,6 +74,10 @@ SNAPSHOT_HECHOS: dict[str, Any] = {
     "hora_actual": "00:00",
 }
 
+# Clave que SOLO existe en el snapshot: prueba que el snapshot se sigue leyendo
+# (si el almacén se desconectara, esta clave desaparecería del prompt).
+CLAVE_SOLO_DEL_SNAPSHOT = "tema_pendiente"
+
 
 def _settings(*, context_enabled: bool) -> Settings:
     return Settings.model_construct(
@@ -168,7 +172,10 @@ async def _seed_snapshot(
     hechos: dict[str, Any] | None = None,
 ) -> None:
     ahora = datetime.now(UTC)
-    body = {"tipo": "interpretado", "hechos": hechos or SNAPSHOT_HECHOS}
+    body = {
+        "tipo": "interpretado",
+        "hechos": {**(hechos or SNAPSHOT_HECHOS), CLAVE_SOLO_DEL_SNAPSHOT: "entrega"},
+    }
     emb = "[" + ",".join(["0.01"] * 384) + "]"
     async with session_factory() as session:
         await session.execute(
@@ -220,10 +227,16 @@ async def _correr_turno(app, chat_id: int, telegram_message_id: int):
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_el_snapshot_vigente_es_el_que_llega_al_modelo(
+async def test_la_derivacion_en_vivo_gana_al_snapshot_vigente(
     engine, session_factory, alembic_applied
 ) -> None:
-    """Con snapshot vigente, el bloque del prompt sale del snapshot."""
+    """Regresión del defecto medido en producción.
+
+    Las cuatro claves del bloque describen el momento presente, así que un
+    snapshot escrito al cerrar el turno anterior no puede aportarlas: el bloque
+    que recibe el modelo tiene que coincidir con el historial que está leyendo
+    en el mismo prompt. El snapshot se sigue leyendo (aporta sus claves propias).
+    """
     vivo = await _seed_vip(session_factory, CHAT_ACTIVO)
     await _seed_history(session_factory, CHAT_ACTIVO, 3)
     await _seed_snapshot(session_factory, CHAT_ACTIVO, vip_id=vivo, expira_en_horas=2)
@@ -242,11 +255,18 @@ async def test_el_snapshot_vigente_es_el_que_llega_al_modelo(
 
     bloque = _bloque_contexto(llm)
     assert bloque is not None, f"el prompt no trae el bloque de contexto: {llm.calls}"
-    assert bloque["is_first_message_of_day"] is True, (
-        f"el bloque no salió del snapshot: {bloque}"
+
+    # El snapshot vigente dice lo contrario que el historial: gana el historial.
+    assert bloque["is_first_message_of_day"] is False, (
+        f"el bloque trae el valor viejo del snapshot: {bloque}"
     )
-    assert bloque["waiting_for_reply_since"] is None, (
-        f"el bloque no salió del snapshot: {bloque}"
+    assert bloque["waiting_for_reply_since"] is not None, (
+        f"el bloque dice que no hay respuesta pendiente con el cliente "
+        f"escribiendo: {bloque}"
+    )
+    # Y el snapshot se sigue leyendo: su clave propia llega al prompt.
+    assert bloque.get(CLAVE_SOLO_DEL_SNAPSHOT) == "entrega", (
+        f"el snapshot dejó de leerse (almacén desconectado): {bloque}"
     )
     # El historial sembrado dice lo contrario: la prueba distingue de verdad.
     ahora = datetime.now(UTC)
