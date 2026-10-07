@@ -266,6 +266,25 @@ llegaron a escribir en `vips` (sería un defecto aparte y más grave). Para reso
 saber cómo y cuándo da de alta a un VIP, y revisar el chat del bot buscando el texto
 `Historial del VIP`.
 
+### 8.4 Decisión de producto: el historial mezclado se deja como está (2026-10-07)
+
+La dueña decidió **no cambiar** el uso del historial compartido entre la cuenta anterior y la
+cuenta en uso: **es el mismo cliente y la misma relación comercial**, así que el contexto
+anterior le sirve al bot y no hay nada que separar.
+
+Consecuencia que queda registrada para futuras revisiones:
+
+- Las filas de la cuenta anterior en `message_history` (bajo el id de Telegram de la persona)
+  **son legítimas y se usan a propósito**. No son contaminación ni un defecto: un revisor que
+  las encuentre no debe borrarlas, filtrarlas por fecha ni por cuenta sin una decisión de
+  producto nueva.
+- La vía "base → perfil" (reproceso de memoria) **no lleva bandera y no debe llevarla**: no es
+  una importación, es el uso normal del historial. Las banderas
+  `FEATURE_HISTORY_REIMPORT_ENABLED` y `FEATURE_VIP_HISTORY_SEED_ENABLED` gobiernan **otra
+  cosa**: la consulta a Telegram con la cuenta personal.
+- La asimetría conocida (antes del alta, el historial guarda sobre todo el lado de Diana)
+  queda como está: es el comportamiento actual del sistema, no una tarea pendiente.
+
 ---
 
 ## 9. Vigilante propuesto (E4)
