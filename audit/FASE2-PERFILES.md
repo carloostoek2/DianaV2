@@ -269,7 +269,35 @@ Complemento barato, ya en el código: el registro `profile_embedding_zeros` (§3
 
 ---
 
-## 11. Archivos tocados
+## 11. Estado en producción
+
+**Integrado y activo el 2026-10-07.** La rama `audit/perfiles-embeddings` se fusionó a `main` por
+avance rápido (historial lineal, igual que la integración del historial) y se publicó en `origin/main`
+en `5a4a26a`. El bot se reinició a las **23:49:33 UTC** sobre ese commit.
+
+Verificación posterior al reinicio:
+
+| Comprobación | Resultado |
+|---|---|
+| Servicio | `active`, **0 reinicios** (sin bucle de arranque) |
+| Salud | `{"status":"ok","checks":{"db":{"ok":true},"bot":{"ok":true,"username":"Dianishbot"}}}` |
+| Motor de huellas | Cargado (`embedding_warmup_done`) |
+| Errores o trazas en el arranque | Ninguno |
+| Registro `profile_embedding_zeros` | **0 apariciones** — el motor está conectado, que es lo esperado |
+
+**Nota operativa (lo que confundió al reportar):** durante la auditoría el árbol de trabajo quedó
+**en la rama**, y el bot corre desde **ese mismo directorio**
+(`WorkingDirectory=/home/ubuntu/repos/DianaV2`, con el proyecto instalado en modo editable apuntando a
+`src/`). El bot no se enteró porque su proceso tenía el código anterior cargado en memoria, pero **un
+reinicio fortuito habría cargado el código de auditoría sin que nadie lo aprobara**. Al fusionar y
+volver el árbol a `main`, el código en disco y el que corre quedan alineados, y ese riesgo desaparece.
+
+Regla para las próximas auditorías: mientras el trabajo esté en una rama, dejar el árbol en `main` o
+avisar explícitamente de que el directorio de producción está apuntando a la rama.
+
+---
+
+## 12. Archivos tocados
 
 | Archivo | Cambio |
 |---|---|

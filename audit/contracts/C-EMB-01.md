@@ -26,6 +26,8 @@ Semáforo:      🟡 global. Tramo `profiles` cerrado y verde: camino muerto eli
                prueba E2 en verde y dos sabotajes que la hacen fallar. Sigue 🟡 porque las otras
                4 tablas no se re-midieron en esta ronda y el trámite de las 2 huellas en ceros
                queda pendiente de que la dueña lo corra.
+Desplegado:    SÍ — integrado a `main` y publicado en `origin/main` (`5a4a26a`) el 2026-10-07;
+               bot reiniciado a las 23:49:33 UTC, servicio activo, 0 reinicios, /health ok.
 Hallazgos:     H2 cerrado: el cero en profiles era histórico (28/29-jul) e inocuo. Aplicado:
                (1) find_by_similarity borrada; (2) 12 documentos corregidos; (3) script
                scripts/regenerate_profile_embeddings.py (simulación por defecto, respaldo, --apply,
