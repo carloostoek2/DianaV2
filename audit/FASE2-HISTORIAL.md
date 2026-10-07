@@ -137,6 +137,7 @@ mensaje, así que no se abre ninguna sesión real.
 |---|---|---|---|
 | S1 | La puerta de la bandera en `composition.py` (`if not settings.feature_...` → `if False:`) | La prueba principal debe **fallar** | **Falla** en la aserción 3. Los registros muestran `vip_history_seed_enabled` y `vip_history_seed_empty`: el importador se construyó y el alta lo llamó. |
 | S2 | El registro explícito de `schedule_seed_for_new_vip` | La prueba principal debe **fallar** | **Falla** en la aserción 4 (`falta el registro del alta con el motivo`). |
+| S3 | La referencia viva de la tarea en segundo plano (§8.1) | La prueba unitaria de la tarea debe **fallar** | **Falla**: `AssertionError: la tarea quedó sin referencia`. |
 
 Ambos sabotajes se aplicaron de forma temporal sobre el árbol de trabajo y se revirtieron
 inmediatamente; el árbol quedó restaurado (verificado con `grep`).
@@ -163,6 +164,7 @@ puerta del seed apagada, el servicio de recarga tampoco se construye (`compositi
 | `.env` | Comentario de la recarga corregido + bandera nueva con motivo y condición |
 | `.env.example` | Bandera nueva documentada |
 | `tests/audit/test_C_HIST_01.py` | Prueba E2 + contraprueba (nuevo) |
+| `tests/unit/application/test_vip_history_seed.py` | Prueba de la referencia viva de la tarea |
 | `faltantes.md` | §7: decisión del 2026-09-06 y condición de reactivación |
 | `wiki/entities/specs/estado-del-proyecto.md` | Pendiente registrado con fecha y fuente |
 | `audit/FASE2-HISTORIAL.md` | Este informe (nuevo) |
@@ -185,12 +187,24 @@ Suites ejecutadas: `tests/audit/test_C_HIST_01.py`, `tests/unit` (4349 pruebas) 
 
 ---
 
-## 7. Pendiente operativo (importante)
+## 7. Estado en producción
 
-El cambio **no está activo en producción**: el proceso en ejecución mantiene el código anterior
-cargado. Hasta el próximo reinicio del bot, cada alta de VIP nuevo sigue intentando la
-importación con la sesión de la cuenta anterior. No se reinició ni se desplegó nada, según lo
-acordado.
+**Activo desde el 2026-10-07 07:12 UTC** (reinicio autorizado por la dueña). Verificado en el
+arranque:
+
+```
+vip_history_seed_disabled_by_flag session_path=.../runtime/diana_session
+  telethon_configured=True reason=feature_vip_history_seed_enabled=false
+history_reimport_job_skipped_flag_off
+```
+
+`telethon_configured=True` deja ver que la configuración de Telethon sigue completa: lo que
+impide la importación es la puerta de producto, no una credencial faltante.
+
+**Límite a tener presente:** el reinicio tomó el código de la rama `audit/historial-decision`,
+que es la que está en el árbol de trabajo. `main` **no** tiene el cambio todavía. Si el árbol
+vuelve a `main` sin integrar la rama, el comportamiento anterior regresa en el siguiente
+reinicio. La integración a `main` queda pendiente y no se hizo (fuera de lo acordado).
 
 ---
 
@@ -228,8 +242,10 @@ los registros de esa fecha quedaron fuera de la retención de `journald`):
   por límite de Telegram, hasta 5 esperas) y la tarea murió con el siguiente reinicio del
   proceso, sin llegar nunca al aviso.
 
-Ambas causas quedan **desactivadas** por el cambio de §3 (la puerta apagada evita el intento),
-pero el defecto de la referencia sigue en el código para cuando se reactive.
+Ambas causas quedan **desactivadas** por el cambio de §3 (la puerta apagada evita el intento).
+El defecto de la referencia, además, **quedó corregido** el 2026-10-07
+(`vip_history_seed.schedule_seed_for_new_vip` ahora sostiene la tarea en un conjunto y la suelta
+al terminar, igual que `MemoryBackfillQueue`), con prueba propia y sabotaje S3.
 
 ### 8.2 De dónde salió la información del VIP Memo L.A. (la duda de la dueña)
 
