@@ -1,7 +1,7 @@
 ---
 title: Estado del Proyecto
 created: 2026-08-11
-updated: 2026-08-21
+updated: 2026-10-07
 type: summary
 tags: [estado, operacion, riesgo]
 sources: [../../docs/ESTADO-PROYECTO.md]
@@ -40,6 +40,7 @@ Síntesis del 2026-08-21. Fuente canónica: `docs/ESTADO-PROYECTO.md`. Head `b59
 - **Cola durable `synthesis_queue`** para síntesis de perfiles: no implementada (hoy guard en memoria).
 - **Ficha de perfil EA-06** con historial de versiones (`vip_profile_history`): no implementada.
 - **Fase 4 de evolución de agente (iniciativa contextual)**: diferida por decisión de producto.
+- **Importación de historial desde la cuenta personal — apagada a propósito (2026-09-06).** Tanto la recarga de historial de VIP ya registrados (`FEATURE_HISTORY_REIMPORT_ENABLED=false`) como la importación al registrar un VIP nuevo (`FEATURE_VIP_HISTORY_SEED_ENABLED=false`) están apagadas desde el cambio de cuenta: la sesión de Telethon configurada es de la cuenta anterior y la cuenta en uso no tiene historial con ningún VIP (todos escriben en chats nuevos). El historial anterior sigue guardado en `message_history`. Reactivar solo con una sesión de la cuenta en uso y decisión explícita de producto. Detalle: `faltantes.md` §7, `audit/FASE2-HISTORIAL.md`.
 - **Migraciones 027–029 en producción**: apply sin verificar (operativo).
 - **Deuda técnica de privacidad**: masking PII previo al envío al LLM, retención/modelo local y acuerdo de procesamiento con el proveedor, recalibración del umbral de dedup 0.85 tras uso real.
 

@@ -200,14 +200,33 @@ class SystemClock:
 def _build_vip_history_seed(
     settings: Settings, *, history: Any, notifier: Any = None
 ) -> Any:
-    """Wire Telethon VIP history seed when API credentials + session path are set."""
+    """Arma el importador de historial del alta de VIP.
+
+    La puerta es ``feature_vip_history_seed_enabled``: con la bandera apagada el
+    servicio se construye igual (los puntos de alta no cambian) pero sin
+    ``fetcher``, así que registrar un VIP nunca abre la sesión personal de
+    Telegram. Cada intento de alta queda registrado con su motivo; configurar
+    credenciales no alcanza para que el importador funcione.
+    """
     from diana.application.vip_history_seed import VipHistorySeedService
 
     api_id = settings.telethon_api_id
     api_hash = settings.telethon_api_hash.get_secret_value().strip()
     session_path = (settings.telethon_session_path or "").strip()
+    credentials_ready = bool(api_id and api_hash and session_path)
     fetcher = None
-    if api_id and api_hash and session_path:
+    disabled_reason: str | None = None
+    if not settings.feature_vip_history_seed_enabled:
+        disabled_reason = "flag_off"
+        logger.info(
+            "vip_history_seed_disabled_by_flag",
+            extra={
+                "session_path": session_path,
+                "telethon_configured": credentials_ready,
+                "reason": "feature_vip_history_seed_enabled=false",
+            },
+        )
+    elif credentials_ready:
         from diana.infrastructure.telethon.vip_history_fetcher import (
             TelethonVipHistoryFetcher,
         )
@@ -225,12 +244,14 @@ def _build_vip_history_seed(
             },
         )
     else:
+        disabled_reason = "missing_telethon_config"
         logger.info("vip_history_seed_disabled_missing_telethon_config")
     return VipHistorySeedService(
         history=history,
         fetcher=fetcher,
         limit=settings.vip_history_seed_limit,
         notifier=notifier,
+        disabled_reason=disabled_reason,
     )
 
 

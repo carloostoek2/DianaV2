@@ -120,15 +120,25 @@ class VipHistorySeedService:
         fetcher: VipHistoryFetcher | None,
         limit: int = 20,
         notifier: OwnerNotifierPort | None = None,
+        disabled_reason: str | None = None,
     ) -> None:
         self._history = history
         self._fetcher = fetcher
         self._limit = max(1, int(limit))
         self._notifier = notifier
+        # Motivo por el que no hay importador (bandera apagada, configuración
+        # ausente). Viaja a los logs para que el silencio nunca se lea como
+        # "no había nada que importar".
+        self._disabled_reason = disabled_reason
 
     @property
     def enabled(self) -> bool:
         return self._fetcher is not None
+
+    @property
+    def disabled_reason(self) -> str:
+        """Motivo por el que el importador no está disponible (nunca vacío)."""
+        return self._disabled_reason or "no_fetcher"
 
     async def seed_for_new_vip(
         self,
@@ -149,7 +159,7 @@ class VipHistorySeedService:
         if self._fetcher is None:
             logger.info(
                 "vip_history_seed_disabled",
-                extra={"telegram_user_id": uid},
+                extra={"telegram_user_id": uid, "reason": self.disabled_reason},
             )
             return SeedOutcome(kind="disabled", count=0, telegram_user_id=uid)
 
@@ -203,6 +213,16 @@ class VipHistorySeedService:
     ) -> None:
         """Fire-and-forget seed after VIP allowlist add (never blocks owner UX)."""
         if self._fetcher is None:
+            # El alta sigue su curso, pero el intento queda registrado con su
+            # motivo: apagado a propósito no es lo mismo que no tener nada que
+            # importar, y un registro ausente no debe parecer un éxito.
+            logger.info(
+                "vip_history_seed_skipped_disabled",
+                extra={
+                    "telegram_user_id": int(telegram_user_id),
+                    "reason": self.disabled_reason,
+                },
+            )
             return
         try:
             loop = asyncio.get_running_loop()

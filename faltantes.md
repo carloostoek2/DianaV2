@@ -90,9 +90,39 @@ Durante el backfill, el historial completo del chat del VIP se envía al proveed
 
 ---
 
+## 7. Historial de VIP (importación desde la cuenta personal)
+
+Decisión de producto del **2026-09-06**, tomada al cambiar la cuenta de Telegram con la que
+opera Diana. Las dos vías de importación quedaron apagadas a propósito, no por falla.
+
+- **Recarga de historial de VIP ya registrados — apagada a propósito.**
+  `FEATURE_HISTORY_REIMPORT_ENABLED=false` en `.env`. Motivo: la sesión de Telethon
+  configurada (`TELETHON_SESSION_PATH`) es de la **cuenta anterior**, y la cuenta en uso **no
+  tiene historial con ningún VIP** (todos escriben en chats nuevos). Recargar consultaría
+  Telegram con una cuenta que ya no opera y, además, generaría actividad de una cuenta recién
+  creada, con el riesgo de llamar la atención de Telegram. El historial anterior **sigue
+  guardado** en `message_history`: no se borró nada.
+- **Importación de historial al registrar un VIP nuevo — apagada a propósito.**
+  `FEATURE_VIP_HISTORY_SEED_ENABLED=false` en `.env` (misma fecha y mismo motivo). Antes de
+  este cambio, cada alta disparaba un intento de importación en segundo plano con la sesión de
+  la cuenta anterior (no bloqueaba el alta) y avisaba a la dueña con un mensaje que podía
+  leerse como "no había historial" cuando en realidad la sesión era de otra cuenta. Ahora el
+  alta no toca Telethon y deja registrado el motivo.
+- **Condición para reactivar cualquiera de las dos:** que `TELETHON_SESSION_PATH` apunte a una
+  sesión de la **cuenta en uso** y que la dueña decida de forma explícita asumir el riesgo de
+  que Telegram note la actividad de la cuenta. No hay reactivación automática ni por fecha.
+- **Qué se pierde mientras estén apagadas:** Diana no recupera la conversación previa de un VIP
+  al registrarlo (arranca sin contexto de ese chat) ni reprocesa el historial ya guardado para
+  reconstruir perfiles. La captura de historial en vivo (lo que la dueña escribe en el chat del
+  VIP) sigue funcionando con normalidad.
+- **Detalle técnico y evidencia:** `audit/FASE2-HISTORIAL.md`.
+
+---
+
 ## Referencias
 
 - `docs/ESTADO-PROYECTO.md` — estado actual del sistema y pendientes reales (2026-09-14).
+- `audit/FASE2-HISTORIAL.md` — decisión del historial desde la cuenta personal (2026-09-06) y verificación del alta de VIP.
 - `docs/INFORME_AUDITORIA.md` — auditoría de alineamiento código ↔ REQUERIMIENTOS.md (161 reqs).
 - `docs/SPEC-FASE5.md` — perfil de VIP con memoria; pendientes de privacidad y dedup (§12).
 - `docs/SPEC-EVOLUCION-AGENTE.md` — evolución de agente (v1.2); fase 4 diferida y retención de datos.
