@@ -30,7 +30,7 @@ Telegram de la dueña, lentamente, un VIP por ciclo".
 |---|---|---|
 | ¿Bloquea o retrasa el alta? | **No.** El alta se guarda primero y la importación se lanza como tarea de fondo (`create_task`); el handler no la espera. | `vip_history_seed.py:215-218` |
 | ¿Falla el alta si la importación falla? | **No.** `_seed_safe` captura cualquier excepción y la convierte en `SeedOutcome(kind="failed")`. | `vip_history_seed.py:227-234` |
-| ¿Avisa a la dueña? | **Sí, siempre**, incluso en el caso benigno: el mensaje de "no había historial previo que importar" sale cuando la importación devuelve 0 filas nuevas, y "no se pudo importar" cuando falla. | `vip_history_seed.py:41-61`, `237-246` |
+| ¿Avisa a la dueña? | **El código lo intenta siempre** (el mensaje de "no había historial previo que importar" sale cuando la importación devuelve 0 filas nuevas, y "no se pudo importar" cuando falla), pero **en la práctica el aviso nunca llega**: ver la corrección de §8.1. | `vip_history_seed.py:41-61`, `237-246`; §8.1 |
 | ¿Se queda esperando? | **Sí, sin límite.** `client.connect()` del fetcher no tiene timeout y el módulo serializa con un `asyncio.Lock` global. Una tarea colgada retiene ese lock. Hoy el lock solo lo usa el propio importador (la recarga está apagada), así que no bloquea ni el alta ni el pipeline. | `vip_history_fetcher.py:147-159` |
 | ¿Se intenta de todos modos con la cuenta anterior? | **Sí.** El `fetcher` se construye por configuración presente (`TELETHON_API_ID` + `TELETHON_API_HASH` + `TELETHON_SESSION_PATH`), sin ninguna puerta de producto. El `.env` tiene las tres. | `composition.py:200-234` |
 
@@ -75,6 +75,9 @@ primeras filas con rol `vip` aparecen el mismo 22 de septiembre, o sea que son c
 nueva de la cuenta en uso.
 
 **Conclusión (probado):** el alta de ese VIP **no trajo historial de la cuenta anterior**.
+
+**Ampliado en §8.1:** la inspección de la sesión de Telethon mostró después que el intento **sí
+se ejecutó y sí conectó** ese día, y que no importó ni avisó.
 
 **Sin determinar (⚪):** no se puede saber si el intento del 22 de septiembre falló
 (`vip_history_seed_failed` → aviso "no se pudo importar") o volvió vacío
@@ -191,7 +194,81 @@ acordado.
 
 ---
 
-## 8. Vigilante propuesto (E4)
+## 8. Corrección tras la revisión de la dueña (2026-10-07, misma fecha)
+
+La dueña aportó tres hechos que obligaron a re-medir. Dos de mis afirmaciones anteriores
+quedaron corregidas.
+
+### 8.1 El aviso del alta nunca llega (mi informe decía que avisa siempre)
+
+El informe afirmaba que el alta avisa a la dueña "siempre". La dueña confirma que ese aviso
+**nunca** llega; sí llegan, en cambio, los avisos del reproceso de perfil.
+
+Evidencia nueva (inspección de la sesión de Telethon, en copia, sin conectarse a Telegram):
+
+- `runtime/diana_session.session` tiene fecha de modificación **2026-09-22 00:37:53**, un
+  segundo después de la fila del VIP de Memo L.A. (00:37:52). El único otro uso registrado en
+  la caché de entidades es el 2026-09-02. **Conclusión: el intento de importación sí se
+  ejecutó y sí conectó** con la cuenta de la sesión.
+- En esa misma marca solo se actualizó la entidad propia (id 0) de la sesión: **ninguna
+  entidad se recargó** ese día, así que no hubo un recorrido de conversaciones.
+- No se agregó ninguna fila a `message_history` en ese momento.
+
+Es decir: la tarea arrancó, conectó, y **ni importó ni avisó**. Causa probable (no probada,
+los registros de esa fecha quedaron fuera de la retención de `journald`):
+
+- **Diferencia real de código entre los dos caminos que salen del mismo botón.**
+  `MemoryBackfillQueue.schedule_enqueue` guarda una referencia de la tarea
+  (`self._tasks.add(task)` + `add_done_callback`), mientras que
+  `VipHistorySeedService.schedule_seed_for_new_vip` **no la guarda**
+  (`loop.create_task(...)` suelto). Una tarea sin referencia puede recolectarse a mitad de
+  ejecución; es el riesgo que documenta la propia biblioteca estándar. El camino que sí
+  guarda la referencia es justamente el que sí avisa.
+- Alternativa compatible con la misma evidencia: la consulta se quedó esperando (reintentos
+  por límite de Telegram, hasta 5 esperas) y la tarea murió con el siguiente reinicio del
+  proceso, sin llegar nunca al aviso.
+
+Ambas causas quedan **desactivadas** por el cambio de §3 (la puerta apagada evita el intento),
+pero el defecto de la referencia sigue en el código para cuando se reactive.
+
+### 8.2 De dónde salió la información del VIP Memo L.A. (la duda de la dueña)
+
+**De la base de datos, no de Telegram.** Evidencia:
+
+- Las memorias de ese VIP se crearon a las **2026-09-22 00:37:55**, tres segundos después de
+  su alta, con `"fuente": "backfill"`. El reproceso lee `message_history`; no usa Telethon.
+- Entre los hechos extraídos hay referencias a hechos del **15 de septiembre**, anteriores al
+  alta (22 de septiembre).
+- No entró ninguna fila nueva por la vía de Telethon (§8.1).
+
+**Mecanismo (hallazgo nuevo e importante):** `message_history` está indexado por el **id de
+Telegram de la persona**, no por cuenta ni por chat. Al cambiar de cuenta, el mismo id de
+persona conserva el historial de la cuenta anterior mezclado con el de la cuenta en uso. En el
+chat de Memo L.A. se ve la discontinuidad: agosto con ids 593.820–602.844 (cuenta anterior) y
+desde el 8 de septiembre ids 2.582 en adelante (cuenta en uso), **todo bajo el mismo chat_id**.
+
+Consecuencia: **apagar las dos banderas de importación no evita que la conversación anterior
+alimente el perfil de un VIP nuevo.** Esa vía es el reproceso de memoria
+(`FEATURE_MEMORY_ENABLED=true`), que lee la base y no tiene puerta por cuenta. Las memorias
+sensibles que la dueña vio llegar por DM corresponden a ese reproceso de perfil, no a la
+importación de historial.
+
+### 8.3 Cantidad de altas desde el cambio de cuenta (mi informe decía una)
+
+La dueña indica al menos siete o diez. Lo medido dice una sola fila en `vips` posterior al
+2026-09-06 (Memo L.A., 2026-09-22 00:37:52) y ninguna otra desde entonces. La sesión de
+Telethon sin tocar desde esa misma marca respalda que no hubo otro intento de alta.
+
+Lo que sí creció mucho desde el cambio de cuenta: **278 ventanas de atención** iniciadas
+(`atencion_cycles`) y **137 chats con historial nuevo**. Queda **sin determinar** si la dueña
+cuenta esas altas de atención como "altas de VIP", o si hubo intentos de alta de VIP que no
+llegaron a escribir en `vips` (sería un defecto aparte y más grave). Para resolverlo hace falta
+saber cómo y cuándo da de alta a un VIP, y revisar el chat del bot buscando el texto
+`Historial del VIP`.
+
+---
+
+## 9. Vigilante propuesto (E4)
 
 1. **Alerta si el importador se cablea con la puerta apagada.** Buscar `vip_history_seed_enabled`
    en el arranque mientras `FEATURE_VIP_HISTORY_SEED_ENABLED=false`, o cualquier
