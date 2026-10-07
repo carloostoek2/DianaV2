@@ -201,10 +201,9 @@ history_reimport_job_skipped_flag_off
 `telethon_configured=True` deja ver que la configuración de Telethon sigue completa: lo que
 impide la importación es la puerta de producto, no una credencial faltante.
 
-**Límite a tener presente:** el reinicio tomó el código de la rama `audit/historial-decision`,
-que es la que está en el árbol de trabajo. `main` **no** tiene el cambio todavía. Si el árbol
-vuelve a `main` sin integrar la rama, el comportamiento anterior regresa en el siguiente
-reinicio. La integración a `main` queda pendiente y no se hizo (fuera de lo acordado).
+**Integrado a `main`** el 2026-10-07 (`cc85b78..bed7693`, avance directo) y publicado en
+`origin/main`. El bot quedó reiniciado sobre `main`, así que el cambio ya no depende de la rama
+de auditoría: es el estado del proyecto.
 
 ---
 
