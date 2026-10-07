@@ -36,6 +36,10 @@ Regla dura: **solo E3 o E4 se reporta como ✅**. E0/E1 se reporta como "sin ver
 - **Cableado por bandera:** `x if settings.feature_y else None` en `composition.py`; el flujo existe pero nadie lo recibe.
 - **Función huérfana:** definida y probada, nunca llamada desde producción.
 - **Prueba que no ve el cableado:** el test construye el servicio a mano en vez de pasar por `build_app`.
+- **Upsert que borra lo ya escrito:** `INSERT … ON CONFLICT DO UPDATE` que pisa columnas con NULL (ocurrió: owner_outcome, 23-ago→10-sep).
+- **Documentación que afirma de más:** la wiki dice "activa" algo que nadie llama (búsqueda por parecido en `profiles`).
+- **Bandera apagada a propósito y sin registrar:** `.env` decía "VIVO", valor real `false`. Toda bandera núcleo apagada debe declarar motivo y fecha.
+- **Ruta de diseño que nunca pasa por el registro** (escalación por palabra clave, plantillas, sandbox): un hueco puede ser diseño, no fallo. Clasificar por ruta ANTES de culpar a errores tragados.
 
 ## Qué cuenta como prueba válida
 - Parte del punto de entrada **real** (handler, job, `build_app`), no del servicio ya armado.
@@ -50,3 +54,6 @@ Lenguaje de negocio (AGENTS.md §0): qué prometía, si ocurre de verdad, qué p
 - No arreglar código de producción durante la auditoría: se reporta con evidencia y se propone arreglo aparte.
 - Una prueba nueva que pasa a la primera es sospechosa: sabotear antes de confiar.
 - Si no se puede ejecutar algo (sin Docker, sin credenciales de Telegram), decirlo y marcar ⚪, nunca asumir.
+
+## Lección de la ronda piloto
+De 3 hipótesis iniciales (errores tragados en la sombra, causa común en el cambio de cuenta, ceros vivos en perfiles) las 3 resultaron falsas o inocuas al medir. La regla "no concluir sin medir" evitó arreglar lo equivocado. Siempre: hipótesis → medición en datos reales → conclusión marcada (probado / probable / sin determinar).

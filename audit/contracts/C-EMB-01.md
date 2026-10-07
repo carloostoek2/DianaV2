@@ -19,5 +19,5 @@ Prueba E2:     pendiente → insertar por el flujo real (Destacar, Reprender, po
 Sabotaje E3:   pendiente → S1 (embedder=None), S3 (embed lanza), S4 (embed devuelve ceros). Esperado: la prueba falla Y el sistema deja rastro visible.
 Vigilante E4:  propuesto → diario: `SELECT count(*) FROM <tabla> WHERE embedding = <ceros>` por tabla (examples, policies, memories, profiles); > 0 ⇒ alerta. Y: modelo de embeddings `is_loaded` en /health.
 Nivel:         E0 + evidencia estática de riesgo real
-Semáforo:      🔴 CONFIRMADO en producción: 2 de 3 perfiles con embedding en ceros (último cambio 22-sep). examples/policies/memories/contexts: 0 ceros (🟢)
-Hallazgos:     H2
+Semáforo:      🟡 Las 4 tablas con búsqueda por parecido (memories, examples, policies, contexts): 0 ceros. profiles: 2 ceros heredados de julio (antes del motor), SIN efecto: nadie busca por parecido en profiles. Documentación afirma de más (wiki dice 'activa').
+Hallazgos:     H2 corregido: el cero en profiles es histórico (28/29-jul) e inocuo (NaN se autoexcluye). Pendiente: regenerar 2 huellas; borrar o blindar find_by_similarity huérfana; corregir wiki. Ver INVESTIGACION-B.md

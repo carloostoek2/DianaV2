@@ -18,5 +18,5 @@ Prueba E2:     (a) pendiente: entrega real → asertar filas de historial con me
 Sabotaje E3:   pendiente → S2 (bandera OFF), S1 (seed=None), quitar la llamada a append_owner_delivery_history.
 Vigilante E4:  propuesto → (a) turnos DELIVERED sin fila de historial en 24h; (b) VIPs sin importar / cursor sin avanzar en > N intervalos con la bandera ON.
 Nivel:         E0
-Semáforo:      (a) captura de historial: 🟡 viva en producción (0 mensajes sin id). (b) recarga de historial: 🔴 apagada (bandera false, cursor congelado 6-sep) aunque el .env decía 'VIVO desde 2026-09-02'
-Hallazgos:     H3
+Semáforo:      (a) captura: 🟡 15.688 filas, todas con id. (b) recarga de VIP existentes: ⚪ apagada A PROPÓSITO desde 6-sep. CONFIRMADO por la dueña (2026-10-06): la sesión de Telethon es la de la cuenta VIEJA; la cuenta nueva no tiene historial con ningún VIP (todos escriben en chats nuevos; el historial anterior en Telegram se perdió; en la base sigue). PENDIENTE: el import al alta de VIP nuevo usa esa misma sesión y no puede encontrar chats de la cuenta nueva.
+Hallazgos:     H3 confirmado y resuelto como decisión; falta registrar. Pregunta abierta: ¿qué cuenta usa la sesión Telethon y trae historial el alta de VIP nuevos? Ver INVESTIGACION-C.md

@@ -42,3 +42,17 @@ Fecha: 2026-10-06 · Alcance: lectura estática + escaneo automático. **No se e
 
 Correlación a investigar: el cursor de recarga y el hueco de resultados de la dueña empiezan el MISMO día (6-sep, cambio de cuenta). Hipótesis, no probada: una causa común.
 Vigilantes propuestos: `audit/vigilantes.sql` (V1–V6).
+
+---
+# CIERRE DEL PILOTO (investigaciones A, B y C)
+Tres hipótesis mías resultaron incorrectas al medir: (1) los huecos de la sombra NO eran errores tragados; (2) NO había causa común en el cambio de cuenta; (3) los ceros en perfiles NO eran un bug vivo. El valor del método estuvo en descartarlas con datos.
+
+| Contrato | Semáforo final | Resumen |
+|---|---|---|
+| C-SHADOW-01 | 🟡 | 14 huecos = rutas de diseño. 41 pérdidas = defecto de upsert corregido 10-sep. Sin recaídas. |
+| C-EMB-01 | 🟡 | 4 tablas útiles limpias. 2 ceros históricos inocuos. La wiki afirma de más. |
+| C-HIST-01a | 🟡 | 15.688 filas, todas con id |
+| C-HIST-01b | ⚪ por decisión | Apagada a propósito (6-sep). Falta documentarla. |
+| NUEVO | ❓ | Import al alta de VIP nuevo: encendido, misma sesión Telethon, no verificado con la cuenta nueva |
+
+Pendientes ordenados: ver mensaje de cierre. Evidencia: INVESTIGACION-A/B/C.md · vigilantes: vigilantes.sql (V1–V7).

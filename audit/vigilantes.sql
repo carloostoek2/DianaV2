@@ -38,3 +38,10 @@ FROM system_config WHERE key = 'history_reimport_cursor';
 SELECT count(*) AS vip_sin_perfil
 FROM vips v LEFT JOIN profiles p ON p.vip_id = v.id
 WHERE v.is_active AND p.id IS NULL;
+
+-- V7 Recaída del defecto del 10-sep: fila con puntaje y SIN decisión de la dueña tras una aprobación. Alerta si > 0
+SELECT count(*) AS recaidas
+FROM turn_outcome_log o JOIN turns t ON t.id = o.turn_id
+WHERE o.draft_score IS NOT NULL AND o.owner_outcome IS NULL
+  AND t.status = 'delivered'
+  AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '2 hours';

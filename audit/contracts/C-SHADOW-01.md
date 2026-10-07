@@ -23,5 +23,5 @@ Prueba E2:     pendiente → tests/audit/test_C_SHADOW_01.py (P1+P2+P4: build_ap
 Sabotaje E3:   pendiente → S1 (outcome_log=None), S3 (record_shadow lanza), S5 (quitar llamada :432). Esperado: la prueba falla en los tres.
 Vigilante E4:  propuesto → diario: turnos VIP entregados/escalados de las últimas 24h SIN fila en turn_outcome_log > 0 ⇒ alerta. Y: filas con owner_outcome NULL a más de N horas de una aprobación.
 Nivel:         E0 en código + evidencia viva de producción (499 filas, 23-ago → 6-oct; 223/237 turnos con fila). Sin E3.
-Semáforo:      🟡 funciona en producción; fallos parciales sin explicar (14 turnos sin fila; 41 sin resultado de la dueña del 6 al 10-sep)
-Hallazgos:     H1 (contadores de silencios sin exponer), H4 (bandera de producción no verificable)
+Semáforo:      🟡 Funciona. Los 14 huecos son rutas de diseño (probado). El hueco del 23-ago→10-sep fue un defecto de guardado (commit 3ade3b3, corregido 10-sep 19:42): 157 entregas desde el 11-sep, 0 pérdidas. Falta E3 y vigilantes.
+Hallazgos:     H1 sigue siendo riesgo sistémico pero NO fue la causa aquí (0 errores en logs 30-sep→6-oct). Causa real del hueco: upsert que borraba owner_outcome. Ver INVESTIGACION-A.md
