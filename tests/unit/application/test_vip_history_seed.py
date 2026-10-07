@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -154,6 +155,45 @@ async def test_seed_dedup_rows_without_message_id() -> None:
     recent = await history.get_recent(42, limit=10)
     assert len(recent) == 2
     assert [r["text"] for r in recent] == ["dup", "other"]
+
+
+@pytest.mark.asyncio
+async def test_schedule_sostiene_la_tarea_en_segundo_plano() -> None:
+    """La tarea del alta no puede quedar sin referencia.
+
+    Una tarea en segundo plano sin referencia puede recolectarse a mitad de
+    ejecución: es lo observado en producción (el alta conectó con Telethon y no
+    importó ni avisó). Mientras corre, el servicio debe sostenerla; al
+    terminar, soltarla.
+    """
+    history = InMemoryMessageHistoryWriter()
+    notifier = FakeOwnerNotifier()
+    arrancada = asyncio.Event()
+    liberar = asyncio.Event()
+
+    class FetcherQueSeQueda:
+        async def fetch_recent(
+            self, user_id: int, *, limit: int, username: str | None = None
+        ) -> list[HistoryLine]:
+            arrancada.set()
+            await liberar.wait()
+            return [_line("vip", "hola", 1)]
+
+    svc = VipHistorySeedService(
+        history=history, fetcher=FetcherQueSeQueda(), limit=20, notifier=notifier
+    )
+    svc.schedule_seed_for_new_vip(4242)
+    await asyncio.wait_for(arrancada.wait(), timeout=1)
+    assert len(svc._tasks) == 1, "la tarea quedó sin referencia"  # noqa: SLF001
+
+    tareas = list(svc._tasks)  # noqa: SLF001
+    liberar.set()
+    await asyncio.wait(tareas)
+    await asyncio.sleep(0)  # deja correr el callback que la suelta
+    await asyncio.sleep(0)
+
+    assert svc._tasks == set(), "la tarea terminada no se soltó"  # noqa: SLF001
+    assert len(notifier.infos) == 1, "la tarea terminó sin avisar a la dueña"
 
 
 @pytest.mark.asyncio

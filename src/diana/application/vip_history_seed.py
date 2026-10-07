@@ -130,6 +130,10 @@ class VipHistorySeedService:
         # ausente). Viaja a los logs para que el silencio nunca se lea como
         # "no había nada que importar".
         self._disabled_reason = disabled_reason
+        # Tareas de importación vivas. Sin esta referencia una tarea en segundo
+        # plano puede recolectarse a mitad de ejecución y desaparecer sin
+        # importar ni avisar (mismo patrón que MemoryBackfillQueue).
+        self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def enabled(self) -> bool:
@@ -232,10 +236,15 @@ class VipHistorySeedService:
                 extra={"telegram_user_id": telegram_user_id},
             )
             return
-        loop.create_task(
+        task = loop.create_task(
             self._seed_safe(telegram_user_id, username=username),
             name=f"vip-history-seed-{telegram_user_id}",
         )
+        # La referencia se sostiene hasta que la tarea termina: si se suelta
+        # antes, la tarea puede morir en silencio (conecta con Telegram y no
+        # importa ni avisa, que es exactamente lo que se observó en producción).
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _seed_safe(
         self,
