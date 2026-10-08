@@ -13,8 +13,10 @@
 
 -- V1 | activo | C-EMB-01 | huellas semánticas NUEVAS en ceros (el incidente de agosto)
 -- Alerta solo por ceros escritos en los últimos 2 días: las filas históricas ya
--- conocidas no vuelven a avisar todos los días (hoy: 2 históricas en `profiles`,
--- documentadas y pendientes de decisión de la dueña, con 0 nuevas).
+-- conocidas no vuelven a avisar todos los días. Estado al 2026-10-08: las 2
+-- históricas de `profiles` (28/29-jul) se regeneraron con
+-- scripts/regenerate_profile_embeddings.py --apply, así que hoy las 5 tablas
+-- están en 0 y este vigilante solo puede dispararse por algo NUEVO.
 SELECT t AS tabla, nuevos AS alerta, total AS historico
 FROM (
     SELECT 'examples' AS t, count(*) AS total,

@@ -19,6 +19,14 @@ from diana.infrastructure.db.repositories.staging import StagingCandidateRepo
 
 logger = logging.getLogger("diana.application")
 
+# Reasons why a promoted row ends up carrying the zero vector. Same vocabulary
+# as ProfilesRepo (`profile_embedding_zeros`) and PoliciesRepo
+# (`policy_embedding_pending`): the row keeps the zeros, the reason stops being
+# invisible (audit/FASE2-SABOTAJE.md §4, H-SB-1).
+_NO_EMBEDDER = "no_embedder"
+_EMPTY_TEXT = "empty_text"
+_EMBEDDER_RETURNED_ZEROS = "embedder_returned_zeros"
+
 
 class AtencionPromoteBlocked(ValueError):
     """Raised when an atencion correction is promoted to the VIP example bank.
@@ -54,20 +62,47 @@ class StagingService:
     async def _embed(self, text: str) -> list[float] | None:
         """Compute the retrieval fingerprint for ``text``, or None.
 
-        None when no embedder is configured or the embed call fails: the row
-        is still persisted (fail-open, mirroring GrayZoneService) but logged
-        so a silent zero-embedding write stays observable.
+        None when there is no embedder, no text, or the embed call fails. The
+        row is still persisted (fail-open, mirroring GrayZoneService) and the
+        examples repository turns that None into the zero vector, so the row
+        ends up invisible to the similarity search. Persisting is deliberate;
+        the *silence* is not: every None path logs its reason, with the same
+        vocabulary as ProfilesRepo and PoliciesRepo (audit H-SB-1, 2026-10-08).
+
+        Note: this removes the silence, not the zero — the row still carries
+        the zero vector, which is what the daily watcher V1 alerts on.
         """
-        if self._embedder is None or not text:
+        if self._embedder is None:
+            logger.warning(
+                "staging_embed_zeros",
+                extra={"reason": _NO_EMBEDDER, "text_len": len(text)},
+            )
+            return None
+        if not text:
+            # Legitimate: the candidate had nothing to fingerprint. Kept at
+            # DEBUG, like the empty_text case in ProfilesRepo.
+            logger.debug(
+                "staging_embed_zeros",
+                extra={"reason": _EMPTY_TEXT, "text_len": 0},
+            )
             return None
         try:
-            return await self._embedder.embed(text)
+            vec = await self._embedder.embed(text)
         except Exception:
             logger.exception(
                 "staging_embed_failed",
                 extra={"text_len": len(text)},
             )
             return None
+        if not any(vec):
+            # The August-2026 disguise: an all-zero vector is not "no
+            # embedding", it is a row that looks valid and is invisible.
+            logger.warning(
+                "staging_embed_zeros",
+                extra={"reason": _EMBEDDER_RETURNED_ZEROS, "text_len": len(text)},
+            )
+            return None
+        return vec
 
     def _anchor_text(self, payload: dict) -> str:
         """Pick the text that best represents the example for retrieval."""

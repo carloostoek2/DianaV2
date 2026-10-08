@@ -406,11 +406,19 @@ INFO     diana.application:admin_service.py:980 gold_example_marked
 (ningún WARNING ni ERROR de huella en toda la corrida)
 ```
 
-La causa está en `staging_service._embed`: cuando `self._embedder is None` devuelve `None` en silencio; solo
-registra `staging_embed_failed` si el embedder **existe y falla**. Con la pieza ausente, el repositorio
+La causa está en `staging_service._embed`: cuando `self._embedder is None` devolvía `None` en silencio; solo
+registraba `staging_embed_failed` si el embedder **existe y falla**. Con la pieza ausente, el repositorio
 convierte ese `None` en ceros (`examples.py:74`), que es el punto ciego que el propio contrato ya tenía
-anotado. **La prueba lo caza igual** (por eso es E3), pero en producción el rastro no existiría. Es el
-candidato natural a un vigilante E4 (§6) y a un arreglo aparte, fuera del alcance de esta auditoría.
+anotado. **La prueba lo caza igual** (por eso es E3), pero en producción el rastro no existía.
+
+**ARREGLADO (2026-10-08, autorizado por la dueña).** `staging_service._embed` ahora deja rastro en todos
+los caminos que terminan en ceros, con el mismo vocabulario que perfiles y política: evento
+`staging_embed_zeros` con `reason` = `no_embedder` / `empty_text` (a DEBUG, porque no tener texto que
+huellar es legítimo) / `embedder_returned_zeros`. Este último es el disfraz de agosto: el motor contesta
+ceros **sin lanzar excepción**, así que nunca caía en el camino de error y la fila parecía válida. El
+comportamiento no cambió (la fila se sigue guardando, fail-open); lo que se quitó es el silencio. Tres
+pruebas unitarias nuevas cubren los tres motivos, y se verificó que fallan si se revierte el arreglo
+(sabotaje).
 
 ### H-SB-2 — Los dos niveles de silencio de C-SHADOW-01 quedaron probados con evidencia
 
@@ -512,10 +520,13 @@ a medir.
    y V7 activos; V3/V4/V5/V6 no, cada uno con su motivo escrito en `audit/vigilantes.sql`.
 2. **Fichas de contrato — HECHO**: `audit/contracts/C-SHADOW-01.md` y `C-EMB-01.md` actualizadas con el nivel
    E3, el vigilante desplegado y los hallazgos.
-3. **H-SB-1 sigue abierto** (ceros silenciosos en "Destacar" cuando falta el embedder): merece un arreglo
-   chico y aparte — que `staging_service._embed` registre el motivo `no_embedder`, igual que ya hacen política
-   y memoria. Esta ronda solo midió y vigiló; no se tocó el código de producción.
-4. **Nada más que arreglar por el sabotaje**: los 12 sabotajes hacen su trabajo y no apareció ningún defecto
+3. **H-SB-1 — ARREGLADO** (2026-10-08, por decisión de la dueña): `staging_service._embed` ya no escribe
+   ceros en silencio (§4). Tres pruebas unitarias nuevas; la suite completa (4.432 pruebas) y las pruebas E2
+   de C-EMB-01 siguen en verde.
+4. **Las 2 huellas históricas de `profiles` — RESUELTAS** (2026-10-08): regeneradas con
+   `scripts/regenerate_profile_embeddings.py --apply` (con respaldo previo en `runtime/backup_profile_embeddings_2026-10-08T18-50-34Z.json`).
+   V1 hoy da 0 en las 5 tablas.
+5. **Nada más que arreglar por el sabotaje**: los 12 sabotajes hacen su trabajo y no apareció ningún defecto
    nuevo. Lo que queda son límites de cobertura (§5), no fallas.
 
 ---
@@ -544,7 +555,7 @@ Los cuatro propuestos que se dejaron **apagados** no fue por prudencia genérica
 
 | Vigilante | Qué devolvía | Por qué no se activa así |
 |---|---|---|
-| **V1** | 2 ceros en `profiles` | Son las 2 filas históricas (28/29-jul) ya conocidas y sin uso. Encendido tal cual habría avisado **todos los días para siempre**. Se le puso ventana de 2 días: avisa de un cero **nuevo**, que es lo que importa. |
+| **V1** | 2 ceros en `profiles` | Son las 2 filas históricas (28/29-jul) ya conocidas y sin uso. Encendido tal cual habría avisado **todos los días para siempre**. Se le puso ventana de 2 días: avisa de un cero **nuevo**, que es lo que importa. *(Después, con la autorización de la dueña, esas 2 filas se regeneraron: hoy V1 da 0 en las 5 tablas — §8.4.)* |
 | **V2** | 5 turnos sin fila | Los 5 son **sesiones de sandbox** de la dueña (chat 1280444712): no persisten a propósito (§4.20 de AGENTS.md) y el journal lo dice (`post_turn_skipped_sandbox`). Sin ese filtro, cada prueba suya en el sandbox habría disparado una falsa alarma. El ejecutor los descarta leyendo el journal. |
 | **V3** | 1 turno escalado sin resolución de la dueña | Alertaría **por diseño**: una escalación que la dueña responde escribiendo directo en el chat queda sin `owner_outcome` para siempre (decisión de producto del 2026-10-06), y los envíos automáticos y de plantilla tampoco tienen resolución. El caso real lo cubre V7, más preciso. |
 | **V4** | 18 entregas sin rastro en el historial | Pertenece a C-HIST-01, cuya cláusula (a) sigue en **E0** (nunca verificada con efecto real). Hay que separar hueco por diseño (sandbox) de hueco real **en esa ronda**, no a ciegas. |

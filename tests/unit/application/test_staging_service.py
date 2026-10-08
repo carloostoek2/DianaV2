@@ -7,6 +7,7 @@ Service logic is tested end-to-end — no mocks inside the service itself.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -225,8 +226,14 @@ async def test_promote_embed_failure_is_fail_open(
 @pytest.mark.asyncio
 async def test_promote_without_embedder_skips_embedding(
     repos: dict[str, AsyncMock],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """No embedder configured → insert proceeds with embedding=None (zeros)."""
+    """No embedder → insert proceeds with embedding=None, and says WHY.
+
+    audit H-SB-1: the row still gets the zeros (fail-open, unchanged), but the
+    reason is observable — before, this path wrote the zero vector in silence
+    while memory and policies did log theirs.
+    """
     service = StagingService(
         staging_repo=repos["staging"],
         examples_repo=repos["examples"],
@@ -242,12 +249,71 @@ async def test_promote_without_embedder_skips_embedding(
         },
     )
     repos["examples"].insert.return_value = _fake_example_row()
+    caplog.set_level(logging.WARNING, logger="diana.application")
 
     result = await service.promote_to_example(candidate_id=candidate_id)
 
     assert result is not None
     kwargs = repos["examples"].insert.await_args.kwargs
     assert kwargs["embedding"] is None
+    avisos = [r for r in caplog.records if r.getMessage() == "staging_embed_zeros"]
+    assert avisos, "el ejemplo quedó con la huella vacía sin dejar rastro"
+    assert avisos[0].reason == "no_embedder"
+
+
+@pytest.mark.asyncio
+async def test_promote_embedder_returning_zeros_leaves_a_trace(
+    service: StagingService,
+    repos: dict[str, AsyncMock],
+    embedder: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A zero vector is the August disguise: written, but never silently.
+
+    The embedder answering with zeros is not a crash, so it never reached the
+    ``staging_embed_failed`` path: the row looked valid and was invisible.
+    """
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id,
+        payload={
+            "original_draft": "old draft",
+            "corrected_text": "new text",
+            "context": {"turn_text": "VIP says hi"},
+        },
+    )
+    repos["examples"].insert.return_value = _fake_example_row()
+    embedder.embed.return_value = [0.0] * 384
+    caplog.set_level(logging.WARNING, logger="diana.application")
+
+    result = await service.promote_to_example(candidate_id=candidate_id)
+
+    assert result is not None
+    avisos = [r for r in caplog.records if r.getMessage() == "staging_embed_zeros"]
+    assert avisos, "el cero se guardó sin dejar rastro"
+    assert avisos[0].reason == "embedder_returned_zeros"
+
+
+@pytest.mark.asyncio
+async def test_promote_without_text_keeps_debug_level(
+    service: StagingService,
+    repos: dict[str, AsyncMock],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No text to fingerprint is legitimate: logged at DEBUG, not as a warning."""
+    candidate_id = uuid4()
+    repos["staging"].get_by_id.return_value = _fake_staging_row(
+        candidate_id=candidate_id,
+        payload={"original_draft": "", "corrected_text": "", "context": {}},
+    )
+    repos["examples"].insert.return_value = _fake_example_row()
+    caplog.set_level(logging.DEBUG, logger="diana.application")
+
+    await service.promote_to_example(candidate_id=candidate_id)
+
+    avisos = [r for r in caplog.records if r.getMessage() == "staging_embed_zeros"]
+    assert avisos and avisos[0].reason == "empty_text"
+    assert avisos[0].levelno == logging.DEBUG
 
 
 @pytest.mark.asyncio
