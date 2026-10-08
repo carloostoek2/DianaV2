@@ -41,4 +41,5 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "db: Tests that require a real PostgreSQL database via testcontainers.",
+    "slow: Tests that load the real embedding model (deselect with '-m \"not slow\"').",
 ]
