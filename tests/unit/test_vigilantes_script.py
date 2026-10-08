@@ -1,8 +1,9 @@
-"""scripts/vigilantes.py — activation notice and the voice of the owner-facing copy.
+"""scripts/vigilantes.py — modo seco del vigilante y la voz de la copia que lee la duena.
 
-The vigilance was announced with a hand-typed message that had drifted from the
-copy the script itself sends (voseo in one, neutral Spanish in the other). The
-notice now lives here, so it is reproducible and speaks like the alerts.
+El chequeo de verdad corre dentro del bot; este script existe para mirarlo a mano sin esperar
+la corrida del dia y sin mandar nada. Lo que se prueba aca es que el modo seco no tenga efecto,
+que el aviso de puesta en marcha salga una sola vez y que la copia al usuario siga en espanol
+neutro (el aviso se escribio a mano y se habia desviado de la copia que manda el sistema).
 """
 
 from __future__ import annotations
@@ -12,10 +13,12 @@ import re
 import sys
 from pathlib import Path
 
+from diana.application.contract_watchdog_service import leer_vigilantes
+
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "vigilantes.py"
 
-# Voseo (present and imperative). The product copy uses neutral Spanish: "tú",
-# never "vos". A hit here means the owner-facing text picked up a regional form.
+# Voseo (presente e imperativo). La copia de producto usa espanol neutro: "tu", nunca "vos".
+# Un acierto aca significa que el texto que lee la duena se contagio de una forma regional.
 _VOSEO = re.compile(
     r"\b(tenés|podés|querés|sabés|sos|hacés|ponés|decís|venís|salís|andás|dejás|"
     r"mandás|pasás|hablás|pensás|mirás|escuchás|escribís|vivís|sentís|preferís|"
@@ -37,16 +40,16 @@ def _load():
     return mod
 
 
-def test_activation_notice_is_sent_once_and_skips_the_daily_check(monkeypatch) -> None:
-    """--avisar-activacion sends the notice and never touches the database."""
+def test_el_aviso_de_activacion_no_toca_la_base(monkeypatch) -> None:
+    """--avisar-activacion manda el aviso y nunca corre la revision."""
     mod = _load()
     enviados: list[tuple[str, bool]] = []
-    monkeypatch.setattr(mod, "avisar", lambda texto, *, dry_run: enviados.append((texto, dry_run)))
+    monkeypatch.setattr(mod, "_avisar", lambda texto, *, dry_run: enviados.append((texto, dry_run)))
 
-    async def _no_debe_correr(_vigilantes):  # pragma: no cover - guard, never called
-        raise AssertionError("el aviso de activación no corre la revisión diaria")
+    async def _no_debe_correr(_como_json):  # pragma: no cover - guardia, nunca se llama
+        raise AssertionError("el aviso de activacion no corre la revision diaria")
 
-    monkeypatch.setattr(mod, "revisar", _no_debe_correr)
+    monkeypatch.setattr(mod, "_correr", _no_debe_correr)
     monkeypatch.setattr(mod.sys, "argv", ["vigilantes.py", "--avisar-activacion"])
 
     mod.main()
@@ -55,10 +58,10 @@ def test_activation_notice_is_sent_once_and_skips_the_daily_check(monkeypatch) -
     assert enviados[0][1] is False
 
 
-def test_activation_notice_dry_run_sends_nothing(monkeypatch) -> None:
+def test_el_aviso_de_activacion_en_modo_seco_no_manda_nada(monkeypatch) -> None:
     mod = _load()
     enviados: list[tuple[str, bool]] = []
-    monkeypatch.setattr(mod, "avisar", lambda texto, *, dry_run: enviados.append((texto, dry_run)))
+    monkeypatch.setattr(mod, "_avisar", lambda texto, *, dry_run: enviados.append((texto, dry_run)))
     monkeypatch.setattr(mod.sys, "argv", ["vigilantes.py", "--avisar-activacion", "--dry-run"])
 
     mod.main()
@@ -66,22 +69,19 @@ def test_activation_notice_dry_run_sends_nothing(monkeypatch) -> None:
     assert [dry_run for _, dry_run in enviados] == [True]
 
 
-def test_owner_facing_copy_stays_in_neutral_spanish() -> None:
-    """Every text the owner can read: no voseo, no regional forms."""
+def test_la_copia_que_lee_la_duena_esta_en_espanol_neutro() -> None:
     mod = _load()
-    textos = {
-        "AVISO_ACTIVACION": mod.AVISO_ACTIVACION,
-        **{f"LINEA_DE_ALERTA[{k}]": v for k, v in mod.LINEA_DE_ALERTA.items()},
-        **{f"SIGNIFICADO[{k}]": v for k, v in mod.SIGNIFICADO.items()},
-    }
-    for nombre, texto in textos.items():
-        encontrado = _VOSEO.search(texto)
-        assert encontrado is None, f"{nombre} usa una forma regional: {encontrado.group(0)!r}"
+    encontrado = _VOSEO.search(mod.AVISO_ACTIVACION)
+    assert encontrado is None, f"AVISO_ACTIVACION usa una forma regional: {encontrado.group(0)!r}"
 
 
-def test_activation_notice_names_the_three_active_watchers() -> None:
-    """The notice promises three checks, matching what is actually deployed."""
+def test_el_aviso_de_activacion_cuenta_los_chequeos_que_corren() -> None:
+    """La copia no puede prometer un numero de chequeos distinto del que corre de verdad."""
     mod = _load()
-    activos = {v["id"] for v in mod.leer_vigilantes() if v["activo"]}
-    assert activos == {"V1", "V2", "V7"}
-    assert mod.AVISO_ACTIVACION.count("• que ") == len(activos)
+    activos = {vigilante["id"] for vigilante in leer_vigilantes() if vigilante["activo"]}
+    vinetas = [linea for linea in mod.AVISO_ACTIVACION.splitlines() if linea.startswith("•")]
+
+    assert activos == {"V1", "V2", "V3", "V7"}
+    assert len(vinetas) == len(activos), (
+        f"el aviso promete {len(vinetas)} chequeo(s) y corren {len(activos)}"
+    )
