@@ -7,7 +7,7 @@
 -- de un vigilante es > 0, el ejecutor avisa a la dueña por Telegram. Si es 0, silencio.
 -- Un vigilante `no-activado` no se ejecuta: queda documentado con el motivo.
 --
--- Calibración (2026-10-08, contra la base real — ver audit/FASE2-SABOTAJE.md §9):
+-- Calibración (2026-10-08, contra la base real — ver audit/FASE2-VIGILANTE.md):
 -- los activos se midieron antes de encenderlos y hoy dan 0, para que el aviso
 -- signifique "algo cambió", no "hay datos viejos".
 
@@ -57,16 +57,36 @@ WHERE t.vip_id IS NOT NULL
   AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '1 hour'
 ORDER BY t.created_at DESC;
 
--- V3 | no-activado | C-SHADOW-01 | turnos entregados/escalados sin resolución de la dueña
--- NO se activa: alertaría por diseño todos los días. Una escalación que la dueña
--- responde escribiendo directo en el chat queda sin `owner_outcome` para siempre
--- (decisión de producto del 2026-10-06), y los envíos automáticos y de plantilla
--- tampoco tienen resolución de la dueña. El caso real —"ella aprobó y no quedó
--- registrado"— lo cubre V7, más preciso. Se deja la consulta como referencia.
-SELECT count(*) AS sin_resultado_duena, 0 AS alerta
-FROM turns t JOIN turn_outcome_log o ON o.turn_id = t.id
+-- V3 | activo | C-SHADOW-01 | escalaciones que nadie resolvió: ni en la cola ni en el chat
+-- Calibración (2026-10-08, contra la base real): la versión cruda —"entregado o
+-- escalado sin resolución de la dueña"— alertaba POR DISEÑO, porque hay tres caminos
+-- que no dejan `owner_outcome` y no son fallas:
+--   1) los envíos automáticos: la decisión la tomó el sistema, no la dueña;
+--   2) los saludos y check-ins de plantilla: responden sin pasar por la cola;
+--   3) una escalación que la dueña responde escribiendo directo en el chat
+--      (decisión de producto del 2026-10-06).
+-- Excluidos los tres, la consulta mide 0 tanto con la ventana de producción como en
+-- 14 días. Lo que queda es justamente lo que importa: una escalación que nadie
+-- contestó en ningún lado. Medición: crudo 1 → calibrado 0 (el caso que sobraba era
+-- una escalación por riesgo que la dueña ya había respondido en el chat: 10 mensajes
+-- suyos después de la escalación y ninguno del bot).
+-- La consulta solo cuenta filas y lee rol y hora de los mensajes; NUNCA lee el texto.
+SELECT t.id::text AS turno, t.chat_id AS chat,
+       to_char(t.created_at, 'DD/MM HH24:MI') AS cuando, 1 AS alerta
+FROM turns t
+JOIN turn_outcome_log o ON o.turn_id = t.id
+LEFT JOIN pipeline_traces p ON p.turn_id = t.id
+LEFT JOIN escalation_events e ON e.turn_id = t.id
 WHERE t.status IN ('delivered','escalated') AND o.owner_outcome IS NULL
-  AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '2 hours';
+  AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '2 hours'
+  AND coalesce(p.decision->>'action', '') <> 'send'
+  AND coalesce(p.decision->>'reason', '') NOT LIKE 'plantilla_%'
+  AND NOT EXISTS (
+      SELECT 1 FROM message_history m
+      WHERE m.chat_id = t.chat_id AND m.role = 'owner'
+        AND m.timestamp > coalesce(e.created_at, t.updated_at)
+  )
+ORDER BY t.created_at DESC;
 
 -- V4 | no-activado | C-HIST-01 | entregas sin rastro en el historial del chat
 -- NO se activa todavía: hoy devuelve 18 y la cláusula (a) del contrato sigue en E0
