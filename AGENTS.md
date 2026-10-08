@@ -12,6 +12,13 @@ Idioma Español
 
 ---
 
+PRIORITARIO 1: Nunca leer logs de conversaciones A menos que la dueña lo solicita explícitamente. 
+PRIORITARIO 2: Idioma y acento 
+Todo lo escrito en este repositorio en los flujos de comunicación UI con el usuario, documentación, docstrings,etc. En general, todo lo que no sea código, tendrá que escribirse única y exclusivamente en el idioma español con un tono neutro, sin acentos ni regionalismos en ningún lugar.
+A) Si durante la tarea realizada en ese moment En caso de encontrar referencias a algún regionalismo o acento distinto al fijado en esta regla, reportar su hallazgo en ese mismo instante y después ignorarlo.
+B) Las convenciones en el idioma del código, Qué hacen modificación ni efecto 
+
+
 0. Comunicación con el usuario (obligatorio)
 
 El interlocutor del chat **no es un desarrollador**: es el **dueño o dueña de producto** (quien opera el negocio, el bot y las decisiones de control). Toda la comunicación **agente ↔ usuario** (explicaciones, avances, dudas, opciones, resúmenes, errores, riesgos y pedidos de confirmación) debe usarse con **nivel técnico medio-bajo**, lenguaje **claro y práctico**.
