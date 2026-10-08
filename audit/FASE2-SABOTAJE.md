@@ -15,7 +15,7 @@ que sigue en verde después de arrancarle la pieza que dice cuidar no sirve para
 Se aplicaron **12 sabotajes** sobre las 8 pruebas de la ronda anterior (los 8 pedidos más 2 de cobertura y
 2 variantes). **Los 12 hicieron fallar la prueba que debía fallar. Ninguna prueba quedó decorativa.**
 
-| Qué se le arrancó al sistema (en criollo) | Pruebas que lo delataron |
+| Qué se le arrancó al sistema (en lenguaje llano) | Pruebas que lo delataron |
 |---|---|
 | El registro del modo sombra: el cable, la bandera y la pieza que lo escribe | 4 de las 5 pruebas de sombra |
 | El arreglo de septiembre que protege lo que decide la dueña | 1 (la prueba de regresión) |
@@ -61,7 +61,7 @@ sg docker -c "cd /tmp/diana-sabotaje && \
 ```
 
 El sabotaje no se simula: se corre el mismo Postgres real, el mismo `build_app` y el mismo motor de huellas
-que la prueba ya venía usando. Lo único falso sigue siendo el modelo de lenguaje externo.
+que la prueba ya usaba. Lo único falso sigue siendo el modelo de lenguaje externo.
 
 ### Línea base (antes de tocar nada)
 

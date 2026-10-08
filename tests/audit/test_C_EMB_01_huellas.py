@@ -604,7 +604,7 @@ async def test_politica_de_zona_gris_lleva_huella_y_se_recupera(
             bot,
             _owner_text_update(REGLA_POLITICA, update_id=903),
         )
-        # La dueña confirma el alcance (a todos): recién ahí se guarda la regla.
+        # La dueña confirma el alcance (a todos): solo entonces se guarda la regla.
         await app.dispatcher.feed_update(
             bot,
             _owner_callback_update(
