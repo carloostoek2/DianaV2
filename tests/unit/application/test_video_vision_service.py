@@ -58,8 +58,10 @@ class _SpyDescriber:
     def __init__(self, text: str | None = "un video de dedicatoria") -> None:
         self._text = text
         self.calls = 0
+        self.frames_calls = 0
         self.seen_bytes: bytes | None = None
         self.seen_mime: str | None = None
+        self.seen_frames: list[bytes] | None = None
 
     async def describe(self, video_bytes, *, mime_type):
         self.calls += 1
@@ -67,8 +69,22 @@ class _SpyDescriber:
         self.seen_mime = mime_type
         return self._text
 
+    async def describe_frames(self, frames, *, mime_type):
+        self.frames_calls += 1
+        self.seen_frames = list(frames)
+        return self._text
 
-def _service(*, texts=None, frames=None, error=None, enabled=True, describer=None):
+
+def _service(
+    *,
+    texts=None,
+    frames=None,
+    error=None,
+    enabled=True,
+    describer=None,
+    send_max_bytes=1024,
+    frames_to_send=20,
+):
     extractor = _FakeExtractor(frames=frames, error=error)
     ocr = _FakeOcr(texts if texts is not None else [""])
     spy = describer if describer is not None else _SpyDescriber()
@@ -77,6 +93,8 @@ def _service(*, texts=None, frames=None, error=None, enabled=True, describer=Non
         ocr=ocr,
         describer=spy,
         enabled=enabled,
+        send_max_bytes=send_max_bytes,
+        frames_to_send=frames_to_send,
     )
     return SimpleNamespace(service=service, extractor=extractor, ocr=ocr, spy=spy)
 
@@ -162,6 +180,45 @@ async def test_disabled_service_does_nothing() -> None:
     assert result.enabled is False
     assert ctx.extractor.calls == 0
     assert ctx.ocr.calls == 0
+    assert ctx.spy.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_heavy_video_is_described_from_its_frames() -> None:
+    """Un video que no entra en un solo envío no sale: salen sus cuadros."""
+    ctx = _service(frames=_frames(5), send_max_bytes=4)
+    result = await ctx.service.analyze(b"12345", mime_type="video/mp4")
+    assert result.sensitive is False
+    assert result.description == "un video de dedicatoria"
+    assert ctx.spy.frames_calls == 1
+    assert ctx.spy.calls == 0  # el archivo completo nunca se envía
+    assert ctx.spy.seen_frames is not None and len(ctx.spy.seen_frames) == 5
+
+
+@pytest.mark.asyncio
+async def test_frames_sent_are_capped_but_spread() -> None:
+    ctx = _service(frames=_frames(10), send_max_bytes=4, frames_to_send=4)
+    await ctx.service.analyze(b"12345", mime_type="video/mp4")
+    assert ctx.spy.seen_frames is not None
+    assert len(ctx.spy.seen_frames) == 4
+
+
+@pytest.mark.asyncio
+async def test_small_video_still_travels_whole() -> None:
+    ctx = _service(frames=_frames(3), send_max_bytes=1024)
+    await ctx.service.analyze(b"mp4", mime_type="video/mp4")
+    assert ctx.spy.calls == 1
+    assert ctx.spy.frames_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_sensitive_frames_block_even_a_heavy_video() -> None:
+    """La revisión local manda: si un cuadro trae datos, no sale nada."""
+    ctx = _service(texts=["", "4111 1111 1111 1111"], frames=_frames(3), send_max_bytes=2)
+    result = await ctx.service.analyze(b"12345", mime_type="video/mp4")
+    assert result.sensitive is True
+    assert result.reason == "tarjeta"
+    assert ctx.spy.frames_calls == 0
     assert ctx.spy.calls == 0
 
 

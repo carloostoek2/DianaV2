@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # Se mira un fotograma por segundo: los videos cortos (el caso real) se
     # revisan completos; uno más largo reparte ese tope por todo el video.
     video_vision_max_frames: Annotated[int, Field(ge=1, le=120)] = 30
+    # Peso a partir del cual el video no viaja entero: se describen sus cuadros
+    # ya revisados localmente, en una sola llamada.
+    video_vision_send_max_bytes: Annotated[int, Field(ge=1)] = 20 * 1024 * 1024
+    # Cuadros que se envían como máximo en ese caso.
+    video_vision_frames_sent: Annotated[int, Field(ge=1, le=60)] = 20
     gemini_api_key: SecretStr = SecretStr("")
     # Gemini vision model used to caption non-sensitive inbound photos.
     # gemini-2.5-flash is no longer available to new accounts (404 since

@@ -78,12 +78,13 @@ class FfmpegFrameExtractor:
         with tempfile.TemporaryDirectory(prefix="diana-video-") as tmp:
             source = Path(tmp) / "entrada.bin"
             source.write_bytes(video_bytes)
-            stamps = self._timestamps(self._probe_duration(source))
-            frames: list[VideoFrame] = []
-            for index, stamp in enumerate(stamps):
-                png = self._grab(source, stamp, Path(tmp) / f"cuadro_{index}.png")
-                if png is not None:
-                    frames.append(VideoFrame(png_bytes=png, timestamp_s=stamp))
+            duration = self._probe_duration(source)
+            frames = self._grab_in_one_pass(source, Path(tmp), duration)
+            if not frames:
+                # Si el filtro no dio nada se prueba cuadro por cuadro (video
+                # con metadatos raros). Es mucho más lento, por eso no es el
+                # camino normal.
+                frames = self._grab_one_by_one(source, Path(tmp), duration)
         if not frames:
             logger.warning(
                 "video_frames_none",
@@ -91,6 +92,74 @@ class FfmpegFrameExtractor:
             )
             raise FrameExtractionError("ffmpeg no produjo ningún fotograma")
         return tuple(frames)
+
+    def _grab_in_one_pass(
+        self, source: Path, tmp: Path, duration_s: float | None
+    ) -> list[VideoFrame]:
+        """Extrae todos los cuadros en UNA pasada de ffmpeg.
+
+        Pedirlos de a uno obliga a ffmpeg a decodificar el video entero cada
+        vez: en un archivo pesado eso son decenas de segundos. Una sola pasada
+        los saca todos juntos.
+        """
+        rate = self._sample_rate(duration_s)
+        pattern = tmp / "pasada_%04d.png"
+        result = self._run(
+            [
+                self._ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(source),
+                "-vf",
+                f"fps={rate:.6f}",
+                "-frames:v",
+                str(self._max_frames),
+                "-f",
+                "image2",
+                "-vcodec",
+                "png",
+                str(pattern),
+            ]
+        )
+        if result is None or result.returncode != 0:
+            return []
+        frames: list[VideoFrame] = []
+        for index, path in enumerate(sorted(tmp.glob("pasada_*.png"))):
+            data = path.read_bytes()
+            path.unlink(missing_ok=True)
+            if data:
+                frames.append(
+                    VideoFrame(png_bytes=data, timestamp_s=index / rate)
+                )
+        return frames
+
+    def _grab_one_by_one(
+        self, source: Path, tmp: Path, duration_s: float | None
+    ) -> list[VideoFrame]:
+        """Respaldo: pide cada cuadro por separado (lento pero tolerante)."""
+        frames: list[VideoFrame] = []
+        for index, stamp in enumerate(self._timestamps(duration_s)):
+            png = self._grab(source, stamp, tmp / f"cuadro_{index}.png")
+            if png is not None:
+                frames.append(VideoFrame(png_bytes=png, timestamp_s=stamp))
+        return frames
+
+    def _sample_rate(self, duration_s: float | None) -> float:
+        """Cuadros por segundo que hay que sacar para no pasar del tope.
+
+        En un video corto es 1 (un cuadro por segundo); en uno largo baja, de
+        modo que el tope se reparte por todo el video en vez de quedarse con el
+        comienzo.
+        """
+        if duration_s is None or duration_s <= 0:
+            return _FRAMES_PER_SECOND
+        if duration_s <= self._max_frames:
+            return _FRAMES_PER_SECOND
+        return self._max_frames / duration_s
 
     def _timestamps(self, duration_s: float | None) -> tuple[float, ...]:
         """Segundos que se van a revisar.

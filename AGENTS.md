@@ -682,8 +682,10 @@ business_message con video o video_note + flag ON:
       1. Extracción local de un fotograma por segundo, de punta a punta
          (tope de 30; un video más largo reparte ese tope por todo el
          video) — infrastructure/vision/video_frames.py; ffmpeg + ffprobe,
-         en un directorio temporal que se borra al terminar. El video NO
-         sale del servidor en esta etapa.
+         en un directorio temporal que se borra al terminar. Los cuadros se
+         sacan en UNA sola pasada de ffmpeg: pedirlos de a uno obliga a
+         decodificar el video entero cada vez (38 s contra 4 s medidos en un
+         video de 22 MB). El video NO sale del servidor en esta etapa.
       2. OCR local de cada fotograma (tesseract) y la MISMA política de
          sensibilidad que las fotos
          (application/image_vision_service.scan_sensitive):
@@ -693,8 +695,13 @@ business_message con video o video_note + flag ON:
            SENSIBLE: un video no se puede tapar, así que no hay enmascarado
          - factura o recibo solo → viaja (el importe es el comprobante)
          - sin datos → viaja
-      3. Si los fotogramas están limpios → el video completo →
-         VideoDescriber (cognitive/video_vision.py) → GeminiVisionProvider
+      3. Si los fotogramas están limpios → se describe. Con el video por
+         debajo de VIDEO_VISION_SEND_MAX_BYTES viaja el video completo; si
+         pesa más, viajan los CUADROS ya revisados (hasta
+         VIDEO_VISION_FRAMES_SENT, reducidos antes de salir) en UNA sola
+         llamada: el archivo completo no sale del servidor y no hay tope de
+         tamaño. La descripción la arma VideoDescriber
+         (cognitive/video_vision.py) sobre GeminiVisionProvider
          (llm/gemini_vision.py, con plazo propio más largo que el de las
          fotos) → descripción corta (español, máx. 40 palabras). Fallo del
          proveedor → fail-open: se mantiene el tag plano.
@@ -713,7 +720,8 @@ Invariantes: flag OFF = sin descarga, sin fotogramas y sin análisis (se
 conserva la etiqueta `[video]`); se revisa un fotograma por segundo (tope
 `VIDEO_VISION_MAX_FRAMES`) porque mirar solo unos instantes sueltos deja pasar
 cualquier dato que aparezca entre dos muestras, y la revisión local es la misma
-que la de las fotos; el
+que la de las fotos; cuando el video no entra en un solo envío, sale SOLO lo ya
+revisado (los cuadros); el
 enmascarado NO existe para video, por eso cualquier dato fuerte lo deja fuera
 del servidor; fail-closed ante ffmpeg ausente, fotogramas no extraíbles u OCR no
 disponible; la imagen de identidad NUNCA sale; el video y los fotogramas no se

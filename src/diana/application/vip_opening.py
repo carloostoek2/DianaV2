@@ -150,21 +150,26 @@ class VipOpeningService:
         return OpeningOutcome(kind="started", turn_id=turn_id, messages=len(burst))
 
     async def _unanswered(self, chat_id: int) -> list[dict]:
-        """Últimos mensajes del VIP sin responder, en orden cronológico."""
+        """Últimos mensajes del VIP sin responder, en orden cronológico.
+
+        ``get_recent`` devuelve el historial en orden cronológico (del más viejo
+        al más nuevo) — el nombre engaña. La ráfaga sin responder se lee desde
+        el final: al revés se mira el mensaje más viejo del chat y cualquier
+        respuesta de la dueña corta la búsqueda antes de llegar a los buenos.
+        """
         try:
             rows = await self._history.get_recent(chat_id, limit=_HISTORY_WINDOW)
         except Exception:
             logger.exception("vip_opening_history_read_failed", extra={"chat_id": chat_id})
             return []
         trailing: list[dict] = []
-        for row in rows:  # get_recent devuelve del más nuevo al más viejo
+        for row in reversed(rows):  # del más nuevo al más viejo
             if not isinstance(row, dict) or row.get("role") != "vip":
                 break
             if not str(row.get("text") or "").strip():
                 continue
             trailing.append(row)
-        selected = list(reversed(trailing[: self._max_messages]))
-        return selected
+        return list(reversed(trailing[: self._max_messages]))
 
     def _skip(self, chat_id: int, reason: str) -> OpeningOutcome:
         logger.info("vip_opening_skipped", extra={"chat_id": chat_id, "reason": reason})

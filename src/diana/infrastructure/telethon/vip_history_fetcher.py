@@ -13,9 +13,11 @@ logger = logging.getLogger("diana.infrastructure.telethon")
 _FLOOD_WAIT_MAX_RETRIES = 5
 _SESSION_LOCK = asyncio.Lock()
 
-# Tope de peso para traer la media del historial: un archivo más grande no se
-# descarga (describirlo no justifica la espera ni el costo).
-_MAX_MEDIA_BYTES = 20 * 1024 * 1024
+# Tope de peso para traer la media del historial. Es más alto que el tope de
+# la Bot API porque esta descarga va por la cuenta personal: los videos que no
+# entran en un solo envío al proveedor se describen después con sus cuadros, así
+# que conviene bajarlos igual.
+_MAX_MEDIA_BYTES = 80 * 1024 * 1024
 
 
 def _media_kind(msg: object) -> str | None:

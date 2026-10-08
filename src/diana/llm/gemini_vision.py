@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Sequence
 
 import httpx
 from pydantic import SecretStr
@@ -107,6 +108,26 @@ class GeminiVisionProvider:
             empty_error="video_bytes must not be empty",
         )
 
+    async def describe_images(
+        self,
+        images: Sequence[bytes],
+        *,
+        mime_type: str,
+        prompt: str,
+    ) -> str:
+        """Describe varias imágenes en UNA sola llamada.
+
+        Se usa para los videos que no entran en un solo envío: viajan los
+        cuadros ya revisados localmente, no el archivo completo.
+        """
+        return await self._describe_media_many(
+            list(images),
+            mime_type=mime_type,
+            prompt=prompt,
+            timeout=self._video_timeout,
+            empty_error="images must not be empty",
+        )
+
     async def _describe_media(
         self,
         media_bytes: bytes,
@@ -116,27 +137,43 @@ class GeminiVisionProvider:
         timeout: float,
         empty_error: str,
     ) -> str:
-        """Envía la media en línea (inline_data) y devuelve el texto del modelo."""
-        if not media_bytes:
+        """Envía una media en línea (inline_data) y devuelve el texto del modelo."""
+        return await self._describe_media_many(
+            [media_bytes],
+            mime_type=mime_type,
+            prompt=prompt,
+            timeout=timeout,
+            empty_error=empty_error,
+        )
+
+    async def _describe_media_many(
+        self,
+        media: list[bytes],
+        *,
+        mime_type: str,
+        prompt: str,
+        timeout: float,
+        empty_error: str,
+    ) -> str:
+        """Envía una o varias medias en un único pedido."""
+        if not media or any(not item for item in media):
             raise ValueError(empty_error)
         if not mime_type or not str(mime_type).strip():
             raise ValueError("mime_type must not be empty")
         if not prompt or not str(prompt).strip():
             raise ValueError("prompt must not be empty")
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": str(mime_type).strip(),
-                                "data": base64.b64encode(media_bytes).decode("ascii"),
-                            }
-                        },
-                    ]
+        parts: list[dict[str, object]] = [{"text": prompt}]
+        parts.extend(
+            {
+                "inline_data": {
+                    "mime_type": str(mime_type).strip(),
+                    "data": base64.b64encode(item).decode("ascii"),
                 }
-            ],
+            }
+            for item in media
+        )
+        payload = {
+            "contents": [{"parts": parts}],
             "generationConfig": {
                 "temperature": 0.2,
                 "maxOutputTokens": _MAX_OUTPUT_TOKENS,

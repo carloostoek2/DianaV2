@@ -8,6 +8,7 @@ composition root (or in tests).
 from __future__ import annotations
 
 from datetime import datetime
+from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -156,6 +157,14 @@ class VisionProvider(Protocol):
     async def describe_video(
         self,
         video_bytes: bytes,
+        *,
+        mime_type: str,
+        prompt: str,
+    ) -> str: ...
+
+    async def describe_images(
+        self,
+        images: Sequence[bytes],
         *,
         mime_type: str,
         prompt: str,

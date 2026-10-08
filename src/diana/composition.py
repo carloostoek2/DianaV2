@@ -511,6 +511,8 @@ def build_app(
         ocr=image_ocr,
         describer=video_describer,
         enabled=settings.feature_video_vision_enabled,
+        send_max_bytes=settings.video_vision_send_max_bytes,
+        frames_to_send=settings.video_vision_frames_sent,
     )
     media_downloader = (
         functools.partial(download_media_bytes, bot_inst)

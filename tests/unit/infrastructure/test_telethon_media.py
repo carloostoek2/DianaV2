@@ -85,10 +85,20 @@ async def test_zero_limit_never_downloads() -> None:
 
 @pytest.mark.asyncio
 async def test_oversized_media_is_skipped() -> None:
-    client = _Client([_Msg(3, _video_media(), size=25 * 1024 * 1024)])
+    client = _Client([_Msg(3, _video_media(), size=120 * 1024 * 1024)])
     raw = await _fetch_raw_messages(client, object(), 20, media_limit=3)
     assert client.downloaded == []
     assert raw[0].get("media_bytes") is None
+
+
+@pytest.mark.asyncio
+async def test_a_heavy_video_is_still_downloaded() -> None:
+    """La descarga va por la cuenta personal: un video pesado se baja igual,
+    porque después se describe con sus cuadros y no con el archivo completo."""
+    client = _Client([_Msg(3, _video_media(), size=60 * 1024 * 1024)])
+    raw = await _fetch_raw_messages(client, object(), 20, media_limit=3)
+    assert client.downloaded == [3]
+    assert raw[0].get("media_bytes") == b"contenido"
 
 
 @pytest.mark.asyncio

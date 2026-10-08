@@ -20,9 +20,13 @@ _CHAT = 1280444712
 
 
 def _rows(*roles_texts: tuple[str, str]) -> list[dict]:
-    """Historial del más nuevo al más viejo, como lo devuelve get_recent."""
+    """Historial en orden cronológico, como lo devuelve get_recent.
+
+    El ÚLTIMO par pasado es el mensaje más nuevo del chat: así se lee igual que
+    la base (del más viejo al más nuevo), que es donde estuvo el error.
+    """
     return [
-        {"role": role, "text": text, "telegram_message_id": 100 - i, "timestamp": None}
+        {"role": role, "text": text, "telegram_message_id": 100 + i, "timestamp": None}
         for i, (role, text) in enumerate(roles_texts)
     ]
 
@@ -133,18 +137,18 @@ async def test_starts_a_turn_from_the_unanswered_messages() -> None:
     assert "te gustó?" in inbound.text
     # El identificador del turno es el del último mensaje del VIP.
     # El turno se ancla al mensaje más reciente del VIP.
-    assert inbound.telegram_message_id == 100
+    assert inbound.telegram_message_id == 101
 
 
 @pytest.mark.asyncio
 async def test_only_the_last_messages_are_answered() -> None:
     service, runner = _service(
         rows=_rows(
-            ("vip", "cinco"),
-            ("vip", "cuatro"),
-            ("vip", "tres"),
-            ("vip", "dos"),
             ("vip", "uno"),
+            ("vip", "dos"),
+            ("vip", "tres"),
+            ("vip", "cuatro"),
+            ("vip", "cinco"),
         ),
         max_messages=3,
     )
@@ -160,7 +164,7 @@ async def test_only_the_last_messages_are_answered() -> None:
 @pytest.mark.asyncio
 async def test_nothing_to_answer_when_the_owner_wrote_last() -> None:
     service, runner = _service(
-        rows=_rows(("owner", "ya te contesté"), ("vip", "hola"))
+        rows=_rows(("vip", "hola"), ("owner", "ya te contesté"))
     )
     outcome = await service.start(_CHAT)
     assert outcome.kind == "skipped"
@@ -212,7 +216,7 @@ async def test_history_read_failure_does_not_raise() -> None:
 @pytest.mark.asyncio
 async def test_blank_trailing_messages_are_ignored() -> None:
     service, runner = _service(
-        rows=_rows(("vip", "   "), ("vip", "te gustó?"))
+        rows=_rows(("vip", "te gustó?"), ("vip", "   "))
     )
     outcome = await service.start(_CHAT)
     assert outcome.kind == "started"

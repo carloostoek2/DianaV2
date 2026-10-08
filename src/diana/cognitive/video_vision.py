@@ -15,6 +15,7 @@ nunca importa telegram ni aiogram.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from diana.cognitive.ports import VisionProvider
 
@@ -33,6 +34,17 @@ _SYSTEM_PROMPT = (
     "ni datos personales."
 )
 
+# Para los videos que no entran en un solo envío se describen los cuadros ya
+# revisados localmente (no sale el archivo completo).
+_FRAMES_PROMPT = (
+    "Estas imágenes son fotos sacadas de un video, en orden. Describe en una "
+    "sola frase, máximo 40 palabras, en español neutro, qué muestra el video "
+    "completo. Di qué se ve y qué pasa; si hay frases escritas, cuenta de qué "
+    "tratan sin copiarlas palabra por palabra. No inventes información que no "
+    "aparezca. Si no se entiende, di exactamente: 'video no claro'. No repitas "
+    "números, nombres ni datos personales."
+)
+
 _MAX_CAPTION_CHARS = 400
 
 
@@ -48,12 +60,36 @@ class VideoDescriber:
         None es la señal de fail-open: quien llama conserva la etiqueta plana
         de media y el turno sigue igual que antes de la visión de video.
         """
-        try:
-            text = await self._vision.describe_video(
+        return await self._caption(
+            self._vision.describe_video(
                 video_bytes,
                 mime_type=mime_type,
                 prompt=_SYSTEM_PROMPT,
             )
+        )
+
+    async def describe_frames(
+        self, frames: list[bytes], *, mime_type: str
+    ) -> str | None:
+        """Describe el video a partir de sus cuadros (una sola llamada).
+
+        Se usa cuando el video es demasiado grande para viajar entero: salen los
+        cuadros que ya pasaron la revisión local, no el archivo.
+        """
+        if not frames:
+            return None
+        return await self._caption(
+            self._vision.describe_images(
+                frames,
+                mime_type=mime_type,
+                prompt=_FRAMES_PROMPT,
+            )
+        )
+
+    async def _caption(self, call: Any) -> str | None:
+        """Ejecuta la llamada al proveedor y normaliza el resultado (fail-open)."""
+        try:
+            text = await call
         except Exception as exc:
             logger.warning(
                 "video_describer_failed_fail_open",

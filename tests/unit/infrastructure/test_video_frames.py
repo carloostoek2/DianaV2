@@ -98,3 +98,41 @@ def test_real_video_yields_one_frame_per_second() -> None:
         assert frame.png_bytes.startswith(b"\x89PNG")
         with Image.open(io.BytesIO(frame.png_bytes)) as img:
             assert img.size == (160, 120)
+
+
+def _sample_rate(duration_s: float | None, max_frames: int = 30) -> float:
+    return FfmpegFrameExtractor(max_frames=max_frames)._sample_rate(duration_s)
+
+
+def test_short_video_samples_one_frame_per_second() -> None:
+    assert _sample_rate(15.0) == 1.0
+
+
+def test_long_video_lowers_the_rate_to_respect_the_cap() -> None:
+    """En un video largo el tope se reparte por todo el video."""
+    assert _sample_rate(300.0, max_frames=30) == 0.1
+    assert _sample_rate(60.0, max_frames=30) == 0.5
+
+
+def test_unknown_duration_keeps_one_per_second() -> None:
+    assert _sample_rate(None) == 1.0
+    assert _sample_rate(0.0) == 1.0
+
+
+@pytest.mark.skipif(_FFMPEG is None, reason="ffmpeg no está instalado")
+def test_a_long_video_does_not_exceed_the_cap() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "largo.mp4"
+        built = subprocess.run(
+            [
+                _FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=12",
+                "-pix_fmt", "yuv420p", str(source),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        assert built.returncode == 0, built.stderr.decode("utf-8", "replace")
+        frames = FfmpegFrameExtractor(max_frames=4).extract_frames(source.read_bytes())
+
+    assert len(frames) == 4

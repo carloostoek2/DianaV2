@@ -218,3 +218,38 @@ async def test_describe_video_rejects_empty_args() -> None:
     with pytest.raises(ValueError, match="video_bytes"):
         await provider.describe_video(b"", mime_type="video/mp4", prompt="d")
     await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_describe_images_sends_every_image_in_one_request() -> None:
+    """Varios cuadros viajan en UN solo pedido, no uno por cuadro."""
+    seen: list[int] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        parts = json.loads(request.content)["contents"][0]["parts"]
+        seen.append(sum(1 for p in parts if "inline_data" in p))
+        assert parts[0]["text"] == "estas fotos vienen de un video"
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "un video"}]}}]}
+        )
+
+    provider = GeminiVisionProvider(api_key=SecretStr("k"), client=_transport(responder))
+    text = await provider.describe_images(
+        [b"a", b"b", b"c"],
+        mime_type="image/jpeg",
+        prompt="estas fotos vienen de un video",
+    )
+    assert text == "un video"
+    assert seen == [3]  # una sola llamada con las tres imágenes adentro
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_describe_images_rejects_an_empty_or_blank_image() -> None:
+    client = _transport(lambda _r: httpx.Response(200, json={}))
+    provider = GeminiVisionProvider(api_key=SecretStr("k"), client=client)
+    with pytest.raises(ValueError, match="images"):
+        await provider.describe_images([], mime_type="image/jpeg", prompt="d")
+    with pytest.raises(ValueError, match="images"):
+        await provider.describe_images([b"a", b""], mime_type="image/jpeg", prompt="d")
+    await provider.aclose()
