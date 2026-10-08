@@ -294,6 +294,21 @@ exactos en el commit correspondiente). Verificación posterior al reinicio:
 | Salud | `/health` → `{"status":"ok",...}` con base y bot en verde |
 | Errores o trazas en el arranque | Ninguno |
 
-**Verificación del arreglo con turnos reales:** se repite la medición de §3 restringida a los turnos
-**posteriores al reinicio**. Antes del arreglo el desacuerdo era del 84 %; después, el valor esperado
-es **0**.
+### Verificación del arreglo con turnos reales
+
+Se repitió la medición de §3 restringida a los turnos **posteriores al reinicio** (misma comparación
+inyectado contra derivado, sobre datos reales):
+
+| Medición | Antes del arreglo | Después del arreglo |
+|---|---|---|
+| Turnos analizados | 70 | **3** (los primeros disponibles) |
+| `waiting_for_reply_since` en desacuerdo | **59 (84 %)** | **0** |
+| `is_first_message_of_day` en desacuerdo | **15 (21 %)** | **0** |
+
+Los turnos medidos son de 2026-10-08 00:14, 00:22 y 00:25 (hora UTC), los tres con bloque de
+contexto. En la misma ventana se escribieron **5 fotos nuevas**, así que el almacén sigue escribiendo.
+
+**Límite de esta medición:** son 3 turnos, no una muestra grande. Lo que la vuelve concluyente no es
+el tamaño sino que sea **la misma medición que midió el defecto**, sobre la misma base, con el mismo
+método: el desacuerdo pasó de 84 % a 0 %. La prueba E2 (§5) cubre el comportamiento de forma
+reproducible.

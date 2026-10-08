@@ -32,7 +32,8 @@ Semáforo:      🟢 El mecanismo se usa en producción (21 fotos, 4 chats, vige
                llega al modelo en 502/536 turnos (94 %). Defecto de contenido medido, arreglado y
                desplegado el 2026-10-07: la derivación en vivo gana sobre la foto para las cuatro
                claves H.3.
-Hallazgos:     H-CTX-1 (cerrado): contexto temporal un turno atrasado. H-CTX-2 (abierto): búsqueda por
+Hallazgos:     H-CTX-1 (cerrado y verificado en producción el 2026-10-08: el desacuerdo pasó de
+               59/70 a 0/3 en los turnos posteriores al reinicio). H-CTX-2 (abierto): búsqueda por
                parecido huérfana en `contexts` — pendiente de decisión de la dueña. H-CTX-3 (menor):
                parámetro `vip_id` aceptado e ignorado en `find_active_by_chat`.
                Ver audit/FASE2-CONTEXTO.md
