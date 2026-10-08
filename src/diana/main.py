@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 
+from diana.application.contract_watchdog_service import ContractWatchdogService
 from diana.application.logformat import ColorExtraFormatter
 from diana.application.missed_message_recovery import recover_missed_updates
 from diana.application.policy_embedding import PolicyEmbeddingRepairService
@@ -18,9 +19,11 @@ from diana.composition import (
     run_app_startup_recovery,
 )
 from diana.config import Settings
+from diana.infrastructure.journal_sandbox_turns import JournalSandboxTurnClassifier
 from diana.jobs.agent_data_purge import AgentDataPurgeJob
 from diana.jobs.backfill import BackfillJob
 from diana.jobs.calibration import CalibrationJob
+from diana.jobs.contract_watchdog import DEFAULT_INTERVAL_SECONDS, ContractWatchdogJob
 from diana.jobs.embedding_warmup import EmbeddingWarmupJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
 from diana.jobs.metrics import MetricsJob
@@ -102,6 +105,8 @@ async def async_main() -> None:
     except BaseException:
         logger.exception("pre_delay_recovery_failed")
 
+    # Vigilante de contratos: chequeo diario de que los efectos prometidos siguen ocurriendo.
+    contract_watchdog_job = _setup_contract_watchdog_job(app)
     # hardener/persona-reglas ítem 3 (D1): embedding warmup in background
     # (model load runs in a worker thread; polling never waits for it).
     embedding_warmup_job = _setup_embedding_warmup_job(app)
@@ -136,6 +141,7 @@ async def async_main() -> None:
         port=settings.health_port,
         session_factory=app.session_factory,
         bot=app.bot,
+        watchdog_enabled=settings.feature_contract_watchdog_enabled,
     )
     # Outer finally always cancels jobs even if health bind or polling fails.
     try:
@@ -159,6 +165,7 @@ async def async_main() -> None:
             await health.stop()
     finally:
         # Stop new jobs first, then existing F2/F3 jobs.
+        await _cancel_job(contract_watchdog_job, "contract_watchdog_job")
         await _cancel_job(embedding_warmup_job, "embedding_warmup_job")
         await _cancel_job(backfill_job, "backfill_job")
         await _cancel_job(history_reimport_job, "history_reimport_job")
@@ -170,6 +177,35 @@ async def async_main() -> None:
         await _cancel_job(purge_job, "purge_job")
         await _cancel_job(agent_purge_job, "agent_purge_job")
         await _cancel_job(expiration_job, "expiration_job")
+
+
+def _setup_contract_watchdog_job(app: AppContainer) -> asyncio.Task | None:
+    """Start the daily contract watchdog only when its flag is on.
+
+    El chequeo corre en este proceso a proposito: es lo unico que le permite leer los
+    contadores de fallos internos y publicar su latido en /health.
+    """
+    if not app.settings.feature_contract_watchdog_enabled:
+        logger.info("contract_watchdog_job_skipped_flag_off")
+        return None
+
+    service = ContractWatchdogService(
+        app.session_factory,
+        sandbox_turns=JournalSandboxTurnClassifier(),
+    )
+    minimo = app.settings.contract_watchdog_min_hours_between_runs
+    job = ContractWatchdogJob(
+        service,
+        notifier=app.notifier,
+        interval_seconds=DEFAULT_INTERVAL_SECONDS,
+        min_hours_between_runs=minimo,
+    )
+    task = asyncio.create_task(job.start())
+    logger.info(
+        "contract_watchdog_job_started",
+        extra={"interval_seconds": DEFAULT_INTERVAL_SECONDS, "min_hours_between_runs": minimo},
+    )
+    return task
 
 
 def _setup_embedding_warmup_job(app: AppContainer) -> asyncio.Task | None:

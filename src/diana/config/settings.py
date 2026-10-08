@@ -288,6 +288,14 @@ class Settings(BaseSettings):
     feature_history_reimport_enabled: bool = False
     history_reimport_interval_sec: Annotated[int, Field(ge=1)] = 3600
 
+    # Vigilante de contratos: chequeo diario, solo lectura, de que los efectos prometidos
+    # siguen ocurriendo (las consultas viven en audit/vigilantes.sql). Avisa a la dueña SOLO
+    # si algo falla y deja su latido para /health. El valor real vive en el .env.
+    feature_contract_watchdog_enabled: bool = False
+    # Mínimo entre dos corridas (horas). Más bajo que 24 a propósito: un reinicio del bot no
+    # debe adelantar el chequeo del día ni correrlo 24 h después de cada reinicio.
+    contract_watchdog_min_hours_between_runs: Annotated[int, Field(ge=1, le=168)] = 20
+
     # F5 Pool 2 (REQ-MEM-05/08): backfill pacing + semantic dedup threshold.
     # backfill_interval_sec spaces EVERY processed unit (between VIPs AND
     # between windows of the same VIP) to protect the account from bursts;

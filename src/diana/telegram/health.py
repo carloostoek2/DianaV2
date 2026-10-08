@@ -11,9 +11,13 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
+
+from diana.application.observability import get_swallowed_counts
+from diana.application.watchdog_heartbeat import read_heartbeat, summarize_heartbeat
 
 logger = logging.getLogger("diana.telegram")
 
@@ -27,11 +31,19 @@ def build_health_payload(
     db_latency_ms: int,
     bot_ok: bool | None,
     bot_username: str | None,
+    watchdog: dict[str, Any] | None = None,
+    swallowed: dict[str, int] | None = None,
 ) -> HealthBody:
-    """Assemble public health JSON (no secrets)."""
+    """Assemble public health JSON (no secrets).
+
+    ``watchdog`` es el bloque del vigilante de contratos (``None`` cuando no hay nada que
+    mostrar) y ``swallowed`` los contadores de fallos internos del proceso, que hasta ahora
+    nadie leia. Un vigilante vencido o fallado deja el estado en ``degraded``: si dejo de
+    correr, no puede parecerse a un vigilante tranquilo.
+    """
     if not db_ok:
         status = "fail"
-    elif bot_ok is False:
+    elif bot_ok is False or (watchdog is not None and watchdog.get("ok") is False):
         status = "degraded"
     else:
         status = "ok"
@@ -41,6 +53,10 @@ def build_health_payload(
     }
     if bot_ok is not None:
         checks["bot"] = {"ok": bot_ok, "username": bot_username}
+    if watchdog is not None:
+        checks["watchdog"] = watchdog
+    if swallowed:
+        checks["swallowed"] = dict(sorted(swallowed.items()))
     return {"status": status, "checks": checks}
 
 
@@ -56,6 +72,8 @@ class HealthServer:
         bot: Any | None = None,
         bot_check_timeout_s: float = 2.0,
         bot_cache_s: float = 30.0,
+        watchdog_enabled: bool = False,
+        watchdog_heartbeat_path: Path | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -63,6 +81,8 @@ class HealthServer:
         self._bot = bot
         self._bot_check_timeout_s = bot_check_timeout_s
         self._bot_cache_s = bot_cache_s
+        self._watchdog_enabled = watchdog_enabled
+        self._watchdog_heartbeat_path = watchdog_heartbeat_path
         self._server: asyncio.AbstractServer | None = None
         self._bot_cache: tuple[float, bool, str | None] | None = None
 
@@ -106,9 +126,24 @@ class HealthServer:
             db_latency_ms=db_latency_ms,
             bot_ok=bot_ok,
             bot_username=bot_username,
+            watchdog=self.check_watchdog(),
+            swallowed=get_swallowed_counts(),
         )
         code = 200 if db_ok else 503
         return code, body
+
+    def check_watchdog(self) -> dict[str, Any] | None:
+        """Ultimo latido del vigilante de contratos, leido de su archivo.
+
+        Se lee del latido (y no de memoria del proceso) para que sobreviva a un reinicio y
+        para que se vea **vencido** cuando el vigilante dejo de correr.
+        """
+        if not self._watchdog_enabled and self._watchdog_heartbeat_path is None:
+            return None
+        return summarize_heartbeat(
+            read_heartbeat(self._watchdog_heartbeat_path),
+            enabled=self._watchdog_enabled,
+        )
 
     async def _handle(
         self,
