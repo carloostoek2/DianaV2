@@ -11,16 +11,11 @@ from uuid import UUID
 from aiogram import Bot, Router
 from aiogram.types import Message
 
-from diana.application.image_vision_service import (
-    ImageVisionResult,
-    ImageVisionService,
-)
+from diana.application.image_vision_service import ImageVisionService
+from diana.application.media_text import SENSITIVE_MARK, compose_media_text
 from diana.application.ports import VipInboundMessage
 from diana.application.turn_orchestrator import TurnOrchestrator
-from diana.application.video_vision_service import (
-    VideoVisionResult,
-    VideoVisionService,
-)
+from diana.application.video_vision_service import VideoVisionService
 from diana.infrastructure.vision.ocr import (
     OcrUnavailableError,
     detect_image_mime,
@@ -28,11 +23,6 @@ from diana.infrastructure.vision.ocr import (
 from diana.telegram.media_tags import inbound_text, media_tag
 
 logger = logging.getLogger("diana.telegram")
-
-# Appended to the plain tag when the local filter flagged the image as
-# sensitive: it never went to Gemini and the owner reviews it manually.
-_SENSITIVE_MARK = "⚠️ contiene información sensible (no analizada)"
-
 
 MediaDownloader = Callable[[str], Awaitable[bytes]]
 
@@ -50,28 +40,6 @@ async def download_media_bytes(bot: Bot, file_id: str) -> bytes:
     buffer = io.BytesIO()
     await bot.download_file(file.file_path, destination=buffer)
     return buffer.getvalue()
-
-
-def _compose_media_text(
-    result: ImageVisionResult | VideoVisionResult, *, tag: str, caption: str
-) -> str:
-    """Texto del turno a partir del resultado de visión (sirve para foto y video).
-
-    El caption nunca entra a la decisión de privacidad: viaja como texto normal
-    y lo procesa el control de seguridad del pipeline, igual que cualquier
-    mensaje del VIP.
-    """
-    if not result.enabled:
-        text = f"[{tag}]"
-    elif result.sensitive:
-        text = f"[{tag}] {_SENSITIVE_MARK}"
-    elif result.description:
-        text = f"[{tag}: {result.description}]"
-    else:
-        text = f"[{tag}]"
-    if caption:
-        text = f"{text} {caption}"
-    return text
 
 
 async def _photo_text_and_id(
@@ -97,7 +65,7 @@ async def _photo_text_and_id(
             extra={"error_type": type(exc).__name__},
         )
         return plain, file_id
-    return _compose_media_text(result, tag=tag, caption=caption), file_id
+    return compose_media_text(result, tag=tag, caption=caption), file_id
 
 
 async def _video_text(
@@ -131,7 +99,7 @@ async def _video_text(
             extra={"error_type": type(exc).__name__},
         )
         return plain
-    return _compose_media_text(result, tag=tag, caption=caption)
+    return compose_media_text(result, tag=tag, caption=caption)
 
 
 async def _vision_text_and_media(

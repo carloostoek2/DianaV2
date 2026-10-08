@@ -727,6 +727,47 @@ igual que el de fotos.
 
 ---
 
+4.25 Arranque de conversación de un VIP nuevo (depende de FEATURE_VIP_HISTORY_SEED_ENABLED)
+
+```
+Alta de VIP (/add_vip o el menú) → vips.add → schedule_seed_for_new_vip
+  → VipHistorySeedService.seed_for_new_vip (Telethon, cuenta personal):
+      - trae hasta VIP_HISTORY_SEED_LIMIT mensajes del chat personal
+      - de los últimos VIP_HISTORY_MEDIA_LIMIT mensajes con archivo trae la
+        foto o el video (en memoria) y lo describe con la MISMA visión de la
+        media en vivo: mismo filtro de privacidad y mismos topes
+        → "[imagen: …]" / "[video: …]"; con la visión apagada o si falla,
+        queda la etiqueta de siempre ("[foto]" / "[video]")
+      - append_missing a message_history (idempotente)
+  → VipOpeningService.start(telegram_user_id):
+      - no arranca si el VIP no existe, si tiene envío automático activado,
+        si el chat ya tiene un turno vivo, si no hay mensajes del VIP sin
+        responder, o si no hay conexión de negocios vigente
+      - toma hasta VIP_OPENING_MAX_MESSAGES mensajes del VIP sin responder
+        (los últimos, en orden cronológico) y los une con el formato de
+        ráfaga del pipeline
+      - usa la conexión de negocios vigente (business_connections: la más
+        reciente habilitada y que puede responder); no hay mensaje entrante
+        del que sacarla
+      - skip_coalesce: el orquestador NO rearma la ráfaga desde el historial
+        importado (puede abarcar semanas)
+  → TurnCoordinator → pipeline normal → Decisor → cola de aprobación de la dueña
+  → Aviso a la dueña: el del historial + "quedó un borrador en tu cola"
+```
+
+Invariantes: el arranque NUNCA envía — el único destino es la cola de
+aprobación, y por eso un VIP con envío automático activado queda fuera; un solo
+turno vivo por chat; la media importada pasa por el mismo filtro de privacidad
+que la que llega en vivo y no se persiste (solo su descripción); la conexión de
+negocios es una sola por cuenta de la dueña, NO una por chat de VIP.
+
+Límite conocido: si el VIP escribió hace más de ~24 h y no volvió a escribir,
+Telegram puede rechazar la respuesta del bot en ese chat (`can_reply` se evalúa
+sobre chats activos). El borrador queda igual en la cola y el fallo se ve al
+aprobar.
+
+---
+
 4. Contratos críticos que ningún agente puede romper
 
 4.1 Decisor (orden de prioridades actualizado)

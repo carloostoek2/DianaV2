@@ -54,3 +54,54 @@ async def test_upsert_returns_deep_copy() -> None:
     result.is_enabled = False
     result2 = await store.upsert(original)
     assert result2.is_enabled is True
+
+
+# --- lectura por chat (arranque de un VIP nuevo) -----------------------------
+
+
+async def test_get_active_returns_the_live_connection() -> None:
+    store = InMemoryBusinessConnectionStore()
+    await store.upsert(_make_record("bc-1"))
+    found = await store.get_active()
+    assert found is not None
+    assert found.business_connection_id == "bc-1"
+
+
+async def test_get_active_ignores_a_disabled_connection() -> None:
+    store = InMemoryBusinessConnectionStore()
+    await store.upsert(_make_record("bc-1", is_enabled=False))
+    assert await store.get_active() is None
+
+
+async def test_get_active_ignores_a_connection_that_cannot_reply() -> None:
+    store = InMemoryBusinessConnectionStore()
+    record = _make_record("bc-1")
+    record.can_reply = False
+    await store.upsert(record)
+    assert await store.get_active() is None
+
+
+async def test_get_active_prefers_the_most_recent() -> None:
+    store = InMemoryBusinessConnectionStore()
+    vieja = _make_record("bc-vieja")
+    vieja.date = datetime(2026, 1, 1)
+    nueva = _make_record("bc-nueva")
+    nueva.date = datetime(2026, 10, 8)
+    await store.upsert(vieja)
+    await store.upsert(nueva)
+    found = await store.get_active()
+    assert found is not None
+    assert found.business_connection_id == "bc-nueva"
+
+
+async def test_get_active_is_none_without_any_connection() -> None:
+    store = InMemoryBusinessConnectionStore()
+    assert await store.get_active() is None
+
+
+async def test_get_active_is_none_when_nothing_can_reply() -> None:
+    store = InMemoryBusinessConnectionStore()
+    record = _make_record("bc-1")
+    record.can_reply = False
+    await store.upsert(record)
+    assert await store.get_active() is None

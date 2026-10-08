@@ -183,6 +183,17 @@ class InMemoryBusinessConnectionStore:
         self._connections[stored.business_connection_id] = stored
         return stored.model_copy(deep=True)
 
+    async def get_active(self) -> BusinessConnectionRecord | None:
+        candidates = [
+            record
+            for record in self._connections.values()
+            if record.is_enabled and record.can_reply
+        ]
+        if not candidates:
+            return None
+        newest = max(candidates, key=lambda record: record.date)
+        return newest.model_copy(deep=True)
+
 
 class InMemoryLinkEventStore:
     """Dict-backed LinkEventStore keyed by event_id for unit tests."""

@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal, Protocol
 
+from diana.application.image_vision_service import ImageVisionService
+from diana.application.media_text import compose_media_text
 from diana.application.ports import MessageHistoryWriter, OwnerNotifierPort
+from diana.application.video_vision_service import VideoVisionService
+from diana.application.vip_opening import OpeningOutcome, VipOpeningService
+from diana.infrastructure.vision.ocr import detect_image_mime
 
 logger = logging.getLogger("diana.application")
 
@@ -22,12 +27,21 @@ SeedKind = Literal["disabled", "ok", "failed"]
 
 @dataclass(frozen=True, slots=True)
 class HistoryLine:
-    """One seeded history row (V2 role vocabulary)."""
+    """One seeded history row (V2 role vocabulary).
+
+    ``media_bytes`` trae el archivo que el VIP mandó antes de estar en la lista
+    (solo para los últimos mensajes con media). Se usa para describirlo con la
+    visión y se descarta: nunca se persiste.
+    """
 
     role: HistoryRole
     text: str
     telegram_message_id: int | None = None
     timestamp: datetime | None = None
+    caption: str = ""
+    media_kind: str | None = None
+    media_bytes: bytes | None = None
+    media_mime: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,9 +95,10 @@ def map_raw_messages_to_lines(raw: list[dict]) -> list[HistoryLine]:
     """
     out: list[HistoryLine] = []
     for m in raw:
-        text = (m.get("text") or "").strip()
+        caption = (m.get("text") or "").strip()
+        kind = m.get("media_kind")
+        text = caption
         if not text:
-            kind = m.get("media_kind")
             if kind:
                 text = f"[{kind}]"
             else:
@@ -105,6 +120,10 @@ def map_raw_messages_to_lines(raw: list[dict]) -> list[HistoryLine]:
                 text=text,
                 telegram_message_id=int(mid) if mid is not None else None,
                 timestamp=ts,
+                caption=caption,
+                media_kind=kind,
+                media_bytes=m.get("media_bytes"),
+                media_mime=str(m.get("media_mime") or ""),
             )
         )
     return out
@@ -121,11 +140,20 @@ class VipHistorySeedService:
         limit: int = 20,
         notifier: OwnerNotifierPort | None = None,
         disabled_reason: str | None = None,
+        image_vision: ImageVisionService | None = None,
+        video_vision: VideoVisionService | None = None,
+        opening: VipOpeningService | None = None,
     ) -> None:
         self._history = history
         self._fetcher = fetcher
         self._limit = max(1, int(limit))
         self._notifier = notifier
+        # Visión para la media importada: sin ella la foto o el video del
+        # historial quedan como una etiqueta muda.
+        self._image_vision = image_vision
+        self._video_vision = video_vision
+        # Arranque de conversación: se dispara después de importar el historial.
+        self._opening = opening
         # Motivo por el que no hay importador (bandera apagada, configuración
         # ausente). Viaja a los logs para que el silencio nunca se lea como
         # "no había nada que importar".
@@ -172,6 +200,7 @@ class VipHistorySeedService:
         lines = await self._fetcher.fetch_recent(
             chat_id, limit=self._limit, username=username
         )
+        lines = await self._describe_media(lines)
         if not lines:
             logger.info(
                 "vip_history_seed_empty",
@@ -208,6 +237,48 @@ class VipHistorySeedService:
             },
         )
         return SeedOutcome(kind="ok", count=added, telegram_user_id=uid)
+
+    async def _describe_media(self, lines: list[HistoryLine]) -> list[HistoryLine]:
+        """Cambia la etiqueta muda de la media importada por su descripción.
+
+        Un fallo de la visión deja la etiqueta como estaba: el historial entra
+        igual, solo que sin el contenido de esa foto o ese video.
+        """
+        if self._image_vision is None and self._video_vision is None:
+            return lines
+        return [await self._describe_line(line) for line in lines]
+
+    async def _describe_line(self, line: HistoryLine) -> HistoryLine:
+        data = line.media_bytes
+        if not data or line.role != "vip":
+            return line
+        kind = (line.media_kind or "").lower()
+        try:
+            if kind.startswith("foto") and self._image_vision is not None:
+                result = await self._image_vision.analyze(
+                    data, mime_type=detect_image_mime(data)
+                )
+                tag = "imagen"
+            elif kind.startswith("video") and self._video_vision is not None:
+                result = await self._video_vision.analyze(
+                    data, mime_type=line.media_mime or "video/mp4"
+                )
+                tag = "video"
+            else:
+                return line
+        except Exception as exc:
+            logger.warning(
+                "vip_history_media_describe_failed",
+                extra={
+                    "telegram_message_id": line.telegram_message_id,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return line
+        if not result.enabled:
+            return line
+        text = compose_media_text(result, tag=tag, caption=line.caption)
+        return replace(line, text=text, media_bytes=None)
 
     def schedule_seed_for_new_vip(
         self,
@@ -261,13 +332,37 @@ class VipHistorySeedService:
                 extra={"telegram_user_id": uid},
             )
             outcome = SeedOutcome(kind="failed", count=0, telegram_user_id=uid)
-        await self._notify_owner(outcome)
+        opening = await self._start_opening(uid, outcome)
+        await self._notify_owner(outcome, opening=opening)
 
-    async def _notify_owner(self, outcome: SeedOutcome) -> None:
+    async def _start_opening(
+        self, uid: int, outcome: SeedOutcome
+    ) -> OpeningOutcome | None:
+        """Arranca la conversación con lo que quedó sin responder.
+
+        Un fallo aquí no puede tumbar la importación: el historial ya entró.
+        """
+        if self._opening is None or outcome.kind != "ok":
+            return None
+        try:
+            return await self._opening.start(uid)
+        except Exception:
+            logger.exception("vip_opening_failed", extra={"telegram_user_id": uid})
+            return None
+
+    async def _notify_owner(
+        self, outcome: SeedOutcome, *, opening: OpeningOutcome | None = None
+    ) -> None:
         if self._notifier is None:
             return
+        text = outcome.owner_message()
+        if opening is not None and opening.kind == "started":
+            text = (
+                f"{text} Además quedó un borrador en tu cola de aprobación con "
+                "los mensajes que habían quedado sin responder."
+            )
         try:
-            await self._notifier.notify_info(outcome.owner_message())
+            await self._notifier.notify_info(text)
         except Exception:
             logger.exception(
                 "vip_history_seed_notify_failed",

@@ -1948,8 +1948,15 @@ class TurnOrchestrator:
 
         # Coalesce open VIP burst into turn text so a superseding turn answers
         # all unanswered VIP lines in this round (not only the latest message).
-        turn_text = await self._coalesce_open_vip_turn_text(
-            incoming.chat_id, fallback=incoming.text
+        # El arranque de un VIP nuevo ya trae su texto unido y acotado (los
+        # últimos mensajes sin responder): no se rearma la ráfaga completa del
+        # historial importado, que puede abarcar semanas.
+        turn_text = (
+            incoming.text
+            if incoming.skip_coalesce
+            else await self._coalesce_open_vip_turn_text(
+                incoming.chat_id, fallback=incoming.text
+            )
         )
 
         turn_ctx = IncomingTurn(

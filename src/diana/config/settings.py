@@ -268,12 +268,14 @@ class Settings(BaseSettings):
     telethon_api_hash: SecretStr = SecretStr("")
     telethon_session_path: str = ""  # e.g. /path/to/diana_session (no .session)
     vip_history_seed_limit: Annotated[int, Field(ge=1, le=100)] = 20
+    # Cuántos archivos (fotos o videos) del historial importado se traen para
+    # describirlos. Se toman los más recientes; 0 = no traer ninguno.
+    vip_history_media_limit: Annotated[int, Field(ge=0, le=20)] = 3
+    # Cuántos mensajes sin responder se contestan de una vez en el arranque de
+    # un VIP nuevo.
+    vip_opening_max_messages: Annotated[int, Field(ge=1, le=10)] = 3
     # Puerta de la importación de historial al registrar un VIP nuevo.
-    # Apagada a propósito desde 2026-09-06: la sesión de Telethon configurada es
-    # de la cuenta anterior y la cuenta en uso no tiene historial con ningún VIP
-    # (todos escriben en chats nuevos), así que importar solo consultaría
-    # Telegram con una cuenta que ya no opera. El valor real vive en el .env;
-    # ver faltantes.md §7.
+    # El valor real vive en el .env.
     feature_vip_history_seed_enabled: bool = False
     # Scheduled re-import of pre-existing history for VIPs registered before
     # the seed fix (one VIP per cycle; owner personal account protection —

@@ -13,6 +13,10 @@ logger = logging.getLogger("diana.infrastructure.telethon")
 _FLOOD_WAIT_MAX_RETRIES = 5
 _SESSION_LOCK = asyncio.Lock()
 
+# Tope de peso para traer la media del historial: un archivo más grande no se
+# descarga (describirlo no justifica la espera ni el costo).
+_MAX_MEDIA_BYTES = 20 * 1024 * 1024
+
 
 def _media_kind(msg: object) -> str | None:
     media = getattr(msg, "media", None)
@@ -88,8 +92,35 @@ async def _resolve_entity(client: object, user_id: int, username: str | None) ->
     )
 
 
+async def _attach_media(client: object, msg: object, record: dict) -> bool:
+    """Descarga la media del mensaje (en memoria) y la adjunta al registro.
+
+    Devuelve True solo si se obtuvo contenido. La iteración va del mensaje más
+    nuevo al más viejo, así que las primeras medias que aparecen son las
+    últimas que mandó el VIP — que son las que interesan.
+    """
+    file_info = getattr(msg, "file", None)
+    size = getattr(file_info, "size", None)
+    if isinstance(size, int) and size > _MAX_MEDIA_BYTES:
+        logger.info("telethon_media_skipped_too_large", extra={"size": size})
+        return False
+    try:
+        data = await client.download_media(msg, file=bytes)  # type: ignore[attr-defined]
+    except Exception as exc:
+        logger.warning(
+            "telethon_media_download_failed",
+            extra={"error_type": type(exc).__name__},
+        )
+        return False
+    if not data:
+        return False
+    record["media_bytes"] = bytes(data)
+    record["media_mime"] = str(getattr(file_info, "mime_type", "") or "")
+    return True
+
+
 async def _fetch_raw_messages(
-    client: object, entity: object, limit: int
+    client: object, entity: object, limit: int, media_limit: int = 0
 ) -> list[dict]:
     from telethon.errors import FloodWaitError
 
@@ -99,10 +130,15 @@ async def _fetch_raw_messages(
     while True:
         try:
             newest_first: list[dict] = []
+            pending_media = max(0, int(media_limit))
             async for msg in client.iter_messages(entity, limit=limit):  # type: ignore[attr-defined]
                 if msg is None:
                     continue
-                newest_first.append(await _message_to_record(msg, diana_id))
+                record = await _message_to_record(msg, diana_id)
+                if pending_media and record.get("media_kind"):
+                    if await _attach_media(client, msg, record):
+                        pending_media -= 1
+                newest_first.append(record)
             newest_first.reverse()  # chronological oldest → newest
             return newest_first
         except FloodWaitError as exc:
@@ -125,7 +161,9 @@ class TelethonVipHistoryFetcher:
         api_id: int,
         api_hash: str,
         session_path: str | Path,
+        media_limit: int = 0,
     ) -> None:
+        self._media_limit = max(0, int(media_limit))
         self._api_id = int(api_id)
         self._api_hash = str(api_hash)
         path = Path(session_path)
@@ -153,7 +191,9 @@ class TelethonVipHistoryFetcher:
                         f"Telethon session not authorized: {self._session}.session"
                     )
                 entity = await _resolve_entity(client, user_id, username)
-                raw = await _fetch_raw_messages(client, entity, limit)
+                raw = await _fetch_raw_messages(
+                    client, entity, limit, self._media_limit
+                )
                 return map_raw_messages_to_lines(raw)
             finally:
                 await client.disconnect()

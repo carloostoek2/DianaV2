@@ -166,6 +166,7 @@ from diana.cognitive.image_vision import ImageDescriber
 from diana.cognitive.video_vision import VideoDescriber
 from diana.application.image_vision_service import ImageVisionService
 from diana.application.video_vision_service import VideoVisionService
+from diana.application.vip_opening import VipOpeningService
 from diana.telegram.actuator import AiogramTelegramActuator
 from diana.telegram.handlers.business import download_media_bytes
 from diana.telegram.handlers.callbacks import CorrectSessionStore
@@ -201,7 +202,13 @@ class SystemClock:
 
 
 def _build_vip_history_seed(
-    settings: Settings, *, history: Any, notifier: Any = None
+    settings: Settings,
+    *,
+    history: Any,
+    notifier: Any = None,
+    image_vision: Any = None,
+    video_vision: Any = None,
+    opening: Any = None,
 ) -> Any:
     """Arma el importador de historial del alta de VIP.
 
@@ -238,6 +245,7 @@ def _build_vip_history_seed(
             api_id=int(api_id),
             api_hash=api_hash,
             session_path=session_path,
+            media_limit=settings.vip_history_media_limit,
         )
         logger.info(
             "vip_history_seed_enabled",
@@ -255,6 +263,9 @@ def _build_vip_history_seed(
         limit=settings.vip_history_seed_limit,
         notifier=notifier,
         disabled_reason=disabled_reason,
+        image_vision=image_vision,
+        video_vision=video_vision,
+        opening=opening,
     )
 
 
@@ -1404,8 +1415,24 @@ def build_app(
     )
 
     # VIP DM history seed (Telethon personal session) — optional until env is set.
+    # Arranque de conversación de un VIP nuevo: toma los mensajes que quedaron
+    # sin responder del historial importado y los lleva a la cola de aprobación
+    # de la dueña (nunca se envía solo).
+    vip_opening = VipOpeningService(
+        runner=orchestrator,
+        history=history,
+        vips=vips,
+        connections=bc_store,
+        coordinator=coordinator,
+        max_messages=settings.vip_opening_max_messages,
+    )
     history_seed = _build_vip_history_seed(
-        settings, history=history, notifier=notifier
+        settings,
+        history=history,
+        notifier=notifier,
+        image_vision=image_vision,
+        video_vision=video_vision,
+        opening=vip_opening,
     )
 
     # F5 Pool 2: backfill queue + scheduler (one window per cycle, interval-gated).

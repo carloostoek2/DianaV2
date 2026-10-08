@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Text, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,6 +67,17 @@ class SqlBusinessConnectionStore:
             result = _orm_to_record(merged)
             await session.commit()
             return result
+
+    async def get_active(self) -> BusinessConnectionRecord | None:
+        """Conexión vigente: la más reciente habilitada que puede responder."""
+        async with self._sf() as session:
+            stmt = select(BusinessConnection).order_by(
+                BusinessConnection.date.desc()
+            )
+            for row in (await session.execute(stmt)).scalars():
+                if row.is_enabled and row.can_reply:
+                    return _orm_to_record(row)
+        return None
 
 
 __all__ = [

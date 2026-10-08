@@ -351,6 +351,9 @@ class VipInboundMessage(BaseModel):
     # F4-02: True ONLY when the general-mode atencion gate set it (auth.py).
     # Sandbox/training atencion and VIP never count; edits never count.
     counts_toward_limit: bool = False
+    # Arranque de un VIP nuevo: el texto ya viene unido y acotado desde el
+    # historial importado, así que el orquestador no rearma la ráfaga.
+    skip_coalesce: bool = False
 
 
 class VipRecord(BaseModel):
@@ -1043,9 +1046,21 @@ class BusinessConnectionRecord(BaseModel):
 
 @runtime_checkable
 class BusinessConnectionStore(Protocol):
-    """Upsert business connection state by business_connection_id."""
+    """Business connection state by business_connection_id."""
 
     async def upsert(self, record: BusinessConnectionRecord) -> BusinessConnectionRecord: ...
+
+    async def get_active(self) -> BusinessConnectionRecord | None:
+        """Conexión de negocios vigente, si la hay.
+
+        La conexión es una sola por cuenta de la dueña (no una por chat de VIP):
+        sirve para responder en cualquiera de sus chats. La necesita el arranque
+        de un VIP nuevo, donde no hay mensaje entrante del que sacarla.
+
+        Si hay varias filas se toma la más reciente que esté habilitada y pueda
+        responder; con ninguna utilizable devuelve None.
+        """
+        ...
 
 
 @runtime_checkable
