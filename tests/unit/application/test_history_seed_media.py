@@ -148,3 +148,24 @@ async def test_owner_media_is_not_described() -> None:
     )
     assert stored[0]["text"] == "[video]"
     video.analyze.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_media_already_stored_is_not_described_again() -> None:
+    """Lo que ya está en el historial no se vuelve a describir (gasta cuota)."""
+    video = _fake(
+        VideoVisionResult(enabled=True, sensitive=False, description="otra vez")
+    )
+    history = InMemoryMessageHistoryWriter()
+    await history.append(123, role="vip", text="[video]", telegram_message_id=7)
+    service = VipHistorySeedService(
+        history=history,
+        fetcher=_Fetcher([_video_line(telegram_message_id=7)]),
+        limit=20,
+        video_vision=video,
+    )
+    await service.seed_for_new_vip(123)
+    video.analyze.assert_not_awaited()
+    # La fila que ya estaba no se toca.
+    stored = await history.get_recent(123, limit=20)
+    assert stored[0]["text"] == "[video]"

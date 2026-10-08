@@ -61,9 +61,15 @@ class RecentHistoryReader(Protocol):
 
 @runtime_checkable
 class VipLookup(Protocol):
-    """Alta de VIP consultada por su identificador de Telegram."""
+    """Alta de VIP consultada por su identificador de Telegram.
 
-    async def get_record_and_allowed(self, telegram_user_id: int) -> VipRecord | None: ...
+    Devuelve ``(registro, permitido)``: el registro puede existir y aun así no
+    estar permitido (pausado o congelado).
+    """
+
+    async def get_record_and_allowed(
+        self, telegram_user_id: int, *, record: VipRecord | None = None
+    ) -> tuple[VipRecord | None, bool]: ...
 
 
 @runtime_checkable
@@ -103,9 +109,12 @@ class VipOpeningService:
     async def start(self, telegram_user_id: int) -> OpeningOutcome:
         """Arranca la conversación, o explica por qué no corresponde."""
         chat_id = int(telegram_user_id)
-        record = await self._vips.get_record_and_allowed(chat_id)
+        record, allowed = await self._vips.get_record_and_allowed(chat_id)
         if record is None:
             return self._skip(chat_id, "vip_unknown")
+        if not allowed:
+            # Pausado o congelado: no se le arranca una conversación.
+            return self._skip(chat_id, "vip_not_allowed")
         if bool(getattr(record, "auto_send", False)):
             # El arranque siempre termina en la cola de aprobación; con envío
             # automático activado no se arranca para no disparar solo.

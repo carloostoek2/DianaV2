@@ -746,11 +746,15 @@ Alta de VIP (/add_vip o el menú) → vips.add → schedule_seed_for_new_vip
         media en vivo: mismo filtro de privacidad y mismos topes
         → "[imagen: …]" / "[video: …]"; con la visión apagada o si falla,
         queda la etiqueta de siempre ("[foto]" / "[video]")
+      - NO vuelve a describir la media cuyo mensaje ya está en el historial:
+        la importación no reescribe esas filas, así que describirla otra vez
+        solo gasta cuota. Para eso está scripts/refresh_chat_media.py
       - append_missing a message_history (idempotente)
   → VipOpeningService.start(telegram_user_id):
-      - no arranca si el VIP no existe, si tiene envío automático activado,
-        si el chat ya tiene un turno vivo, si no hay mensajes del VIP sin
-        responder, o si no hay conexión de negocios vigente
+      - no arranca si el VIP no existe, si está pausado o congelado, si
+        tiene envío automático activado, si el chat ya tiene un turno vivo,
+        si no hay mensajes del VIP sin responder, o si no hay conexión de
+        negocios vigente
       - toma hasta VIP_OPENING_MAX_MESSAGES mensajes del VIP sin responder
         (los últimos, en orden cronológico) y los une con el formato de
         ráfaga del pipeline

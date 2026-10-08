@@ -200,7 +200,8 @@ class VipHistorySeedService:
         lines = await self._fetcher.fetch_recent(
             chat_id, limit=self._limit, username=username
         )
-        lines = await self._describe_media(lines)
+        known = await self._known_message_ids(chat_id)
+        lines = await self._describe_media(lines, known=known)
         if not lines:
             logger.info(
                 "vip_history_seed_empty",
@@ -238,7 +239,31 @@ class VipHistorySeedService:
         )
         return SeedOutcome(kind="ok", count=added, telegram_user_id=uid)
 
-    async def _describe_media(self, lines: list[HistoryLine]) -> list[HistoryLine]:
+    async def _known_message_ids(self, chat_id: int) -> set[int]:
+        """Ids que ya están en el historial del chat.
+
+        Lo que ya está guardado no se vuelve a describir: la importación no
+        reescribe esas filas, así que describirlas otra vez solo gasta cuota.
+        """
+        reader = getattr(self._history, "get_recent", None)
+        if not callable(reader):
+            return set()
+        try:
+            rows = await reader(chat_id, limit=self._limit)
+        except Exception:
+            logger.exception(
+                "vip_history_seed_known_read_failed", extra={"chat_id": chat_id}
+            )
+            return set()
+        return {
+            int(row["telegram_message_id"])
+            for row in rows
+            if isinstance(row, dict) and row.get("telegram_message_id") is not None
+        }
+
+    async def _describe_media(
+        self, lines: list[HistoryLine], *, known: set[int] | None = None
+    ) -> list[HistoryLine]:
         """Cambia la etiqueta muda de la media importada por su descripción.
 
         Un fallo de la visión deja la etiqueta como estaba: el historial entra
@@ -246,12 +271,17 @@ class VipHistorySeedService:
         """
         if self._image_vision is None and self._video_vision is None:
             return lines
-        return [await self._describe_line(line) for line in lines]
+        already = known or set()
+        return [await self._describe_line(line, known=already) for line in lines]
 
-    async def _describe_line(self, line: HistoryLine) -> HistoryLine:
+    async def _describe_line(
+        self, line: HistoryLine, *, known: set[int] | None = None
+    ) -> HistoryLine:
         data = line.media_bytes
         if not data or line.role != "vip":
             return line
+        if line.telegram_message_id is not None and line.telegram_message_id in (known or set()):
+            return replace(line, media_bytes=None)
         kind = (line.media_kind or "").lower()
         try:
             if kind.startswith("foto") and self._image_vision is not None:

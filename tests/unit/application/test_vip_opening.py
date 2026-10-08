@@ -54,11 +54,14 @@ class _History:
 
 
 class _Vips:
-    def __init__(self, record: VipRecord | None) -> None:
-        self._record = record
+    """Doble del alta de VIP: devuelve (registro, permitido), igual que el real."""
 
-    async def get_record_and_allowed(self, telegram_user_id: int):
-        return self._record
+    def __init__(self, record: VipRecord | None, *, allowed: bool = True) -> None:
+        self._record = record
+        self._allowed = allowed
+
+    async def get_record_and_allowed(self, telegram_user_id: int, *, record=None):
+        return self._record, self._allowed
 
 
 class _Connections:
@@ -101,6 +104,7 @@ def _service(
     *,
     rows=None,
     vip=_UNSET,
+    allowed: bool = True,
     connection=_UNSET,
     live=None,
     max_messages: int = 3,
@@ -109,7 +113,7 @@ def _service(
     service = VipOpeningService(
         runner=runner,
         history=_History(rows if rows is not None else _rows(("vip", "hola"))),
-        vips=_Vips(_vip() if vip is _UNSET else vip),
+        vips=_Vips(_vip() if vip is _UNSET else vip, allowed=allowed),
         connections=_Connections(
             _connection() if connection is _UNSET else connection
         ),
@@ -177,6 +181,15 @@ async def test_busy_chat_is_left_alone() -> None:
     service, runner = _service(live=[object()])
     outcome = await service.start(_CHAT)
     assert outcome.reason == "chat_busy"
+    assert runner.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_paused_vip_is_left_out() -> None:
+    """Un VIP pausado o congelado no recibe arranque de conversación."""
+    service, runner = _service(allowed=False)
+    outcome = await service.start(_CHAT)
+    assert outcome.reason == "vip_not_allowed"
     assert runner.calls == 0
 
 
