@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -49,6 +50,10 @@ from diana.infrastructure.vision.video_frames import (  # noqa: E402
     FfmpegFrameExtractor,
 )
 from diana.llm.gemini_vision import GeminiVisionProvider  # noqa: E402
+
+
+# Una fila ya descrita empieza con la etiqueta y dos puntos: "[video: …]".
+_YA_DESCRITA = re.compile(r"^\[(?:imagen|foto|video):")
 
 
 async def _describe(line, *, image_vision, video_vision, tag_for_kind):
@@ -84,6 +89,11 @@ async def main() -> int:
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="muestra lo que haría, sin escribir"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="vuelve a describir lo que ya tiene descripción (gasta cuota)",
     )
     args = parser.parse_args()
 
@@ -148,6 +158,15 @@ async def main() -> int:
         actual = stored.get(line.telegram_message_id)
         if actual is not None and actual.get("text") == texto:
             print(f"  id={line.telegram_message_id}: sin cambios")
+            continue
+        if (
+            actual is not None
+            and _YA_DESCRITA.search(str(actual.get("text") or ""))
+            and not args.force
+        ):
+            # Ya tiene descripción: volver a describirla gasta cuota y puede
+            # cambiarla por otra peor.
+            print(f"  id={line.telegram_message_id}: ya estaba descrita, se deja igual")
             continue
         antes = (actual or {}).get("text")
         print(f"  id={line.telegram_message_id}:")
