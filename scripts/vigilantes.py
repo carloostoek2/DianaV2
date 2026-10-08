@@ -36,6 +36,7 @@ Uso::
 
     venv/bin/python scripts/vigilantes.py --dry-run   # muestra, no manda nada
     venv/bin/python scripts/vigilantes.py             # corre y avisa si hace falta
+    venv/bin/python scripts/vigilantes.py --avisar-activacion   # aviso de puesta en marcha (una vez)
 """
 
 from __future__ import annotations
@@ -84,6 +85,23 @@ SIGNIFICADO: dict[str, str] = {
         "contra la nada (el defecto del 10 de septiembre)."
     ),
 }
+
+# Aviso de puesta en marcha: se manda UNA vez, a mano, cuando la vigilancia se
+# activa o se reinstala (p. ej. al cambiar de cuenta o de máquina). No es parte
+# de la corrida diaria: el día a día solo escribe si algo dejó de funcionar.
+AVISO_ACTIVACION = (
+    "✅ Vigilancia diaria activada\n"
+    "\n"
+    "Desde hoy reviso sola, una vez por día, tres cosas, y te escribo SOLO si algo "
+    "dejó de funcionar:\n"
+    "• que lo que Diana guarda no quede con la huella vacía (el problema de agosto);\n"
+    "• que cada turno de un VIP siga dejando el registro de lo que Diana habría "
+    "decidido sola;\n"
+    "• que lo que apruebas o corriges quede guardado (el defecto de septiembre).\n"
+    "\n"
+    "Si no hay novedades, no te escribo: el silencio significa que está todo en orden.\n"
+    'Probé la alarma a propósito y suena (incluida la de "no pude revisar").'
+)
 
 _CABECERA = re.compile(r"^--\s*(V\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$")
 
@@ -296,7 +314,17 @@ async def principal(argumentos: argparse.Namespace) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="muestra el mensaje sin mandarlo")
+    parser.add_argument(
+        "--avisar-activacion",
+        action="store_true",
+        help="manda el aviso de puesta en marcha (una vez, al activar la vigilancia)",
+    )
     argumentos = parser.parse_args()
+    if argumentos.avisar_activacion:
+        avisar(AVISO_ACTIVACION, dry_run=argumentos.dry_run)
+        estado = "dry-run" if argumentos.dry_run else "enviado"
+        print(f"aviso de activación: {estado}")
+        return
     sys.exit(asyncio.run(principal(argumentos)))
 
 
