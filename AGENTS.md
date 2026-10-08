@@ -71,7 +71,7 @@ Principios rectores (no negociables):
 6. Toda decisión es reconstruible a partir de objetos persistidos.
 7. El Turn Coordinator garantiza la serialización por chat (REQ-NFR-02).
 
-Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, FEATURE_IMAGE_VISION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
+Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, FEATURE_IMAGE_VISION_ENABLED, FEATURE_VIDEO_VISION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
 Regla de PRIORIDAD — feature flags en el .env real (fija desde 2026-09-02, obligatoria para toda implementación):
 
@@ -574,7 +574,10 @@ business_message con photo + flag ON:
          (español, máx. 40 palabras; el prompt indica IGNORAR las zonas
          tapadas: no mencionarlas ni adivinar qué hay debajo). Fallo del
          proveedor → fail-open: se mantiene el tag plano [imagen] (nunca se
-         rompe el turno)
+         rompe el turno). La llamada va con el razonamiento del modelo
+         apagado (`thinkingConfig.thinkingBudget: 0`): ese razonamiento se
+         descuenta del tope de salida y la descripción llegaba cortada a la
+         mitad (`finishReason=MAX_TOKENS`). Aplica igual a la visión de video.
   → Texto del turno (el tag base es consciente de álbum: un miembro de álbum
     dice "imagen parte de álbum" — NUNCA "álbum de imágenes", porque cada
     miembro es su propia fila y el modelo leería N álbumes distintos):
@@ -664,6 +667,63 @@ de fotos) y no hace falta: basta la etiqueta.
 Invariantes: un mensaje de texto conserva sus palabras textuales (el tag nunca
 se filtra al texto); la marca de álbum no implica descarga ni análisis; el
 conteo del colapso es solo presentación (no se escribe en la DB).
+
+---
+
+4.24 Visión de video con revisión local de fotogramas (FEATURE_VIDEO_VISION_ENABLED)
+
+```
+business_message con video o video_note + flag ON:
+  → Telegram Layer: detecta el video → descarga los bytes del file_id
+    (media_downloader; el video y los fotogramas NUNCA se persisten)
+    — guarda previa: si file_size supera 20 MB (tope de descarga de la
+      Bot API) no se intenta bajar; queda la etiqueta plana
+  → VideoVisionService (application):
+      1. Extracción local de un fotograma por segundo, de punta a punta
+         (tope de 30; un video más largo reparte ese tope por todo el
+         video) — infrastructure/vision/video_frames.py; ffmpeg + ffprobe,
+         en un directorio temporal que se borra al terminar. El video NO
+         sale del servidor en esta etapa.
+      2. OCR local de cada fotograma (tesseract) y la MISMA política de
+         sensibilidad que las fotos
+         (application/image_vision_service.scan_sensitive):
+         - documento de identidad en cualquier fotograma → SENSIBLE
+           (revisión manual de la dueña; el video NUNCA sale)
+         - dato fuerte (tarjeta / cuenta / clave) en cualquier fotograma →
+           SENSIBLE: un video no se puede tapar, así que no hay enmascarado
+         - factura o recibo solo → viaja (el importe es el comprobante)
+         - sin datos → viaja
+      3. Si los fotogramas están limpios → el video completo →
+         VideoDescriber (cognitive/video_vision.py) → GeminiVisionProvider
+         (llm/gemini_vision.py, con plazo propio más largo que el de las
+         fotos) → descripción corta (español, máx. 40 palabras). Fallo del
+         proveedor → fail-open: se mantiene el tag plano.
+  → Texto del turno (igual que en las fotos):
+      - sensible:       "[video] ⚠️ contiene información sensible (no analizada)"
+      - descripción:    "[video: <descripción>]" (+ caption si existe)
+      - fallo / flag off: tag de media "[video]" (+ caption) — sin descarga,
+        sin análisis
+  → La descripción entra al pipeline como TEXTO del turno: Analyst,
+    Generator, Evaluator y Decisor NO se tocan. El caption no participa en
+    la decisión sobre el video: lo procesa el control de seguridad de texto
+    del pipeline, como cualquier mensaje del VIP.
+```
+
+Invariantes: flag OFF = sin descarga, sin fotogramas y sin análisis (se
+conserva la etiqueta `[video]`); se revisa un fotograma por segundo (tope
+`VIDEO_VISION_MAX_FRAMES`) porque mirar solo unos instantes sueltos deja pasar
+cualquier dato que aparezca entre dos muestras, y la revisión local es la misma
+que la de las fotos; el
+enmascarado NO existe para video, por eso cualquier dato fuerte lo deja fuera
+del servidor; fail-closed ante ffmpeg ausente, fotogramas no extraíbles u OCR no
+disponible; la imagen de identidad NUNCA sale; el video y los fotogramas no se
+guardan en DB ni en disco (solo los bytes en memoria); el Decisor no interviene
+(el filtro es pre-pipeline, capa de aplicación + Telegram I/O).
+
+Límite conocido: el video todavía NO se adjunta al mensaje de aprobación de la
+dueña (`photo_file_id` sigue siendo solo para fotos), así que ella ve la
+descripción pero no el video. Un álbum de videos se analiza miembro por miembro,
+igual que el de fotos.
 
 ---
 

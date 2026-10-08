@@ -137,10 +137,12 @@ def build_dispatcher(
     link: LinkCoordinator | None = None,
     link_chat_id: int | None = None,
     feature_link_enabled: bool = False,
-    # Image vision (FEATURE_IMAGE_VISION_ENABLED): service + photo downloader.
-    # Both None ⇒ today's behavior byte-for-byte (media tag without content).
+    # Visión de media (FEATURE_IMAGE_VISION_ENABLED / FEATURE_VIDEO_VISION_ENABLED):
+    # servicios + descargador. Si son None el comportamiento es el de siempre
+    # (etiqueta de media sin contenido).
     image_vision: Any | None = None,
-    photo_downloader: Any | None = None,
+    video_vision: Any | None = None,
+    media_downloader: Any | None = None,
     # False-positive resume (AGENTS §4.21): when ON, the forbidden/J.4
     # short-circuit remembers the VIP message so the owner's triage can later
     # generate a draft for it. OFF ⇒ no history write at all.
@@ -318,7 +320,8 @@ def build_dispatcher(
             orchestrator=orchestrator,
             on_vip_inbound=sessions.cancel_combo_for_chat,
             image_vision=image_vision,
-            photo_downloader=photo_downloader,
+            video_vision=video_vision,
+            media_downloader=media_downloader,
         )
     )
     if bc_store is not None:

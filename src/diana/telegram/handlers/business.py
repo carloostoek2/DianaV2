@@ -11,9 +11,16 @@ from uuid import UUID
 from aiogram import Bot, Router
 from aiogram.types import Message
 
-from diana.application.image_vision_service import ImageVisionService
+from diana.application.image_vision_service import (
+    ImageVisionResult,
+    ImageVisionService,
+)
 from diana.application.ports import VipInboundMessage
 from diana.application.turn_orchestrator import TurnOrchestrator
+from diana.application.video_vision_service import (
+    VideoVisionResult,
+    VideoVisionService,
+)
 from diana.infrastructure.vision.ocr import (
     OcrUnavailableError,
     detect_image_mime,
@@ -27,11 +34,16 @@ logger = logging.getLogger("diana.telegram")
 _SENSITIVE_MARK = "⚠️ contiene información sensible (no analizada)"
 
 
-PhotoDownloader = Callable[[str], Awaitable[bytes]]
+MediaDownloader = Callable[[str], Awaitable[bytes]]
+
+# Tope real de la API de Telegram para que un bot descargue un archivo. Un video
+# más pesado ni siquiera se puede bajar, así que no se intenta.
+_MAX_VIDEO_BYTES = 20 * 1024 * 1024
+_DEFAULT_VIDEO_MIME = "video/mp4"
 
 
-async def download_photo_bytes(bot: Bot, file_id: str) -> bytes:
-    """Download a Telegram photo into memory (never persisted to disk)."""
+async def download_media_bytes(bot: Bot, file_id: str) -> bytes:
+    """Descarga un archivo de Telegram en memoria (nunca se escribe en disco)."""
     file = await bot.get_file(file_id)
     if file.file_path is None:
         raise OcrUnavailableError("telegram file has no download path")
@@ -40,46 +52,18 @@ async def download_photo_bytes(bot: Bot, file_id: str) -> bytes:
     return buffer.getvalue()
 
 
-async def _vision_text_and_photo(
-    message: Message,
-    *,
-    vision: ImageVisionService,
-    downloader: PhotoDownloader,
-) -> tuple[str, str | None]:
-    """Describe an inbound photo (or mark it sensitive) → (text, photo_file_id).
+def _compose_media_text(
+    result: ImageVisionResult | VideoVisionResult, *, tag: str, caption: str
+) -> str:
+    """Texto del turno a partir del resultado de visión (sirve para foto y video).
 
-    Only called when the vision feature is enabled. Never raises: any failure
-    falls back to the plain media tag while still forwarding the photo to the
-    owner approval DM (``photo_file_id``). The image bytes are never stored.
+    El caption nunca entra a la decisión de privacidad: viaja como texto normal
+    y lo procesa el control de seguridad del pipeline, igual que cualquier
+    mensaje del VIP.
     """
-    photo = message.photo
-    caption = (message.caption or "").strip()
-    # Album-aware base tag (``imagen`` / ``imagen parte de álbum``); the three
-    # variants below are built from it so an album member stays identifiable
-    # whichever way the analysis ends.
-    tag = media_tag(message) or "imagen"
-    plain = f"[{tag}]" if not caption else f"[{tag}] {caption}"
-    if not photo:
-        return inbound_text(message), None
-    file_id = photo[-1].file_id
-    try:
-        image_bytes = await downloader(file_id)
-        mime_type = detect_image_mime(image_bytes)
-        result = await vision.analyze(
-            image_bytes, mime_type=mime_type
-        )
-    except Exception as exc:
-        # Download / decode / analysis failure → fail-open to the plain tag;
-        # the owner still receives the photo to review it herself.
-        logger.warning(
-            "image_vision_failed_fail_open",
-            extra={"error_type": type(exc).__name__},
-        )
-        return plain, file_id
-
     if not result.enabled:
-        return plain, file_id
-    if result.sensitive:
+        text = f"[{tag}]"
+    elif result.sensitive:
         text = f"[{tag}] {_SENSITIVE_MARK}"
     elif result.description:
         text = f"[{tag}: {result.description}]"
@@ -87,7 +71,109 @@ async def _vision_text_and_photo(
         text = f"[{tag}]"
     if caption:
         text = f"{text} {caption}"
-    return text, file_id
+    return text
+
+
+async def _photo_text_and_id(
+    message: Message,
+    *,
+    vision: ImageVisionService,
+    downloader: MediaDownloader,
+    tag: str,
+    caption: str,
+    plain: str,
+) -> tuple[str, str | None]:
+    """Describe la foto entrante → (texto, file_id para el mensaje a la dueña)."""
+    file_id = message.photo[-1].file_id  # type: ignore[index]
+    try:
+        image_bytes = await downloader(file_id)
+        mime_type = detect_image_mime(image_bytes)
+        result = await vision.analyze(image_bytes, mime_type=mime_type)
+    except Exception as exc:
+        # Fallo de descarga, decodificación o análisis → etiqueta plana; la
+        # dueña igual recibe la foto para revisarla ella misma.
+        logger.warning(
+            "image_vision_failed_fail_open",
+            extra={"error_type": type(exc).__name__},
+        )
+        return plain, file_id
+    return _compose_media_text(result, tag=tag, caption=caption), file_id
+
+
+async def _video_text(
+    message: Message,
+    *,
+    video_vision: VideoVisionService,
+    downloader: MediaDownloader,
+    tag: str,
+    caption: str,
+    plain: str,
+) -> str:
+    """Describe el video entrante, o devuelve la etiqueta plana de media."""
+    video = message.video or message.video_note
+    if video is None:
+        return plain
+    declared = getattr(video, "file_size", None)
+    if isinstance(declared, int) and declared > _MAX_VIDEO_BYTES:
+        logger.info(
+            "video_vision_skipped_too_large",
+            extra={"file_size": declared},
+        )
+        return plain
+    try:
+        video_bytes = await downloader(video.file_id)
+        mime_type = (getattr(video, "mime_type", None) or _DEFAULT_VIDEO_MIME).strip()
+        result = await video_vision.analyze(video_bytes, mime_type=mime_type)
+    except Exception as exc:
+        # Fallo de descarga o de análisis → etiqueta plana (el video no viaja).
+        logger.warning(
+            "video_vision_failed_fail_open",
+            extra={"error_type": type(exc).__name__},
+        )
+        return plain
+    return _compose_media_text(result, tag=tag, caption=caption)
+
+
+async def _vision_text_and_media(
+    message: Message,
+    *,
+    vision: ImageVisionService | None,
+    video_vision: VideoVisionService | None,
+    downloader: MediaDownloader,
+) -> tuple[str, str | None]:
+    """Describe la media entrante (o la marca sensible) → (texto, foto_file_id).
+
+    Se llama solo cuando la visión correspondiente está encendida. Nunca
+    levanta excepciones: cualquier fallo vuelve a la etiqueta plana de media.
+    La foto viaja además a la dueña en el mensaje de aprobación
+    (``photo_file_id``); el video todavía no. Los bytes nunca se guardan.
+    """
+    caption = (message.caption or "").strip()
+    # Etiqueta base consciente de álbum (``imagen`` / ``imagen parte de
+    # álbum``): las variantes se arman desde ella para que un miembro de álbum
+    # siga siendo identificable sin importar cómo termine el análisis.
+    tag = media_tag(message) or "imagen"
+    plain = f"[{tag}]" if not caption else f"[{tag}] {caption}"
+    if message.photo and vision is not None:
+        return await _photo_text_and_id(
+            message,
+            vision=vision,
+            downloader=downloader,
+            tag=tag,
+            caption=caption,
+            plain=plain,
+        )
+    if (message.video or message.video_note) and video_vision is not None:
+        text = await _video_text(
+            message,
+            video_vision=video_vision,
+            downloader=downloader,
+            tag=tag,
+            caption=caption,
+            plain=plain,
+        )
+        return text, None
+    return inbound_text(message), None
 
 
 def build_business_router(
@@ -95,7 +181,8 @@ def build_business_router(
     orchestrator: TurnOrchestrator,
     on_vip_inbound: Callable[[int], None] | None = None,
     image_vision: ImageVisionService | None = None,
-    photo_downloader: PhotoDownloader | None = None,
+    video_vision: VideoVisionService | None = None,
+    media_downloader: MediaDownloader | None = None,
 ) -> Router:
     router = Router(name="business")
 
@@ -120,14 +207,18 @@ def build_business_router(
     ) -> VipInboundMessage:
         text = inbound_text(message)
         photo_file_id: str | None = None
-        if image_vision is not None and image_vision.enabled:
-            # Vision path only when the feature is ON: OFF keeps the media tag
-            # only (no download, no analysis, no photo in the owner DM —
-            # regla de oro AGENTS §1).
-            if photo_downloader is not None:
-                text, photo_file_id = await _vision_text_and_photo(
-                    message, vision=image_vision, downloader=photo_downloader
-                )
+        image_on = image_vision is not None and image_vision.enabled
+        video_on = video_vision is not None and video_vision.enabled
+        if media_downloader is not None and (image_on or video_on):
+            # Camino de visión solo con la función encendida: apagada se
+            # conserva la etiqueta de media, sin descarga ni análisis
+            # (regla de oro AGENTS §1).
+            text, photo_file_id = await _vision_text_and_media(
+                message,
+                vision=image_vision if image_on else None,
+                video_vision=video_vision if video_on else None,
+                downloader=media_downloader,
+            )
         return VipInboundMessage(
             chat_id=message.chat.id,
             text=text,
@@ -244,8 +335,8 @@ async def handle_business_message(
 
 
 __all__ = [
-    "PhotoDownloader",
+    "MediaDownloader",
     "build_business_router",
-    "download_photo_bytes",
+    "download_media_bytes",
     "handle_business_message",
 ]

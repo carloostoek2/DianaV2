@@ -156,15 +156,18 @@ from diana.infrastructure.db.repositories.memories import MemoriesRepo
 from diana.infrastructure.db.repositories.policies import PoliciesRepo
 from diana.infrastructure.db.repositories.profiles import ProfilesRepo
 from diana.infrastructure.vision.ocr import OcrEngine
+from diana.infrastructure.vision.video_frames import FfmpegFrameExtractor
 from diana.learning.post_turn import LearningService
 from diana.llm.deepseek import DeepSeekProvider
 from diana.llm.fake import FakeLLM
 from diana.llm.gemini_vision import GeminiVisionProvider
 from diana.llm.hot_swap import LLM_CONFIG_KEY, HotSwapLLMProvider
 from diana.cognitive.image_vision import ImageDescriber
+from diana.cognitive.video_vision import VideoDescriber
 from diana.application.image_vision_service import ImageVisionService
+from diana.application.video_vision_service import VideoVisionService
 from diana.telegram.actuator import AiogramTelegramActuator
-from diana.telegram.handlers.business import download_photo_bytes
+from diana.telegram.handlers.business import download_media_bytes
 from diana.telegram.handlers.callbacks import CorrectSessionStore
 from diana.telegram.handlers.doctrine import (
     DoctrineSessionStore,
@@ -465,16 +468,18 @@ def build_app(
     notifier = AiogramOwnerNotifier(
         bot_inst, owner_telegram_id=settings.owner_telegram_id
     )
-    # Image vision (FEATURE_IMAGE_VISION_ENABLED): local OCR privacy filter +
-    # Gemini captioning for non-sensitive inbound photos. Built ALWAYS (the
-    # flag governs behavior; an empty GEMINI_API_KEY disables the captioner),
-    # so the wiring stays declarative and flag-off equals today's behavior.
+    # Visión de media (FEATURE_IMAGE_VISION_ENABLED / FEATURE_VIDEO_VISION_ENABLED):
+    # filtro local de privacidad (OCR sobre la foto, OCR sobre fotogramas del
+    # video) + descripción con Gemini. Se arma SIEMPRE: la bandera gobierna el
+    # comportamiento y una GEMINI_API_KEY vacía deja sin describer, así que el
+    # cableado queda declarativo y con la bandera apagada nada cambia.
     image_ocr = OcrEngine()
     vision_provider = (
         GeminiVisionProvider(
             api_key=settings.gemini_api_key,
             model=settings.gemini_vision_model,
             timeout=settings.gemini_vision_timeout_s,
+            video_timeout=settings.gemini_video_timeout_s,
         )
         if settings.gemini_api_key.get_secret_value().strip()
         else None
@@ -487,10 +492,34 @@ def build_app(
         describer=image_describer,
         enabled=settings.feature_image_vision_enabled,
     )
-    photo_downloader = (
-        functools.partial(download_photo_bytes, bot_inst)
-        if settings.feature_image_vision_enabled and vision_provider is not None
+    video_describer = (
+        VideoDescriber(vision=vision_provider) if vision_provider else None
+    )
+    video_vision = VideoVisionService(
+        frames=FfmpegFrameExtractor(max_frames=settings.video_vision_max_frames),
+        ocr=image_ocr,
+        describer=video_describer,
+        enabled=settings.feature_video_vision_enabled,
+    )
+    media_downloader = (
+        functools.partial(download_media_bytes, bot_inst)
+        if (
+            settings.feature_image_vision_enabled
+            or settings.feature_video_vision_enabled
+        )
+        and vision_provider is not None
         else None
+    )
+    # Estado explícito al arrancar: una función apagada no debe parecer un
+    # "no había nada que analizar".
+    logger.info(
+        "media_vision_wired",
+        extra={
+            "image_enabled": settings.feature_image_vision_enabled,
+            "video_enabled": settings.feature_video_vision_enabled,
+            "video_max_frames": settings.video_vision_max_frames,
+            "captioner": vision_provider is not None,
+        },
     )
     clock = SystemClock()
     # Fase 6 (vínculo Lucien→Diana): built ALWAYS (trust_budget pattern) — the
@@ -1517,7 +1546,8 @@ def build_app(
         link_chat_id=settings.link_chat_id,
         feature_link_enabled=settings.feature_link_enabled,
         image_vision=image_vision,
-        photo_downloader=photo_downloader,
+        video_vision=video_vision,
+        media_downloader=media_downloader,
         # False-positive resume: the forbidden/J.4 short-circuit remembers the
         # VIP message so the owner's triage can generate a draft for it.
         feature_escalation_fp_draft_enabled=(

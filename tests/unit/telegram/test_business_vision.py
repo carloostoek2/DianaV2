@@ -1,4 +1,4 @@
-"""Business handler + image vision — tag replacement and photo forwarding."""
+"""Business handler + media vision — tag replacement, photo forwarding, video."""
 
 from __future__ import annotations
 
@@ -7,11 +7,12 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from aiogram.types import Chat, Message, PhotoSize, User
+from aiogram.types import Chat, Message, PhotoSize, User, Video, VideoNote
 from PIL import Image
 
 from diana.application.image_vision_service import ImageVisionResult
 from diana.application.ports import VipInboundMessage
+from diana.application.video_vision_service import VideoVisionResult
 from diana.telegram.handlers.business import build_business_router
 
 
@@ -54,6 +55,48 @@ def _album_photo_message(*, caption: str | None = None) -> Message:
     )
 
 
+def _video_message(
+    *,
+    caption: str | None = None,
+    file_size: int | None = 2_000_000,
+    mime_type: str | None = "video/mp4",
+) -> Message:
+    return Message(
+        message_id=10,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        video=Video(
+            file_id="vid-big",
+            file_unique_id="v1",
+            width=640,
+            height=360,
+            duration=12,
+            file_size=file_size,
+            mime_type=mime_type,
+        ),
+        caption=caption,
+        business_connection_id="bc-1",
+    )
+
+
+def _video_note_message() -> Message:
+    return Message(
+        message_id=11,
+        date=0,
+        chat=Chat(id=42, type="private"),
+        from_user=User(id=111, is_bot=False, first_name="Vip"),
+        video_note=VideoNote(
+            file_id="round-1",
+            file_unique_id="v2",
+            length=240,
+            duration=8,
+            file_size=1_500_000,
+        ),
+        business_connection_id="bc-1",
+    )
+
+
 def _text_message() -> Message:
     return Message(
         message_id=7,
@@ -72,23 +115,29 @@ class _FakeVision:
         self.enabled = enabled
         self.analyze = AsyncMock(return_value=result)
 
-    async def analyze(self, *args, **kwargs) -> ImageVisionResult:
-        return await self.analyze.analyze(*args, **kwargs) if False else self.analyze()
+
+class _FakeVideoVision:
+    """VideoVisionService double with a scripted analyze()."""
+
+    def __init__(self, result: VideoVisionResult, *, enabled: bool = True) -> None:
+        self.enabled = enabled
+        self.analyze = AsyncMock(return_value=result)
 
 
-def _router(vision, downloader):
+def _router(vision=None, downloader=None, video_vision=None):
     orch = AsyncMock()
     orch.handle_vip_message = AsyncMock(return_value=uuid4())
     router = build_business_router(
         orchestrator=orch,
         image_vision=vision,
-        photo_downloader=downloader,
+        video_vision=video_vision,
+        media_downloader=downloader,
     )
     return orch, router.business_message.handlers[0].callback
 
 
-async def _run(message, vision, downloader) -> VipInboundMessage:
-    orch, on_business = _router(vision, downloader)
+async def _run(message, vision, downloader, video_vision=None) -> VipInboundMessage:
+    orch, on_business = _router(vision, downloader, video_vision)
     await on_business(message)
     orch.handle_vip_message.assert_awaited_once()
     return orch.handle_vip_message.await_args.args[0]
@@ -240,7 +289,7 @@ async def test_edited_photo_path_applies_vision_and_keeps_edit_flag() -> None:
     router = build_business_router(
         orchestrator=orch,
         image_vision=vision,
-        photo_downloader=downloader,
+        media_downloader=downloader,
     )
     on_edited = router.edited_business_message.handlers[0].callback
     await on_edited(_photo_message(caption="nueva"))
@@ -249,3 +298,114 @@ async def test_edited_photo_path_applies_vision_and_keeps_edit_flag() -> None:
     assert inbound.text == "[imagen: nueva foto] nueva"
     assert inbound.is_edit is True
     assert inbound.photo_file_id == "big"
+
+
+# --- Video ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_video_described_gets_video_tag() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description="una dedicatoria")
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    inbound = await _run(_video_message(), None, downloader, video_vision)
+    assert inbound.text == "[video: una dedicatoria]"
+    # El video todavía no viaja al mensaje de aprobación de la dueña.
+    assert inbound.photo_file_id is None
+    downloader.assert_awaited_once_with("vid-big")
+    video_vision.analyze.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_video_with_caption_keeps_caption_after_description() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description="un collage")
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    inbound = await _run(
+        _video_message(caption="mira esto"), None, downloader, video_vision
+    )
+    assert inbound.text == "[video: un collage] mira esto"
+
+
+@pytest.mark.asyncio
+async def test_sensitive_video_is_marked_and_never_described() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=True, reason="tarjeta")
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    inbound = await _run(_video_message(), None, downloader, video_vision)
+    assert (
+        inbound.text == "[video] ⚠️ contiene información sensible (no analizada)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_video_note_uses_the_same_video_tag() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description="un saludo")
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    inbound = await _run(_video_note_message(), None, downloader, video_vision)
+    assert inbound.text == "[video: un saludo]"
+    downloader.assert_awaited_once_with("round-1")
+
+
+@pytest.mark.asyncio
+async def test_oversized_video_is_not_downloaded() -> None:
+    """Más de 20 MB no se puede bajar: se conserva la etiqueta plana."""
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description="x")
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    inbound = await _run(
+        _video_message(file_size=25 * 1024 * 1024), None, downloader, video_vision
+    )
+    assert inbound.text == "[video]"
+    downloader.assert_not_awaited()
+    video_vision.analyze.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_video_download_failure_falls_back_to_plain_tag() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description="x")
+    )
+    downloader = AsyncMock(side_effect=RuntimeError("telegram down"))
+    inbound = await _run(_video_message(), None, downloader, video_vision)
+    assert inbound.text == "[video]"
+
+
+@pytest.mark.asyncio
+async def test_video_vision_disabled_keeps_plain_tag_and_no_download() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=False), enabled=False
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    inbound = await _run(_video_message(caption="hola"), None, downloader, video_vision)
+    assert inbound.text == "[video] hola"
+    assert inbound.photo_file_id is None
+    downloader.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_video_with_image_vision_only_stays_plain() -> None:
+    """Con visión de fotos encendida y la de video apagada, el video no se toca."""
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=False, description="x")
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    inbound = await _run(_video_message(), vision, downloader, None)
+    assert inbound.text == "[video]"
+    downloader.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_video_mime_defaults_to_mp4() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description="x")
+    )
+    downloader = AsyncMock(return_value=b"mp4-bytes")
+    await _run(_video_message(mime_type=None), None, downloader, video_vision)
+    assert video_vision.analyze.await_args.kwargs["mime_type"] == "video/mp4"

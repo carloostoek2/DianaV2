@@ -52,6 +52,28 @@ async def test_describe_image_sends_inline_data_and_returns_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_thinking_is_disabled_so_the_caption_is_not_cut_off() -> None:
+    """El razonamiento del modelo se descuenta del tope de salida.
+
+    Con el razonamiento encendido, la descripción quedaba cortada a la mitad
+    (finishReason=MAX_TOKENS): se gastaba el tope pensando y la respuesta
+    llegaba incompleta.
+    """
+    visto: dict = {}
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        visto.update(json.loads(request.content)["generationConfig"])
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+        )
+
+    provider = GeminiVisionProvider(api_key=SecretStr("k"), client=_transport(responder))
+    await provider.describe_image(b"img", mime_type="image/jpeg", prompt="d")
+    assert visto["thinkingConfig"]["thinkingBudget"] == 0
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
 async def test_describe_image_joins_multiple_text_parts() -> None:
     def responder(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -129,4 +151,70 @@ async def test_describe_image_rejects_empty_args() -> None:
         await provider.describe_image(b"x", mime_type="", prompt="d")
     with pytest.raises(ValueError, match="prompt"):
         await provider.describe_image(b"x", mime_type="image/jpeg", prompt=" ")
+    await provider.aclose()
+
+
+# --- Video ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_describe_video_sends_inline_data_with_video_mime() -> None:
+    def responder(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        parts = body["contents"][0]["parts"]
+        assert parts[0]["text"] == "Qué muestra este video?"
+        assert parts[1]["inline_data"]["mime_type"] == "video/mp4"
+        decoded = base64.b64decode(parts[1]["inline_data"]["data"])
+        assert decoded == b"mp4-bytes"
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {"content": {"parts": [{"text": "un video de dedicatoria"}]}}
+                ]
+            },
+        )
+
+    provider = GeminiVisionProvider(
+        api_key=SecretStr("k"),
+        client=_transport(responder),
+    )
+    text = await provider.describe_video(
+        b"mp4-bytes",
+        mime_type="video/mp4",
+        prompt="Qué muestra este video?",
+    )
+    assert text == "un video de dedicatoria"
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_describe_video_uses_its_own_longer_timeout() -> None:
+    """Un video tarda más que una foto: el plazo se pide por llamada."""
+    seen: list[float] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        seen.append(request.extensions["timeout"]["read"])
+        return httpx.Response(
+            200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+        )
+
+    provider = GeminiVisionProvider(
+        api_key=SecretStr("k"),
+        timeout=11.0,
+        video_timeout=90.0,
+        client=_transport(responder),
+    )
+    await provider.describe_video(b"mp4", mime_type="video/mp4", prompt="d")
+    await provider.describe_image(b"img", mime_type="image/jpeg", prompt="d")
+    assert seen == [90.0, 11.0]
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_describe_video_rejects_empty_args() -> None:
+    client = _transport(lambda _r: httpx.Response(200, json={}))
+    provider = GeminiVisionProvider(api_key=SecretStr("k"), client=client)
+    with pytest.raises(ValueError, match="video_bytes"):
+        await provider.describe_video(b"", mime_type="video/mp4", prompt="d")
     await provider.aclose()

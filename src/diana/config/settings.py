@@ -60,12 +60,24 @@ class Settings(BaseSettings):
     # first; only non-sensitive images are sent to Gemini for a short caption.
     # OFF (default) = today's behavior byte-for-byte (media tag without content).
     feature_image_vision_enabled: bool = False
+    # Visión de video (FEATURE_VIDEO_VISION_ENABLED): primero se revisan unos
+    # fotogramas en el servidor con el mismo filtro que las fotos; solo si
+    # están limpios el video viaja a Gemini para que lo describa.
+    # Apagada (default) = comportamiento anterior sin cambios.
+    feature_video_vision_enabled: bool = False
+    # Tope de fotogramas que se revisan localmente antes de enviar un video.
+    # Se mira un fotograma por segundo: los videos cortos (el caso real) se
+    # revisan completos; uno más largo reparte ese tope por todo el video.
+    video_vision_max_frames: Annotated[int, Field(ge=1, le=120)] = 30
     gemini_api_key: SecretStr = SecretStr("")
     # Gemini vision model used to caption non-sensitive inbound photos.
     # gemini-2.5-flash is no longer available to new accounts (404 since
     # 2026-08); gemini-3.6-flash is Google's current flash vision model.
     gemini_vision_model: str = "gemini-3.6-flash"
     gemini_vision_timeout_s: Annotated[float, Field(gt=0)] = 15.0
+    # Plazo para describir un video: subir el archivo y recorrerlo tarda más
+    # que una foto.
+    gemini_video_timeout_s: Annotated[float, Field(gt=0)] = 45.0
     global_mode: Literal["supervised", "autonomous", "fake_delivery"] = "supervised"
     delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3
     delivery_retry_backoff_seconds: Annotated[float, Field(gt=0)] = 0.05
