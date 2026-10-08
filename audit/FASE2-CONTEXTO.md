@@ -240,10 +240,24 @@ contenido temporal **no es determinante**. Consecuencia a vigilar: si la lectura
 bloque no cambiaría. Por eso la prueba exige además que una clave propia de la foto llegue al prompt
 (§5): así la desconexión se nota.
 
-**Sobre la búsqueda por parecido huérfana (`ContextsRepo.find_by_similarity`):** está en la misma
-situación que la de fichas. Se propone la misma decisión (eliminarla) si no hay plan de usar la
-búsqueda semántica de contextos. **No se eliminó**: requiere confirmación, igual que en el caso de las
-fichas.
+### Búsqueda por parecido huérfana: eliminada
+
+`ContextsRepo.find_by_similarity` estaba en la misma situación que la de fichas y se eliminó el
+**2026-10-08**, con el mismo procedimiento: confirmar que ningún camino de producción la llama, borrar
+la función y su prueba unitaria, corregir la documentación y desplegar.
+
+| Comprobación previa | Resultado |
+|---|---|
+| Único llamador | Su propia prueba unitaria (`tests/unit/infrastructure/test_contexts_repo.py:105`) |
+| Llamadas reales a un `find_by_similarity` en `src/` | Solo sobre **`ExamplesRepo`** (`cognitive/retrievers/examples.py:55,69`) |
+| Consumidores de `contexts_repo` | Registry → `ContextRetriever` (usa `find_active_by_chat`); `ContextStoreService` (usa `insert`); job de purga en `main.py:227` (usa `delete_expired`) |
+| Acceso dinámico / `Protocol` / `ABC` | Ninguno |
+| Lock de forma (`test_sql_repo_shapes.py`) | No la menciona |
+| Índice de vector en la tabla | No hay (solo `contexts_pkey`) |
+
+La columna `embedding` se sigue escribiendo (el escritor no cambió), pero **ningún camino la
+consume**: eso quedó dicho en la wiki y en `docs/Plan_fase2.md` para que nadie construya encima
+creyendo lo contrario.
 
 ## 9. Vigilante propuesto (E4)
 
@@ -271,6 +285,8 @@ alerta, no ruido de fondo. Se deja como propuesta de vigilante diario.
 | `src/diana/cognitive/retrievers/context.py` | La derivación en vivo gana sobre la foto; la foto solo aporta sus claves propias. Docstring del lector actualizado |
 | `tests/unit/cognitive/test_retrievers.py` | Se reemplazó la prueba que fijaba el comportamiento viejo por dos: el vivo gana, y las claves propias de la foto sobreviven |
 | `tests/audit/test_C_CTX_01.py` | **Nuevo** — 3 escenarios E2 del contexto temporal |
+| `src/diana/infrastructure/db/repositories/contexts.py` | Se eliminó `find_by_similarity` (huérfana) |
+| `tests/unit/infrastructure/test_contexts_repo.py` | Se eliminó la prueba de la función huérfana |
 | `audit/FASE2-CONTEXTO.md` | Este informe |
 
 Los dos sabotajes se aplicaron y se revirtieron (`grep -rn SABOTAJE src/` → sin resultados).

@@ -1,7 +1,7 @@
 ---
 title: Cognitive Core
 created: 2026-08-11
-updated: 2026-10-07
+updated: 2026-10-08
 type: entity
 tags: [modulo, arquitectura, contrato]
 sources: [../../AGENTS.md, ../../docs/SPEC-1.1.md, ../../src/diana/cognitive/]
@@ -43,7 +43,7 @@ Capa que ejecuta el pipeline de decisión (Director → Analista → Planificado
 - **Registry** (`registry.py`) — resolución nombre → Retriever (Anexo H.1).
 - **Thresholds** (`thresholds.py`) — defaults duales F3 (SPEC-FASE3 §4.2); `runtime_thresholds.py` — umbrales mutables en runtime para lecturas del Decider tras la calibración (ver [[calibracion-de-umbrales]]).
 - **ContextBuilder** (`context_builder.py`) — emite bloques en orden fijo (D.4) y omite valores nulos. Cerca user-controllable (profile / memory / policy / examples / ephemeral) con fences SEC-INJ para que el LLM no los trate como instrucciones. Expone el mismo render (`render_knowledge_sections`) para dar al **Evaluador** los bloques esenciales (policy/memory/profile) como evidencia, sin duplicar el historial/ejemplos.
-- **Retrievers reales:** `history` (mensajes recientes del chat), `context` (REAL: estado conversacional derivado del historial; con `FEATURE_CONTEXT_ENABLED` lee el snapshot interpretado no expirado de la tabla `contexts` — REQ-MEM-06 — con fallback a la derivación en vivo; ver [[esquema-conocimiento]]), `memory` (VIP-scoped, BR-15), `policy` (estáticas por tema + DB con `scope` y `vip_id`), `profile` (por PK; embeddings reales del contenido al escribir, **no consumidos** por ninguna búsqueda por parecido; no fetch si `vip_id` es None), `examples` (nunca lee memoria VIP; gold-first + visibilidad `vip_id`; anexa 1 contraejemplo), `schedule` (agenda semanal fija), `persona_facts` y `voice_patterns` (catálogo estático por tags / canal).
+- **Retrievers reales:** `history` (mensajes recientes del chat), `context` (REAL: estado conversacional **derivado en vivo del historial**; con `FEATURE_CONTEXT_ENABLED` lee además el snapshot no expirado de la tabla `contexts` — REQ-MEM-06 — y toma de él solo las claves que la derivación no produzca, porque las cuatro del bloque son hechos del presente; ver [[esquema-conocimiento]]), `memory` (VIP-scoped, BR-15), `policy` (estáticas por tema + DB con `scope` y `vip_id`), `profile` (por PK; embeddings reales del contenido al escribir, **no consumidos** por ninguna búsqueda por parecido; no fetch si `vip_id` es None), `examples` (nunca lee memoria VIP; gold-first + visibilidad `vip_id`; anexa 1 contraejemplo), `schedule` (agenda semanal fija), `persona_facts` y `voice_patterns` (catálogo estático por tags / canal).
 - **Extras de seguridad:** `template_gate.py` (matcher determinístico para respuestas cortas VIP, H6), `repetition_guard.py` (detector de intents repetidos), `j4_triggers.py` + `deterministic_escalate.py` (en application/) — cortocircuito pre-Director sin LLM.
 
 Relacionado: [[anti-contaminacion]], [[zona-gris-y-politicas]].

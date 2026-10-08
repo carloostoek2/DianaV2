@@ -101,33 +101,6 @@ class ContextsRepo:
             result = await session.execute(stmt)
             return [context_to_dict(row) for row in result.scalars().all()]
 
-    async def find_by_similarity(
-        self,
-        embedding: list[float],
-        *,
-        threshold: float,
-        limit: int = 5,
-        chat_id: int | None = None,
-        now: datetime | None = None,
-    ) -> list[dict]:
-        """Return non-expired snapshots semantically close to ``embedding``.
-
-        ``chat_id`` optional scope (default: all chats). Cosine similarity
-        > ``threshold`` → cosine distance < ``1 - threshold``.
-        """
-        now = now or datetime.now(UTC)
-        stmt = select(Context).where(Context.expires_at > now)
-        if chat_id is not None:
-            stmt = stmt.where(Context.chat_id == chat_id)
-        stmt = (
-            stmt.where(Context.embedding.cosine_distance(embedding) < 1 - threshold)
-            .order_by(Context.embedding.cosine_distance(embedding))
-            .limit(limit)
-        )
-        async with self._sf() as session:
-            result = await session.execute(stmt)
-            return [context_to_dict(row) for row in result.scalars().all()]
-
     async def delete_expired(self, now: datetime | None = None) -> int:
         """Purge expired snapshots; returns deleted row count."""
         from sqlalchemy import delete

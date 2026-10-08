@@ -102,22 +102,6 @@ async def test_find_active_by_chat_returns_rows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_by_similarity_builds_distance_query() -> None:
-    sf = _make_session_factory()
-    row = _row()
-    sf._session.execute = AsyncMock(
-        return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row]))))
-    )
-    repo = ContextsRepo(sf)
-    rows = await repo.find_by_similarity([0.0] * 384, threshold=0.75)
-    assert len(rows) == 1
-    assert rows[0]["chat_id"] == 100
-    # Ordering/where built on cosine_distance — exercise the generated stmt.
-    stmt = sf._session.execute.await_args.args[0]
-    assert "<=>" in str(stmt)
-
-
-@pytest.mark.asyncio
 async def test_delete_expired_returns_rowcount() -> None:
     sf = _make_session_factory()
     result = MagicMock()
