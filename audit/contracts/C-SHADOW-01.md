@@ -21,14 +21,15 @@ Puntos ciegos:
   - Decisión de producto (2026-10-06, dueña): cuando ella responde ESCRIBIENDO directo en el chat NO se compara contra el borrador. No es un error: no se contempló en el diseño original. Queda fuera del contrato; solo se compara por aprobar/corregir/escalar.
 Prueba E2:     HECHO → tests/audit/test_C_SHADOW_01.py (5 pruebas: build_app con la bandera ON y OFF; mensaje VIP; aprobar; las dos rutas de diseño). Postgres real; solo el LLM es falso.
 Sabotaje E3:   HECHO (2026-10-08) → 9 sabotajes aplicados y revertidos; los 9 hacen fallar exactamente la prueba que debían. Evidencia cruda en audit/FASE2-SABOTAJE.md §3.
-Vigilante E4:  DESPLEGADO (2026-10-08) → scripts/vigilantes.py + cron diario (10:17 UTC), solo lectura. V2: turnos que pasaron por el pipeline y no dejaron fila de sombra (exige traza con evaluación y descarta las sesiones de sandbox, que no persisten a propósito). V7: turno entregado con nota del borrador y sin la decisión de la dueña (la firma exacta del defecto del 10-sep). El V3 propuesto NO se activó: alertaría por diseño (escalaciones que la dueña responde escribiendo en el chat, envíos automáticos y de plantilla). Calibración, falsos positivos descartados y prueba de que la alarma suena: audit/FASE2-SABOTAJE.md §9.
+Vigilante E4:  DESPLEGADO (2026-10-08) → job diario dentro del bot (`src/diana/jobs/contract_watchdog.py`, bandera `FEATURE_CONTRACT_WATCHDOG_ENABLED`), solo lectura. V2: turnos que pasaron por el pipeline y no dejaron fila de sombra (exige traza con evaluación y descarta las sesiones de sandbox, que no persisten a propósito). V7: turno entregado con nota del borrador y sin la decisión de la dueña (la firma exacta del defecto del 10-sep). V3: escalaciones que nadie resolvió — calibrado para excluir envíos automáticos, saludos/check-ins de plantilla y escalaciones que la dueña ya respondió en el chat (crudo 1 → calibrado 0). Detalle, pruebas y sabotaje: audit/FASE2-VIGILANTE.md.
 Nivel:         E3 en los tramos (a) turno entregado deja su fila, (b) la decisión de la dueña sobrevive al re-guardado, (c) bandera OFF no escribe, (d) rutas de diseño sin fila. E4 en (a) y (b) por los vigilantes desplegados.
                Sin cubrir: la reacción del VIP (C3, `vip_signal`) y los tramos `corregir` / `escalar` de `owner_outcome`.
 Semáforo:      🟢 E3 + E4 en los tramos medidos. Los 14 huecos son rutas de diseño (probado). El hueco del 23-ago→10-sep fue un defecto de guardado (commit 3ade3b3, corregido 10-sep 19:42): 157 entregas desde el 11-sep, 0 pérdidas. Lo que falta: cubrir la reacción del VIP (C3) y los tramos corregir/escalar.
 Desplegado:    Ronda E3/E4 (2026-10-08): sabotaje sobre copia descartable (producción intacta) y
-               vigilantes V2/V7 activados por cron de usuario (10:17 UTC, solo lectura).
-               `.env` real: FEATURE_AUTONOMY_QUALITY_ENABLED=true (bandera VIVA, verificada hoy).
-               Ver audit/FASE2-SABOTAJE.md.
+               vigilantes V2/V3/V7 activados como job diario dentro del bot (solo lectura).
+               `.env` real: FEATURE_AUTONOMY_QUALITY_ENABLED=true y
+               FEATURE_CONTRACT_WATCHDOG_ENABLED=true (banderas VIVAS, verificadas hoy).
+               Ver audit/FASE2-VIGILANTE.md.
 Hallazgos:     H-SB-2 (cerrado, 2026-10-08): los DOS niveles de silencio del contrato quedaron
                probados con evidencia — el `except` del servicio (`outcome_record_shadow_failed`) y
                el del orquestador (`outcome_log_error`, vía log_swallowed). El riesgo no es que

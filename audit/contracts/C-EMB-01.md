@@ -17,7 +17,7 @@ Puntos ciegos (EVIDENCIA EN CÓDIGO):
   - El propio repo tiene un script de recuperación (backfill_feedback_embeddings.py) por un bug previo: ejemplos y políticas insertados con embedding cero, "invisibles" para la búsqueda.
 Prueba E2:     HECHO en los tramos memoria / ejemplo dorado / política → tests/audit/test_C_EMB_01_huellas.py (mensaje VIP → entrega → extracción post-turno; botón Destacar; doctrina de zona gris; Postgres real y motor de huellas real). Tramo `profiles`: tests/audit/test_C_EMB_01.py.
 Sabotaje E3:   HECHO (2026-10-08) → S1 (embedder=None), S3 (el motor lanza, con rastro visible) y S4 (devuelve ceros, el disfraz del incidente de agosto): las 3 pruebas fallan en los 3 sabotajes. Evidencia cruda en audit/FASE2-SABOTAJE.md §3.10–3.12.
-Vigilante E4:  DESPLEGADO (2026-10-08) → V1 de scripts/vigilantes.py, cron diario (10:17 UTC), solo lectura: huellas NUEVAS en ceros por tabla. La ventana de 2 días es lo que lo hace útil: las 2 históricas de `profiles` ya conocidas no avisan todos los días, pero un cero nuevo sí. Pendiente: `is_loaded` del motor en /health.
+Vigilante E4:  DESPLEGADO (2026-10-08) → V1 del job diario dentro del bot (`src/diana/jobs/contract_watchdog.py`, bandera `FEATURE_CONTRACT_WATCHDOG_ENABLED`), solo lectura: huellas NUEVAS en ceros por tabla. La ventana de 2 días es lo que lo hace útil: las 2 históricas de `profiles` ya conocidas no avisan todos los días, pero un cero nuevo sí. El aviso traduce cada tabla a lenguaje de negocio (nunca nombra tablas) y el chequeo deja su latido en /health. Detalle: audit/FASE2-VIGILANTE.md.
                H-SB-1 CERRADO (2026-10-08): `staging_service._embed` ya deja rastro en todos los caminos que
                terminan en ceros — evento `staging_embed_zeros` con motivo `no_embedder` / `empty_text` /
                `embedder_returned_zeros` (audit/FASE2-SABOTAJE.md §4). Tres pruebas unitarias nuevas.
@@ -31,7 +31,7 @@ Semáforo:      🟢 global con vigilante diario. Las 4 tablas medidas (memories
 Desplegado:    SÍ — integrado a `main` y publicado en `origin/main` (`5a4a26a`) el 2026-10-07;
                bot reiniciado a las 23:49:33 UTC, servicio activo, 0 reinicios, /health ok.
                Ronda E3/E4 (2026-10-08): sabotaje ejecutado sobre una copia descartable (producción
-               intacta) y vigilante diario activado por cron de usuario. Ver audit/FASE2-SABOTAJE.md.
+               intacta) y vigilante diario activado como job dentro del bot. Ver audit/FASE2-VIGILANTE.md.
 Hallazgos:     H-SB-1 (cerrado, 2026-10-08): con el embedder ausente, `staging_service._embed` devolvía
                None en silencio y el ejemplo dorado se guardaba con ceros sin ningún aviso (memoria y
                política sí avisaban). Arreglado ese mismo día, con la autorización de la dueña: la fila se

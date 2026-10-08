@@ -533,6 +533,11 @@ a medir.
 
 ## 9. Vigilancia E4 — activada el 2026-10-08
 
+> Estado actual: el chequeo corre como **job diario dentro del bot**
+> (`src/diana/jobs/contract_watchdog.py`), que es lo que le permite leer los contadores de fallos
+> internos del proceso y publicar su latido en `/health`. Esta sección queda como registro de la
+> ronda que lo activó. Ver `audit/FASE2-VIGILANTE.md`.
+
 Una prueba en verde dice que el efecto ocurría **el día que se midió**. E4 es lo que avisa si mañana deja de
 ocurrir. Se activó, y en el camino apareció que los vigilantes propuestos, corridos de verdad, **no servían
 como estaban**.
