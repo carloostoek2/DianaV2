@@ -182,7 +182,6 @@ _CHECKIN_SUBSTANCE_CUES = (
     "problema",
     "ayuda con",
     "pregunta sobre",
-    "explicame",
     "explícame",
     "cuéntame de",
     "cuentame de",

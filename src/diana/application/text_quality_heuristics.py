@@ -68,7 +68,6 @@ DEFAULT_COLLOQUIAL_LEXICON: tuple[str, ...] = (
     "qué tal",
     "oye",
     "va",
-    "dale",
     "súper",
     "un poquito",
     "claro",

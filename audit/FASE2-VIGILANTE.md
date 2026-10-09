@@ -83,13 +83,13 @@ Así se ve un aviso real (armado con el mismo servicio que lo manda, en modo sec
   parecido (el problema de agosto).
   - las fichas de tus VIP: 2 sin huella (antes habia 2)
   Desde cuando: los ultimos 2 dias.
-  Que hacer: Avisame: hay que regenerar esas huellas (lo hace el equipo).
+  Que hacer: Avísame: hay que regenerar esas huellas (lo hace el equipo).
 
 • Dejo de registrarse lo que Diana habria decidido sola (C-SHADOW-01)
   Que paso: Dejo de quedar el registro de lo que Diana habria decidido sola.
   - un intercambio del 08/10 03:43
   Desde cuando: los ultimos 2 dias.
-  Que hacer: Avisame: sin ese registro no hay con que medir si Diana ya puede contestar sola.
+  Que hacer: Avísame: sin ese registro no hay con que medir si Diana ya puede contestar sola.
 
 ⚠️ No pude revisar: consulta rota a proposito. (UndefinedColumnError)
 

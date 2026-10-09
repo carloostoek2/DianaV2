@@ -13,7 +13,7 @@ Para cada contrato:
 3. La base es la **copia de la base real** dentro de un contenedor desechable
    (`audit/ENTORNO.md`): Postgres real, con datos reales de los VIP. No la simules ni la
    reemplaces por `InMemory*`.
-4. **No asumas base vacía.** Los datos reales ya están ahí: acotá cada inserción y cada
+4. **No asumas base vacía.** Los datos reales ya están ahí: acota cada inserción y cada
    aserción a lo tuyo (ids/fechas propios, limpieza al final). Una prueba que solo pasa en una
    base vacía es una prueba rota.
 5. Simula SOLO el LLM externo con `llm/fake.py`. Embeddings, repos, coordinador y orquestador, reales.

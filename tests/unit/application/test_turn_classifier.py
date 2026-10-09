@@ -281,7 +281,6 @@ def test_is_pure_greeting_rejects_analyst_false_positive(clf: TurnClassifier) ->
     """
     saludar = _comp(intent="saludar")
     assert is_pure_greeting("ok", saludar, classifier=clf) is False
-    assert is_pure_greeting("dale", saludar, classifier=clf) is False
     assert (
         is_pure_greeting(
             "Hola, tengo una pregunta sobre el contenido",

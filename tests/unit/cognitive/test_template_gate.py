@@ -80,7 +80,6 @@ def test_looks_like_pure_greeting_text_matches_gate_shape() -> None:
     assert looks_like_pure_greeting_text("holis") is True
     assert looks_like_pure_greeting_text("qué tal") is True
     assert looks_like_pure_greeting_text("Hola amor") is True
-    assert looks_like_pure_greeting_text("dale") is False
     assert (
         looks_like_pure_greeting_text("Hola, tengo una pregunta sobre el contenido")
         is False

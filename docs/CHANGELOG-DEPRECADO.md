@@ -182,7 +182,7 @@ Este estado acompaña a la supervisión real para acumular evidencia de cómo de
 ## 🔧 Improvements
 - **Faster history**: long conversations now load quickly and reliably, even with many messages.
 - **More human delivery**: replies are paced with natural delays and typing, varying by mode (supervised vs. autonomous) to match Diana's original cadence.
-- **More natural Spanish voice**: Diana now uses neutral Spanish consistently, with an emotion-sensitive tone and no dialect-locked or slang-heavy phrasing.
+- **More natural Spanish voice**: Diana now uses neutral Spanish consistently, with an emotion-sensitive tone.
 - **Better conversation flow**: bursts of messages are grouped instead of answered one by one, and repeated questions are recognized and handled better.
 
 ## 🐛 Fixes

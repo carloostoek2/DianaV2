@@ -1661,7 +1661,7 @@ async def handle_persona_edit_text(
         )
         await _restart_persona_wizard(sessions, message, section, extra, channel)
         await _edit_or_answer(
-            bot, "❌ No se pudo guardar. Reenviame el texto o usa /cancelar.",
+            bot, "❌ No se pudo guardar. Reenvíame el texto o usa /cancelar.",
             session=session, fallback=message, keyboard=None,
         )
         return

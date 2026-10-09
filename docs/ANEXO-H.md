@@ -349,7 +349,7 @@ saludo_response_pool = ["Holis 😁", "Holaa", "Hey", "Holis", "Hola 😊", "Qu�
 #   (NO agradecer/despedirse; NO basta el intent del Analyst)
 ```
 
-**Diseño histórico (H6 original):** existía `TemplateRule` `saludo_constante` con keywords + `max_words=4` en el gate pre-pipeline. La clase `TemplateGate` aún soporta esa forma (tests unitarios del gate); **producción ya no la cablea** como short-circuit pre-Analyst. El candado anti-mixto es **doble**: (1) forma del texto (`looks_like_pure_greeting_text`, misma lista + techo de 4 palabras) y (2) comprehension + clasificador (`ambiguedad_saludo_mas_carga` / no confiable → pipeline completo). El Analyst solo no puede disparar la plantilla: un `intent=saludar` sobre "dale" o "Hola, tengo una pregunta…" falla el corte.
+**Diseño histórico (H6 original):** existía `TemplateRule` `saludo_constante` con keywords + `max_words=4` en el gate pre-pipeline. La clase `TemplateGate` aún soporta esa forma (tests unitarios del gate); **producción ya no la cablea** como short-circuit pre-Analyst. El candado anti-mixto es **doble**: (1) forma del texto (`looks_like_pure_greeting_text`, misma lista + techo de 4 palabras) y (2) comprehension + clasificador (`ambiguedad_saludo_mas_carga` / no confiable → pipeline completo). El Analyst solo no puede disparar la plantilla: un `intent=saludar` sobre "Hola, tengo una pregunta…" falla el corte.
 
 ### H6.4 Integración en `CognitiveDirector` (estado actual)
 

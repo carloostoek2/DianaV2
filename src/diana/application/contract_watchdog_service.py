@@ -130,27 +130,27 @@ _COPY: dict[str, _Copy] = {
             "parecido (el problema de agosto)."
         ),
         ventana="los ultimos 2 dias",
-        que_hacer="Avisame: hay que regenerar esas huellas (lo hace el equipo).",
+        que_hacer="Avísame: hay que regenerar esas huellas (lo hace el equipo).",
     ),
     "V2": _Copy(
         titulo="Dejo de registrarse lo que Diana habria decidido sola",
         que_paso="Dejo de quedar el registro de lo que Diana habria decidido sola.",
         ventana="los ultimos 2 dias",
         que_hacer=(
-            "Avisame: sin ese registro no hay con que medir si Diana ya puede contestar sola."
+            "Avísame: sin ese registro no hay con qué medir si Diana ya puede contestar sola."
         ),
     ),
     "V3": _Copy(
         titulo="Hay intercambios sin tu decision registrada",
         que_paso="Hay intercambios entregados o escalados donde no quedo registrada tu decision.",
         ventana="los ultimos 2 dias",
-        que_hacer="Revisa si aprobaste o corregiste esos dias; si te suena, avisame.",
+        que_hacer="Revisa si aprobaste o corregiste esos días; si te suena, avísame.",
     ),
     "V7": _Copy(
         titulo="Lo que decides no quedo guardado",
         que_paso="Aprobaste o corregiste y tu decision no quedo guardada (el defecto de septiembre).",
         ventana="los ultimos 2 dias",
-        que_hacer="Avisame: es el defecto de septiembre y hay que mirarlo ya.",
+        que_hacer="Avísame: es el defecto de septiembre y hay que mirarlo ya.",
     ),
 }
 

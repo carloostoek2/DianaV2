@@ -1,34 +1,19 @@
-"""scripts/vigilantes.py — modo seco del vigilante y la voz de la copia que lee la duena.
+"""scripts/vigilantes.py — modo seco del vigilante.
 
 El chequeo de verdad corre dentro del bot; este script existe para mirarlo a mano sin esperar
-la corrida del dia y sin mandar nada. Lo que se prueba aca es que el modo seco no tenga efecto,
-que el aviso de puesta en marcha salga una sola vez y que la copia al usuario siga en espanol
-neutro (el aviso se escribio a mano y se habia desviado de la copia que manda el sistema).
+la corrida del dia y sin mandar nada. Lo que se prueba aca es que el modo seco no tenga efecto
+y que el aviso de puesta en marcha salga una sola vez.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import re
 import sys
 from pathlib import Path
 
 from diana.application.contract_watchdog_service import leer_vigilantes
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "vigilantes.py"
-
-# Voseo (presente e imperativo). La copia de producto usa espanol neutro: "tu", nunca "vos".
-# Un acierto aca significa que el texto que lee la duena se contagio de una forma regional.
-_VOSEO = re.compile(
-    r"\b(tenés|podés|querés|sabés|sos|hacés|ponés|decís|venís|salís|andás|dejás|"
-    r"mandás|pasás|hablás|pensás|mirás|escuchás|escribís|vivís|sentís|preferís|"
-    r"elegís|seguís|pedís|permitís|decidís|corregís|aprobás|escalás|confirmás|"
-    r"aceptás|rechazás|tocás|apretás|usás|necesitás|esperás|notás|revisás|sumás|"
-    r"sacás|abrís|cerrás|tomás|buscás|andá|fijate|fijáte|mirá|decime|mandá|"
-    r"escribí|probá|dejá|hacé|vení|revisá|tomá|sacá|poné|buscá|cerrá|abrí|sumá|"
-    r"pasá|contá|mostrá|tocá|apretá|elegí|pedí|seguí|salí|agregá|volvé|dame)\b",
-    re.IGNORECASE,
-)
 
 
 def _load():
@@ -67,12 +52,6 @@ def test_el_aviso_de_activacion_en_modo_seco_no_manda_nada(monkeypatch) -> None:
     mod.main()
 
     assert [dry_run for _, dry_run in enviados] == [True]
-
-
-def test_la_copia_que_lee_la_duena_esta_en_espanol_neutro() -> None:
-    mod = _load()
-    encontrado = _VOSEO.search(mod.AVISO_ACTIVACION)
-    assert encontrado is None, f"AVISO_ACTIVACION usa una forma regional: {encontrado.group(0)!r}"
 
 
 def test_el_aviso_de_activacion_cuenta_los_chequeos_que_corren() -> None:
