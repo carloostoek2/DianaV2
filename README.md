@@ -419,6 +419,71 @@ Diana nunca se activa sola.
 
 ---
 
+Sabotear a propósito para saber si una prueba sirve
+
+Hay una trampa en la que es muy fácil caer: ver todas las pruebas en verde y dar por hecho que todo funciona.
+
+Una prueba en verde solo dice que no encontró un problema. No dice si habría sido capaz de encontrarlo. Si una prueba sigue pasando después de quitarle la pieza que dice cuidar, no está protegiendo nada: es decorativa, y su verde da una sensación de seguridad que no es real.
+
+Por eso, desde octubre de 2026, en Diana no basta con que una prueba pase. Tiene que demostrar que puede fallar. A eso le llamamos sabotaje, y lo uso como una técnica de precisión en pruebas: sirve para medir si una prueba detecta exactamente lo que dice detectar.
+
+1. Qué se sabotea
+
+La idea es sencilla. Tomamos la pieza que una prueba dice vigilar, la desconectamos o la rompemos a propósito y volvemos a correr la prueba. Si la prueba cae, sabemos que de verdad mira esa pieza. Si sigue en verde, encontramos una prueba que hay que reescribir.
+
+Algunos ejemplos de lo que se saboteó:
+
+- cortar la conexión que escribe el registro del modo sombra, o hacer que esa pieza falle por dentro;
+- encender una bandera donde debía estar apagada, y al revés;
+- deshacer el arreglo de septiembre que protege la decisión de la dueña cuando un turno se vuelve a guardar;
+- hacer que el motor de huellas —lo que permite encontrar memorias, ejemplos y reglas por parecido— devuelva una huella vacía, que es exactamente lo que ocurrió en agosto sin que nadie se enterara;
+- quitarle al vigilante diario su ventana de tiempo, su filtro de sesiones de prueba o su aviso cuando no puede revisar;
+- quitar la llamada que dispara el aviso de banderas apagadas al arrancar.
+
+2. Cómo se hace sin poner nada en riesgo
+
+Romper cosas a propósito solo tiene sentido si nunca llega a producción. Por eso el sabotaje sigue reglas estrictas:
+
+- Nunca se hace sobre el código que corre el bot. Se trabaja en una copia descartable que se borra al terminar.
+- Se rompe una sola cosa a la vez, y se deshace antes de pasar a la siguiente.
+- Si el cambio no cae exactamente en el punto buscado, el sabotaje se cancela. No quiero sabotear «algo parecido» y creer que probé la pieza correcta.
+- En la ronda del modo sombra y las huellas, las pruebas usaron el mismo arranque del bot y una copia de la base real. Lo único simulado fue el modelo de lenguaje externo.
+
+3. Cómo se lee el resultado
+
+Cada sabotaje tiene una prueba que debería delatarlo. El resultado se lee así:
+
+- Cae la prueba esperada: la prueba es precisa; detecta lo que promete.
+- La prueba sigue en verde: es un falso verde. Se reescribe antes de volver a confiar en ella.
+- Caen otras pruebas además de la esperada: no siempre es malo. En una ronda, una prueba que solo debía confirmar «aquí no se escribe nada, por diseño» también delató un fallo silencioso, y eso mostró que distingue un hueco intencional de uno por error.
+- Las pruebas que no tienen que ver siguen en verde: también importa, porque confirma que el sabotaje fue puntual.
+
+Con eso, cada promesa del sistema recibe un nivel de evidencia. Una prueba que pasa contra el sistema real es un buen comienzo, pero solo cuenta como verificada cuando además tiene un sabotaje que la tumba. Y si encima hay un vigilante diario que avisa si el efecto deja de ocurrir en producción, llega al nivel más alto.
+
+4. Lo que encontramos
+
+En la ronda dedicada al modo sombra y a las huellas hicimos 12 sabotajes sobre 8 pruebas. Los 12 tumbaron la prueba que debían. Ninguna quedó decorativa.
+
+Después aplicamos lo mismo a lo que vino detrás: 14 sabotajes al vigilante diario de contratos y 7 al aviso de banderas apagadas. Todos hicieron caer su prueba.
+
+Pero lo más útil fue lo que el sabotaje dejó a la vista:
+
+- Al quitar el motor de huellas, «Destacar» guardaba el ejemplo con la huella vacía y sin dejar ningún aviso, mientras que memoria y reglas sí avisaban. Ahora ese camino también deja rastro.
+- Una prueba que decía cubrir «un fallo no frena el arranque» era decorativa: no provocaba ningún fallo real. Se reemplazó por dos pruebas que sí lo provocan.
+- Algunos sabotajes no funcionaron al primer intento porque la pieza tenía más de un candado: la bandera del modo sombra tiene tres. Eso no era un defecto, sino protección real, y obligó a encontrar el punto correcto.
+
+5. Qué cambia para la dueña y para el equipo
+
+Para el VIP y para la operación no cambia nada: el sabotaje vive en una copia y nunca toca el bot que atiende.
+
+Lo que cambia es cuánto vale un «funciona». Cuando un informe dice que algo está verificado, ya trae la evidencia de que la prueba lo habría notado si se rompiera.
+
+Para el equipo, la regla es clara: sin sabotaje documentado, no hay verde. Una prueba nueva que pasa a la primera es sospechosa hasta que demuestre que puede fallar.
+
+El sabotaje tampoco lo resuelve todo. Dice si una prueba detecta lo que promete, no si existen pruebas para todo: la reacción del VIP o los casos en que la dueña corrige o escala todavía no tienen la suya, y quedan anotados como pendientes, no como verificados. Además, hoy se hace por rondas, como parte de una auditoría; no corre solo con cada cambio.
+
+---
+
 Ecosistema Diana
 
 Tampoco diseñé Diana como un componente completamente aislado.
@@ -459,6 +524,8 @@ Y el último paso, por ahora, ha sido la visión de imágenes, junto con el refi
 
 No la añadimos como una excepción al sistema. La incorporamos respetando la misma arquitectura que venimos siguiendo: aislar la nueva capacidad, poner límites antes de externalizar datos, mantener la supervisión y evitar contaminar la memoria con información que no necesitamos conservar.
 
+En octubre de 2026 también cambiamos la forma de dar algo por verificado: una prueba en verde ya no basta si no se demuestra, saboteando a propósito la pieza que cuida, que esa prueba habría fallado.
+
 ---
 
 Filosofía del proyecto
@@ -474,6 +541,7 @@ A medida que el sistema ha crecido, estos son los principios que he intentado ma
 - Privacidad antes que comodidad — cuando no podemos determinar si una información es segura para externalizar, no la externalizamos.
 - Evolución observable — una nueva capacidad debe poder medirse antes de convertirse en comportamiento real.
 - Fail-closed cuando está en juego la seguridad — ante una duda relevante, prefiero detener el flujo antes que asumir un riesgo.
+- Un verde tiene que poder ponerse en rojo — una prueba solo cuenta cuando se ha demostrado, con un sabotaje, que detecta lo que dice detectar.
 
 ---
 
@@ -489,6 +557,7 @@ Producto y estado
 - "docs/PRODUCT_OWNER_ADMIN_SANDBOX.md" — reglas del producto y superficie administrativa.
 - "docs/PRODUCT_OWNER_PERSONALIDAD.md" — panel de personalidad y reglas (cómo habla Diana).
 - "CHANGELOG.md" — historial de cambios.
+- "audit/FASE2-SABOTAJE.md" — informe del sabotaje del modo sombra y las huellas, con la salida real de cada fallo.
 
 Técnica
 
