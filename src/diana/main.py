@@ -6,6 +6,8 @@ import asyncio
 import logging
 import sys
 
+from diana.application.aviso_banderas import STATE_PATH as FLAGS_STATE_PATH
+from diana.application.aviso_banderas import avisar_banderas_nucleo
 from diana.application.contract_watchdog_service import ContractWatchdogService
 from diana.application.logformat import ColorExtraFormatter
 from diana.application.missed_message_recovery import recover_missed_updates
@@ -64,6 +66,9 @@ async def async_main() -> None:
     settings = Settings()
     configure_logging(settings.log_level)
     app = build_app(settings)
+    # Banderas nucleo apagadas: un resumen en el registro, el mismo en /health y, solo si hay
+    # algo que revisar, un mensaje a la dueña. Aviso, nunca bloqueo del arranque.
+    await avisar_banderas_nucleo(app)
     await load_forbidden_keywords(app)
     await load_runtime_thresholds(app)
     report = await run_app_startup_recovery(app)
@@ -142,6 +147,7 @@ async def async_main() -> None:
         session_factory=app.session_factory,
         bot=app.bot,
         watchdog_enabled=settings.feature_contract_watchdog_enabled,
+        flags_state_path=FLAGS_STATE_PATH,
     )
     # Outer finally always cancels jobs even if health bind or polling fails.
     try:

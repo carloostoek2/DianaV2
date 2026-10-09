@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from diana.application.aviso_banderas import leer_bloque_banderas
 from diana.application.observability import get_swallowed_counts
 from diana.application.watchdog_heartbeat import read_heartbeat, summarize_heartbeat
 
@@ -33,6 +34,7 @@ def build_health_payload(
     bot_username: str | None,
     watchdog: dict[str, Any] | None = None,
     swallowed: dict[str, int] | None = None,
+    flags: dict[str, Any] | None = None,
 ) -> HealthBody:
     """Assemble public health JSON (no secrets).
 
@@ -40,6 +42,11 @@ def build_health_payload(
     mostrar) y ``swallowed`` los contadores de fallos internos del proceso, que hasta ahora
     nadie leia. Un vigilante vencido o fallado deja el estado en ``degraded``: si dejo de
     correr, no puede parecerse a un vigilante tranquilo.
+
+    ``flags`` es el resumen de banderas nucleo apagadas que dejo el ultimo arranque. Es
+    **informativo**: una bandera apagada a proposito es una decision de producto, no una falla,
+    asi que no mueve ``status`` (si lo moviera, el estado quedaria en ``degraded`` para siempre y
+    se aprenderia a ignorarlo). Quien necesite alertar mira ``flags.ok``.
     """
     if not db_ok:
         status = "fail"
@@ -57,6 +64,8 @@ def build_health_payload(
         checks["watchdog"] = watchdog
     if swallowed:
         checks["swallowed"] = dict(sorted(swallowed.items()))
+    if flags is not None:
+        checks["flags"] = flags
     return {"status": status, "checks": checks}
 
 
@@ -74,6 +83,7 @@ class HealthServer:
         bot_cache_s: float = 30.0,
         watchdog_enabled: bool = False,
         watchdog_heartbeat_path: Path | None = None,
+        flags_state_path: Path | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -83,6 +93,7 @@ class HealthServer:
         self._bot_cache_s = bot_cache_s
         self._watchdog_enabled = watchdog_enabled
         self._watchdog_heartbeat_path = watchdog_heartbeat_path
+        self._flags_state_path = flags_state_path
         self._server: asyncio.AbstractServer | None = None
         self._bot_cache: tuple[float, bool, str | None] | None = None
 
@@ -128,6 +139,7 @@ class HealthServer:
             bot_username=bot_username,
             watchdog=self.check_watchdog(),
             swallowed=get_swallowed_counts(),
+            flags=self.check_flags(),
         )
         code = 200 if db_ok else 503
         return code, body
@@ -144,6 +156,17 @@ class HealthServer:
             read_heartbeat(self._watchdog_heartbeat_path),
             enabled=self._watchdog_enabled,
         )
+
+    def check_flags(self) -> dict[str, Any] | None:
+        """Resumen de banderas nucleo apagadas que dejo el ultimo arranque.
+
+        Se lee del archivo, igual que el latido del vigilante: asi el resumen que publica
+        ``/health`` es el mismo que quedo en el registro, y sigue visible aunque el proceso se
+        haya reiniciado. Sin archivo configurado o sin resumen previo, el bloque no aparece.
+        """
+        if self._flags_state_path is None:
+            return None
+        return leer_bloque_banderas(self._flags_state_path)
 
     async def _handle(
         self,
