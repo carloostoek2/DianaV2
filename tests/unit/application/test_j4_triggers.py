@@ -119,7 +119,7 @@ def test_pago_cuanto_te_sale_and_factura() -> None:
     for text in (
         "cuánto te sale el pack?",
         "cuanto te sale?",
-        "mandame la factura",
+        "mándame la factura",
         "hay descuento?",
         "pago en usd",
         "precio en mxn",

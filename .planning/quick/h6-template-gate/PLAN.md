@@ -68,7 +68,7 @@ VIP short greetings and “are you AI?” probes no longer burn LLM tokens and n
 | Mixed short `hola eres una ia` | Director TemplateGate | **deteccion_ia wins** (rule order) |
 | Pago / compromiso keywords | Middleware J.4 | Silent escalate; Director never runs |
 | Hybrid IA + pago | Middleware (pago after IA removed from classifier) | Silent escalate as pago_precio |
-| Pure former J.4-only IA (`chatgpt`, `sos un bot`, …) not in annex | Full LLM pipeline | Coverage shrink accepted (residual expand keywords) |
+| Pure former J.4-only IA (`chatgpt`, …) not in annex | Full LLM pipeline | Coverage shrink accepted (residual expand keywords) |
 | Forbidden keywords | Middleware | Unchanged silent escalate |
 
 **Decision contract (template path):**

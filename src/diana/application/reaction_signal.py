@@ -45,7 +45,6 @@ DEFAULT_POSITIVE_LEXICON: tuple[str, ...] = (
     "😁",
     "❤",
     "claro",
-    "dale",
     "ok",
     "está bien",
     "me gusta",

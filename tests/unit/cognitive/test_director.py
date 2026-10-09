@@ -1322,7 +1322,7 @@ async def test_naturalness_below_min_redrafts_once() -> None:
     assert "--- REDRAFT ---" in second_user
     assert "naturalness" in second_user.lower()
     # Spanish persona voice
-    assert "Reescríbela" in second_user or "Reescribí" in second_user
+    assert "Reescríbela" in second_user
 
     timings = trace.get(turn.turn_id, "timings")
     assert isinstance(timings, dict)

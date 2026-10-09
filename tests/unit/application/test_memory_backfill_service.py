@@ -289,7 +289,7 @@ async def test_short_history_single_window_writes_sections_and_statuses() -> Non
     notifier = FakeNotifier()
     svc, history, _, writer, _ = _build_service(
         messages=[
-            _msg("vip", "hola! respondeme juguetón"),
+            _msg("vip", "hola! respóndeme juguetón"),
             _msg("owner", "claro!"),
             _msg("vip", "me encanta viajar"),
         ],

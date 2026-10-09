@@ -104,7 +104,7 @@ None. Fix round added alembic data migration 012 (in review scope).
 
 ## Residuals
 
-1. **Expand `deteccion_ia` triggers** toward former `IDENTIDAD_IA_KEYWORDS` (sos/chatgpt/humano/…) — class: `out-of-scope`.
+1. **Expand `deteccion_ia` triggers** toward former `IDENTIDAD_IA_KEYWORDS` (chatgpt/humano/…) — class: `out-of-scope`.
 2. **Shared pure keyword matcher** across cognitive/application — class: `out-of-scope`.
 3. **Remove dead `handle_deterministic_template_escalate`** + Forbidden `behavior=` if fully unused — class: `in-scope-followup`.
 4. **ANEXO-H H6.4 docs** still show `evaluation=None` (stale vs synthetic) — class: `out-of-scope`.
