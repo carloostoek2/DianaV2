@@ -105,6 +105,40 @@ async def test_health_json_has_no_secrets() -> None:
     assert "token" not in body.get("checks", {})
 
 
+def test_health_publica_el_bloque_de_banderas() -> None:
+    bloque = {"ok": False, "sin_declarar": ["FEATURE_RECONTACT_ENABLED"], "nucleo_total": 20}
+    body = build_health_payload(
+        db_ok=True,
+        db_latency_ms=1,
+        bot_ok=True,
+        bot_username="x",
+        flags=bloque,
+    )
+
+    assert body["checks"]["flags"] == bloque
+
+
+def test_sin_bloque_de_banderas_el_health_responde_igual_que_antes() -> None:
+    body = build_health_payload(db_ok=True, db_latency_ms=1, bot_ok=True, bot_username="x")
+
+    assert "flags" not in body["checks"]
+    assert body["status"] == "ok"
+
+
+def test_una_bandera_apagada_no_degrada_el_estado() -> None:
+    """Apagar una bandera es una decision de producto, no una falla: no mueve ``status``."""
+    body = build_health_payload(
+        db_ok=True,
+        db_latency_ms=1,
+        bot_ok=True,
+        bot_username="x",
+        flags={"ok": False, "sin_declarar": ["FEATURE_MEMORY_ENABLED"]},
+    )
+
+    assert body["status"] == "ok"
+    assert body["checks"]["flags"]["ok"] is False
+
+
 def test_build_health_payload_status_matrix() -> None:
     ok = build_health_payload(
         db_ok=True,

@@ -54,6 +54,19 @@ def test_main_health_bind_soft_fails(_main_src: str) -> None:
     assert soft_idx < poll_idx
 
 
+def test_main_reports_core_flags_before_serving(_main_src: str) -> None:
+    """El resumen de banderas nucleo sale antes de levantar el servicio y de atender."""
+    report_idx = _main_src.find("await avisar_banderas_nucleo(app)")
+    health_idx = _main_src.find("await health.start()")
+    poll_idx = _main_src.find("start_polling")
+    assert report_idx != -1, "main.py tiene que reportar las banderas nucleo al arrancar"
+    assert report_idx < health_idx < poll_idx
+
+
+def test_main_hands_the_flag_summary_to_health(_main_src: str) -> None:
+    assert "flags_state_path=FLAGS_STATE_PATH" in _main_src
+
+
 def test_main_outer_finally_cancels_jobs(_main_src: str) -> None:
     """Job cancel runs in outer finally (survives health start failure)."""
     # Outer finally must cancel jobs; structure: try health/poll finally cancel
