@@ -7,6 +7,24 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Sabotaje a propósito: una técnica de precisión para saber si una prueba detecta lo que dice — 2026-10-08
+
+Teníamos pruebas que entran por el arranque real del bot y revisan filas reales en la base para el modo sombra y para las huellas de memoria, ejemplos y reglas. Pasaban en verde, pero un verde solo dice que la prueba no encontró un problema, no que habría sido capaz de encontrarlo. En agosto, las huellas vacías dejaron cosas invisibles para la búsqueda sin que nadie se enterara. No quería volver a confiar en un verde que no se ha puesto a prueba.
+
+Ahora cada prueba que dice verificar algo tiene que demostrar que puede fallar. Se le quita o se le rompe a propósito la pieza que cuida, se vuelve a correr y se exige que caiga. Si cae, la prueba es precisa. Si sigue en verde, es decorativa y se reescribe. Solo una prueba que pasa contra el sistema real y además cae con su sabotaje cuenta como verificada.
+
+- Ronda del modo sombra y las huellas: 12 sabotajes sobre 8 pruebas. Entre ellos: cortar la conexión que escribe el registro del modo sombra, invertir la bandera (encendida donde debía estar apagada y al revés), hacer fallar la pieza que escribe el registro, deshacer el arreglo de septiembre que protege la decisión de la dueña y hacer que el motor de huellas devuelva una huella vacía, como en agosto. Los 12 tumbaron la prueba que debían; ninguna quedó decorativa.
+- La misma técnica se aplicó después al vigilante diario de contratos (14 sabotajes, 14 detectados) y al aviso de banderas apagadas al arrancar (7 sabotajes, 12 de 12 pruebas cayeron). Antes de activar el vigilante también se le sabotearon 4 casos contra la base real, en solo lectura: la alarma suena y una consulta rota sale como «no pude revisar», nunca como «todo bien».
+- Cómo se lee un resultado: si cae la prueba esperada, detecta lo que promete; si sigue en verde, es un falso verde; si caen otras además, se revisa por qué, porque a veces muestra que una prueba también vigila algo más; y las pruebas que no tienen relación deben seguir en verde, para confirmar que el sabotaje fue puntual.
+- Lo que el sabotaje dejó a la vista: al quitar el motor de huellas, «Destacar» guardaba el ejemplo con la huella vacía sin dejar aviso (ahora deja rastro; el comportamiento no cambia); y una prueba del aviso de banderas que decía cubrir «un fallo no frena el arranque» no provocaba ningún fallo, así que se reemplazó por dos que sí lo provocan.
+- Nada de esto toca producción: el sabotaje se hace en una copia descartable del código, se rompe una sola cosa a la vez y se deshace antes de la siguiente. En la ronda del modo sombra y las huellas, las pruebas corrieron con el mismo arranque del bot y una copia de la base real; lo único simulado fue el modelo de lenguaje externo.
+- Límites: el sabotaje dice si una prueba es precisa, no si hay pruebas para todo. La reacción del VIP y los casos en que la dueña corrige o escala siguen sin prueba propia. Hoy se hace por rondas de auditoría, no de forma automática con cada cambio.
+- Para el VIP y la operación no cambia nada. Para la dueña, un «funciona» en un informe ya trae la evidencia de que la prueba lo habría notado si se rompiera. Para el equipo, sin sabotaje documentado no hay verde.
+- El detalle de cada sabotaje, con la salida real de cada fallo, está en `audit/FASE2-SABOTAJE.md`, `audit/FASE2-VIGILANTE.md` y `audit/FASE2-BANDERAS.md`.
+
+---
+
+
 Diana pega los datos de pago cuando el cliente pregunta cómo pagar — 2026-10-05
 
 En atención, cuando un cliente preguntaba cómo pagar, Diana contestaba "te paso los datos" o preguntaba qué método prefería, pero no ponía la tarjeta. El número de tarjeta del negocio (en el dato `metodos_pago`) se oculta antes de enviarse al proveedor de IA y se repone solo si la respuesta lo menciona con su marcador (`[tarjeta]`); la IA lo tomaba como dato oculto y no lo copiaba.
