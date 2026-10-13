@@ -7,6 +7,23 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+El historial del chat: verificado de punta a punta, y un contador que medía mal — 2026-10-12
+
+Quedaba una promesa sin comprobar con hechos: que cada mensaje que Diana manda a un VIP quede guardado en el historial del chat, con su texto y con el número de mensaje que devuelve Telegram. Es lo que Diana usa después para acordarse de la conversación y para aprender la voz de la dueña. Estaba verificada leyendo el código, no corriéndolo. Esta ronda la probó de verdad, y de paso cubrió dos huecos que la ronda anterior había dejado anotados: los casos en que la dueña corrige o escala un borrador, y la reacción del VIP.
+
+Se probaron los tres caminos por los que un mensaje sale —aprobar un borrador, corregirlo y el recontacto automático— entrando por el mismo arranque que usa el bot en producción y sobre una copia de la base real. Se comparó el texto guardado con el que de verdad salió por el canal, incluido el número de mensaje. Lo único simulado fue el modelo de lenguaje externo y la salida a Telegram.
+
+- **Lo que quedó verificado:** aprobar, corregir y recontactar dejan su fila en el historial con el texto correcto y su número de mensaje. Corregir guarda lo corregido, no el borrador descartado. En una sesión de prueba no se guarda nada, y es a propósito.
+- **Los avisos del vigilante V4 no eran fallas.** Ese chequeo cuenta "entregas sin rastro en el historial" y daba 18. Se revisaron uno por uno contra la base real: los 18 son mensajes de promoción a chats que no son VIP, que por diseño no van al historial del VIP. En la misma ventana, los 20 turnos de VIP dejaron los 20 su fila. Cero fallas reales. Se revisó también una ventana de 30 días: aparecieron 4 turnos de VIP sin historial y los 4 son de la sesión de prueba, identificados uno por uno en el registro del bot.
+- **Una decisión pendiente:** el vigilante V4, tal como está escrito, avisaría todos los días por promociones en cuanto se encienda. Hay que decidir si las promociones deben quedar en el historial del chat o no, y ajustar el vigilante en consecuencia. Queda apagado hasta entonces.
+- **Un defecto real, medido en producción:** el job de respaldo que clasifica la reacción del VIP cuando el bot no la vio en vivo **no puede clasificar nada**. Descarta todas las filas del historial por un detalle de formato (la fecha llega como texto y el código espera una fecha), así que cierra todos los casos como "no contestó". En los 316 ciclos registrados nunca clasificó una sola reacción, y de las 176 veces que anotó "silencio", **80 (el 45 %) tienen un mensaje real del VIP** dentro de la ventana. Esto importa porque esa señal alimenta la confianza con la que el sistema recomienda activar el envío automático: un VIP que contestó bien queda anotado como si no hubiera contestado, y el camino a la autonomía se mide con datos equivocados en casi la mitad de los casos en que el job participa.
+- **Límites:** esta ronda demuestra que el efecto ocurre, pero todavía no se le hizo el sabotaje que prueba que las pruebas caen si la pieza se desconecta. Tampoco se probó la corrección desde Atención ni el Reprender en sesión de prueba.
+- Nada de esto toca producción: se trabajó en una copia del código, sin desplegar y sin modificar una línea del bot. Lo único que se leyó de la base real fueron consultas de solo lectura.
+- El detalle completo, con los comandos, la salida real y la clasificación de los 18 casos, está en `audit/FASE2-PRUEBAS-R2.md`.
+
+---
+
+
 Sabotaje a propósito: una técnica de precisión para saber si una prueba detecta lo que dice — 2026-10-08
 
 Teníamos pruebas que entran por el arranque real del bot y revisan filas reales en la base para el modo sombra y para las huellas de memoria, ejemplos y reglas. Pasaban en verde, pero un verde solo dice que la prueba no encontró un problema, no que habría sido capaz de encontrarlo. En agosto, las huellas vacías dejaron cosas invisibles para la búsqueda sin que nadie se enterara. No quería volver a confiar en un verde que no se ha puesto a prueba.
