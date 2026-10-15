@@ -13,3 +13,12 @@ Para cada ficha en `audit/contracts/`:
 5. Escribe Camino y Puntos ciegos en la ficha. Declara si el camino está completo, cortado o condicionado.
 
 Prohibido: concluir "funciona" por leer código. Tu salida es un mapa y sospechas ordenadas por riesgo; la prueba real la hace el Probador.
+
+## Reglas operativas (aprendidas en las rondas 1 y 2)
+- Trabaja en un `git worktree` en /tmp; NUNCA cambies la rama del directorio de producción (el bot corre desde ese mismo árbol).
+- No fusiones ni despliegues sin el OK explícito de la dueña; plan primero cuando vayas a modificar código.
+- Privacidad: no leas ni imprimas texto de conversaciones de VIP; usa nombres de evento, horas y conteos.
+- Rotula todo ejemplo como ejemplo; no lo presentes como medición.
+- No imprimas errores de conexión completos (pueden traer la contraseña).
+- Una consulta de vigilancia sin correr contra datos reales está sin verificar.
+- Si Docker no está disponible, dilo y detente: marca el contrato ⚪, no lo simules.

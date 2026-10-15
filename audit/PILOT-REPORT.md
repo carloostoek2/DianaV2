@@ -56,3 +56,25 @@ Tres hipótesis mías resultaron incorrectas al medir: (1) los huecos de la somb
 | NUEVO | ❓ | Import al alta de VIP nuevo: encendido, misma sesión Telethon, no verificado con la cuenta nueva |
 
 Pendientes ordenados: ver mensaje de cierre. Evidencia: INVESTIGACION-A/B/C.md · vigilantes: vigilantes.sql (V1–V7).
+
+---
+# CIERRE DE LA FASE 2 (2026-10-09)
+| Contrato | Semáforo | Nivel | Pendiente |
+|---|---|---|---|
+| C-SHADOW-01 | 🟢 | E3 + E4 | corregir/escalar, reacción del VIP (vip_signal) sin prueba |
+| C-EMB-01 | 🟢 | E3 + E4 | camino "Reprender" sin prueba propia |
+| C-CTX-01 (nuevo) | 🟢 | E3 | vigilante de contenido propuesto, no implementado |
+| C-HIST-01 (b) puerta/alta VIP | 🟢 | E3 | — |
+| C-HIST-01 (a) captura de historial | 🟡 | E0 | 18 entregas sin rastro de historial sin explicar (V4) |
+| Banderas núcleo | 🟢 | E3 | RECONTACT apagada sin declarar |
+
+Defectos reales encontrados y corregidos: contexto temporal "rancio" (84 % de turnos con dato contrario a la conversación), tarea de importación sin referencia, ceros silenciosos en "Destacar".
+Pendientes abiertos: contradicción sobre FEATURE_VIP_HISTORY_SEED_ENABLED (HISTORIAL vs BANDERAS H-B2), RECONTACT, 18 entregas sin historial, "avisos tuyos que no te llegaron: 3", vigilante externo (hombre muerto), retención de journald (requiere sudo).
+
+---
+# RONDA 2 (2026-10-13) — mapa de contratos, historial, sombra, Reprender
+- MAPA-CONTRATOS.md: solo 5 áreas con evidencia de efecto (E2/E3/E4); el resto del sistema está en E0/E1. El "143/161 cumple" es lectura de código.
+- C-HIST-01(a) captura: E3 (17 pruebas, 34 sabotajes, 32 muerden; 2 afirmaciones sueltas devueltas al Probador). Los 18 avisos de V4 = promociones a chats no VIP, por diseño. V4 debe ajustarse antes de activarse.
+- DEFECTO ABIERTO: jobs/outcome_reaction.py:52 descarta el timestamp (texto ISO vs datetime). 176 'silence' escritos por el job, 80 (45 %) mal. Alimenta la confianza de autonomía. Arreglo de 1 línea + reparación de datos pendientes de decisión.
+- INVESTIGACIÓN D: "3 avisos / 1 ánimo" era un EJEMPLO en modo seco del informe del vigilante, no una medición (error de lectura corregido). Hueco real: los contadores de fallos viven en memoria y un reinicio los borra. Propuesta A+B+C.
+- Contradicciones documentales: 12 (ver MAPA §4).

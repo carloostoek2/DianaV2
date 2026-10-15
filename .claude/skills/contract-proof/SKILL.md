@@ -36,6 +36,14 @@ Regla dura: **solo E3 o E4 se reporta como ✅**. E0/E1 se reporta como "sin ver
 - **Cableado por bandera:** `x if settings.feature_y else None` en `composition.py`; el flujo existe pero nadie lo recibe.
 - **Función huérfana:** definida y probada, nunca llamada desde producción.
 - **Prueba que no ve el cableado:** el test construye el servicio a mano en vez de pasar por `build_app`.
+- **Conversión de tipos que descarta todo:** `isinstance(ts, datetime)` sobre un valor que llega como texto ISO hace que un job nunca clasifique nada y escriba siempre el valor por defecto (ocurrió: 'silence' en 45 % de los casos).
+- **Ejemplo confundido con medición:** un mensaje de muestra en modo seco dentro de un informe no es un dato real; rotular siempre los ejemplos.
+- **Contadores solo en memoria:** un reinicio del proceso borra los fallos tragados; contar sobre algo que sobreviva (journal o tabla).
+- **Foto guardada que se inyecta vieja:** un snapshot escrito al cerrar un turno y leído en el siguiente congela datos "del presente" (ocurrió: 84 % de contexto contradictorio). Verificar CONTENIDO, no solo que se escriba y se lea.
+- **Tarea de fondo sin referencia:** `asyncio.create_task` sin guardar el objeto puede recolectarse a mitad de ejecución.
+- **Vigilante sin correr:** una consulta de vigilancia no ejecutada contra datos reales está sin verificar (V6 estuvo rota).
+- **El directorio de trabajo ES producción:** si el bot corre desde el mismo árbol, una rama de auditoría puede cargarse en un reinicio. Mantener el árbol en `main`.
+- **Informes que se contradicen:** cuando dos reportes discrepan sobre un valor (bandera), verificar en la fuente antes de actuar.
 - **Upsert que borra lo ya escrito:** `INSERT … ON CONFLICT DO UPDATE` que pisa columnas con NULL (ocurrió: owner_outcome, 23-ago→10-sep).
 - **Documentación que afirma de más:** la wiki dice "activa" algo que nadie llama (búsqueda por parecido en `profiles`).
 - **Bandera apagada a propósito y sin registrar:** `.env` decía "VIVO", valor real `false`. Toda bandera núcleo apagada debe declarar motivo y fecha.
