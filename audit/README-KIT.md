@@ -1,6 +1,7 @@
 # Kit de auditoría de contratos — DianaV2
 
-## Qué contiene
+## Qué contiene (versión 2026-10-15)
+- `audit/ESTADO-ACTUAL.md` — el semáforo de hoy por contrato y el orden de lo siguiente. Empieza por aquí.
 - `.claude/skills/contract-proof/` — el método (niveles E0–E4, sabotaje, patrones de prueba).
 - `.claude/agents/` — 6 agentes: cartógrafo, rastreador, probador, saboteador, auditor de banderas, árbitro.
 - `audit/tools/wiring_scan.py` — escáner estático de cableado.

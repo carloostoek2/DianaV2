@@ -49,3 +49,8 @@ Hallazgos:     H-SB-1 (cerrado, 2026-10-08): con el embedder ausente, `staging_s
                empty_text) en vez de guardar ceros en silencio.
                Pendiente aparte: ContextsRepo.find_by_similarity tiene el mismo estado de huérfana.
                Ver audit/FASE2-PERFILES.md
+
+## Estado vigente (2026-10-15)
+Semáforo: 🟢 E3 + E4 (V1 diario). memories, examples, policies, profiles y el camino de "Reprender" (R2) probados con huella real y recuperación real. 0 ceros en las 5 tablas.
+Hechos: el cero en `profiles` era histórico (28/29-jul) e inocuo; las 2 huellas se regeneraron con respaldo. `find_by_similarity` de `profiles` y de `contexts` se borró (sin llamadores; código recuperable desde git). "Destacar" ya deja rastro cuando no hay embedder (`staging_embed_zeros`).
+Pendiente: "Reprender" en sandbox (aislamiento) y corrección desde Atención sin prueba propia.

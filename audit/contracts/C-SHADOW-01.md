@@ -40,3 +40,10 @@ Hallazgos:     H-SB-2 (cerrado, 2026-10-08): los DOS niveles de silencio del con
                fallas. El ejecutor las descarta leyendo el journal; sin ese filtro el vigilante
                habría avisado cada vez que la dueña prueba el sandbox.
                H1 sigue siendo riesgo sistémico pero NO fue la causa aquí (0 errores en logs 30-sep→6-oct). Causa real del hueco: upsert que borraba owner_outcome. Ver INVESTIGACION-A.md
+
+## Estado vigente (2026-10-15)
+Semáforo: 🟢 E3 + E4 en entrega, resolución de la dueña, bandera ON/OFF y rutas de diseño (FASE2-SABOTAJE: 12/12 sabotajes mordieron).
+Ronda 2 (FASE2-PRUEBAS-R2 / SABOTAJE-R2): `corrected` y `escalated` con fila real, en los dos estados de la bandera: E3 (32 de 34 sabotajes mordieron; 2 afirmaciones sueltas devueltas al Probador).
+Vigilantes activos (dentro del bot): V2, V3, V7.
+Reacción del VIP (`vip_signal`): gancho inmediato E2/E3. **DEFECTO ABIERTO** en el job de respaldo: `jobs/outcome_reaction.py:52` descarta el timestamp (texto ISO vs datetime). 176 'silence' escritos por el job, 80 (45 %) con respuesta real del VIP. Arreglo de 1 línea pendiente (Prompt 12). Reparación de datos: decisión de la dueña.
+Decisión de producto (2026-10-06): la respuesta directa de la dueña en el chat no se compara; no se contempló en el diseño.

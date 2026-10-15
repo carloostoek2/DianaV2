@@ -67,3 +67,8 @@ wiki/.ua/intermediate/
 
 # Supabase CLI local (config de desarrollo local, no del producto)
 supabase/
+
+# Paquete del kit de auditoría — lo mantiene la dueña por fuera del repo. El repo
+# es la fuente de verdad: del kit se versionan sus documentos (skill, agentes,
+# fichas, índice), nunca el paquete.
+diana-contract-audit-kit-*.zip
