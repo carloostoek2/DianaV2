@@ -12,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from diana.cognitive.models import TurnStatus
 from diana.cognitive.ports import TRACE_KEYS, TRACE_KEY_TO_COLUMN, to_jsonable
 from diana.infrastructure.db.models import PipelineTrace, Turn, Vip
+from diana.infrastructure.db.repositories.sandbox_filters import (
+    trace_not_sandbox,
+    trace_same_sandbox_mode_as,
+)
 
 # Columns that accept TRACE_KEYS values.
 _TRACE_COLUMNS = frozenset(TRACE_KEY_TO_COLUMN.values())
@@ -192,7 +196,12 @@ class SqlTraceStore:
             .order_by(PipelineTrace.created_at.desc())
         )
         if exclude_turn_id is not None:
-            stmt = stmt.where(PipelineTrace.turn_id != exclude_turn_id)
+            stmt = stmt.where(
+                PipelineTrace.turn_id != exclude_turn_id,
+                trace_same_sandbox_mode_as(exclude_turn_id),
+            )
+        else:
+            stmt = stmt.where(trace_not_sandbox())
         # Oversample then filter empties so limit is on non-empty intents.
         stmt = stmt.limit(max(limit * 4, limit))
         async with self._sf() as session:
@@ -252,7 +261,12 @@ class SqlTraceStore:
             .order_by(PipelineTrace.created_at.desc())
         )
         if exclude_turn_id is not None:
-            stmt = stmt.where(PipelineTrace.turn_id != exclude_turn_id)
+            stmt = stmt.where(
+                PipelineTrace.turn_id != exclude_turn_id,
+                trace_same_sandbox_mode_as(exclude_turn_id),
+            )
+        else:
+            stmt = stmt.where(trace_not_sandbox())
         # Oversample then filter empties so limit is on non-empty comprehensions.
         stmt = stmt.limit(max(limit * 4, limit))
         async with self._sf() as session:

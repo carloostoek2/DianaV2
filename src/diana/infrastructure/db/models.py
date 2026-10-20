@@ -94,6 +94,11 @@ class Turn(Base):
     superseded_by: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     # Failure reason (e.g. analista_schema_invalido). Nullable; set on mark_failed.
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Migration 037: frozen at creation from SandboxService.is_active(chat_id).
+    # Metric/learning readers exclude these rows (repositories.real_vip_turn).
+    is_sandbox: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

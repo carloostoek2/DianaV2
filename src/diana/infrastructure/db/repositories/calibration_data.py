@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.application.calibration_service import CalibrationSample
 from diana.infrastructure.db.models import PipelineTrace, StagingCandidate
+from diana.infrastructure.db.repositories.sandbox_filters import trace_not_sandbox
 
 logger = logging.getLogger("diana.infrastructure.db")
 
@@ -99,6 +100,7 @@ class SqlCalibrationDataSource:
                         PipelineTrace.evaluation.is_not(None),
                         # REQ-ATN-13: calibration reads VIP traces only.
                         PipelineTrace.channel_type == "vip",
+                        trace_not_sandbox(),
                     )
                 )
             )
@@ -129,6 +131,7 @@ class SqlCalibrationDataSource:
                         PipelineTrace.generated_text != "",
                         # REQ-ATN-13: calibration reads VIP traces only.
                         PipelineTrace.channel_type == "vip",
+                        trace_not_sandbox(),
                     )
                 )
                 .order_by(func.random())
@@ -148,6 +151,7 @@ class SqlCalibrationDataSource:
                         PipelineTrace.generated_text != "",
                         # REQ-ATN-13: calibration reads VIP traces only.
                         PipelineTrace.channel_type == "vip",
+                        trace_not_sandbox(),
                     )
                 )
             )
@@ -166,6 +170,7 @@ class SqlCalibrationDataSource:
                         PipelineTrace.generated_text != "",
                         # REQ-ATN-13: calibration reads VIP traces only.
                         PipelineTrace.channel_type == "vip",
+                        trace_not_sandbox(),
                     )
                 )
                 .order_by(func.random())

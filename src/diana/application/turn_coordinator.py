@@ -27,7 +27,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from collections.abc import Sequence
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
 from diana.application.observability import log_swallowed
@@ -123,8 +123,12 @@ class TurnCoordinator:
         approval_ui: ApprovalUiInvalidator | None = None,
         runtime_timers: RuntimeTimerStore | None = None,
         gray_zone: GrayZoneServicePort | None = None,
+        sandbox: Any | None = None,
     ) -> None:
         self._turns = turns
+        # Migration 037: duck-typed SandboxService (``is_active(chat_id)``).
+        # The value is frozen on the TurnRecord at creation (turn.is_sandbox).
+        self._sandbox = sandbox
         self._approvals = approvals
         self._behavior = behavior
         self._locks = locks or ChatLockProvider()
@@ -142,6 +146,15 @@ class TurnCoordinator:
         self._turn_vip_epochs: dict[UUID, int] = {}
         # Latest minted turn id per chat (terminal or not) for real abort ids.
         self._last_turn_by_chat: dict[int, UUID] = {}
+
+    def _is_sandbox(self, chat_id: int) -> bool:
+        if self._sandbox is None:
+            return False
+        try:
+            return bool(self._sandbox.is_active(chat_id))
+        except Exception:
+            logger.exception("sandbox_is_active_failed", extra={"chat_id": chat_id})
+            return False
 
     @asynccontextmanager
     async def chat_scope(self, chat_id: int) -> AsyncIterator[None]:
@@ -337,6 +350,7 @@ class TurnCoordinator:
             vip_id=vip_id,
             trigger_message_id=trigger_message_id,
             channel_type=channel_type,
+            is_sandbox=self._is_sandbox(chat_id),
         )
         created = await self._turns.create(record)
         self._last_turn_by_chat[chat_id] = created.id

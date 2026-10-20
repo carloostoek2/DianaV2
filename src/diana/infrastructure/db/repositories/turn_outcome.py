@@ -30,6 +30,7 @@ from diana.infrastructure.db.models import (
     Turn,
     TurnOutcomeLog,
 )
+from diana.infrastructure.db.repositories.sandbox_filters import real_vip_turn
 
 __all__ = ["SqlTurnOutcomeLogRepo"]
 
@@ -109,6 +110,7 @@ class SqlTurnOutcomeLogRepo:
             .outerjoin(PendingApproval, PendingApproval.turn_id == Turn.id)
             .where(
                 Turn.channel_type == "vip",
+                real_vip_turn(),
                 Turn.status.in_(_FINISHED_STATUSES),
                 Turn.created_at >= since,
             )
@@ -351,6 +353,7 @@ class SqlTurnOutcomeLogRepo:
                 .join(Turn, Turn.id == TurnOutcomeLog.turn_id)
                 .where(
                     Turn.chat_id == chat_id,
+                    real_vip_turn(),
                     TurnOutcomeLog.vip_signal.is_(None),
                     TurnOutcomeLog.created_at >= since,
                 )
@@ -381,6 +384,7 @@ class SqlTurnOutcomeLogRepo:
             .join(Turn, Turn.id == TurnOutcomeLog.turn_id)
             .where(
                 TurnOutcomeLog.vip_signal.is_(None),
+                real_vip_turn(),
                 anchor < cutoff,
             )
             .order_by(TurnOutcomeLog.created_at.desc())

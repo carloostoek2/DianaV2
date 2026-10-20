@@ -22,6 +22,7 @@ from diana.cognitive.models import (
     parse_turn_status,
 )
 from diana.infrastructure.db.models import Turn
+from diana.infrastructure.db.repositories.sandbox_filters import real_vip_turn
 
 
 def is_terminal_status(status: str) -> bool:
@@ -50,6 +51,7 @@ def turn_orm_to_record(row: Turn) -> TurnRecord:
         superseded_by=row.superseded_by,
         error=row.error,
         channel_type=row.channel_type,
+        is_sandbox=bool(getattr(row, "is_sandbox", False)),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -72,6 +74,7 @@ class SqlTurnStore:
                 superseded_by=turn.superseded_by,
                 error=turn.error,
                 channel_type=turn.channel_type,
+                is_sandbox=turn.is_sandbox,
             )
             session.add(row)
             await session.commit()
@@ -132,7 +135,9 @@ class SqlTurnStore:
         stmt = (
             select(func.count())
             .select_from(Turn)
-            .where(Turn.vip_id == vip_id, Turn.channel_type == "vip")
+            .where(
+                Turn.vip_id == vip_id, Turn.channel_type == "vip", real_vip_turn()
+            )
         )
         if since is not None:
             stmt = stmt.where(Turn.created_at >= since)
@@ -153,7 +158,11 @@ class SqlTurnStore:
         """
         stmt = (
             select(Turn.vip_id, func.max(Turn.created_at))
-            .where(Turn.channel_type == "vip", Turn.vip_id.is_not(None))
+            .where(
+                Turn.channel_type == "vip",
+                Turn.vip_id.is_not(None),
+                real_vip_turn(),
+            )
             .group_by(Turn.vip_id)
             .having(func.max(Turn.created_at) < older_than)
             .order_by(func.max(Turn.created_at).desc())

@@ -293,6 +293,25 @@ class TurnOrchestrator:
         # F4: per-chat cooldown for the atencion payment DM (bounded, pruned).
         self._last_payment_notify: dict[int, datetime] = {}
 
+    async def _turn_is_sandbox(self, turn_id: UUID, chat_id: int) -> bool:
+        """Sandbox gate for post-turn learning/metric hooks (migration 037).
+
+        Source of truth is ``turn.is_sandbox`` frozen by ``TurnCoordinator``
+        when the turn was minted, so toggling the sandbox mid-turn cannot
+        flip the gate between hooks of the same turn. Falls back to the live
+        ``should_persist`` only when the turn row cannot be read (legacy/test
+        coordinators without ``get_turn`` or a missing row).
+        """
+        get_turn = getattr(self._coordinator, "get_turn", None)
+        if callable(get_turn):
+            try:
+                turn = await get_turn(turn_id)
+            except Exception:
+                turn = None
+            if turn is not None and hasattr(turn, "is_sandbox"):
+                return bool(turn.is_sandbox)
+        return self._sandbox is not None and not self._sandbox.should_persist(chat_id)  # type: ignore[union-attr]
+
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
 
@@ -418,7 +437,7 @@ class TurnOrchestrator:
         return "dropped"
 
     async def _maybe_post_turn(self, turn_id: UUID, chat_id: int) -> None:
-        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+        if await self._turn_is_sandbox(turn_id, chat_id):
             logger.info(
                 "post_turn_skipped_sandbox",
                 extra={"turn_id": str(turn_id), "chat_id": chat_id},
@@ -514,6 +533,12 @@ class TurnOrchestrator:
         trace_reader = self._trace_reader
         if trace_reader is None:
             return
+        if await self._turn_is_sandbox(turn_id, chat_id):
+            logger.info(
+                "emotional_signal_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
         try:
             trace = await trace_reader.get_full_trace(turn_id)
             if trace is None or not trace.get("comprehension"):
@@ -597,7 +622,7 @@ class TurnOrchestrator:
         """
         if self._profile_synthesis_trigger is None:
             return
-        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+        if await self._turn_is_sandbox(turn_id, chat_id):
             logger.info(
                 "profile_synthesis_skipped_sandbox",
                 extra={"turn_id": str(turn_id), "chat_id": chat_id},
@@ -651,6 +676,12 @@ class TurnOrchestrator:
             return
         trace_reader = self._trace_reader
         if trace_reader is None:
+            return
+        if await self._turn_is_sandbox(turn_id, chat_id):
+            logger.info(
+                "turn_category_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
             return
         try:
             trace = await trace_reader.get_full_trace(turn_id)
@@ -751,7 +782,7 @@ class TurnOrchestrator:
             return
         if incoming.vip_id is None:
             return
-        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+        if await self._turn_is_sandbox(turn_id, chat_id):
             logger.info(
                 "mood_skipped_sandbox",
                 extra={
@@ -867,7 +898,7 @@ class TurnOrchestrator:
             return
         if category_log is None or not category_log.would_autonomous:
             return
-        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+        if await self._turn_is_sandbox(turn_id, chat_id):
             logger.info(
                 "trust_budget_skipped_sandbox",
                 extra={
@@ -912,7 +943,7 @@ class TurnOrchestrator:
         """
         if self._outcome_log is None:
             return
-        if self._sandbox is not None and not self._sandbox.should_persist(chat_id):  # type: ignore[union-attr]
+        if await self._turn_is_sandbox(turn_id, chat_id):
             return
         trace_reader = self._trace_reader
         if trace_reader is None:
@@ -970,6 +1001,14 @@ class TurnOrchestrator:
             return
         trace_reader = self._trace_reader
         if trace_reader is None:
+            return
+        # Sandbox message is never a reaction: no record_reaction, the trust
+        # score must not move from test traffic (critical finding).
+        if await self._turn_is_sandbox(turn_id, chat_id):
+            logger.info(
+                "outcome_reaction_skipped_sandbox",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
             return
         try:
             window = self._outcome_log.reaction_window_seconds()

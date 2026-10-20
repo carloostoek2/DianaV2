@@ -20,6 +20,7 @@ from diana.infrastructure.db.models import (
     PromoExecution,
     StagingCandidate,
 )
+from diana.infrastructure.db.repositories.sandbox_filters import trace_not_sandbox
 
 logger = logging.getLogger("diana.infrastructure.db")
 
@@ -77,6 +78,7 @@ class SqlMetricsDataSource:
                         # weekly learning metrics keep the original VIP-only
                         # semantics; atencion turns are excluded (REQ-ATN-14).
                         PipelineTrace.channel_type == "vip",
+                        trace_not_sandbox(),
                     )
                 )
             )

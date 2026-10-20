@@ -30,7 +30,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from diana.application.contract_watchdog_service import ContractWatchdogService  # noqa: E402
-from diana.infrastructure.journal_sandbox_turns import JournalSandboxTurnClassifier  # noqa: E402
 
 #: Aviso de puesta en marcha: se manda UNA vez, a mano, cuando la vigilancia se activa o se
 #: reinstala (por ejemplo, al cambiar de cuenta o de maquina). No es parte de la corrida
@@ -90,14 +89,13 @@ async def _correr(como_json: bool) -> int:
     try:
         service = ContractWatchdogService(
             async_sessionmaker(engine, expire_on_commit=False),
-            sandbox_turns=JournalSandboxTurnClassifier(),
         )
         report = await service.revisar()
         if como_json:
             print(json.dumps(report.as_dict(), indent=2, ensure_ascii=False, default=str))
         mensaje = service.componer_mensaje(report)
         if mensaje is None:
-            print(f"todo en orden — 0 alertas (sandbox descartados: {report.skipped_sandbox})")
+            print("todo en orden — 0 alertas (el sandbox se descarta en el propio SQL: turns.is_sandbox)")
             return 0
         print("--- mensaje que se mandaria ---")
         print(mensaje)

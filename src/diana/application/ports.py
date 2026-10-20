@@ -48,6 +48,9 @@ class TurnRecord(BaseModel):
     trigger_message_id: int | None = None
     superseded_by: UUID | None = None
     error: str | None = None
+    # Migration 037: sandbox active for this chat when the turn was created.
+    # Source of truth for sandbox gates during the turn (no mid-turn race).
+    is_sandbox: bool = False
     # F5 Pool 3: turn creation time — the post-turn extractor filters
     # message_history to ``timestamp >= created_at`` (plan A3). Populated by
     # the SQL store from the ORM row; None for in-memory/legacy callers.

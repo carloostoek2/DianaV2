@@ -777,6 +777,8 @@ async def test_post_turn_memory_extraction_skipped_on_sandbox() -> None:
         memory_extraction=extraction,
     )
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     await g["orch"].handle_vip_message(_vip(chat_id=100))
     assert learn.calls == []
     assert extraction.calls == []
@@ -890,6 +892,8 @@ async def test_autonomous_sandbox_skips_owner_history() -> None:
     chat_id = 100
     sandbox.activate(chat_id, "nuevo")
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(
         _vip(chat_id=chat_id, vip_id=uuid4(), text="hola diana")
     )
@@ -932,6 +936,8 @@ async def test_sandbox_skips_vip_inbound_history(caplog: pytest.LogCaptureFixtur
     chat_id = 100
     sandbox.activate(chat_id, "nuevo")
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     with caplog.at_level(logging.INFO, logger="diana.application"):
         turn_id = await g["orch"].handle_vip_message(
             _vip(chat_id=chat_id, vip_id=uuid4(), text="hola sandbox")
@@ -3609,6 +3615,8 @@ async def test_sandbox_skips_learning_post_turn() -> None:
     sandbox.activate(100, "nuevo")
     g = _build(FakeDirector(decision), learning=learn)
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     await g["orch"].handle_vip_message(_vip(chat_id=100))
     assert learn.calls == []
 
@@ -3662,6 +3670,8 @@ async def test_sandbox_inactive_still_runs_learning() -> None:
     sandbox = SandboxService(profiles=MINIMAL_SIX)
     g = _build(FakeDirector(decision), learning=learn)
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     await g["orch"].handle_vip_message(_vip(chat_id=100))
     assert len(learn.calls) == 1
 
@@ -3742,6 +3752,8 @@ async def test_sandbox_autonomous_uses_configured_delivery_mode() -> None:
         behavior_override=CaptureBehavior(),
     )
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     await g["orch"].handle_vip_message(_vip(chat_id=100, vip_id=rec.id))
     assert len(captured) == 1
     # CLARIFY: sandbox must not force fake — equals configured delivery_mode
@@ -3820,6 +3832,8 @@ async def test_sandbox_autonomous_uses_autonomous_delivery_mode() -> None:
         behavior_override=CaptureBehavior(),
     )
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     await g["orch"].handle_vip_message(_vip(chat_id=100, vip_id=rec.id))
     assert len(captured) == 1
     assert captured[0].mode == "autonomous"
@@ -3896,6 +3910,8 @@ async def test_sandbox_respects_global_fake_delivery_mode() -> None:
         behavior_override=CaptureBehavior(),
     )
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     await g["orch"].handle_vip_message(_vip(chat_id=100, vip_id=rec.id))
     assert len(captured) == 1
     assert captured[0].mode == "fake_delivery"
@@ -3954,6 +3970,8 @@ async def test_sandbox_consult_doctrine_demotes_when_no_vip() -> None:
         feature_gray_zone_enabled=True,
     )
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     g["admin"]._sandbox = sandbox  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(_vip(chat_id=100, vip_id=None))
     turn = await g["turns"].get(turn_id)
@@ -5664,8 +5682,10 @@ async def test_mood_engine_skipped_in_sandbox(
     sandbox = SandboxService(profiles=MINIMAL_SIX)
     sandbox.activate(100, "nuevo")
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = uuid4()
-    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding", is_sandbox=True))
     with caplog.at_level(logging.INFO, logger="diana.application"):
         await g["orch"]._run_mood_engine(turn_id, 100, _vip(vip_id=vip_id))
     assert mood_engine.signal_calls == []
@@ -5709,8 +5729,10 @@ async def test_trust_budget_skipped_in_sandbox(
     sandbox = SandboxService(profiles=MINIMAL_SIX)
     sandbox.activate(100, "nuevo")
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = uuid4()
-    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding", is_sandbox=True))
     with caplog.at_level(logging.INFO, logger="diana.application"):
         await g["orch"]._run_trust_budget(
             turn_id,
@@ -5762,8 +5784,10 @@ async def test_profile_synthesis_trigger_skipped_in_sandbox(
     sandbox = SandboxService(profiles=MINIMAL_SIX)
     sandbox.activate(100, "nuevo")
     g["orch"]._sandbox = sandbox  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = uuid4()
-    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding"))
+    await g["turns"].create(TurnRecord(id=turn_id, chat_id=100, status="deciding", is_sandbox=True))
     with caplog.at_level(logging.INFO, logger="diana.application"):
         await g["orch"]._run_profile_synthesis_trigger(
             turn_id, 100, _vip(vip_id=vip_id), _signal_detected()
@@ -5808,6 +5832,8 @@ async def test_sandbox_auto_send_flag_off_still_approves() -> None:
     )
     g = _build(FakeDirector(decision))
     g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(
         _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
     )
@@ -5827,6 +5853,8 @@ async def test_sandbox_auto_send_approve_delivers_direct() -> None:
     )
     g = _build(FakeDirector(decision), feature_sandbox_auto_send=True)
     g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(
         _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
     )
@@ -5853,6 +5881,8 @@ async def test_sandbox_auto_send_escalate_still_notifies() -> None:
     )
     g = _build(FakeDirector(decision), feature_sandbox_auto_send=True)
     g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(
         _vip(chat_id=100, vip_id=uuid4(), text="mensaje riesgoso")
     )
@@ -5874,6 +5904,8 @@ async def test_sandbox_auto_send_vip_id_none_delivers() -> None:
     )
     g = _build(FakeDirector(decision), feature_sandbox_auto_send=True)
     g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(
         _vip(chat_id=100, vip_id=None, channel_type="atencion", text="hola")
     )
@@ -5898,6 +5930,8 @@ async def test_sandbox_auto_send_uses_instant_context() -> None:
         behavior_override=deliverer,
     )
     g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     await g["orch"].handle_vip_message(
         _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
     )
@@ -5927,6 +5961,8 @@ async def test_sandbox_auto_send_skips_pre_pipeline_delay() -> None:
         delay_policy=FixedDelayPolicy(initial=5.0, typing=1.0),
     )
     g["orch"]._sandbox = _sandbox_auto_send_service()  # noqa: SLF001
+    # composition wires the same SandboxService into TurnCoordinator (037).
+    g["orch"]._coordinator._sandbox = g["orch"]._sandbox  # noqa: SLF001
     turn_id = await g["orch"].handle_vip_message(
         _vip(chat_id=100, vip_id=uuid4(), text="hola sandbox")
     )
@@ -6279,3 +6315,188 @@ async def test_consult_doctrine_proposal_flag_off_is_classic() -> None:
     assert gz.queries[0]["proposed_rule"] is None
     assert len(g["notifier"].doctrines) == 1
     assert g["notifier"].doctrines[0].proposed_rule is None
+
+
+# ---------------------------------------------------------------------------
+# Migration 037 — turns.is_sandbox frozen at creation (sandbox metrics isolation)
+# ---------------------------------------------------------------------------
+
+
+class _FakeOutcomeLogForReaction:
+    """Outcome log double for the C3 immediate reaction hook."""
+
+    def __init__(self) -> None:
+        self.pending_turn_id = uuid4()
+        self.find_calls: list[int] = []
+        self.reactions: list[tuple] = []
+
+    def reaction_window_seconds(self) -> int:
+        return 3600
+
+    async def find_pending_signal_for_chat(self, chat_id, *, since):
+        from types import SimpleNamespace
+
+        self.find_calls.append(chat_id)
+        return SimpleNamespace(turn_id=self.pending_turn_id)
+
+    def classify_reaction(self, text, comprehension) -> str:
+        return "positive"
+
+    async def record_reaction(self, turn_id, *, vip_signal):
+        self.reactions.append((turn_id, vip_signal))
+
+
+def _wire_sandbox(g: dict, sandbox) -> None:
+    """Mirror composition: the SAME SandboxService in orchestrator + coordinator."""
+    g["orch"]._sandbox = sandbox  # noqa: SLF001
+    g["orch"]._coordinator._sandbox = sandbox  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_037_turn_is_sandbox_frozen_for_same_vip() -> None:
+    """Same VIP/chat: sandbox on → is_sandbox=True; sandbox off → False."""
+    decision = Decision(action="approve", reason="good", evaluation=_eval(), draft_text="d")
+    g = _build(FakeDirector(decision))
+    sandbox = _sandbox_auto_send_service(chat_id=100)
+    _wire_sandbox(g, sandbox)
+    vip_id = uuid4()
+    coord = g["orch"]._coordinator  # noqa: SLF001
+    t_sb = await coord.begin_turn(chat_id=100, vip_id=vip_id, trigger_message_id=1)
+    assert t_sb.is_sandbox is True
+    assert (await g["turns"].get(t_sb.id)).is_sandbox is True
+    sandbox.deactivate(100)
+    t_real = await coord.begin_turn(chat_id=100, vip_id=vip_id, trigger_message_id=2)
+    assert t_real.is_sandbox is False
+    assert (await g["turns"].get(t_real.id)).is_sandbox is False
+
+
+@pytest.mark.asyncio
+async def test_037_coordinator_without_sandbox_is_false() -> None:
+    g = _build(FakeDirector(Decision(action="approve", reason="r", evaluation=_eval())))
+    t = await g["orch"]._coordinator.begin_turn(chat_id=100, vip_id=uuid4())  # noqa: SLF001
+    assert t.is_sandbox is False
+
+
+@pytest.mark.asyncio
+async def test_037_sandbox_reaction_never_records_reaction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Critical: a sandbox message never calls record_reaction (trust stays put)."""
+    import logging
+
+    g = _build(
+        FakeDirector(Decision(action="approve", reason="r", evaluation=_eval())),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": {"emotion": "neutral"}}),
+    )
+    outcome = _FakeOutcomeLogForReaction()
+    g["orch"]._outcome_log = outcome  # noqa: SLF001
+    _wire_sandbox(g, _sandbox_auto_send_service(chat_id=100))
+    turn = await g["orch"]._coordinator.begin_turn(chat_id=100, vip_id=uuid4())  # noqa: SLF001
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        await g["orch"]._run_outcome_reaction(  # noqa: SLF001
+            turn.id, 100, _vip(vip_id=uuid4())
+        )
+    assert outcome.reactions == []
+    assert outcome.find_calls == []
+    assert any("outcome_reaction_skipped_sandbox" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_037_real_reaction_still_recorded() -> None:
+    """Control: the same hook on a real turn records the reaction."""
+    g = _build(
+        FakeDirector(Decision(action="approve", reason="r", evaluation=_eval())),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": {"emotion": "neutral"}}),
+    )
+    outcome = _FakeOutcomeLogForReaction()
+    g["orch"]._outcome_log = outcome  # noqa: SLF001
+    turn = await g["orch"]._coordinator.begin_turn(chat_id=100, vip_id=uuid4())  # noqa: SLF001
+    await g["orch"]._run_outcome_reaction(turn.id, 100, _vip(vip_id=uuid4()))  # noqa: SLF001
+    assert outcome.reactions == [(outcome.pending_turn_id, "positive")]
+
+
+@pytest.mark.asyncio
+async def test_037_is_sandbox_survives_mid_turn_deactivation() -> None:
+    """Sandbox turned OFF mid-turn: the turn's hooks still treat it as sandbox."""
+    decision = Decision(action="approve", reason="r", evaluation=_eval(), draft_text="d")
+    outcome = _FakeOutcomeLogForReaction()
+    cat_log = _FakeTurnCategoryLog()
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": {"emotion": "triste"}}),
+        emotional_detector=_FakeEmotionalDetector(_signal_detected()),
+        emotional_signal_log=signal_log,
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=cat_log,
+    )
+    g["orch"]._outcome_log = outcome  # noqa: SLF001
+    sandbox = _sandbox_auto_send_service(chat_id=100)
+    _wire_sandbox(g, sandbox)
+    vip_id = uuid4()
+    turn = await g["orch"]._coordinator.begin_turn(chat_id=100, vip_id=vip_id)  # noqa: SLF001
+    sandbox.deactivate(100)  # owner leaves the sandbox while the turn runs
+    assert sandbox.should_persist(100) is True
+    orch = g["orch"]
+    await orch._run_emotional_detector(turn.id, 100, decision)  # noqa: SLF001
+    await orch._run_turn_classifier(turn.id, 100, _vip(vip_id=vip_id), None)  # noqa: SLF001
+    await orch._run_outcome_reaction(turn.id, 100, _vip(vip_id=vip_id))  # noqa: SLF001
+    assert signal_log.inserted == []
+    assert cat_log.inserted == []
+    assert outcome.reactions == []
+
+
+@pytest.mark.asyncio
+async def test_037_real_turn_not_skipped_when_sandbox_activated_mid_turn() -> None:
+    """Inverse race: sandbox turned ON mid-turn does not hide a real turn."""
+    decision = Decision(action="approve", reason="r", evaluation=_eval(), draft_text="d")
+    cat_log = _FakeTurnCategoryLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": {"emotion": "neutral"}}),
+        turn_classifier=_FakeTurnClassifier(_classification("fatico", 1.0)),
+        turn_category_log=cat_log,
+    )
+    sandbox = _sandbox_auto_send_service(chat_id=100)
+    sandbox.deactivate(100)
+    _wire_sandbox(g, sandbox)
+    vip_id = uuid4()
+    turn = await g["orch"]._coordinator.begin_turn(chat_id=100, vip_id=vip_id)  # noqa: SLF001
+    sandbox.activate(100, "nuevo")
+    await g["orch"]._run_turn_classifier(turn.id, 100, _vip(vip_id=vip_id), None)  # noqa: SLF001
+    assert len(cat_log.inserted) == 1
+
+
+@pytest.mark.asyncio
+async def test_037_sandbox_writes_no_category_or_emotional_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    decision = Decision(action="approve", reason="r", evaluation=_eval(), draft_text="d")
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    g = _build(
+        FakeDirector(decision),
+        trace_reader=_FakeEmotionalTraceReader({"comprehension": {"emotion": "triste"}}),
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    _wire_sandbox(g, _sandbox_auto_send_service(chat_id=100))
+    vip_id = uuid4()
+    turn = await g["orch"]._coordinator.begin_turn(chat_id=100, vip_id=vip_id)  # noqa: SLF001
+    with caplog.at_level(logging.INFO, logger="diana.application"):
+        sig = await g["orch"]._run_emotional_detector(turn.id, 100, decision)  # noqa: SLF001
+        rec = await g["orch"]._run_turn_classifier(  # noqa: SLF001
+            turn.id, 100, _vip(vip_id=vip_id), None
+        )
+    assert sig is None and rec is None
+    assert detector.calls == [] and classifier.calls == []
+    assert signal_log.inserted == [] and cat_log.inserted == []
+    msgs = [r.message for r in caplog.records]
+    assert "emotional_signal_skipped_sandbox" in msgs
+    assert "turn_category_skipped_sandbox" in msgs

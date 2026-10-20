@@ -21,7 +21,6 @@ from diana.composition import (
     run_app_startup_recovery,
 )
 from diana.config import Settings
-from diana.infrastructure.journal_sandbox_turns import JournalSandboxTurnClassifier
 from diana.jobs.agent_data_purge import AgentDataPurgeJob
 from diana.jobs.backfill import BackfillJob
 from diana.jobs.calibration import CalibrationJob
@@ -197,7 +196,6 @@ def _setup_contract_watchdog_job(app: AppContainer) -> asyncio.Task | None:
 
     service = ContractWatchdogService(
         app.session_factory,
-        sandbox_turns=JournalSandboxTurnClassifier(),
     )
     minimo = app.settings.contract_watchdog_min_hours_between_runs
     job = ContractWatchdogJob(
