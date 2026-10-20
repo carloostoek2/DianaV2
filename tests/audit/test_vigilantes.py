@@ -100,15 +100,23 @@ async def _seed_turn(
     chat_id: int,
     status: str,
     horas_atras: float = 3.0,
+    is_sandbox: bool = False,
 ) -> str:
     creado = datetime.now(UTC) - timedelta(hours=horas_atras)
     async with session_factory() as session:
         fila = await session.execute(
             text(
-                "insert into turns (chat_id, vip_id, status, created_at, updated_at) "
-                "values (:chat, cast(:vip as uuid), :status, :creado, :creado) returning id"
+                "insert into turns (chat_id, vip_id, status, created_at, updated_at, is_sandbox) "
+                "values (:chat, cast(:vip as uuid), :status, :creado, :creado, :sandbox) "
+                "returning id"
             ),
-            {"chat": chat_id, "vip": vip_id, "status": status, "creado": creado},
+            {
+                "chat": chat_id,
+                "vip": vip_id,
+                "status": status,
+                "creado": creado,
+                "sandbox": is_sandbox,
+            },
         )
         turn_id = str(fila.scalar_one())
         await session.commit()
@@ -255,30 +263,50 @@ async def test_v2_avisa_por_un_turno_sin_registro(session_factory) -> None:
 
 
 async def test_v2_no_avisa_por_un_turno_de_sesion_de_prueba(session_factory) -> None:
-    """El sandbox no persiste a proposito: si no se filtrara, cada prueba dispararia una alarma."""
+    """El sandbox no persiste a proposito: V2 lo descarta en el SQL (turns.is_sandbox, 037)."""
     vip_id = await _seed_vip(session_factory, etiqueta="v2-sandbox")
     chat_id = 991100000 + (uuid.uuid4().int % 9_000_000)
-    turn_id = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered")
+    turn_id = await _seed_turn(
+        session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered", is_sandbox=True
+    )
     await _seed_trace(session_factory, turn_id=turn_id, chat_id=chat_id, vip_id=vip_id, decision={})
 
-    sandbox = _SandboxFake({turn_id})
+    sandbox = _SandboxFake()
     report = await _correr(session_factory, sandbox)
 
-    assert sandbox.llamado, "el vigilante no consulto las sesiones de prueba"
+    assert not sandbox.llamado, "V2 ya no debe depender del clasificador del journal"
     assert turn_id not in _turnos(report, "V2"), "V2 conto como falla un turno de una prueba"
-    assert report.skipped_sandbox >= 1
 
 
-async def test_v2_sin_clasificador_de_sandbox_es_falla_y_no_silencio(session_factory) -> None:
-    """Sin poder clasificar, el vigilante dice "no pude revisar" en vez de dar todo por bueno."""
+async def test_v2_funciona_sin_journal(session_factory) -> None:
+    """Sin clasificador (sin journal) V2 corre igual: avisa del real, calla el de sandbox."""
+    vip_id = await _seed_vip(session_factory, etiqueta="v2-sin-journal")
+    chat_id = 991200000 + (uuid.uuid4().int % 9_000_000)
+    real = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered")
+    await _seed_trace(session_factory, turn_id=real, chat_id=chat_id, vip_id=vip_id, decision={})
+    chat_sb = chat_id + 1
+    prueba = await _seed_turn(
+        session_factory, vip_id=vip_id, chat_id=chat_sb, status="delivered", is_sandbox=True
+    )
+    await _seed_trace(session_factory, turn_id=prueba, chat_id=chat_sb, vip_id=vip_id, decision={})
+
     service = ContractWatchdogService(session_factory, sandbox_turns=None)
-
     report = await service.revisar()
 
-    fallas = {falla.vigilante_id for falla in report.failures}
-    assert "V2" in fallas, "V2 se cayo en silencio cuando no pudo clasificar las pruebas"
-    mensaje = service.componer_mensaje(report)
-    assert mensaje is not None and "No pude revisar" in mensaje
+    assert "V2" not in {f.vigilante_id for f in report.failures}, report.as_dict()
+    assert real in _turnos(report, "V2")
+    assert prueba not in _turnos(report, "V2")
+
+
+async def test_v3_descarta_escalaciones_de_sandbox(session_factory) -> None:
+    """V3 tambien excluye turnos de sandbox (consistencia con V2); el gemelo real si avisa."""
+    real = await _seed_v3(session_factory)
+    prueba = await _seed_v3(session_factory, is_sandbox=True)
+
+    report = await _correr(session_factory)
+
+    assert real in _turnos(report, "V3")
+    assert prueba not in _turnos(report, "V3")
 
 
 # ---------------------------------------------------------------------------
@@ -293,10 +321,13 @@ async def _seed_v3(
     razon: str = "naturalidad",
     status: str = "escalated",
     respuesta_duena: bool = False,
+    is_sandbox: bool = False,
 ) -> str:
     vip_id = await _seed_vip(session_factory, etiqueta="v3")
     chat_id = 992000000 + (uuid.uuid4().int % 9_000_000)
-    turn_id = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status=status)
+    turn_id = await _seed_turn(
+        session_factory, vip_id=vip_id, chat_id=chat_id, status=status, is_sandbox=is_sandbox
+    )
     await _seed_trace(
         session_factory,
         turn_id=turn_id,

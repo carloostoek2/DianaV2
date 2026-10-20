@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import StagingCandidate, Turn
+from diana.infrastructure.db.repositories.sandbox_filters import real_vip_turn
 
 
 class StagingCandidateRepo:
@@ -103,6 +104,7 @@ class StagingCandidateRepo:
             .join(Turn, Turn.id == StagingCandidate.turn_id)
             .where(
                 Turn.vip_id == vip_id,
+                real_vip_turn(),
                 StagingCandidate.candidate_type == "example",
                 StagingCandidate.status.notin_(["discarded"]),
             )

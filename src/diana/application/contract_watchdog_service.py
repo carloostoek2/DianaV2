@@ -43,10 +43,11 @@ VIGILANTES_SQL_PATH = Path(__file__).resolve().parents[3] / "audit" / "vigilante
 # Formato de cada bloque del SQL:  -- V<n> | activo|no-activado | <contrato> | <que vigila>
 _CABECERA = re.compile(r"^--\s*(V\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$")
 
-#: Vigilantes cuyas filas hay que cruzar con las sesiones de sandbox. El sandbox no persiste
-#: a proposito (AGENTS.md §4.20), asi que sus turnos no dejan fila: sin este filtro, cada
-#: prueba de la duena en el sandbox dispararia una falsa alarma.
-VIGILANTES_CON_FILTRO_SANDBOX = frozenset({"V2"})
+#: Vigilantes cuyas filas hay que cruzar con un clasificador externo de sesiones de sandbox.
+#: Vacio desde la migracion 037: V2/V3/V4 descartan el sandbox en el propio SQL con
+#: ``NOT t.is_sandbox`` (columna fijada al crear el turno), asi que ya no dependen del
+#: journal. El mecanismo queda por si un vigilante futuro no puede filtrar en SQL.
+VIGILANTES_CON_FILTRO_SANDBOX: frozenset[str] = frozenset()
 
 #: Cuantas filas de un mismo vigilante se listan antes de resumir el resto.
 MAX_FILAS_EN_MENSAJE = 10

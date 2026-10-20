@@ -16,6 +16,7 @@ G.4: Postgres `SELECT … FOR UPDATE` / advisory locks).
 | **CorrectSessionStore** | `telegram/handlers/callbacks.py` | In-memory FSM: owner awaiting free-text Correct. TTL (default 15 min). **Restart clears** all sessions (owner presses Correct again — expected). |
 | **DedupMiddleware** | `telegram/middlewares/dedup.py` | In-memory TTL cache of update / callback ids. Drops Telegram redeliveries in-process only. |
 | **RateLimitMiddleware** | `telegram/middlewares/rate_limit.py` | Per-user sliding window in-process. Owner exempt via constructor id. |
+| **SandboxService** | `application/sandbox.py` | In-memory `chat_id → profile` sessions. Each new turn freezes `turns.is_sandbox` from it (migration 037) so metric/learning readers exclude test turns. **Restart clears** all sessions: turns created after a restart with the sandbox on are stored as `is_sandbox=false` (counted as real) until the owner re-activates it. Not flag-gated. |
 | **PersonaCatalogProvider** | `application/persona_catalog_provider.py` | In-process cache of the active persona catalog per channel (panel "Personalidad y reglas"). Invalidated only by saves/restores **in the same process** (`set_on_change`). Consumers: retrievers (persona facts / voice / policy / schedule), Director persona, Analyst catalog temas, gray-zone proposal, delivery mode. |
 
 ## Multi-replica consequences (if run anyway)

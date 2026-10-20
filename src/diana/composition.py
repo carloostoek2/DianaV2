@@ -826,6 +826,7 @@ def build_app(
         approval_ui=ApprovalDraftVoider(notifier, vips=vips),
         runtime_timers=runtime_timers_store,
         gray_zone=gray_zone,
+        sandbox=sandbox,
     )
     owner_marks = SqlOwnerMarkStore(sf)
     admin = AdminService(

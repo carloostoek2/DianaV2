@@ -445,6 +445,30 @@ aplicables/faltantes en situaciones reales. El Reprender en sandbox entrega el
 texto corregido pero NO guarda la lección (aislamiento); el mensaje a la dueña
 lo aclara (`reprimand_lesson_not_saved_sandbox`).
 
+**Marca durable `turns.is_sandbox` (migración 037, 2026-10-19) — SIN flag:**
+`TurnCoordinator` fija `is_sandbox = sandbox.is_active(chat_id)` al crear el
+turno (el `SandboxService` se inyecta desde `composition`). Es la fuente de
+verdad durante el turno: los hooks post-turno del orquestador (memoria,
+síntesis, mood, trust, outcome log, **reacción de confianza**
+`_run_outcome_reaction`, `turn_category_log`, `emotional_signal_log`) leen
+`turn.is_sandbox` vía `_turn_is_sandbox(turn_id, chat_id)`, así que activar o
+desactivar el sandbox a mitad de un turno no cambia el criterio de ese turno
+(solo se cae al `should_persist` vivo si no se puede leer el turno). Las
+escrituras de historial (`_append_vip_history_if_persist`, historial de la
+dueña) siguen con `should_persist` vivo porque ocurren antes de que exista el
+turno o fuera de él. Los lectores de métricas/aprendizaje excluyen el sandbox
+con los helpers únicos de `infrastructure/db/repositories/sandbox_filters.py`
+(`real_vip_turn()`, `trace_not_sandbox()`, `trace_same_sandbox_mode_as()`);
+los lectores operativos (`list_non_terminal`, `list_all_non_terminal`,
+`latest_turn_id`, recovery, visor de trazas) NO filtran. Los vigilantes V2/V3/V4
+filtran `NOT t.is_sandbox` en el SQL (ya no dependen del journal).
+No lleva feature flag a propósito: es una columna con default `false` y un
+filtro de lectura; apagarla solo reintroduciría la contaminación de métricas.
+**Limitación:** la sesión de sandbox vive en memoria del proceso; tras un
+reinicio con el sandbox activo la sesión se pierde y los turnos siguientes
+quedan con `is_sandbox=false` (cuentan como reales) hasta que la dueña vuelva a
+activar el sandbox. Las filas anteriores a la migración también quedan `false`.
+
 4.21 Escalaciones — manejo desde el DM de la dueña (resume tras falso positivo: FEATURE_ESCALATION_FP_DRAFT_ENABLED)
 
 ```

@@ -43,14 +43,17 @@ FROM (
 -- V2 | activo | C-SHADOW-01 | turnos VIP que pasaron por el pipeline y NO dejaron fila de sombra
 -- Exige traza CON evaluación: así las rutas que no pasan por el pipeline
 -- (escalación determinística, saludo de plantilla) no cuentan — su hueco es diseño.
--- El ejecutor descarta además las sesiones de sandbox, que no persisten a propósito
--- (§4.20 de AGENTS.md): el motivo queda en el journal como `post_turn_skipped_sandbox`.
+-- Los turnos de sandbox no dejan fila de sombra a propósito (§4.20 de AGENTS.md) y
+-- se descartan en la propia consulta con `NOT t.is_sandbox` (migración 037): ya no
+-- se cruza con el journal. Límite: tras un reinicio con el sandbox activo, la sesión
+-- en memoria se pierde y los turnos siguientes quedan como reales (is_sandbox false).
 SELECT t.chat_id AS chat, t.id::text AS turno, t.status AS estado,
        to_char(t.created_at, 'DD/MM HH24:MI') AS cuando, 1 AS alerta
 FROM turns t
 JOIN pipeline_traces p ON p.turn_id = t.id
 LEFT JOIN turn_outcome_log o ON o.turn_id = t.id
 WHERE t.vip_id IS NOT NULL
+  AND NOT t.is_sandbox
   AND t.status NOT IN ('superseded','failed')
   AND p.evaluation IS NOT NULL
   AND o.id IS NULL
@@ -78,6 +81,7 @@ JOIN turn_outcome_log o ON o.turn_id = t.id
 LEFT JOIN pipeline_traces p ON p.turn_id = t.id
 LEFT JOIN escalation_events e ON e.turn_id = t.id
 WHERE t.status IN ('delivered','escalated') AND o.owner_outcome IS NULL
+  AND NOT t.is_sandbox
   AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '2 hours'
   AND coalesce(p.decision->>'action', '') <> 'send'
   AND coalesce(p.decision->>'reason', '') NOT LIKE 'plantilla_%'
@@ -91,10 +95,12 @@ ORDER BY t.created_at DESC;
 -- V4 | no-activado | C-HIST-01 | entregas sin rastro en el historial del chat
 -- NO se activa todavía: hoy devuelve 18 y la cláusula (a) del contrato sigue en E0
 -- (nunca verificada con efecto real). Antes de encenderlo hay que separar el hueco
--- por diseño (sandbox) del hueco real, en la ronda de C-HIST-01.
+-- por diseño (sandbox) del hueco real, en la ronda de C-HIST-01. El sandbox ya se
+-- descarta con `NOT t.is_sandbox` (migración 037); falta medir el resto.
 SELECT count(*) AS entregas_sin_historial, 0 AS alerta
 FROM turns t
 WHERE t.status = 'delivered'
+  AND NOT t.is_sandbox
   AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '10 minutes'
   AND NOT EXISTS (SELECT 1 FROM message_history m
                   WHERE m.chat_id = t.chat_id AND m.role = 'owner' AND m.timestamp >= t.created_at);
