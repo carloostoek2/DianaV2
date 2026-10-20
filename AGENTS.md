@@ -468,6 +468,8 @@ filtro de lectura; apagarla solo reintroduciría la contaminación de métricas.
 reinicio con el sandbox activo la sesión se pierde y los turnos siguientes
 quedan con `is_sandbox=false` (cuentan como reales) hasta que la dueña vuelva a
 activar el sandbox. Las filas anteriores a la migración también quedan `false`.
+Contexto, despliegue, condiciones de riesgo y pruebas:
+[`.planning/quick/sandbox-metrics-isolation/SUMMARY.md`](.planning/quick/sandbox-metrics-isolation/SUMMARY.md) (commit `4bc5754`, PR #26).
 
 4.21 Escalaciones — manejo desde el DM de la dueña (resume tras falso positivo: FEATURE_ESCALATION_FP_DRAFT_ENABLED)
 

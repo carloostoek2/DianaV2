@@ -22,6 +22,8 @@ Tres razones, en orden de peso:
    coincidencia y la ventana de 14 días mide **92,8 %**. Nada que discutir: el botón "Activar"
    no se dibuja. (Histórico: 87,8 %. Tendencia semanal: 72,4 % → 88,9 % → 88,0 % → 97,1 % →
    91,7 %.)
+   > Nota 2026-10-19 (PR #26): estas cifras incluyen turnos de sandbox. Desde la migración 037
+   > el panel los excluye; la tasa sin sandbox debe re-medirse (no se re-midió en esta nota).
 2. **La evidencia que alimenta la puerta está sucia.** De las 341 señales "positivas" que suben
    la confianza de un VIP, **184 (54 %) cuelgan de mensajes que nunca se le entregaron** (173 de
    turnos reemplazados por un mensaje posterior y 11 de turnos escalados). Cada una suma +0,05.
@@ -198,6 +200,10 @@ pero visible justo cuando el maestro esté encendido y la mayoría de los VIPs n
   autónomo, un chat que no es VIP queda en la cola. Es el invariante de seguridad del canal.
 - **El sandbox no guarda nada.** No deja memoria, ni ejemplos, ni medición: es a propósito, para
   que la dueña pueda probar sin ensuciar el sistema. Si aparece como "sin registro", es diseño.
+  > **Actualización 2026-10-19 (PR #26, `4bc5754`):** no era del todo cierto para las métricas.
+  > Los turnos de sandbox entregados sin aprobación se contaban en la coincidencia (como aciertos
+  > o conservadoras) y movían la confianza. Resuelto con `turns.is_sandbox` (migración 037): la
+  > reacción de confianza y los lectores de métricas los excluyen. Sin backfill.
 - **Un VIP pausado que escribe no recibe nada, ni entra a la cola.** El mensaje se descarta en
   la entrada, en silencio. Es el comportamiento de la lista blanca, no un defecto de este camino.
 - **Ya hay envíos sin aprobación hoy, y no son del camino autónomo.** Los saludos y check-ins
@@ -302,6 +308,8 @@ Avisa: la dueña, por Telegram.
 -- Exige traza CON evaluacion y descarta las plantillas de saludo/check-in (que responden sin
 -- pasar por el motor de decision). Hay que agregar V9 a VIGILANTES_CON_FILTRO_SANDBOX en
 -- contract_watchdog_service.py: el sandbox no persiste a proposito y sus envios son directos.
+-- ACTUALIZACION 2026-10-19 (PR #26): ya no hace falta la lista del journal; basta con
+-- agregar `AND NOT t.is_sandbox` (migracion 037), como V2/V3/V4.
 SELECT t.id::text AS turno, t.chat_id AS chat,
        to_char(t.created_at, 'DD/MM HH24:MI') AS cuando, 1 AS alerta
 FROM turns t
@@ -392,7 +400,7 @@ HAVING count(*) > 0;
 Los bloques de arriba solo tienen la consulta. Activarlos de verdad exige cuatro cosas
 (preguntas al equipo, no a la dueña): agregar el bloque al archivo de vigilantes activos,
 agregar la copia en español, sumar V9 a la lista de chequeos que descartan las sesiones de
-prueba, y actualizar la prueba que hoy fija que los vigilantes activos son exactamente V1, V2,
+prueba (desde 2026-10-19, PR #26: agregar `NOT t.is_sandbox` a su SQL), y actualizar la prueba que hoy fija que los vigilantes activos son exactamente V1, V2,
 V3 y V7. La consulta debe medirse contra la base real **antes** de encenderla, para confirmar que
 hoy da 0 (como se hizo con los cuatro vigentes).
 
