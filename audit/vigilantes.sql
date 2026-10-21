@@ -48,7 +48,7 @@ FROM (
 -- se cruza con el journal. Límite: tras un reinicio con el sandbox activo, la sesión
 -- en memoria se pierde y los turnos siguientes quedan como reales (is_sandbox false).
 SELECT t.chat_id AS chat, t.id::text AS turno, t.status AS estado,
-       to_char(t.created_at, 'DD/MM HH24:MI') AS cuando, 1 AS alerta
+       t.created_at AS cuando, 1 AS alerta
 FROM turns t
 JOIN pipeline_traces p ON p.turn_id = t.id
 LEFT JOIN turn_outcome_log o ON o.turn_id = t.id
@@ -75,7 +75,7 @@ ORDER BY t.created_at DESC;
 -- suyos después de la escalación y ninguno del bot).
 -- La consulta solo cuenta filas y lee rol y hora de los mensajes; NUNCA lee el texto.
 SELECT t.id::text AS turno, t.chat_id AS chat,
-       to_char(t.created_at, 'DD/MM HH24:MI') AS cuando, 1 AS alerta
+       t.created_at AS cuando, 1 AS alerta
 FROM turns t
 JOIN turn_outcome_log o ON o.turn_id = t.id
 LEFT JOIN pipeline_traces p ON p.turn_id = t.id
@@ -125,10 +125,13 @@ WHERE v.is_active AND p.vip_id IS NULL;
 -- V7 | activo | C-SHADOW-01 | recaída del defecto del 10-sep: la dueña aprobó y su decisión no quedó
 -- Es el caso real de "el efecto dejó de ocurrir" para la mitad de la dueña, con
 -- la firma exacta del defecto (fila con nota y sin resolución, en un turno entregado).
+-- Los turnos de sandbox se descartan con `NOT t.is_sandbox`, igual que V2/V3/V4.
+-- `cuando` sale como timestamptz crudo (V2/V3/V7): el servicio lo pasa a hora CDMX.
 SELECT t.id::text AS turno, t.chat_id AS chat,
-       to_char(t.created_at, 'DD/MM HH24:MI') AS cuando, 1 AS alerta
+       t.created_at AS cuando, 1 AS alerta
 FROM turn_outcome_log o JOIN turns t ON t.id = o.turn_id
 WHERE o.draft_score IS NOT NULL AND o.owner_outcome IS NULL
   AND t.status = 'delivered'
+  AND NOT t.is_sandbox
   AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '2 hours'
 ORDER BY t.created_at DESC;

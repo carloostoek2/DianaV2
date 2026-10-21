@@ -417,6 +417,24 @@ async def test_v7_no_avisa_cuando_la_decision_si_quedo(session_factory) -> None:
     assert turn_id not in _turnos(report, "V7"), "V7 aviso de un turno cuya decision si se guardo"
 
 
+async def test_v7_descarta_turnos_de_sandbox(session_factory) -> None:
+    """V7 excluye el sandbox en SQL (como V2/V3/V4); el gemelo real si avisa."""
+    vip_id = await _seed_vip(session_factory, etiqueta="v7-sandbox")
+    chat_id = 993200000 + (uuid.uuid4().int % 9_000_000)
+    real = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered")
+    await _seed_outcome(session_factory, turn_id=real, vip_id=vip_id, draft_score=0.71)
+    chat_sb = chat_id + 1
+    prueba = await _seed_turn(
+        session_factory, vip_id=vip_id, chat_id=chat_sb, status="delivered", is_sandbox=True
+    )
+    await _seed_outcome(session_factory, turn_id=prueba, vip_id=vip_id, draft_score=0.71)
+
+    report = await _correr(session_factory)
+
+    assert real in _turnos(report, "V7")
+    assert prueba not in _turnos(report, "V7")
+
+
 # ---------------------------------------------------------------------------
 # El aviso y sus fallas propias
 # ---------------------------------------------------------------------------

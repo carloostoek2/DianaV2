@@ -292,3 +292,53 @@ async def test_si_el_vigilante_no_puede_correr_igual_avisa(tmp_path) -> None:
     assert latido["result"] == "fallo"
     assert avisos and "no pudo correr" in avisos[0]
     assert read_heartbeat(tmp_path / "latido.json")["result"] == "fallo"
+
+
+def test_detalle_v3_dice_chat_y_hora_cdmx() -> None:
+    """V3 cuenta en que chat y a que hora (CDMX, no UTC); 02:00Z es 20:00 del dia anterior."""
+    service = ContractWatchdogService(None)  # type: ignore[arg-type]
+    reporte = WatchdogReport(
+        alerts=(
+            WatchdogAlert(
+                vigilante_id="V3",
+                titulo="escalaciones que nadie resolvio",
+                contrato="C-SHADOW-01",
+                rows=(
+                    {
+                        "turno": "t-1",
+                        "chat": 123456,
+                        "cuando": datetime(2026, 10, 20, 2, 0, tzinfo=UTC),
+                        "alerta": 1,
+                    },
+                ),
+            ),
+        ),
+    )
+
+    mensaje = service.componer_mensaje(reporte)
+
+    assert mensaje is not None
+    assert "chat 123456, mensaje del 19/10 20:00 (hora CDMX)" in mensaje
+    assert "Mensajes que esperaban tu respuesta y nadie contestó" in mensaje
+    assert "Abre ese chat" in mensaje
+    assert "t-1" not in mensaje
+    assert "avísame" not in mensaje.lower()
+
+
+def test_ninguna_copia_pide_contestarle_al_bot() -> None:
+    """El bot no procesa respuestas: ninguna copia puede decir 'avísame'."""
+    from diana.application.contract_watchdog_service import _COPY
+
+    for vid, copy in _COPY.items():
+        for texto in (copy.titulo, copy.que_paso, copy.ventana, copy.que_hacer):
+            assert "avísame" not in texto.lower() and "avisame" not in texto.lower(), vid
+
+
+def test_el_parser_sigue_encontrando_v1_a_v7() -> None:
+    from diana.application.contract_watchdog_service import leer_vigilantes
+
+    ids = [v["id"] for v in leer_vigilantes()]
+
+    assert ids == ["V1", "V2", "V3", "V4", "V5", "V6", "V7"]
+    v7 = next(v for v in leer_vigilantes() if v["id"] == "V7")
+    assert "NOT t.is_sandbox" in v7["sql"]
