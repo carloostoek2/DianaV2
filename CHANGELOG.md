@@ -7,6 +7,19 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+El sandbox deja de contar en las métricas: la marca pasa al turno — 2026-10-19
+
+El sandbox solo existía en la memoria del proceso. No quedaba nada en la base que dijera "este turno fue una prueba", así que todo lo que lee `turns` y las trazas para medir —la coincidencia, la confianza, las señales, la síntesis del perfil, la calibración— contaba las pruebas de la dueña como tráfico real. En 14 días hubo 5 turnos de sandbox del VIP …3bdc, que también tiene tráfico real, enviados sin aprobación y contados como aciertos o conservadoras; además 5 filas en `turn_category_log`, 2 en `emotional_signal_log` y una resíntesis del perfil.
+
+- **La marca vive en el turno:** columna `turns.is_sandbox` (migración `037_turns_is_sandbox`), fijada al crear el turno. Se filtra por turno y no por VIP, porque el mismo VIP mezcla pruebas y tráfico real.
+- **Lo que deja de contaminarse:** la reacción de confianza (`_run_outcome_reaction`), los dos logs de categoría y señal emocional, y los lectores de métricas y aprendizaje (helpers de `sandbox_filters.py`). Los vigilantes V2, V3 y V4 descartan el sandbox en su propia consulta y V2 ya no depende del journal.
+- **Lo que no cambia:** los lectores operativos (lifecycle, recovery, `/trazas`, `latest_turn_id`) siguen viendo todo. Sin bandera: es una corrección.
+- **Límites:** no hay backfill (los turnos de sandbox anteriores siguen contando como reales, y V2 puede dar falsas alarmas unas 48 h); tras un reinicio con el sandbox activo los turnos siguientes quedan como reales.
+- Despliegue: `alembic upgrade head` antes de reiniciar `diana-bot`. Detalle en `.planning/quick/sandbox-metrics-isolation/SUMMARY.md` y AGENTS.md §4.20 (PR #26, `4bc5754`).
+
+---
+
+
 El historial del chat: verificado de punta a punta, y un contador que medía mal — 2026-10-12
 
 Quedaba una promesa sin comprobar con hechos: que cada mensaje que Diana manda a un VIP quede guardado en el historial del chat, con su texto y con el número de mensaje que devuelve Telegram. Es lo que Diana usa después para acordarse de la conversación y para aprender la voz de la dueña. Estaba verificada leyendo el código, no corriéndolo. Esta ronda la probó de verdad, y de paso cubrió dos huecos que la ronda anterior había dejado anotados: los casos en que la dueña corrige o escala un borrador, y la reacción del VIP.

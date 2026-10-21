@@ -6,6 +6,8 @@
 **Base de datos (repo):** Alembic head `036_correction_severity` (cadena 001→036; incluye 030 turn_outcome_log, 031 profile_synthesis_queue, 032–036).
 **Base de datos (producción):** **VERIFICADO 2026-09-14: head `036_correction_severity`** (`alembic_version`; cadena 001→036 aplicadas en prod). Confirmadas tablas 030+ (`turn_outcome_log` con `correction_severity`, `profile_synthesis_queue`, etc.). Snapshot previo 2026-08-22 ya había confirmado datos reales (`link_events`, `examples.quality='gold'`, `ephemeral_events`) al head 029.
 
+**Actualización 2026-10-19:** aislamiento del sandbox en métricas — columna `turns.is_sandbox` (migración `037_turns_is_sandbox`; el head del repo pasa a **037**), PR #26, `4bc5754`, 2026-10-19. Ver `.planning/quick/sandbox-metrics-isolation/SUMMARY.md`. El resto de este documento no se re-verificó.
+
 **Trabajo reciente (sep 2026, código en `main`):**
 - Vista de borrador con evaluación/autonomía para la dueña (PR #3, `5ff0b77`).
 - Doctrina «no aplica» / policy-fence scoring (evaluator no bloquea autonomía cuando no hay regla aplicable; UI marca «no aplica»).

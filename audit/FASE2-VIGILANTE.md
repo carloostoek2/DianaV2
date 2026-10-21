@@ -43,7 +43,7 @@ cada condición, una por una (14 sabotajes), y **las 14 pruebas cayeron como deb
 | Las decisiones y la copia al usuario | `src/diana/application/contract_watchdog_service.py` |
 | Las consultas | `audit/vigilantes.sql` (**fuente única**) |
 | El latido | `runtime/contract_watchdog.json` |
-| Clasificador de sesiones de prueba | `src/diana/infrastructure/journal_sandbox_turns.py` |
+| Clasificador de sesiones de prueba | `src/diana/infrastructure/journal_sandbox_turns.py` · *Actualización 2026-10-19 (PR #26): reemplazado por `NOT t.is_sandbox` en el SQL de V2/V3/V4 (migración 037)* |
 
 Sigue el patrón de los demás jobs del bot (`CalibrationJob`, `MetricsJob`): un ciclo de una sola
 pasada que **nunca propaga excepciones** y una clase que solo lo programa. Se arranca en
@@ -198,6 +198,9 @@ V4 (entregas sin rastro en el historial) y V5 (recarga de historial detenida) si
 el primero pertenece a la ronda de C-HIST-01 y el segundo avisaría de una decisión de producto
 (la recarga está apagada a propósito desde el 2026-09-06).
 
+> Actualización 2026-10-19 (PR #26): V4 ya descarta el sandbox con `NOT t.is_sandbox`; sigue
+> `no-activado` hasta decidir qué pasa con las promociones (ver FASE2-PRUEBAS-R2).
+
 ## 8. Pruebas E2 por vigilante
 
 `tests/audit/test_vigilantes.py` — **16 pruebas, todas en verde**, contra Postgres real (contenedor
@@ -285,6 +288,9 @@ E       AssertionError: assert [] == ['V9']
 - El filtro de sesiones de prueba se lee del **journal del bot**. Si el journal no está disponible,
   V2 sale como *"no pude revisar"* (nunca como "todo bien") y los otros tres chequeos siguen
   corriendo.
+  **Resuelto 2026-10-19 (PR #26, `4bc5754`):** V2, V3 y V4 filtran `NOT t.is_sandbox` en la
+  propia consulta (migración 037) y ya no leen el journal. Límite: los turnos anteriores a la
+  migración quedan como reales (sin backfill), así que V2 puede dar falsas alarmas unas 48 h.
 - El mensaje se corta a 10 renglones por chequeo y resume el resto (*"…y N más"*).
 
 ---

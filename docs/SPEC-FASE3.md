@@ -211,6 +211,9 @@ class RecontactService:
         # - EXISTS gray_zone_queries WHERE status='open'
         # - EXISTS turns WHERE status='pending_approval'
         # - vips.is_sandbox = true
+        # NOTA (2026-10-19): `vips.is_sandbox` nunca existió; la implementación real
+        # marca por turno con `turns.is_sandbox` (migración 037). Ver
+        # .planning/quick/sandbox-metrics-isolation/SUMMARY.md
     
     async def get_due_vips() -> List[UUID]:
         """Retorna VIPs elegibles para recontacto (excluyendo bloqueados)."""
@@ -338,6 +341,7 @@ Job programado (ej. cada hora):
           - NOT EXISTS (gray_zone_queries WHERE status='open')
           - NOT EXISTS (turns WHERE status='pending_approval')
           - is_sandbox = false
+            # NOTA: implementación real = `turns.is_sandbox` (migración 037), ver AGENTS.md §4.20
           - NOT EXISTS (recontact_schedules WHERE status='pending')
   → Para cada VIP:
       → RecontactService.execute_recontact(vip_id)

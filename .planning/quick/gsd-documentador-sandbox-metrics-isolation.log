@@ -1,0 +1,7 @@
+=== documentador sandbox-metrics-isolation start 2026-10-20T07:57Z ===
+Sources: commit 4bc5754 + PR #26 + AGENTS.md §4.20 + veredicto Analista de riesgos
+Scope: SUMMARY.md, enlace en AGENTS.md §4.20, nota en SPEC-FASE3.md; 0 código
+Wrote: .planning/quick/sandbox-metrics-isolation/SUMMARY.md, AGENTS.md §4.20 link, docs/SPEC-FASE3.md notes
+Also: CHANGELOG, docs/ESTADO-PROYECTO, audit/{ESTADO-ACTUAL,MAPA-CONTRATOS,FASE2-VIGILANTE,AUTONOMIA-INFORME}
+Next: git commit docs only (sin push)
+=== documentador sandbox-metrics-isolation end 2026-10-20T08:05Z ===
