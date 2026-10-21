@@ -29,11 +29,14 @@ import re
 from collections import Counter
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from diana.application.mexico_tz import CDMX_TZ
 
 logger = logging.getLogger("diana.application")
 
@@ -131,27 +134,36 @@ _COPY: dict[str, _Copy] = {
             "parecido (el problema de agosto)."
         ),
         ventana="los ultimos 2 dias",
-        que_hacer="Avísame: hay que regenerar esas huellas (lo hace el equipo).",
+        que_hacer="Pásale este aviso al equipo: hay que regenerar esas huellas.",
     ),
     "V2": _Copy(
         titulo="Dejo de registrarse lo que Diana habria decidido sola",
         que_paso="Dejo de quedar el registro de lo que Diana habria decidido sola.",
         ventana="los ultimos 2 dias",
         que_hacer=(
-            "Avísame: sin ese registro no hay con qué medir si Diana ya puede contestar sola."
+            "Pásale este aviso al equipo: sin ese registro no hay con qué medir si Diana ya "
+            "puede contestar sola."
         ),
     ),
     "V3": _Copy(
-        titulo="Hay intercambios sin tu decision registrada",
-        que_paso="Hay intercambios entregados o escalados donde no quedo registrada tu decision.",
-        ventana="los ultimos 2 dias",
-        que_hacer="Revisa si aprobaste o corregiste esos días; si te suena, avísame.",
+        titulo="Mensajes que esperaban tu respuesta y nadie contestó",
+        que_paso=(
+            "Diana te pasó estos mensajes (escalación o borrador) y no hay registro de que los "
+            "aprobaras, corrigieras o respondieras en el chat."
+        ),
+        ventana="Revisé los últimos 2 días (sin contar las últimas 2 horas)",
+        que_hacer=(
+            "Abre ese chat: si ya lo atendiste por otro lado, ignora este aviso; si no, "
+            "contéstale al cliente."
+        ),
     ),
     "V7": _Copy(
         titulo="Lo que decides no quedo guardado",
         que_paso="Aprobaste o corregiste y tu decision no quedo guardada (el defecto de septiembre).",
         ventana="los ultimos 2 dias",
-        que_hacer="Avísame: es el defecto de septiembre y hay que mirarlo ya.",
+        que_hacer=(
+            "Pásale este aviso al equipo hoy: es el defecto de septiembre y hay que mirarlo ya."
+        ),
     ),
 }
 
@@ -214,6 +226,21 @@ def leer_vigilantes(ruta: Path | None = None) -> list[dict[str, Any]]:
             }
         )
     return vigilantes
+
+
+def _cuando_cdmx(valor: Any) -> str | None:
+    """Hora de una fila en reloj de CDMX (``DD/MM HH:MM (hora CDMX)``).
+
+    El SQL devuelve el ``timestamptz`` crudo; la hora se pasa a CDMX aqui para que la duena
+    no lea UTC. Un texto ya formateado (SQL viejo o consultas a mano) se deja tal cual.
+    """
+    if valor is None or valor == "":
+        return None
+    if isinstance(valor, datetime):
+        if valor.tzinfo is None:
+            valor = valor.replace(tzinfo=UTC)
+        return f"{valor.astimezone(CDMX_TZ):%d/%m %H:%M} (hora CDMX)"
+    return str(valor)
 
 
 def _familia_swallowed(evento: str) -> str:
@@ -462,7 +489,14 @@ class ContractWatchdogService:
             cuantos = fila.get("alerta")
             historico = fila.get("historico")
             return f"{dato}: {cuantos} sin huella (antes habia {historico})"
-        cuando = fila.get("cuando")
+        cuando = _cuando_cdmx(fila.get("cuando"))
+        if vigilante_id == "V3":
+            chat = fila.get("vip") or fila.get("chat")
+            partes = [f"chat {chat}"] if chat is not None else []
+            if cuando:
+                partes.append(f"mensaje del {cuando}")
+            if partes:
+                return ", ".join(partes)
         if cuando:
             return f"un intercambio del {cuando}"
         return " · ".join(f"{clave}={valor}" for clave, valor in fila.items() if clave != "alerta")
