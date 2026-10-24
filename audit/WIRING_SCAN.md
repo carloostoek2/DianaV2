@@ -3,15 +3,15 @@
 ## 1. Funciones sin ningún llamador en src (candidatas a 'no conectadas')
 
 - `application/admin_service.py:264` — `set_gray_zone`
-- `application/memory.py:572` — `get_delivery_result`
-- `application/memory.py:575` — `seed_keys`
-- `application/memory.py:776` — `set_paused_until`
+- `application/memory.py:583` — `get_delivery_result`
+- `application/memory.py:586` — `seed_keys`
+- `application/memory.py:787` — `set_paused_until`
 - `application/outcome_log_service.py:414` — `list_outcome_rows_since`
 - `application/sandbox.py:251` — `get_context_block`
-- `application/turn_coordinator.py:614` — `transition_sink`
+- `application/turn_coordinator.py:628` — `transition_sink`
 - `cognitive/context_builder.py:148` — `list_included_blocks`
 - `cognitive/policy_distiller.py:22` — `distill_from_text`
-- `cognitive/ports.py:265` — `keys_for`
+- `cognitive/ports.py:283` — `keys_for`
 - `infrastructure/db/repositories/learning_metrics.py:90` — `list_weeks`
 - `infrastructure/db/repositories/system_config.py:132` — `get_feature_flags`
 - `llm/fake.py:85` — `enqueue_structured`
@@ -25,23 +25,23 @@ Total: 15
 | Archivo | except Exception | log_swallowed |
 |---|---|---|
 | application/admin_service.py | 58 | 20 |
-| application/turn_orchestrator.py | 41 | 18 |
+| application/turn_orchestrator.py | 42 | 18 |
 | telegram/handlers/callbacks.py | 30 | 0 |
 | telegram/handlers/doctrine.py | 17 | 0 |
 | application/recovery_startup.py | 16 | 0 |
 | telegram/handlers/menu.py | 12 | 0 |
 | telegram/handlers/persona_admin.py | 11 | 0 |
 | composition.py | 9 | 0 |
+| application/turn_coordinator.py | 8 | 7 |
 | telegram/handlers/admin.py | 8 | 0 |
 | application/profile_admin_service.py | 7 | 0 |
-| application/turn_coordinator.py | 7 | 7 |
 | application/recontact_service.py | 7 | 0 |
 | infrastructure/vision/ocr.py | 7 | 0 |
+| cognitive/director.py | 6 | 0 |
 | jobs/gray_zone_expiration.py | 6 | 0 |
-| application/draft_variants.py | 6 | 0 |
 
-Total except Exception: 385 · log_swallowed: 46
-Archivos de producción que leen `get_swallowed_counts`: 0 (NADIE expone los contadores)
+Total except Exception: 402 · log_swallowed: 46
+Archivos de producción que leen `get_swallowed_counts`: 2 ['telegram/health.py', 'jobs/contract_watchdog.py']
 
 ## 3. Dependencias que composition.py entrega solo si hay bandera
 
@@ -94,38 +94,47 @@ Archivos de producción que leen `get_swallowed_counts`: 0 (NADIE expone los con
 - `application/promo_service.py:309` — `promo_recovery_missing_trigger_id` (warning)
 - `application/recontact_service.py:228` — `recontact_supervised_skipped` (info)
 - `application/recontact_service.py:269` — `owner_history_skipped_sandbox` (info)
-- `application/staging_service.py:106` — `correction_skipped_sandbox` (info)
-- `application/staging_service.py:252` — `gold_example_skipped_sandbox` (info)
-- `application/turn_orchestrator.py:422` — `post_turn_skipped_sandbox` (info)
-- `application/turn_orchestrator.py:601` — `profile_synthesis_skipped_sandbox` (info)
-- `application/turn_orchestrator.py:755` — `mood_skipped_sandbox` (info)
-- `application/turn_orchestrator.py:871` — `trust_budget_skipped_sandbox` (info)
-- `application/turn_orchestrator.py:1052` — `post_turn_skipped_status` (info)
-- `application/turn_orchestrator.py:1251` — `turn_mint_skipped_stale_epoch` (info)
-- `application/turn_orchestrator.py:1735` — `vip_history_skipped_sandbox` (info)
-- `application/turn_orchestrator.py:1806` — `turn_mint_skipped_stale_epoch_no_prior_turn` (info)
-- `application/turn_orchestrator.py:2572` — `phatic_auto_send_disabled` (info)
-- `application/turn_orchestrator.py:2830` — `autonomous_disabled_for_vip` (info)
-- `application/turn_orchestrator.py:3020` — `owner_history_skipped_sandbox` (info)
-- `application/vip_history_seed.py:150` — `vip_history_seed_disabled` (info)
+- `application/staging_service.py:141` — `correction_skipped_sandbox` (info)
+- `application/staging_service.py:287` — `gold_example_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:441` — `post_turn_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:537` — `emotional_signal_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:626` — `profile_synthesis_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:681` — `turn_category_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:786` — `mood_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:902` — `trust_budget_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:1008` — `outcome_reaction_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:1091` — `post_turn_skipped_status` (info)
+- `application/turn_orchestrator.py:1290` — `turn_mint_skipped_stale_epoch` (info)
+- `application/turn_orchestrator.py:1774` — `vip_history_skipped_sandbox` (info)
+- `application/turn_orchestrator.py:1845` — `turn_mint_skipped_stale_epoch_no_prior_turn` (info)
+- `application/turn_orchestrator.py:2618` — `phatic_auto_send_disabled` (info)
+- `application/turn_orchestrator.py:2876` — `autonomous_disabled_for_vip` (info)
+- `application/turn_orchestrator.py:3066` — `owner_history_skipped_sandbox` (info)
+- `application/vip_history_seed.py:192` — `vip_history_seed_disabled` (info)
+- `application/vip_history_seed.py:324` — `vip_history_seed_skipped_disabled` (info)
+- `application/vip_opening.py:184` — `vip_opening_skipped` (info)
 - `cognitive/director.py:540` — `repetition_guard_skipped_by_caller` (info)
 - `cognitive/persona_semantic.py:219` — `persona_semantic_shadow_skipped` (info)
-- `composition.py:228` — `vip_history_seed_disabled_missing_telethon_config` (info)
-- `composition.py:883` — `memory_feature_disabled` (info)
-- `composition.py:1704` — `phatic_classifier_thresholds_skipped` (info)
-- `composition.py:1730` — `mood_engine_thresholds_skipped` (info)
-- `composition.py:1779` — `trust_budget_thresholds_skipped` (info)
+- `composition.py:231` — `vip_history_seed_disabled_by_flag` (info)
+- `composition.py:259` — `vip_history_seed_disabled_missing_telethon_config` (info)
+- `composition.py:947` — `memory_feature_disabled` (info)
+- `composition.py:1785` — `phatic_classifier_thresholds_skipped` (info)
+- `composition.py:1811` — `mood_engine_thresholds_skipped` (info)
+- `composition.py:1860` — `trust_budget_thresholds_skipped` (info)
+- `infrastructure/telethon/vip_history_fetcher.py:107` — `telethon_media_skipped_too_large` (info)
 - `jobs/metrics.py:160` — `atencion_daily_metrics_skipped_flag_off` (debug)
-- `main.py:178` — `embedding_warmup_job_skipped_no_embedder` (info)
-- `main.py:192` — `expiration_job_skipped_gray_zone_disabled` (info)
-- `main.py:210` — `purge_job_skipped_no_trace_store` (info)
-- `main.py:231` — `agent_data_purge_job_skipped_no_stores` (info)
-- `main.py:243` — `recontact_job_skipped_flag_off` (info)
-- `main.py:260` — `backfill_job_skipped_flag_off` (info)
-- `main.py:288` — `history_reimport_job_skipped_flag_off` (info)
-- `main.py:308` — `metrics_job_skipped_no_service` (info)
-- `main.py:329` — `calibration_job_skipped_flag_off` (info)
-- `main.py:345` — `outcome_reaction_job_skipped_flag_off` (info)
-- `main.py:376` — `profile_synthesis_job_skipped_flag_off` (info)
+- `main.py:194` — `contract_watchdog_job_skipped_flag_off` (info)
+- `main.py:218` — `embedding_warmup_job_skipped_no_embedder` (info)
+- `main.py:232` — `expiration_job_skipped_gray_zone_disabled` (info)
+- `main.py:250` — `purge_job_skipped_no_trace_store` (info)
+- `main.py:271` — `agent_data_purge_job_skipped_no_stores` (info)
+- `main.py:283` — `recontact_job_skipped_flag_off` (info)
+- `main.py:300` — `backfill_job_skipped_flag_off` (info)
+- `main.py:328` — `history_reimport_job_skipped_flag_off` (info)
+- `main.py:348` — `metrics_job_skipped_no_service` (info)
+- `main.py:369` — `calibration_job_skipped_flag_off` (info)
+- `main.py:385` — `outcome_reaction_job_skipped_flag_off` (info)
+- `main.py:416` — `profile_synthesis_job_skipped_flag_off` (info)
+- `telegram/handlers/business.py:86` — `video_vision_skipped_too_large` (info)
 - `telegram/handlers/doctrine.py:264` — `doctrine_proposal_missing_rule` (info)
 - `telegram/handlers/doctrine.py:388` — `doctrine_escalate_missing_turn` (info)
