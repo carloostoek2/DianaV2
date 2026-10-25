@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 import pytest
@@ -126,6 +127,53 @@ async def test_no_overrides_delegates_to_base() -> None:
         assert factory.built == []  # never rebuilt without overrides
     finally:
         await wrapper.aclose()
+
+
+@pytest.mark.asyncio
+async def test_hot_swap_log_never_contains_the_api_key(caplog) -> None:
+    """H1: el registro del cambio en caliente no filtra la clave.
+
+    La huella de configuración incluye la clave para detectar el cambio; esa
+    tupla se registraba con ``str(fp)`` y dejaba la clave en journald. Ahora
+    el registro lleva modelo, base_url y solo un hash corto de la clave.
+    """
+    caplog.set_level(logging.INFO, logger="diana.llm.hot_swap")
+    secret = "sk-audit-secret-9f8e7d6c5b4a"
+    wrapper, factory, clk, state = _build(None)
+    try:
+        state["value"] = {
+            "model": "deepseek-chat",
+            "base_url": "https://proxy.example.com",
+            "api_key": secret,
+        }
+        clk.advance(31)
+        await wrapper.generate([{"role": "user", "content": "hola"}])
+    finally:
+        await wrapper.aclose()
+
+    assert factory.built[-1][0] == secret, "la clave no llegó al proveedor"
+    registros = [
+        record
+        for record in caplog.records
+        if record.name == "diana.llm.hot_swap"
+    ]
+    assert registros, "no se registró el cambio en caliente"
+    volcado = "\n".join(str(vars(record)) for record in registros)
+    assert secret not in volcado, "el registro contiene la clave del proveedor"
+    assert secret not in caplog.text
+    # Diagnóstico útil que sí puede quedar: modelo, base_url y huella corta.
+    assert any(
+        getattr(record, "model", None) == "deepseek-chat"
+        for record in registros
+    )
+    assert any(
+        getattr(record, "base_url", None) == "https://proxy.example.com"
+        for record in registros
+    )
+    assert any(
+        str(getattr(record, "api_key_fp", "")).startswith("sha256:")
+        for record in registros
+    )
 
 
 @pytest.mark.asyncio

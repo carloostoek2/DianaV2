@@ -455,10 +455,16 @@ class MemoryExtractionService:
                 ],
                 WindowExtraction,
             )
-        except Exception:
-            logger.exception(
+        except Exception as exc:
+            # Log the type only: provider/pydantic errors can echo the model
+            # reply, which is already restored and may carry PII (C-PII-01).
+            logger.error(
                 "memory_extraction_llm_failed",
-                extra={"turn_id": str(turn_id), "vip_id": str(vip_id)},
+                extra={
+                    "turn_id": str(turn_id),
+                    "vip_id": str(vip_id),
+                    "error_type": type(exc).__name__,
+                },
             )
             return PostTurnExtractionReport(
                 status="failed", turn_id=turn_id, vip_id=vip_id

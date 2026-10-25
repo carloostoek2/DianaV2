@@ -95,10 +95,14 @@ class RecontactPersonalizer:
             text = await self._llm.generate(
                 messages, temperature=0.8, max_tokens=self._max_tokens
             )
-        except Exception:
-            logger.exception(
+        except Exception as exc:
+            # Type only — provider/pydantic errors can echo restored text.
+            logger.error(
                 "recontact_personalize_llm_failed",
-                extra={"vip_id": str(vip_id)},
+                extra={
+                    "vip_id": str(vip_id),
+                    "error_type": type(exc).__name__,
+                },
             )
             return template
 

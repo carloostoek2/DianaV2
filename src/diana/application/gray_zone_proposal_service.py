@@ -139,10 +139,14 @@ class GrayZoneProposalService:
                 extra={"channel_type": channel_type, "timeout_s": self._timeout},
             )
             return None
-        except Exception:
-            logger.exception(
+        except Exception as exc:
+            # Type only — provider/pydantic errors can echo restored text.
+            logger.error(
                 "gray_zone_proposal_failed",
-                extra={"channel_type": channel_type},
+                extra={
+                    "channel_type": channel_type,
+                    "error_type": type(exc).__name__,
+                },
             )
             return None
 
@@ -256,8 +260,13 @@ class GrayZoneProposalService:
                 proposal = raw
             else:
                 proposal = GrayZoneProposal.model_validate(raw)
-        except Exception:
-            logger.exception("gray_zone_proposal_schema_invalid")
+        except Exception as exc:
+            # Type only — a pydantic ValidationError echoes ``input_value``
+            # (the model reply, already restored and possibly personal).
+            logger.error(
+                "gray_zone_proposal_schema_invalid",
+                extra={"error_type": type(exc).__name__},
+            )
             return None
         rule = (proposal.proposed_rule or "").strip()
         if not rule:

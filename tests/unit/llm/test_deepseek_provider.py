@@ -7,7 +7,7 @@ import logging
 
 import httpx
 import pytest
-from pydantic import BaseModel, SecretStr, ValidationError
+from pydantic import BaseModel, SecretStr
 
 from diana.llm.deepseek import DeepSeekProvider
 
@@ -645,18 +645,29 @@ async def test_extract_content_does_not_fall_back_to_reasoning() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_structured_schema_mismatch_raises_validation_error() -> None:
+async def test_generate_structured_schema_mismatch_raises_sanitized_error() -> None:
+    """Schema failures surface as a sanitized ``ValueError``.
+
+    C-PII-01 (Ronda 2): pydantic's ``ValidationError`` embeds the offending
+    ``input_value`` in ``str(exc)``; the payload was already unmasked, so that
+    would carry personal data into every caller's error log. The provider now
+    logs type/count only and raises a ``ValueError`` with no cause chain.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
+        # ``count`` is missing → schema failure with the input echoed.
         return _openai_chat_response(json.dumps({"value": "only"}))
 
     provider = _provider_with_transport(handler)
     client = provider._client
     try:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError) as excinfo:
             await provider.generate_structured(
                 [{"role": "user", "content": "x"}],
                 _TinySchema,
             )
+        assert "input_value" not in str(excinfo.value)
+        assert excinfo.value.__cause__ is None
     finally:
         await provider.aclose()
         await client.aclose()

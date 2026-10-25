@@ -19,7 +19,10 @@ inserción y cada aserción se acota a ellos y se limpia al final, porque la
 copia trae datos reales de los VIP.
 
 Casos que registran un HUECO (comportamiento real que contradice la promesa)
-lo dicen en su docstring; no se corrige código de producción aquí.
+lo dicen en su docstring. La Ronda 2 corrigió la tarjeta con caducidad/CVV,
+los separadores (punto, espacio duro, tabulador, salto de línea), el registro
+de errores y el cambio de modelo en caliente; esas aserciones exigen ya la
+conducta nueva. Sigue abierto el hueco de la restauración literal.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -36,8 +40,8 @@ import httpx
 import pytest
 from aiogram import Bot
 from aiogram.types import Chat, Message, PhotoSize, Update, User
-from PIL import Image
-from pydantic import SecretStr
+from PIL import Image, ImageDraw
+from pydantic import BaseModel, SecretStr
 from sqlalchemy import text
 
 import diana.llm.deepseek as deepseek_module
@@ -68,6 +72,18 @@ CHAT_SINTESIS = 999200106
 CHAT_VISION = 999200107
 
 CERO_384 = "[" + ",".join(["0"] * 384) + "]"
+
+
+class _TinySchema(BaseModel):
+    """Esquema mínimo para forzar el camino estructurado del proveedor."""
+
+    value: str
+
+
+class _IntValueSchema(BaseModel):
+    """Esquema que falla si el modelo devuelve texto en ``value``."""
+
+    value: int
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +186,28 @@ class _DeepSeekCapture:
                 ]
             },
         )
+
+
+class _BadJsonCapture(_DeepSeekCapture):
+    """Responde JSON inválido y repite el marcador de tarjeta.
+
+    El marcador se restaura ANTES de parsear, así que el dato personal vuelve
+    al texto que el proveedor registra en el error (C-PII-01, hallazgo 3).
+    """
+
+    def response_for(self, payload: dict[str, Any]) -> str:
+        if "response_format" in payload:
+            return '{"value": "[tarjeta]"'
+        return self.draft
+
+
+class _BadSchemaCapture(_DeepSeekCapture):
+    """JSON válido que falla el esquema; el ``input_value`` trae el marcador."""
+
+    def response_for(self, payload: dict[str, Any]) -> str:
+        if "response_format" in payload:
+            return '{"value": "[tarjeta]"}'
+        return self.draft
 
 
 def _install_deepseek_transport(
@@ -308,10 +346,11 @@ async def _app(
     monkeypatch: pytest.MonkeyPatch,
     *,
     draft: str = "Hola, todo bien.",
+    capture: _DeepSeekCapture | None = None,
     **flag_overrides: Any,
 ):
     """Arma la app REAL por ``build_app`` y devuelve (app, captura)."""
-    capture = _DeepSeekCapture(draft=draft)
+    capture = capture or _DeepSeekCapture(draft=draft)
     clients = _install_deepseek_transport(monkeypatch, capture)
     bot = _bot()
     app = build_app(
@@ -631,27 +670,34 @@ async def test_flujo_completo_enmascara_en_http_y_restaura_en_cola_y_traza(
 
 
 # ---------------------------------------------------------------------------
-# 2. Tarjeta seguida de otro grupo: el caso real sale EN CLARO (hueco)
+# 2. Tarjeta seguida de otro grupo: la tarjeta se enmascara (conducta nueva)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("texto", "esperado"),
     [
-        ("4111 1111 1111 1111 12/27", "4111 1111 1111 1111 12/27"),
-        ("4111 1111 1111 1111 123", "4111 1111 1111 1111 123"),
-        ("4111111111111111 12/27", "4111111111111111 12/27"),
+        ("4111 1111 1111 1111 12/27", "[tarjeta] 12/27"),
+        ("4111 1111 1111 1111 123", "[tarjeta] 123"),
+        ("4111111111111111 12/27", "[tarjeta] 12/27"),
+        ("4111 1111 1111 1111 5", "[tarjeta] 5"),
     ],
-    ids=["tarjeta-caducidad", "tarjeta-cvv", "contigua-caducidad"],
+    ids=[
+        "tarjeta-caducidad",
+        "tarjeta-cvv",
+        "contigua-caducidad",
+        "tarjeta-grupo-corto",
+    ],
 )
-async def test_tarjeta_seguida_de_otro_grupo_viaja_en_claro(
+async def test_tarjeta_seguida_de_otro_grupo_enmascara_la_tarjeta(
     engine, session_factory, monkeypatch, texto, esperado
 ) -> None:
-    """HUECO (ficha, punto ciego 1): tarjeta + caducidad/CVV sale sin enmascarar.
+    """El Luhn se reintenta con corridas más cortas (C-PII-01, hallazgo 1).
 
-    El regex acepta 13–19 dígitos y el Luhn se evalúa sobre el match completo;
-    ``re.sub`` no reintenta una corrida más corta, así que la tarjeta real
-    viaja en claro al proveedor. Se registra el hecho; no se corrige.
+    El regex abarca la tarjeta y el grupo extra (caducidad/CVV); el fallo de
+    Luhn descartaba el match completo. Ahora se quitan grupos por la derecha
+    hasta que la corrida pase Luhn y se enmascara SOLO la tarjeta: el sufijo
+    (`` 12/27``, `` 123``) puede quedar visible, como se decidió.
     """
     async with _app(
         engine, session_factory, monkeypatch, feature_pii_masking_enabled=True
@@ -661,30 +707,36 @@ async def test_tarjeta_seguida_de_otro_grupo_viaja_en_claro(
         )
         body = capture.requests[-1]["messages"][-1]["content"]
         assert body == esperado, f"cuerpo HTTP inesperado: {body!r}"
-        assert "[tarjeta]" not in body
+        assert "[tarjeta]" in body
+        # El número de la tarjeta (sin separadores) no puede salir en claro.
+        assert "4111111111111111" not in body.replace(" ", "").replace(
+            " ", ""
+        )
 
 
 # ---------------------------------------------------------------------------
-# 3. Separadores no cubiertos → EN CLARO (hueco)
+# 3. Separadores: punto, espacio duro, tabulador y salto de línea
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("texto", "esperado"),
+    "texto",
     [
-        ("4111 1111 1111 1111", "4111 1111 1111 1111"),
-        ("4111\n1111 1111 1111", "4111\n1111 1111 1111"),
-        ("4111.1111.1111.1111", "4111.1111.1111.1111"),
+        "4111 1111 1111 1111",
+        "4111\n1111 1111 1111",
+        "4111.1111.1111.1111",
+        "4111\t1111 1111 1111",
+        "4111-1111-1111-1111",
     ],
-    ids=["espacio-duro", "salto-de-linea", "puntos"],
+    ids=["espacio-duro", "salto-de-linea", "puntos", "tabulador", "guiones"],
 )
-async def test_separadores_no_cubiertos_viajan_en_claro(
-    engine, session_factory, monkeypatch, texto, esperado
+async def test_separadores_punto_espacio_duro_y_salto_se_enmascaran(
+    engine, session_factory, monkeypatch, texto
 ) -> None:
-    """HUECO (ficha, punto ciego 2): NBSP, salto de línea y puntos no se enmascaran.
+    """El patrón de tarjeta cubre todos los separadores reales (hallazgo 2).
 
-    El patrón de tarjeta solo admite espacio ASCII y guion. Se registra qué
-    sale realmente en el cuerpo HTTP.
+    Se conserva la detección previa con espacio y guion y se agregan punto,
+    espacio duro, tabulador y salto de línea.
     """
     async with _app(
         engine, session_factory, monkeypatch, feature_pii_masking_enabled=True
@@ -693,8 +745,90 @@ async def test_separadores_no_cubiertos_viajan_en_claro(
             [{"role": "user", "content": texto}], max_tokens=64
         )
         body = capture.requests[-1]["messages"][-1]["content"]
-        assert body == esperado, f"cuerpo HTTP inesperado: {body!r}"
-        assert "[tarjeta]" not in body and "[telefono]" not in body
+        assert body == "[tarjeta]", f"cuerpo HTTP inesperado: {body!r}"
+
+
+# ---------------------------------------------------------------------------
+# 3b. Registro de errores: nunca el texto restaurado
+# ---------------------------------------------------------------------------
+
+
+async def test_registro_de_error_no_incluye_el_dato_restaurado(
+    engine, session_factory, monkeypatch, caplog
+) -> None:
+    """El error registra tipo/código/longitud, nunca el contenido (hallazgo 3).
+
+    El proveedor responde JSON inválido que repite el marcador ``[tarjeta]``;
+    la restauración ocurre ANTES de parsear, así que el dato personal vuelve
+    al texto. El registro del proveedor no puede llevarlo al journald.
+    """
+    caplog.set_level(logging.ERROR, logger="diana.llm.deepseek")
+    async with _app(
+        engine,
+        session_factory,
+        monkeypatch,
+        feature_pii_masking_enabled=True,
+        capture=_BadJsonCapture(),
+    ) as (app, capture):
+        with pytest.raises(ValueError):
+            await _provider(app).generate_structured(
+                [{"role": "user", "content": f"mi tarjeta es {CARD}"}],
+                _TinySchema,
+            )
+
+    assert capture.requests, "el proveedor no llegó a recibir la petición"
+    registros = [r for r in caplog.records if r.name == "diana.llm.deepseek"]
+    assert registros, "no se registró el error de JSON inválido"
+    texto_registrado = "\n".join(str(vars(r)) for r in registros)
+    for original in (CARD, "4111111111111111"):
+        assert original not in texto_registrado, (
+            f"el registro de error contiene el dato restaurado {original!r}"
+        )
+    # Sí queda diagnóstico no sensible: longitud y tipo de error.
+    assert any(
+        getattr(r, "content_length", None) is not None for r in registros
+    )
+    assert any(
+        getattr(r, "json_error_type", None) == "JSONDecodeError"
+        for r in registros
+    )
+
+
+async def test_registro_de_error_de_esquema_no_incluye_el_dato_restaurado(
+    engine, session_factory, monkeypatch, caplog
+) -> None:
+    """El ``ValidationError`` de pydantic no puede arrastrar ``input_value``.
+
+    Pydantic imprime el valor recibido en ``str(exc)``; como el texto ya está
+    restaurado, ese valor es PII. El proveedor registra tipo/cantidad y corta
+    la cadena de causa para que ningún ``logger.exception`` de un llamador lo
+    vuelva a escribir.
+    """
+    caplog.set_level(logging.ERROR, logger="diana.llm.deepseek")
+    async with _app(
+        engine,
+        session_factory,
+        monkeypatch,
+        feature_pii_masking_enabled=True,
+        capture=_BadSchemaCapture(),
+    ) as (app, capture):
+        with pytest.raises(ValueError) as excinfo:
+            await _provider(app).generate_structured(
+                [{"role": "user", "content": f"mi tarjeta es {CARD}"}],
+                _IntValueSchema,
+            )
+
+    assert capture.requests
+    # Ni el mensaje de la excepción ni el registro llevan el dato.
+    assert "4111111111111111" not in str(excinfo.value)
+    assert "input_value" not in str(excinfo.value)
+    registros = [r for r in caplog.records if r.name == "diana.llm.deepseek"]
+    texto_registrado = "\n".join(str(vars(r)) for r in registros)
+    assert CARD not in texto_registrado
+    assert "4111111111111111" not in texto_registrado
+    assert any(
+        getattr(r, "error_types", None) for r in registros
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -726,18 +860,27 @@ async def test_tarjetas_validas_se_enmascaran(
         assert body == "[tarjeta]", f"cuerpo HTTP inesperado: {body!r}"
 
 
+@pytest.mark.parametrize(
+    "texto",
+    ["4111111111111112", "4111111111111112 123"],
+    ids=["contigua", "con-grupo-extra"],
+)
 async def test_diez6_digitos_que_fallan_luhn_no_se_marcan_como_tarjeta(
-    engine, session_factory, monkeypatch
+    engine, session_factory, monkeypatch, texto
 ) -> None:
-    """Comportamiento documentado: sin Luhn válido no se marca como tarjeta."""
+    """Comportamiento documentado: sin Luhn válido no se marca como tarjeta.
+
+    El reintento por grupos tampoco puede enmascarar un número que no es
+    tarjeta.
+    """
     async with _app(
         engine, session_factory, monkeypatch, feature_pii_masking_enabled=True
     ) as (app, capture):
         await _provider(app).generate(
-            [{"role": "user", "content": "4111111111111112"}], max_tokens=64
+            [{"role": "user", "content": texto}], max_tokens=64
         )
         body = capture.requests[-1]["messages"][-1]["content"]
-        assert body == "4111111111111112"
+        assert body == texto
         assert "[tarjeta]" not in body
 
 
@@ -825,14 +968,14 @@ async def test_bandera_off_manda_el_texto_en_claro(
         assert outcome.approval is not None
 
 
-async def test_cambio_de_modelo_en_caliente_reenciende_el_enmascarado_con_bandera_off(
+async def test_cambio_de_modelo_en_caliente_respeta_la_bandera_off(
     engine, session_factory, monkeypatch, chats
 ) -> None:
-    """HUECO (ficha, punto ciego 4): el swap fija ``pii_masking=True``.
+    """El swap caliente conserva el enmascarado APAGADO (hallazgo 4).
 
-    Con la bandera OFF, el proveedor base manda el texto en claro; en cuanto
-    la dueña cambia el modelo (``system_config['llm']``), ``hot_swap.py`` crea
-    el reemplazo con ``pii_masking=True`` y el texto vuelve a enmascararse.
+    Con la bandera OFF, el proveedor base manda el texto en claro; al cambiar
+    el modelo (``system_config['llm']``) el reemplazo debe respetar el mismo
+    interruptor, no reencenderlo.
     """
     chats.append(CHAT_HOT_SWAP)
     await _seed_vip(session_factory, CHAT_HOT_SWAP)
@@ -854,9 +997,9 @@ async def test_cambio_de_modelo_en_caliente_reenciende_el_enmascarado_con_bander
         await _expire_hot_swap_cache(app)
         await provider.generate([{"role": "user", "content": CARD}], max_tokens=64)
         despues = capture.requests[-1]["messages"][-1]["content"]
-        assert despues == "[tarjeta]", (
-            "tras el swap caliente se esperaba el enmascarado reactivado "
-            f"(hot_swap.py fija pii_masking=True); salió {despues!r}"
+        assert despues == CARD, (
+            "tras el swap caliente la bandera OFF debe seguir apagando el "
+            f"enmascarado; salió {despues!r}"
         )
 
 
@@ -1006,10 +1149,21 @@ def _install_gemini_transport(
     return created
 
 
-def _blank_jpeg() -> bytes:
+def _sharp_jpeg() -> bytes:
+    """Imagen nítida y de alto contraste, sin texto.
+
+    El filtro de privacidad la clasifica como verificable y limpia; una imagen
+    en blanco se considera no verificable desde el arreglo de 2026-10-24 y ya no
+    llega al proveedor.
+    """
     image = Image.new("RGB", (320, 240), "white")
+    draw = ImageDraw.Draw(image)
+    for y in range(0, 240, 20):
+        for x in range(0, 320, 20):
+            if (x // 20 + y // 20) % 2 == 0:
+                draw.rectangle([x, y, x + 19, y + 19], fill="black")
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG")
+    image.save(buffer, format="JPEG", quality=95)
     return buffer.getvalue()
 
 
@@ -1024,7 +1178,7 @@ async def test_vision_no_recibe_texto_del_chat_ni_el_caption(
     chats.append(CHAT_VISION)
     await _seed_vip(session_factory, CHAT_VISION)
     caption = f"Mira, escríbeme a {EMAIL}"
-    image_bytes = _blank_jpeg()
+    image_bytes = _sharp_jpeg()
 
     async def _fake_download(*args: Any) -> bytes:
         # composition lo envuelve con functools.partial(..., bot): acepta los

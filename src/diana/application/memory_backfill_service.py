@@ -490,13 +490,15 @@ class MemoryBackfillService:
             extracted = await self._extract_window_llm(
                 windows[window_index], already_strs
             )
-        except Exception:
-            logger.exception(
+        except Exception as exc:
+            # Type only — the exception may echo the restored model text.
+            logger.error(
                 "memory_backfill_window_failed",
                 extra={
                     "vip_id": str(vip_id),
                     "chat_id": chat_id,
                     "window": window_index + 1,
+                    "error_type": type(exc).__name__,
                 },
             )
             # R4: no partial writes — one failed window aborts the unit.

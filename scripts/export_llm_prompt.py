@@ -7,7 +7,18 @@ per turn; this script reconstructs it from git at the turn's timestamp for
 fidelity and warns when it must fall back to the current HEAD constant.
 
 Usage:
-    python scripts/export_llm_prompt.py [turn_id] [--out PATH]
+    python scripts/export_llm_prompt.py [turn_id] [--out PATH] --allow-pii
+
+The export contains PERSONAL DATA: the trace stores the prompt and draft
+verbatim (original PII, restored by design). Because of that, the script
+refuses to run unless the operator passes ``--allow-pii`` explicitly. The
+environment variable is NOT accepted as consent (M4): a stray shell profile
+must not be able to unlock the export.
+
+By default the file is written OUTSIDE the repository (``~/diana-exports``),
+created with ``0o600``, and every export leaves one audit line with the turn
+id and timestamp (never the content). Treat the generated file as
+confidential.
 
 Without turn_id it picks a random turn with a non-null prompt_text.
 """
@@ -20,7 +31,8 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -28,7 +40,12 @@ import asyncpg
 
 REPO = Path(__file__).resolve().parent.parent
 ENV_PATH = REPO / ".env"
-DEFAULT_OUT = REPO / "docs" / "prompt-llm-turno-{short}.md"
+# Outside the working tree on purpose: the export contains PII and must never
+# be one ``git add .`` away from being committed.
+EXPORT_DIR = Path.home() / "diana-exports"
+DEFAULT_OUT = EXPORT_DIR / "prompt-llm-turno-{short}.md"
+AUDIT_LOG = EXPORT_DIR / "export-audit.log"
+_EXPORT_FILE_MODE = 0o600
 
 _GENERATOR_REL = "src/diana/cognitive/generator.py"
 
@@ -153,6 +170,13 @@ def build_doc(turn: dict, system: str, sys_commit: str, sys_fallback: bool) -> s
     add = lines.append
     add(f"# Payload exacto al LLM — turno `{short}`")
     add("")
+    add(
+        "> ⚠️ **Contiene datos personales.** El texto del VIP y el borrador se "
+        "guardan sin enmascarar en la traza (a propósito, para reconstruir el "
+        "turno). Trata este archivo como confidencial y no lo compartas fuera "
+        "del equipo autorizado."
+    )
+    add("")
     add("| Campo | Valor |")
     add("| --- | --- |")
     add(f"| turn_id | `{turn['turn_id']}` |")
@@ -214,11 +238,62 @@ def build_doc(turn: dict, system: str, sys_commit: str, sys_fallback: bool) -> s
     return "\n".join(lines)
 
 
+def _write_private(path: Path, content: str) -> None:
+    """Write the export with owner-only permissions (0600)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        _EXPORT_FILE_MODE,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        # ``os.open`` does not change the mode of an existing file.
+        os.chmod(path, _EXPORT_FILE_MODE)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _write_audit_line(turn_id: str) -> None:
+    """One audit line per export: turn and timestamp, never the content."""
+    AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    line = f"{datetime.now(UTC).isoformat()} export_llm_prompt turn_id={turn_id}\n"
+    fd = os.open(
+        AUDIT_LOG,
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+        _EXPORT_FILE_MODE,
+    )
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        handle.write(line)
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("turn_id", nargs="?", default=None)
     parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--allow-pii",
+        action="store_true",
+        help=(
+            "Confirmar que el export contiene datos personales. Es la ÚNICA "
+            "forma de permitirlo: ya no se acepta una variable de entorno."
+        ),
+    )
     args = parser.parse_args()
+
+    if not args.allow_pii:
+        raise SystemExit(
+            "Export bloqueado: el archivo contiene datos personales "
+            "(texto del VIP y borrador sin enmascarar). Repite el comando "
+            "con --allow-pii."
+        )
+    print(
+        "AVISO: el export contiene datos personales. Trátalo como "
+        "confidencial y no lo compartas fuera del equipo autorizado.",
+        file=sys.stderr,
+    )
 
     conn = await asyncpg.connect(_load_db_url())
     try:
@@ -239,8 +314,8 @@ async def main() -> None:
     short = str(turn["turn_id"])[:8]
     out = Path(args.out) if args.out else DEFAULT_OUT
     out = Path(str(out).replace("{short}", short))
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build_doc(turn, system, sys_commit, sys_fallback))
+    _write_private(out, build_doc(turn, system, sys_commit, sys_fallback))
+    _write_audit_line(str(turn["turn_id"]))
     print(f"turn_id={turn['turn_id']} sys_commit={sys_commit} -> {out}")
 
 

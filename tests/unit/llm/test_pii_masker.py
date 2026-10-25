@@ -6,6 +6,7 @@ The provider tests use httpx.MockTransport only — no live network.
 from __future__ import annotations
 
 import json
+import time
 
 import httpx
 import pytest
@@ -87,6 +88,61 @@ def test_masks_payment_card() -> None:
     assert "4111 1111 1111 1111" not in result.masked
     assert "[tarjeta]" in result.masked
     assert result.mapping["[tarjeta]"] == "4111 1111 1111 1111"
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("3782.822463.10005", "[tarjeta]"),
+        ("411111 1111111111", "[tarjeta]"),
+        ("41 11111111111111", "[tarjeta]"),
+        ("4111 1111 1111 1111 123", "[tarjeta] 123"),
+        # L6: tarjeta pegada a su CVV sin separador.
+        ("4111111111111111123", "[tarjeta]123"),
+    ],
+    ids=["amex-con-puntos", "grupos-6-10", "grupos-2-14", "diecinueve-4-4-4-4-3", "contigua-con-cvv"],
+)
+def test_masks_card_in_the_formats_the_audit_found(
+    texto: str, esperado: str
+) -> None:
+    """H2/L6: los formatos que viajaban en claro ahora se enmascaran.
+
+    La detección es la misma que usan las fotos y el video: separadores
+    (espacio, guion, punto, NBSP, tab, salto) y Luhn sobre el prefijo.
+    """
+    result = mask_pii(texto)
+    assert result.masked == esperado, result.masked
+    assert result.stats == {"tarjeta": 1}
+
+
+def test_contiguous_non_card_run_is_still_not_masked() -> None:
+    """El reintento de prefijo no convierte un número de pedido en tarjeta."""
+    result = mask_pii("referencia 1234567890123456")
+    assert result.masked == "referencia 1234567890123456"
+    assert result.stats == {}
+
+
+def test_two_cards_pasted_back_to_back_are_both_masked() -> None:
+    """Separar los grupos no puede fusionar dos tarjetas seguidas."""
+    result = mask_pii("4111 1111 1111 1111 4111 1111 1111 1111")
+    assert result.masked == "[tarjeta] [tarjeta-1]"
+    assert result.stats == {"tarjeta": 2}
+
+
+def test_adversarial_25kb_card_spam_is_under_one_second() -> None:
+    """M3: 25 KB adversariales no pueden disparar retroceso cuadrático.
+
+    Antes del arreglo, la búsqueda del marcador libre rescataba ``[tarjeta]``,
+    ``[tarjeta-1]``… desde cero para cada tarjeta (cuadrático) y este mismo
+    texto de 1250 tarjetas tardaba segundos.
+    """
+    adversarial = "4111 1111 1111 1111 " * 1250  # ~25 KB
+    started = time.perf_counter()
+    result = mask_pii(adversarial)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1.0, f"el enmascarado tardó {elapsed:.2f}s"
+    assert result.stats == {"tarjeta": 1250}
+    assert "4111111111111111" not in result.masked.replace(" ", "")
 
 
 def test_masks_handle_and_url() -> None:

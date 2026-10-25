@@ -56,10 +56,16 @@ async def run_profile_synthesis_cycle(
             try:
                 report = await synthesis_service.synthesize(vip_id, trigger)
                 results.append(report.status)
-            except Exception:
-                logger.exception(
+            except Exception as exc:
+                # Type only: provider/pydantic errors can echo the model reply
+                # (restored, may carry PII — C-PII-01).
+                logger.error(
                     "profile_synthesis_item_failed",
-                    extra={"vip_id": str(vip_id), "trigger": trigger},
+                    extra={
+                        "vip_id": str(vip_id),
+                        "trigger": trigger,
+                        "error_type": type(exc).__name__,
+                    },
                 )
                 results.append("failed")
             finally:

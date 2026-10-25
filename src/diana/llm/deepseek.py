@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from diana.llm.pii_masker import MaskResult, mask_pii, unmask_pii
 
@@ -314,7 +314,9 @@ class DeepSeekProvider:
                 extra={
                     "model": self._model,
                     "finish_reason": _finish_reason(data),
-                    "content_preview": repr(content)[:200],
+                    # Length only: the content is already unmasked and may
+                    # carry personal data restored from placeholders.
+                    "content_length": len(content),
                 },
             )
             raise ValueError("assistant content is empty after structured call")
@@ -325,20 +327,42 @@ class DeepSeekProvider:
                 "deepseek structured invalid JSON",
                 extra={
                     "model": self._model,
-                    "content_preview": cleaned[:500],
-                    "json_error": str(exc),
+                    # Never log the restored content: only error type and
+                    # length cross to the error record (C-PII-01).
+                    "content_length": len(cleaned),
+                    "json_error_type": type(exc).__name__,
+                    "json_error_position": f"{exc.lineno}:{exc.colno}",
                 },
             )
             raise ValueError(
                 "assistant content is not valid JSON after fence strip"
-            ) from exc
+            ) from None
         if not isinstance(parsed, dict):
             raise ValueError("structured response must be a JSON object")
         # Drop internal fields the model may have hallucinated.
         payload_for_model = {
             k: v for k, v in parsed.items() if k not in _INTERNAL_SCHEMA_FIELDS
         }
-        instance = schema.model_validate(payload_for_model)
+        try:
+            instance = schema.model_validate(payload_for_model)
+        except ValidationError as exc:
+            # A pydantic error embeds ``input_value`` in str(exc): the payload
+            # was already unmasked, so it would carry PII into every caller's
+            # error trace. Log type/count only and drop the cause chain.
+            logger.error(
+                "deepseek structured schema invalid",
+                extra={
+                    "model": self._model,
+                    "error_count": exc.error_count(),
+                    "error_types": sorted(
+                        {str(error.get("type")) for error in exc.errors()}
+                    ),
+                },
+            )
+            raise ValueError(
+                "structured response failed schema validation "
+                f"({exc.error_count()} errors)"
+            ) from None
         if "raw_llm_output" in schema.model_fields:
             instance = instance.model_copy(
                 update={"raw_llm_output": dict(payload_for_model)}
@@ -351,10 +375,10 @@ class DeepSeekProvider:
         if response.is_error:
             detail = response.text
             logger.error(
-                "deepseek http %s %s — response: %s",
+                "deepseek http %s %s — response_length=%d",
                 response.status_code,
                 url,
-                detail[:2000],
+                len(detail),
             )
             response.raise_for_status()
         return response.json()

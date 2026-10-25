@@ -17,6 +17,7 @@ cached for ``ttl_seconds`` so the hot path does not hit the DB per call.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -30,6 +31,21 @@ logger = logging.getLogger(__name__)
 
 # system_config key holding the runtime LLM overrides ({model, base_url, api_key}).
 LLM_CONFIG_KEY = "llm"
+
+# Hay dos valores que nunca pueden cruzar al registro: la clave del proveedor
+# viaja en memoria (hace falta para detectar el cambio) y en el log solo deja
+# un hash corto, no reversible, o ``***`` cuando no hay clave.
+_KEY_FP_HEX_CHARS = 8
+_KEY_FP_MISSING = "***"
+
+
+def _key_fingerprint(api_key: object) -> str:
+    """Huella corta de la clave para el registro; NUNCA la clave misma."""
+    if not api_key:
+        return _KEY_FP_MISSING
+    digest = hashlib.sha256(str(api_key).encode("utf-8")).hexdigest()
+    return f"sha256:{digest[:_KEY_FP_HEX_CHARS]}"
+
 
 LLMConfigSource = Callable[[], Awaitable[Any]]
 
@@ -56,6 +72,7 @@ class HotSwapLLMProvider:
         provider_factory: Callable[[str, str, str], Any] | None = None,
         ttl_seconds: float = 30.0,
         clock: Callable[[], float] | None = None,
+        pii_masking: bool | None = None,
     ) -> None:
         if not isinstance(api_key, SecretStr):
             raise TypeError("api_key must be a pydantic SecretStr")
@@ -65,6 +82,14 @@ class HotSwapLLMProvider:
         self._base_model = model
         self._thinking_enabled = thinking_enabled
         self._thinking_effort = thinking_effort
+        # The replacement provider must honor the same privacy switch as the
+        # base (built from FEATURE_PII_MASKING_ENABLED). Deriving it from the
+        # base keeps a debug OFF in place across a hot model change.
+        self._pii_masking = (
+            pii_masking
+            if pii_masking is not None
+            else getattr(base, "_pii_masking", True)
+        )
         self._config_source = config_source
         # Injectable factory so tests can swap in MockTransport-backed providers
         # (the production default builds a plain DeepSeekProvider).
@@ -89,7 +114,7 @@ class HotSwapLLMProvider:
             model=model,
             thinking_enabled=self._thinking_enabled,
             thinking_effort=self._thinking_effort,
-            pii_masking=True,
+            pii_masking=self._pii_masking,
         )
 
     async def _overrides(self) -> Mapping[str, Any]:
@@ -130,7 +155,9 @@ class HotSwapLLMProvider:
                 "llm_hot_swap",
                 extra={
                     "model": getattr(self._current, "_model", "?"),
-                    "active_fp": str(fp),
+                    "base_url": getattr(self._current, "_base_url", "?"),
+                    # Solo la huella corta: la clave jamás se escribe.
+                    "api_key_fp": _key_fingerprint(fp[2]),
                 },
             )
             if old is not None and old is not self._base:
