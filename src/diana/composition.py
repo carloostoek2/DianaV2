@@ -11,7 +11,7 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Callable
 
 from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -164,7 +164,10 @@ from diana.llm.gemini_vision import GeminiVisionProvider
 from diana.llm.hot_swap import LLM_CONFIG_KEY, HotSwapLLMProvider
 from diana.cognitive.image_vision import ImageDescriber
 from diana.cognitive.video_vision import VideoDescriber
-from diana.application.image_vision_service import ImageVisionService
+from diana.application.image_vision_service import (
+    ImageVisionService,
+    vision_activity_snapshot,
+)
 from diana.application.video_vision_service import VideoVisionService
 from diana.application.vip_opening import VipOpeningService
 from diana.telegram.actuator import AiogramTelegramActuator
@@ -267,6 +270,53 @@ def _build_vip_history_seed(
         video_vision=video_vision,
         opening=opening,
     )
+
+
+def _build_vision_health(
+    settings: Settings,
+    *,
+    image_ready: bool,
+    video_ready: bool,
+    captioner_ready: bool,
+) -> dict[str, Any]:
+    """Estado real de la visión para ``/health`` (sin secretos).
+
+    Responde dos preguntas que antes solo vivían en un log de arranque:
+    ¿la bandera está encendida pero falta la clave? ¿está armada y no ha
+    analizado nada? ``ok`` es ``False`` solo cuando una bandera encendida no
+    puede operar; ``activity`` es informativo.
+    """
+    activity = vision_activity_snapshot()
+    image_activity = activity.get("image", {})
+    video_activity = activity.get("video", {})
+
+    def _block(flag: bool, ready: bool, counters: dict[str, int]) -> dict[str, Any]:
+        problems: list[str] = []
+        if flag and not captioner_ready:
+            problems.append("missing_gemini_api_key")
+        elif flag and not ready:
+            problems.append("not_ready")
+        return {
+            "flag": bool(flag),
+            "ready": bool(ready),
+            "key_configured": bool(captioner_ready),
+            **counters,
+            "activity": "active" if counters.get("analyzed", 0) else "none",
+            "ok": not problems,
+            "problems": problems,
+        }
+
+    image_block = _block(
+        settings.feature_image_vision_enabled, image_ready, image_activity
+    )
+    video_block = _block(
+        settings.feature_video_vision_enabled, video_ready, video_activity
+    )
+    return {
+        "ok": image_block["ok"] and video_block["ok"],
+        "image": image_block,
+        "video": video_block,
+    }
 
 
 class RandomDelayPolicy(DelayPolicy):
@@ -433,6 +483,10 @@ class AppContainer:
     # and policies repo (zero-vector repair) exposed for main.py.
     embedding_svc: Any | None = None
     policies_repo: Any | None = None
+    # Visión de media: generador del bloque de estado para /health (main.py).
+    # Es una función, no un dict, para que los contadores de actividad se lean
+    # en cada consulta y no queden congelados en el arranque.
+    vision_health: Callable[[], dict[str, Any]] | None = None
 
 
 def build_app(
@@ -533,6 +587,13 @@ def build_app(
             "video_max_frames": settings.video_vision_max_frames,
             "captioner": vision_provider is not None,
         },
+    )
+    vision_health = functools.partial(
+        _build_vision_health,
+        settings,
+        image_ready=image_vision.enabled,
+        video_ready=video_vision.enabled,
+        captioner_ready=vision_provider is not None,
     )
     clock = SystemClock()
     # Fase 6 (vínculo Lucien→Diana): built ALWAYS (trust_budget pattern) — the
@@ -1648,6 +1709,7 @@ def build_app(
         link_coordinator=link_coordinator,
         embedding_svc=embedding_svc,
         policies_repo=policies_repo,
+        vision_health=vision_health,
     )
 
 

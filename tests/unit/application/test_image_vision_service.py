@@ -16,7 +16,12 @@ from diana.application.image_vision_service import (
     scan_sensitive,
 )
 from diana.cognitive.image_vision import ImageDescriber
-from diana.infrastructure.vision.ocr import OcrLine, OcrUnavailableError
+from diana.infrastructure.vision.ocr import (
+    ImageEvidence,
+    OcrEngine,
+    OcrLine,
+    OcrUnavailableError,
+)
 
 
 def _png_bytes(width: int = 64, height: int = 32) -> bytes:
@@ -25,19 +30,29 @@ def _png_bytes(width: int = 64, height: int = 32) -> bytes:
     return buf.getvalue()
 
 
+# A normal photo-like payload for the evidence path: no text, sharp edges,
+# normal contrast. The empty-text cases must NOT be treated as unverifiable.
+_CLEAN_EVIDENCE = ImageEvidence(
+    text_marks=0, sharpness=250.0, contrast=40.0, width=64, height=32
+)
+
+
 def _fake_ocr(
     text: str | type[Exception],
     *,
     lines: tuple[OcrLine, ...] = (),
     lines_error: type[Exception] | None = None,
     verify_text: str = "",
+    evidence: ImageEvidence | None = None,
+    evidence_error: type[Exception] | None = None,
 ) -> SimpleNamespace:
-    """OcrEngine-compatible fake: extract_text + extract_lines with counters.
+    """OcrEngine-compatible fake: extract_text + extract_lines + probe_image.
 
     ``text`` is returned on the first extract_text call; ``verify_text`` on
     later calls (the post-redaction re-check). ``lines`` feed extract_lines.
+    ``evidence`` feeds the empty-text quality probe (default: clean photo).
     """
-    calls = {"text": 0, "lines": 0}
+    calls = {"text": 0, "lines": 0, "probe": 0}
 
     def extract_text(_b):
         calls["text"] += 1
@@ -51,8 +66,17 @@ def _fake_ocr(
             raise lines_error()
         return lines
 
+    def probe_image(_b):
+        calls["probe"] += 1
+        if evidence_error is not None:
+            raise evidence_error()
+        return evidence if evidence is not None else _CLEAN_EVIDENCE
+
     return SimpleNamespace(
-        extract_text=extract_text, extract_lines=extract_lines
+        extract_text=extract_text,
+        extract_lines=extract_lines,
+        probe_image=probe_image,
+        calls=calls,
     )
 
 
@@ -82,9 +106,16 @@ def _service(
     lines: tuple[OcrLine, ...] = (),
     verify_text: str = "",
     lines_error: type[Exception] | None = None,
+    evidence: ImageEvidence | None = None,
+    evidence_error: type[Exception] | None = None,
 ) -> tuple[ImageVisionService, _SpyVision]:
     ocr = _fake_ocr(
-        ocr_text, lines=lines, lines_error=lines_error, verify_text=verify_text
+        ocr_text,
+        lines=lines,
+        lines_error=lines_error,
+        verify_text=verify_text,
+        evidence=evidence,
+        evidence_error=evidence_error,
     )
     vision = _SpyVision(vision_text, error=vision_error)
     describer = ImageDescriber(vision=vision)
@@ -95,8 +126,8 @@ def _service(
 # --- classify_sensitive / scan_sensitive: pure rules ------------------------
 
 def test_card_grouped_16_digits() -> None:
-    assert classify_sensitive("mi tarjeta es 1234 5678 9012 3456") == (True, "tarjeta")
-    assert classify_sensitive("1234-5678-9012-3456") == (True, "tarjeta")
+    assert classify_sensitive("mi tarjeta es 4111 1111 1111 1111") == (True, "tarjeta")
+    assert classify_sensitive("4111-1111-1111-1111") == (True, "tarjeta")
 
 
 def test_card_amex_style() -> None:
@@ -152,7 +183,7 @@ def test_luhn_valid_math() -> None:
 def test_scan_policy_buckets() -> None:
     identity = scan_sensitive("mi DNI es 30445566")
     assert identity.has_identity is True and identity.strong is False
-    strong = scan_sensitive("1234 5678 9012 3456")
+    strong = scan_sensitive("4111 1111 1111 1111")
     assert strong.strong is True and strong.has_identity is False
     receipt = scan_sensitive("FACTURA Total 99.90")
     assert receipt.receipt is True and receipt.strong is False
@@ -163,6 +194,58 @@ def test_scan_policy_buckets() -> None:
 def test_scan_identity_wins_over_receipt() -> None:
     scan = scan_sensitive("FACTURA\nmi DNI")
     assert scan.has_identity is True
+
+
+def test_identity_wins_over_a_16_digit_card() -> None:
+    """Un documento de identidad SIEMPRE gana: no se clasifica como tarjeta."""
+    scan = scan_sensitive(
+        "DOCUMENTO NACIONAL DE IDENTIDAD\nDNI 30445566\n4111 1111 1111 1111"
+    )
+    assert scan.has_identity is True
+    assert scan.reason == "identidad"
+    assert scan.strong is False
+
+
+def test_card_separators_cover_dots_hard_spaces_tabs_and_newlines() -> None:
+    for text in (
+        "4111.1111.1111.1111",
+        "4111 1111 1111 1111",
+        "4111\t1111\n1111 1111",
+        "4111-1111-1111-1111",
+    ):
+        scan = scan_sensitive(text)
+        assert scan.strong is True and scan.reason == "tarjeta", text
+
+
+def test_sixteen_digits_must_pass_luhn() -> None:
+    """Una corrida de 16 dígitos solo se enmascara si es una tarjeta válida."""
+    assert scan_sensitive("1234567890123456").strong is False
+    assert scan_sensitive("1234 5678 9012 3456").strong is False
+    assert scan_sensitive("4111111111111111").strong is True
+    assert scan_sensitive("4111 1111 1111 1111").strong is True
+
+
+def test_card_formats_found_by_the_audit_are_detected() -> None:
+    """H2: la detección de tarjeta es la misma del enmascarador de texto.
+
+    Amex con puntos, 16 dígitos agrupados 6-10 o 2-14 y la forma 4-4-4-4-3
+    (tarjeta + CVV) viajaban legibles porque los patrones locales de la
+    visión solo aceptaban espacio y guion. Ahora comparten una sola función
+    con Luhn sobre el prefijo.
+    """
+    for text in (
+        "3782.822463.10005",
+        "411111 1111111111",
+        "41 11111111111111",
+        "4111 1111 1111 1111 123",
+    ):
+        scan = scan_sensitive(text)
+        assert scan.strong is True and scan.reason == "tarjeta", text
+
+
+def test_non_luhn_sixteen_digits_still_travels_in_the_image_filter() -> None:
+    """El criterio de Luhn sigue evitando tapar números de pedido."""
+    assert scan_sensitive("PEDIDO 1234567890123456").strong is False
 
 
 # --- ImageVisionService orchestration ---------------------------------------
@@ -218,10 +301,10 @@ async def test_receipt_keywords_travel_unmasked_amount_visible() -> None:
 @pytest.mark.asyncio
 async def test_card_gets_redacted_and_travels_masked() -> None:
     line = OcrLine(
-        text="1234 5678 9012 3456", left=10, top=10, width=200, height=30
+        text="4111 1111 1111 1111", left=10, top=10, width=200, height=30
     )
     svc, vision = _service(
-        ocr_text="1234 5678 9012 3456", lines=(line,), verify_text=""
+        ocr_text="4111 1111 1111 1111", lines=(line,), verify_text=""
     )
     original = _png_bytes()
     result = await svc.analyze(original, mime_type="image/png")
@@ -236,12 +319,12 @@ async def test_card_gets_redacted_and_travels_masked() -> None:
 async def test_redaction_verification_failure_is_fail_closed() -> None:
     # After masking, the re-check still reads a card number ⇒ manual review.
     line = OcrLine(
-        text="1234 5678 9012 3456", left=10, top=10, width=200, height=30
+        text="4111 1111 1111 1111", left=10, top=10, width=200, height=30
     )
     svc, vision = _service(
-        ocr_text="1234 5678 9012 3456",
+        ocr_text="4111 1111 1111 1111",
         lines=(line,),
-        verify_text="1234 5678 9012 3456",
+        verify_text="4111 1111 1111 1111",
     )
     result = await svc.analyze(_png_bytes(), mime_type="image/png")
     assert result.sensitive is True
@@ -252,7 +335,7 @@ async def test_redaction_verification_failure_is_fail_closed() -> None:
 @pytest.mark.asyncio
 async def test_redaction_unavailable_boxes_is_fail_closed() -> None:
     # Strong data found but no OCR lines to paint ⇒ never send.
-    svc, vision = _service(ocr_text="1234 5678 9012 3456", lines=())
+    svc, vision = _service(ocr_text="4111 1111 1111 1111", lines=())
     result = await svc.analyze(_png_bytes(), mime_type="image/png")
     assert result.sensitive is True
     assert result.reason == "mask_unavailable"
@@ -262,7 +345,7 @@ async def test_redaction_unavailable_boxes_is_fail_closed() -> None:
 @pytest.mark.asyncio
 async def test_redaction_lines_error_is_fail_closed() -> None:
     svc, vision = _service(
-        ocr_text="1234 5678 9012 3456", lines_error=OcrUnavailableError
+        ocr_text="4111 1111 1111 1111", lines_error=OcrUnavailableError
     )
     result = await svc.analyze(_png_bytes(), mime_type="image/png")
     assert result.sensitive is True
@@ -303,6 +386,87 @@ async def test_clean_image_gets_caption() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_ocr_on_a_normal_photo_is_clean_and_described() -> None:
+    """Una foto normal sin texto (paisaje, persona) sigue su curso."""
+    svc, vision = _service(ocr_text="", evidence=_CLEAN_EVIDENCE)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is False
+    assert result.description == "una foto del plato"
+    assert vision.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_ocr_with_unreadable_text_marks_is_sensitive() -> None:
+    """Hay marcas de texto que el lector no pudo leer ⇒ no se envía."""
+    evidence = ImageEvidence(text_marks=4, sharpness=250.0, contrast=40.0)
+    svc, vision = _service(ocr_text="", evidence=evidence)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is True
+    assert result.reason == "no_verificable"
+    assert vision.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_ocr_on_a_blurry_photo_is_sensitive() -> None:
+    evidence = ImageEvidence(text_marks=0, sharpness=1.5, contrast=18.0)
+    svc, vision = _service(ocr_text="", evidence=evidence)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is True
+    assert result.reason == "no_verificable"
+    assert vision.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_ocr_on_a_flat_photo_is_sensitive() -> None:
+    evidence = ImageEvidence(text_marks=0, sharpness=250.0, contrast=2.0)
+    svc, vision = _service(ocr_text="", evidence=evidence)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is True
+    assert result.reason == "no_verificable"
+    assert vision.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_evidence_probe_unavailable_is_sensitive() -> None:
+    svc, vision = _service(ocr_text="", evidence_error=OcrUnavailableError)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is True
+    assert result.reason == "no_legible"
+    assert vision.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_scarce_ocr_text_on_a_blurry_image_is_sensitive() -> None:
+    """M5: el texto escaso también dispara la sonda, no solo el texto vacío."""
+    evidence = ImageEvidence(text_marks=0, sharpness=1.5, contrast=40.0)
+    svc, vision = _service(ocr_text="FACT", evidence=evidence)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is True
+    assert result.reason == "no_verificable"
+    assert vision.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_scarce_ocr_text_probe_unavailable_is_sensitive() -> None:
+    """Si la sonda tampoco puede correr, el texto escaso no se asume limpio."""
+    svc, vision = _service(ocr_text="FACT", evidence_error=OcrUnavailableError)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is True
+    assert result.reason == "no_legible"
+    assert vision.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_scarce_ocr_text_on_a_sharp_image_travels() -> None:
+    """Un fragmento corto en una foto nítida no se bloquea de más."""
+    svc, vision = _service(ocr_text="FACT", evidence=_CLEAN_EVIDENCE)
+    result = await svc.analyze(b"img", mime_type="image/jpeg")
+    assert result.sensitive is False
+    assert result.description == "una foto del plato"
+    assert vision.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_captioner_failure_is_fail_open() -> None:
     svc, _ = _service(ocr_text="", vision_error=True)
     result = await svc.analyze(b"img", mime_type="image/jpeg")
@@ -313,10 +477,10 @@ async def test_captioner_failure_is_fail_open() -> None:
 @pytest.mark.asyncio
 async def test_redacted_image_describer_failure_is_fail_open() -> None:
     line = OcrLine(
-        text="1234 5678 9012 3456", left=10, top=10, width=200, height=30
+        text="4111 1111 1111 1111", left=10, top=10, width=200, height=30
     )
     svc, _ = _service(
-        ocr_text="1234 5678 9012 3456",
+        ocr_text="4111 1111 1111 1111",
         lines=(line,),
         vision_error=True,
     )
@@ -355,10 +519,10 @@ async def test_small_clean_image_travels_as_is() -> None:
 @pytest.mark.asyncio
 async def test_large_masked_image_is_downscaled_before_gemini() -> None:
     line = OcrLine(
-        text="1234 5678 9012 3456", left=10, top=10, width=300, height=30
+        text="4111 1111 1111 1111", left=10, top=10, width=300, height=30
     )
     svc, vision = _service(
-        ocr_text="1234 5678 9012 3456", lines=(line,), verify_text=""
+        ocr_text="4111 1111 1111 1111", lines=(line,), verify_text=""
     )
     result = await svc.analyze(_png_bytes(2000, 1500), mime_type="image/png")
     assert result.sensitive is False

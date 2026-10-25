@@ -19,7 +19,10 @@ def _transport(responder) -> httpx.AsyncClient:
 @pytest.mark.asyncio
 async def test_describe_image_sends_inline_data_and_returns_text() -> None:
     def responder(request: httpx.Request) -> httpx.Response:
-        assert request.url.params.get("key") == "k-123"
+        # L3: la clave viaja en cabecera, nunca en la URL (params quedan en
+        # registros de acceso y proxies).
+        assert request.headers.get("x-goog-api-key") == "k-123"
+        assert request.url.params.get("key") is None
         body = json.loads(request.content)
         parts = body["contents"][0]["parts"]
         assert parts[0]["text"] == "Qué muestra esta imagen?"

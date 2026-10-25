@@ -35,6 +35,7 @@ def build_health_payload(
     watchdog: dict[str, Any] | None = None,
     swallowed: dict[str, int] | None = None,
     flags: dict[str, Any] | None = None,
+    vision: dict[str, Any] | None = None,
 ) -> HealthBody:
     """Assemble public health JSON (no secrets).
 
@@ -47,6 +48,11 @@ def build_health_payload(
     **informativo**: una bandera apagada a proposito es una decision de producto, no una falla,
     asi que no mueve ``status`` (si lo moviera, el estado quedaria en ``degraded`` para siempre y
     se aprenderia a ignorarlo). Quien necesite alertar mira ``flags.ok``.
+
+    ``vision`` es el estado real de la vision de media: bandera, si puede operar (clave de
+    Gemini presente) y cuanta actividad lleva el proceso. Una bandera encendida sin clave deja
+    ``vision.ok = false`` y el motivo en ``vision.<tipo>.problems``; es informativo y no mueve
+    ``status`` por la misma razon que ``flags``.
     """
     if not db_ok:
         status = "fail"
@@ -66,6 +72,8 @@ def build_health_payload(
         checks["swallowed"] = dict(sorted(swallowed.items()))
     if flags is not None:
         checks["flags"] = flags
+    if vision is not None:
+        checks["vision"] = vision
     return {"status": status, "checks": checks}
 
 
@@ -84,6 +92,7 @@ class HealthServer:
         watchdog_enabled: bool = False,
         watchdog_heartbeat_path: Path | None = None,
         flags_state_path: Path | None = None,
+        vision: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -94,6 +103,7 @@ class HealthServer:
         self._watchdog_enabled = watchdog_enabled
         self._watchdog_heartbeat_path = watchdog_heartbeat_path
         self._flags_state_path = flags_state_path
+        self._vision = vision
         self._server: asyncio.AbstractServer | None = None
         self._bot_cache: tuple[float, bool, str | None] | None = None
 
@@ -140,9 +150,24 @@ class HealthServer:
             watchdog=self.check_watchdog(),
             swallowed=get_swallowed_counts(),
             flags=self.check_flags(),
+            vision=self.check_vision(),
         )
         code = 200 if db_ok else 503
         return code, body
+
+    def check_vision(self) -> dict[str, Any] | None:
+        """Estado real de la vision de media, leido en cada consulta.
+
+        Se genera con los contadores vivos del proceso (no se congela en el
+        arranque). Un fallo del generador no debe tumbar ``/health``.
+        """
+        if self._vision is None:
+            return None
+        try:
+            return self._vision()
+        except Exception:
+            logger.exception("health_check_vision_error")
+            return {"ok": False, "problems": ["vision_probe_failed"]}
 
     def check_watchdog(self) -> dict[str, Any] | None:
         """Ultimo latido del vigilante de contratos, leido de su archivo.

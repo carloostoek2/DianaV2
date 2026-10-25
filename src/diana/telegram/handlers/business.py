@@ -11,7 +11,11 @@ from uuid import UUID
 from aiogram import Bot, Router
 from aiogram.types import Message
 
-from diana.application.image_vision_service import ImageVisionService
+from diana.application.image_vision_service import (
+    ImageVisionResult,
+    ImageVisionService,
+    record_vision_activity,
+)
 from diana.application.media_text import SENSITIVE_MARK, compose_media_text
 from diana.application.ports import VipInboundMessage
 from diana.application.turn_orchestrator import TurnOrchestrator
@@ -58,13 +62,25 @@ async def _photo_text_and_id(
         mime_type = detect_image_mime(image_bytes)
         result = await vision.analyze(image_bytes, mime_type=mime_type)
     except Exception as exc:
-        # Fallo de descarga, decodificación o análisis → etiqueta plana; la
-        # dueña igual recibe la foto para revisarla ella misma.
+        # Fallo de descarga, decodificación o análisis NO previsto: se cierra
+        # (la foto no sale) y se marca sensible, para que la dueña sepa que
+        # hay algo que revisar y el fallo quede contado. La foto igual llega
+        # a la aprobación para revisión manual.
         logger.warning(
-            "image_vision_failed_fail_open",
+            "image_vision_failed_fail_closed",
             extra={"error_type": type(exc).__name__},
         )
-        return plain, file_id
+        record_vision_activity("image", "failed")
+        return (
+            compose_media_text(
+                ImageVisionResult(
+                    enabled=True, sensitive=True, reason="vision_error"
+                ),
+                tag=tag,
+                caption=caption,
+            ),
+            file_id,
+        )
     return compose_media_text(result, tag=tag, caption=caption), file_id
 
 
@@ -98,6 +114,7 @@ async def _video_text(
             "video_vision_failed_fail_open",
             extra={"error_type": type(exc).__name__},
         )
+        record_vision_activity("video", "failed")
         return plain
     return compose_media_text(result, tag=tag, caption=caption)
 

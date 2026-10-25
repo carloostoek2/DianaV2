@@ -209,36 +209,43 @@ async def test_album_sensitive_photo_keeps_album_mark() -> None:
 
 @pytest.mark.asyncio
 async def test_album_photo_fail_open_keeps_album_mark() -> None:
-    """With vision unavailable the tag is all the model gets — album included."""
+    """Un fallo de descarga/lectura se marca SENSIBLE (fail-closed).
+
+    Antes la etiqueta quedaba plana y la dueña no distinguía "falló" de
+    "bandera apagada". Ahora la foto no sale y el turno avisa que hay algo que
+    revisar, conservando la marca de álbum.
+    """
     vision = _FakeVision(
         ImageVisionResult(enabled=True, sensitive=False, description="x")
     )
     downloader = AsyncMock(side_effect=RuntimeError("telegram down"))
     inbound = await _run(_album_photo_message(), vision, downloader)
-    assert inbound.text == "[imagen parte de álbum]"
+    assert inbound.text == (
+        "[imagen parte de álbum] ⚠️ contiene información sensible (no analizada)"
+    )
     assert inbound.photo_file_id == "big"
 
 
 @pytest.mark.asyncio
-async def test_download_failure_falls_back_to_plain_tag_keeps_photo() -> None:
+async def test_download_failure_marks_sensitive_and_keeps_photo() -> None:
     vision = _FakeVision(
         ImageVisionResult(enabled=True, sensitive=False, description="x")
     )
     downloader = AsyncMock(side_effect=RuntimeError("telegram down"))
     inbound = await _run(_photo_message(), vision, downloader)
-    assert inbound.text == "[imagen]"
+    assert inbound.text == "[imagen] ⚠️ contiene información sensible (no analizada)"
     assert inbound.photo_file_id == "big"  # owner still reviews it herself
 
 
 @pytest.mark.asyncio
-async def test_analyze_failure_falls_back_to_plain_tag() -> None:
+async def test_analyze_failure_marks_sensitive() -> None:
     vision = _FakeVision(
         ImageVisionResult(enabled=True, sensitive=False, description="x")
     )
     vision.analyze = AsyncMock(side_effect=RuntimeError("boom"))
     downloader = AsyncMock(return_value=_png_bytes())
     inbound = await _run(_photo_message(), vision, downloader)
-    assert inbound.text == "[imagen]"
+    assert inbound.text == "[imagen] ⚠️ contiene información sensible (no analizada)"
 
 
 @pytest.mark.asyncio

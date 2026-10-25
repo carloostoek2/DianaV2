@@ -187,10 +187,12 @@ class GeminiVisionProvider:
             },
         }
         url = f"{_GEMINI_BASE_URL}{_GENERATE_CONTENT_PATH.format(model=self._model)}"
+        # La clave viaja en la cabecera, nunca en la URL: los parámetros de
+        # consulta acaban en registros, historiales y proxies (M4/L3).
         response = await self._client.post(
             url,
             json=payload,
-            params={"key": self._api_key},
+            headers={"x-goog-api-key": self._api_key},
             timeout=timeout,
         )
         if response.is_error:

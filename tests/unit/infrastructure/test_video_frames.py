@@ -14,6 +14,8 @@ from PIL import Image
 from diana.infrastructure.vision.video_frames import (
     FfmpegFrameExtractor,
     FrameExtractionError,
+    FrameReviewIncompleteError,
+    VideoFrame,
 )
 
 _FFMPEG = shutil.which("ffmpeg")
@@ -120,7 +122,28 @@ def test_unknown_duration_keeps_one_per_second() -> None:
 
 
 @pytest.mark.skipif(_FFMPEG is None, reason="ffmpeg no está instalado")
-def test_a_long_video_does_not_exceed_the_cap() -> None:
+def test_a_video_at_the_coverage_window_is_fully_reviewed() -> None:
+    """Con la cobertura garantizada, el tope de cuadros se respeta."""
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "cubierto.mp4"
+        built = subprocess.run(
+            [
+                _FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=4",
+                "-pix_fmt", "yuv420p", str(source),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        assert built.returncode == 0, built.stderr.decode("utf-8", "replace")
+        frames = FfmpegFrameExtractor(max_frames=4).extract_frames(source.read_bytes())
+
+    assert len(frames) == 4
+
+
+@pytest.mark.skipif(_FFMPEG is None, reason="ffmpeg no está instalado")
+def test_a_video_longer_than_the_coverage_window_is_not_reviewed() -> None:
+    """Más segundos que cuadros ⇒ no se puede garantizar la cobertura."""
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "largo.mp4"
         built = subprocess.run(
@@ -133,6 +156,52 @@ def test_a_long_video_does_not_exceed_the_cap() -> None:
             check=False,
         )
         assert built.returncode == 0, built.stderr.decode("utf-8", "replace")
-        frames = FfmpegFrameExtractor(max_frames=4).extract_frames(source.read_bytes())
+        with pytest.raises(FrameReviewIncompleteError) as excinfo:
+            FfmpegFrameExtractor(max_frames=4).extract_frames(source.read_bytes())
 
-    assert len(frames) == 4
+    assert excinfo.value.reason == "too_long"
+
+
+# --- M2: ventana constante de 30 s y último cuadro que cubre el final --------
+
+
+def test_coverage_window_stays_thirty_seconds_even_with_more_frames() -> None:
+    """Subir VIDEO_VISION_MAX_FRAMES no amplía la ventana de producto.
+
+    Con 120 cuadros configurados, un video de 60 s seguiría sin poder
+    revisarse a un cuadro por segundo dentro de la ventana de 30 s.
+    """
+    extractor = FfmpegFrameExtractor(max_frames=120)
+    with pytest.raises(FrameReviewIncompleteError) as excinfo:
+        extractor._ensure_coverage(60.0)
+    assert excinfo.value.reason == "too_long"
+
+
+def test_smaller_frame_budget_narrows_the_effective_window() -> None:
+    """Con menos cuadros no se puede cubrir la ventana completa."""
+    extractor = FfmpegFrameExtractor(max_frames=10)
+    with pytest.raises(FrameReviewIncompleteError) as excinfo:
+        extractor._ensure_coverage(12.0)
+    assert excinfo.value.reason == "too_long"
+
+
+def test_last_frame_not_reaching_the_end_is_blocked() -> None:
+    """La extracción puede quedarse corta aunque la duración sea válida."""
+    extractor = FfmpegFrameExtractor(max_frames=30)
+    frames = [VideoFrame(png_bytes=b"x", timestamp_s=5.0)]
+    with pytest.raises(FrameReviewIncompleteError) as excinfo:
+        extractor._ensure_last_frame_covers_end(frames, 10.0)
+    assert excinfo.value.reason == "coverage_gap"
+
+
+def test_last_frame_covering_the_end_is_accepted() -> None:
+    extractor = FfmpegFrameExtractor(max_frames=30)
+    extractor._ensure_last_frame_covers_end(
+        [VideoFrame(png_bytes=b"x", timestamp_s=9.0)], 10.0
+    )
+
+
+def test_non_integer_duration_samples_the_final_second() -> None:
+    """12.5 s necesita una muestra en el segundo 12 (ceil), no solo 0…11."""
+    stamps = _timestamps(12.5)
+    assert stamps[-1] == 12.0

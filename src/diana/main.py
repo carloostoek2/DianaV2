@@ -147,6 +147,7 @@ async def async_main() -> None:
         bot=app.bot,
         watchdog_enabled=settings.feature_contract_watchdog_enabled,
         flags_state_path=FLAGS_STATE_PATH,
+        vision=app.vision_health,
     )
     # Outer finally always cancels jobs even if health bind or polling fails.
     try:

@@ -15,15 +15,19 @@ Promesa bajo prueba: si en cualquier fotograma revisado aparece un dato fuerte
 (tarjeta, cuenta, clave) o un documento de identidad, el video NO sale y el
 turno queda con la marca sensible; si todo está limpio se describe; si el
 archivo supera el tope de descarga, ffmpeg no está, el OCR no está o el video
-no se puede leer, se cierra (sensible) sin llamar al proveedor. Cuando el video
-no entra en un solo envío, salen únicamente los cuadros ya revisados. La
-bandera apagada no descarga, no extrae y deja ``[video]`` plano.
+no se puede leer, se cierra (sensible) sin llamar al proveedor. Un video de más
+de 30 segundos —o con duración desconocida— tampoco sale: la cobertura no se
+puede garantizar (decisión de la dueña, 2026-10-24). Cuando el video no entra
+en un solo envío, salen únicamente los cuadros ya revisados, siempre con un par
+bytes/MIME coherente. La bandera apagada no descarga, no extrae y deja
+``[video]`` plano.
 
 Privacidad: solo se leen filas de los ids de prueba; nunca texto de VIP reales.
 """
 
 from __future__ import annotations
 
+import io
 import logging
 import subprocess
 from dataclasses import dataclass, field
@@ -56,6 +60,7 @@ BUSINESS_CONNECTION_ID = "bc-prv02-audit"
 SENSITIVE_TEXT = "[video] ⚠️ contiene información sensible (no analizada)"
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+JPEG_MAGIC = b"\xff\xd8\xff"
 
 # Ids propios de 13 dígitos (más allá de cualquier id real de Telegram, hoy de
 # 10-11 dígitos). Se valida al arrancar que no existan: si existieran, la prueba
@@ -74,6 +79,7 @@ CHAT_CARD_INNOCENT_CAPTION = 9_000_000_020_111
 CHAT_PNG_MIME = 9_000_000_020_112
 CHAT_PNG_FAILOPEN = 9_000_000_020_113
 CHAT_MATRIX_ON = 9_000_000_020_114
+CHAT_TOO_LONG = 9_000_000_020_115
 
 
 # ---------------------------------------------------------------------------
@@ -339,12 +345,27 @@ def videos(tmp_path_factory: pytest.TempPathFactory) -> dict[str, bytes]:
     assert len(large_clean) > 1024 * 1024, "el video grande debe superar 1 MiB"
     assert len(large_clean) < 20 * 1024 * 1024
     assert len(large_card) > 1024 * 1024
+    # Video de 36 s: excede la ventana de 30 s (un cuadro por segundo) y no se
+    # puede revisar completo ⇒ debe bloquearse sin llamar al proveedor.
+    long_clean = _encode(
+        _frames(
+            root / "long-clean",
+            width=640,
+            height=360,
+            seconds=36,
+            fps=2,
+            card_window=None,
+        ),
+        root / "long_clean.mp4",
+        fps=2,
+    )
     return {
         "card": card,
         "clean": clean,
         "invoice": invoice,
         "large_clean": large_clean,
         "large_card": large_card,
+        "long_clean": long_clean,
     }
 
 
@@ -720,12 +741,6 @@ async def test_video_grande_manda_solo_los_cuadros_ya_revisados(
     engine, session_factory, test_settings, monkeypatch, videos
 ) -> None:
     """Caso 2: > send_max_bytes ⇒ una sola llamada con cuadros revisados."""
-    reviewed = {
-        frame.png_bytes
-        for frame in FfmpegFrameExtractor(max_frames=30).extract_frames(
-            videos["large_clean"]
-        )
-    }
     provider = RecordingVisionProvider(response="un paisaje nublado")
     result = await _run_scenario(
         engine=engine,
@@ -751,7 +766,12 @@ async def test_video_grande_manda_solo_los_cuadros_ya_revisados(
     )
     for payload in call.payloads:
         assert payload != videos["large_clean"], "viajó el archivo completo"
-        assert payload in reviewed, "viajó un cuadro que no salió de la revisión local"
+        # El par bytes/MIME es coherente (JPEG rotulado JPEG), no un PNG
+        # rotulado JPEG como antes.
+        assert payload.startswith(JPEG_MAGIC), (
+            "el cuadro enviado no es JPEG aunque el MIME declarado es image/jpeg"
+        )
+    assert call.mime_type == "image/jpeg"
     assert result.persisted == "[video: un paisaje nublado]"
 
 
@@ -800,6 +820,41 @@ async def test_video_declarado_mayor_al_tope_no_se_descarga(
     assert result.persisted == "[video] mira esto"
 
 
+async def test_video_de_mas_de_30_segundos_se_bloquea_sin_llamar_al_proveedor(
+    engine, session_factory, test_settings, monkeypatch, videos, caplog
+) -> None:
+    """Caso 3b: 36 s ⇒ la cobertura no se puede garantizar, el video NO sale.
+
+    Antes el tope de 30 cuadros bajaba el muestreo y un dato entre muestras
+    pasaba como limpio. Decisión de la dueña (2026-10-24): si no se puede
+    revisar a un cuadro por segundo, el video se bloquea.
+    """
+    caplog.set_level(logging.WARNING, logger="diana.application")
+    result = await _run_scenario(
+        engine=engine,
+        session_factory=session_factory,
+        test_settings=test_settings,
+        monkeypatch=monkeypatch,
+        chat_id=CHAT_TOO_LONG,
+        payload=videos["long_clean"],
+    )
+
+    assert result.persisted == SENSITIVE_TEXT, (
+        f"un video de 36 s no quedó bloqueado: {result.persisted!r}"
+    )
+    assert result.provider.calls == [], (
+        "un video que excede la ventana cubierta salió al proveedor"
+    )
+    assert result.downloader.calls, "el video ni siquiera se descargó"
+    assert any(
+        record.message == "video_vision_coverage_incomplete"
+        and getattr(record, "reason", None) == "too_long"
+        for record in caplog.records
+        if record.name == "diana.application"
+    ), "el bloqueo no vino de la cobertura incompleta que este caso provoca"
+    assert result.turn_count == 1 and result.turn_status == "pending_approval"
+
+
 async def test_ffmpeg_ausente_cierra_sin_llamar_al_proveedor(
     engine, session_factory, test_settings, monkeypatch, videos, tmp_path, caplog
 ) -> None:
@@ -820,11 +875,15 @@ async def test_ffmpeg_ausente_cierra_sin_llamar_al_proveedor(
     assert result.persisted == SENSITIVE_TEXT
     assert result.provider.calls == [], "sin ffmpeg el video salió al proveedor"
     assert result.turn_count == 1, "el turno no se completó (¿se colgó la extracción?)"
+    # Sin ffprobe la duración es desconocida ⇒ la cobertura no se garantiza y
+    # el cierre es explícito (antes el caso se confundía con un fallo de
+    # extracción genérico).
     assert any(
-        record.message == "video_vision_frames_failed"
+        record.message == "video_vision_coverage_incomplete"
+        and getattr(record, "reason", None) == "coverage_unknown"
         for record in caplog.records
         if record.name == "diana.application"
-    ), "el cierre no vino del fallo de extracción que este caso provoca"
+    ), "el cierre no vino de la cobertura no garantizable que este caso provoca"
 
 
 @pytest.mark.parametrize(
@@ -1007,10 +1066,15 @@ async def test_tarjeta_en_cuadro_con_caption_inocente_queda_bloqueada(
     assert result.persisted == f"{SENSITIVE_TEXT} hola, mira"
 
 
-async def test_rama_de_cuadros_rotula_png_como_jpeg(
+async def test_rama_de_cuadros_manda_jpeg_coherente(
     engine, session_factory, test_settings, monkeypatch, videos
 ) -> None:
-    """Caso 10: registra el par bytes/mime real de la rama de cuadros."""
+    """Caso 10: el par bytes/MIME de la rama de cuadros es coherente.
+
+    Antes viajaba un PNG rotulado ``image/jpeg``. Ahora los cuadros se
+    convierten a JPEG (o, si no se puede, viajan como PNG rotulado PNG): lo
+    que se declara es lo que se envía.
+    """
     result = await _run_scenario(
         engine=engine,
         session_factory=session_factory,
@@ -1032,9 +1096,11 @@ async def test_rama_de_cuadros_rotula_png_como_jpeg(
     )
     assert call.payloads, "no viajó ningún cuadro"
     for payload in call.payloads:
-        assert payload.startswith(PNG_MAGIC), (
-            "el cuadro no es PNG; la sospecha del rastreo no se reprodujo"
+        assert payload.startswith(JPEG_MAGIC), (
+            "el MIME dice image/jpeg pero los bytes no son JPEG"
         )
+        with Image.open(io.BytesIO(payload)) as img:
+            assert img.format == "JPEG"
     # El efecto no falla si el proveedor acepta el par: la descripción entra.
     assert result.persisted == "[video: una escena]"
 
@@ -1042,7 +1108,7 @@ async def test_rama_de_cuadros_rotula_png_como_jpeg(
 async def test_rama_de_cuadros_termina_en_fail_open_si_el_proveedor_rechaza(
     engine, session_factory, test_settings, monkeypatch, videos
 ) -> None:
-    """Caso 10b: un rechazo del proveedor por el par PNG/JPEG pierde la descripción."""
+    """Caso 10b: un rechazo del proveedor pierde la descripción (fail-open)."""
     result = await _run_scenario(
         engine=engine,
         session_factory=session_factory,
@@ -1051,7 +1117,7 @@ async def test_rama_de_cuadros_termina_en_fail_open_si_el_proveedor_rechaza(
         chat_id=CHAT_PNG_FAILOPEN,
         payload=videos["clean"],
         provider=RecordingVisionProvider(
-            fail_with=RuntimeError("el proveedor rechaza image/jpeg con bytes PNG")
+            fail_with=RuntimeError("el proveedor rechaza la llamada")
         ),
         settings_updates={
             "video_vision_send_max_bytes": 1,
@@ -1062,7 +1128,7 @@ async def test_rama_de_cuadros_termina_en_fail_open_si_el_proveedor_rechaza(
     assert [call.kind for call in result.provider.calls] == ["images"], (
         "la llamada con los cuadros no ocurrió: no se probó el fail-open"
     )
-    assert all(p.startswith(PNG_MAGIC) for p in result.provider.calls[0].payloads)
+    assert all(p.startswith(JPEG_MAGIC) for p in result.provider.calls[0].payloads)
     assert result.persisted == "[video]", (
         "el efecto no fue fail-open: la descripción se perdió pero el texto cambió"
     )

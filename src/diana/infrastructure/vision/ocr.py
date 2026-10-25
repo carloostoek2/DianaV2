@@ -54,6 +54,20 @@ _FALLBACK_LANGS = "eng"
 
 _MAX_OCR_IMAGE_PIXELS = 4000 * 4000  # guard against decompression bombs
 
+# --- "No verificable" evidence (owner decision, 2026-10-24) -----------------
+# When OCR returns no text, the image is only clean when it really has no
+# text. Three local, cheap signals say "there is something to read but the
+# reader could not read it" (or "the image is unusable"):
+#   * word boxes from image_to_data with non-empty text (unreadable marks),
+#   * very low sharpness (blur): variance of the Laplacian,
+#   * very low contrast: standard deviation of the grayscale image.
+# Thresholds are deliberately conservative: a normal photo (landscape, person)
+# has edges/texture and passes; a blurred document or a flat scan does not.
+_MIN_SHARPNESS = 10.0
+_MIN_CONTRAST = 8.0
+_MIN_EVIDENCE_CONFIDENCE = 20
+_EVIDENCE_MAX_DIM = 512  # measure on a bounded copy (speed, consistent scale)
+
 # Repo-local language data (runtime/tessdata, gitignored) — installed when the
 # host filesystem is read-only so the container keeps spa+eng working.
 _REPO_TESSDATA = Path(__file__).resolve().parents[3] / "runtime" / "tessdata"
@@ -109,6 +123,40 @@ class OcrLine:
     @property
     def bottom(self) -> int:
         return self.top + self.height
+
+
+@dataclass(frozen=True, slots=True)
+class ImageEvidence:
+    """Local quality evidence for an image whose OCR returned no text.
+
+    ``text_marks`` counts word boxes with text that the text extractor could
+    not assemble into a readable string. ``sharpness`` (Laplacian variance)
+    and ``contrast`` (grayscale standard deviation) tell a genuinely empty
+    image apart from a blurred / washed-out one.
+    """
+
+    text_marks: int = 0
+    sharpness: float = 0.0
+    contrast: float = 0.0
+    width: int = 0
+    height: int = 0
+
+    @property
+    def has_unreadable_text(self) -> bool:
+        return self.text_marks > 0
+
+    @property
+    def too_blurry(self) -> bool:
+        return self.sharpness < _MIN_SHARPNESS
+
+    @property
+    def too_flat(self) -> bool:
+        return self.contrast < _MIN_CONTRAST
+
+    @property
+    def cannot_verify(self) -> bool:
+        """True ⇒ the image must not leave the server (fail-closed)."""
+        return self.has_unreadable_text or self.too_blurry or self.too_flat
 
 
 def _tessdata_dir() -> Path | None:
@@ -287,6 +335,98 @@ def _group_lines(data: dict) -> tuple[OcrLine, ...]:
     return tuple(lines)
 
 
+def _image_quality(gray: Image.Image) -> tuple[float, float]:
+    """Return (sharpness, contrast) for a grayscale image.
+
+    Sharpness is the variance of the Laplacian, computed with numpy shifts
+    (no OpenCV): an in-focus image has strong second derivatives at its
+    edges; a blurred one flattens them. Contrast is the grayscale standard
+    deviation. Both are scale-normalized by shrinking to ``_EVIDENCE_MAX_DIM``
+    first so the thresholds do not depend on the phone's resolution.
+    """
+    import numpy as np  # already present via the embedding stack
+
+    gray.thumbnail((_EVIDENCE_MAX_DIM, _EVIDENCE_MAX_DIM), Image.Resampling.LANCZOS)
+    array = np.asarray(gray, dtype=np.float32)
+    if array.size == 0:
+        return 0.0, 0.0
+    contrast = float(array.std())
+    if min(array.shape) < 3:
+        return 0.0, contrast
+    laplacian = (
+        -4.0 * array
+        + np.roll(array, 1, axis=0)
+        + np.roll(array, -1, axis=0)
+        + np.roll(array, 1, axis=1)
+        + np.roll(array, -1, axis=1)
+    )[1:-1, 1:-1]
+    return float(laplacian.var()), contrast
+
+
+def _count_text_marks(img: Image.Image, pytesseract: object, langs: str) -> int:
+    """Words that image_to_data saw although image_to_string returned nothing."""
+
+    def _run(lang: str) -> dict:
+        return pytesseract.image_to_data(  # type: ignore[attr-defined]
+            img, lang=lang, output_type=pytesseract.Output.DICT  # type: ignore[attr-defined]
+        )
+
+    try:
+        data = _run(langs)
+    except Exception:
+        # A missing language pack raises here; retry with plain eng.
+        if langs == _FALLBACK_LANGS or langs == "":
+            raise
+        data = _run(_FALLBACK_LANGS)
+    texts = data.get("text") or []
+    confidences = data.get("conf") or []
+    marks = 0
+    for index in range(len(texts)):
+        if not str(texts[index] or "").strip():
+            continue
+        try:
+            confidence = int(confidences[index])
+        except (IndexError, TypeError, ValueError):
+            confidence = -1
+        if confidence >= _MIN_EVIDENCE_CONFIDENCE:
+            marks += 1
+    return marks
+
+
+def probe_image_evidence(image_bytes: bytes) -> ImageEvidence:
+    """Measure whether an image has text/quality that OCR failed to read.
+
+    Raises ``OcrUnavailableError`` when the payload cannot be decoded or
+    tesseract is unavailable — callers treat that as "cannot verify" too.
+    """
+    try:
+        import pytesseract  # lazy: module import must not require the dep
+    except Exception as exc:  # pragma: no cover - host without pytesseract
+        raise OcrUnavailableError("pytesseract not installed") from exc
+
+    _ensure_tessdata_env()
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            if img.width * img.height > _MAX_OCR_IMAGE_PIXELS:
+                raise OcrUnavailableError("image too large for OCR")
+            width, height = img.width, img.height
+            sharpness, contrast = _image_quality(img.convert("L"))
+            marks = _count_text_marks(img, pytesseract, _DEFAULT_LANGS)
+    except OcrUnavailableError:
+        raise
+    except Exception as exc:  # unreadable image / broken tesseract
+        raise OcrUnavailableError(
+            f"evidence probe failed: {type(exc).__name__}"
+        ) from exc
+    return ImageEvidence(
+        text_marks=marks,
+        sharpness=sharpness,
+        contrast=contrast,
+        width=width,
+        height=height,
+    )
+
+
 class OcrEngine:
     """OCR engine with injectable extractor (tests swap in a fake)."""
 
@@ -295,10 +435,12 @@ class OcrEngine:
         *,
         extractor: Callable[..., str] = extract_text_with_pytesseract,
         lines_extractor: Callable[..., tuple[OcrLine, ...]] = extract_lines_with_pytesseract,
+        evidence_probe: Callable[..., ImageEvidence] = probe_image_evidence,
         langs: str = _DEFAULT_LANGS,
     ) -> None:
         self._extractor = extractor
         self._lines_extractor = lines_extractor
+        self._evidence_probe = evidence_probe
         self._langs = langs
 
     def extract_text(self, image_bytes: bytes) -> str:
@@ -309,8 +451,13 @@ class OcrEngine:
         """Extract text lines with pixel boxes; raises OcrUnavailableError."""
         return self._lines_extractor(image_bytes, langs=self._langs)
 
+    def probe_image(self, image_bytes: bytes) -> ImageEvidence:
+        """Quality/unreadable-text evidence for an image; raises OcrUnavailableError."""
+        return self._evidence_probe(image_bytes)
+
 
 __all__ = [
+    "ImageEvidence",
     "OcrBox",
     "OcrEngine",
     "OcrLine",
@@ -319,4 +466,5 @@ __all__ = [
     "extract_lines_with_pytesseract",
     "extract_text_with_pytesseract",
     "pil_format_for_mime",
+    "probe_image_evidence",
 ]

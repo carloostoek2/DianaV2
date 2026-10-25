@@ -25,17 +25,27 @@ texto de la descripción.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from dataclasses import dataclass
 from typing import Callable
 
-from diana.application.image_vision_service import SensitiveScan, scan_sensitive
+from PIL import Image
+
+from diana.application.image_vision_service import (
+    SensitiveScan,
+    evidence_is_unverifiable,
+    record_vision_activity,
+    scan_sensitive,
+    text_is_scarce,
+)
 from diana.cognitive.video_vision import VideoDescriber
 from diana.infrastructure.vision.ocr import OcrEngine, OcrUnavailableError
 from diana.infrastructure.vision.resize import downscale_image
 from diana.infrastructure.vision.video_frames import (
     FrameExtractionError,
     FrameExtractor,
+    FrameReviewIncompleteError,
     VideoFrame,
 )
 
@@ -44,6 +54,10 @@ from diana.infrastructure.vision.video_frames import (
 _DEFAULT_SEND_MAX_BYTES = 20 * 1024 * 1024
 # Cuadros que se envían como máximo en ese caso.
 _DEFAULT_FRAMES_TO_SEND = 20
+# Calidad del JPEG al que se convierten los cuadros que viajan.
+_FRAME_JPEG_QUALITY = 82
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 logger = logging.getLogger("diana.application")
 
@@ -94,11 +108,13 @@ class VideoVisionService:
         """Analiza un video. Cierra ante la duda; abre si falla la descripción."""
         if not self._enabled:
             return VideoVisionResult(enabled=False)
+        record_vision_activity("video", "analyzed")
         # 1) y 2) Revisión local (ffmpeg + OCR), fuera del hilo del bot: con un
         #    video largo son varios segundos de trabajo y bloquear ese hilo
         #    retrasaría los demás chats.
         blocked, frames = await asyncio.to_thread(self._review_frames, video_bytes)
         if blocked is not None:
+            record_vision_activity("video", "sensitive")
             return blocked
         # 3) Cuadros limpios ⇒ se describe el video. Si es demasiado pesado para
         #    viajar entero, viajan los cuadros ya revisados (una sola llamada).
@@ -108,6 +124,8 @@ class VideoVisionService:
             description = await self._describer.describe(
                 video_bytes, mime_type=mime_type
             )
+        if description is not None:
+            record_vision_activity("video", "described")
         return VideoVisionResult(
             enabled=True,
             sensitive=False,
@@ -119,16 +137,23 @@ class VideoVisionService:
         """Describe el video con los cuadros ya revisados, en un solo envío.
 
         Los cuadros se reducen antes de salir: veinte cuadros a resolución
-        completa no entran en un pedido, y el costo por cuadro no cambia.
+        completa no entran en un pedido, y el costo por cuadro no cambia. El
+        par bytes/MIME se mantiene verdadero: si TODOS se pueden convertir a
+        JPEG viaja ``image/jpeg``; si no, viajan los PNG originales rotulados
+        ``image/png``. Nunca un PNG rotulado JPEG.
         """
         selected = _spread(frames, self._frames_to_send)
-        prepared = [_prepare_frame(frame.png_bytes) for frame in selected]
+        payloads, mime_type = _prepare_frames(selected)
         logger.info(
             "video_vision_describe_by_frames",
-            extra={"frames": len(prepared), "extracted": len(frames)},
+            extra={
+                "frames": len(payloads),
+                "extracted": len(frames),
+                "mime_type": mime_type,
+            },
         )
         return await self._describer.describe_frames(
-            [item for item in prepared if item], mime_type="image/jpeg"
+            payloads, mime_type=mime_type
         )
 
     def _review_frames(
@@ -142,6 +167,19 @@ class VideoVisionService:
         """
         try:
             frames = self._frames.extract_frames(video_bytes)
+        except FrameReviewIncompleteError as exc:
+            # Duración > ventana cubierta o duración desconocida / ffprobe
+            # ausente: no se puede garantizar la cobertura ⇒ no sale.
+            logger.warning(
+                "video_vision_coverage_incomplete",
+                extra={"reason": exc.reason, "error_type": type(exc).__name__},
+            )
+            return (
+                VideoVisionResult(
+                    enabled=True, sensitive=True, reason=exc.reason
+                ),
+                (),
+            )
         except FrameExtractionError as exc:
             logger.warning(
                 "video_vision_frames_failed",
@@ -173,6 +211,18 @@ class VideoVisionService:
                     ),
                     (),
                 )
+            # Texto vacío o escaso: la sonda local decide si el cuadro se pudo
+            # verificar (borroso / plano / marcas ilegibles). Un cuadro que no
+            # se puede verificar bloquea el video, igual que en las fotos.
+            if text_is_scarce(text) and self._frame_is_unverifiable(
+                frame, text_seen=bool(text.strip())
+            ):
+                return (
+                    VideoVisionResult(
+                        enabled=True, sensitive=True, reason="no_verificable"
+                    ),
+                    (),
+                )
             scan = self._scan(text)
             if scan.has_identity:
                 return (
@@ -190,6 +240,22 @@ class VideoVisionService:
                 )
         return None, frames
 
+    def _frame_is_unverifiable(self, frame: VideoFrame, *, text_seen: bool) -> bool:
+        """Sonda local de un cuadro con texto vacío o escaso (M1).
+
+        Un doble de OCR sin ``probe_image`` conserva la conducta anterior
+        (texto escaso ⇒ limpio); el motor real siempre la ofrece y una sonda
+        caída cierra en sensible.
+        """
+        probe = getattr(self._ocr, "probe_image", None)
+        if probe is None:
+            return False
+        try:
+            evidence = probe(frame.png_bytes)
+        except OcrUnavailableError:
+            return True
+        return evidence_is_unverifiable(evidence, text_seen=text_seen)
+
 
 def _spread(frames: tuple[VideoFrame, ...], count: int) -> list[VideoFrame]:
     """Elige hasta ``count`` cuadros repartidos por todo el video."""
@@ -199,9 +265,46 @@ def _spread(frames: tuple[VideoFrame, ...], count: int) -> list[VideoFrame]:
     return [frames[int(index * step)] for index in range(count)]
 
 
-def _prepare_frame(png_bytes: bytes) -> bytes:
-    """Reduce el cuadro antes de enviarlo; si no se puede, va tal cual."""
-    return downscale_image(png_bytes) or png_bytes
+def _to_jpeg(image_bytes: bytes) -> bytes | None:
+    """Re-encode a frame to JPEG; ``None`` when it cannot be decoded/encoded."""
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            buffer = io.BytesIO()
+            img.convert("RGB").save(
+                buffer, format="JPEG", quality=_FRAME_JPEG_QUALITY
+            )
+            return buffer.getvalue()
+    except Exception:
+        return None
+
+
+def _prepare_frames(
+    frames: list[VideoFrame],
+) -> tuple[list[bytes], str]:
+    """Return (payloads, truthful mime) for the frames that travel.
+
+    All frames are converted to JPEG (downscaled when large). If any frame
+    cannot be converted, the whole batch travels as the original PNGs — the
+    declared MIME always matches the bytes.
+    """
+    converted = [
+        downscale_image(frame.png_bytes) or _to_jpeg(frame.png_bytes)
+        for frame in frames
+    ]
+    if converted and all(payload is not None for payload in converted):
+        payloads = [payload for payload in converted if payload is not None]
+        return payloads, "image/jpeg"
+    originals = [frame.png_bytes for frame in frames]
+    return originals, _mime_for(originals)
+
+
+def _mime_for(payloads: list[bytes]) -> str:
+    """MIME that matches every payload (PNG or JPEG), defaulting to JPEG."""
+    if payloads and all(p.startswith(_PNG_MAGIC) for p in payloads):
+        return "image/png"
+    if payloads and all(p.startswith(_JPEG_MAGIC) for p in payloads):
+        return "image/jpeg"
+    return "image/jpeg"
 
 
 __all__ = ["VideoVisionResult", "VideoVisionService"]

@@ -10,11 +10,18 @@ temporal, se extraen los fotogramas y el directorio se borra al terminar.
 Un fotograma que falla se descarta; si no se obtiene ninguno, se levanta
 ``FrameExtractionError`` y quien llama decide (el filtro de privacidad lo
 trata como "no verificable" y el video no sale del servidor).
+
+La cobertura es una condición previa: si ffprobe no informa la duración, o si
+el video dura más de la ventana que se puede revisar a un cuadro por segundo,
+se levanta ``FrameReviewIncompleteError`` y el video tampoco sale. No se baja
+el muestreo para "cubrir" videos largos: un dato entre dos muestras pasaría
+como limpio (decisión de la dueña, 2026-10-24).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -28,6 +35,16 @@ _DEFAULT_TIMEOUT_S = 30.0
 # dato que aparezca entre dos muestras. La revisión es local y no cuesta nada
 # en el proveedor, así que se mira el video segundo por segundo.
 _FRAMES_PER_SECOND = 1.0
+# Ventana máxima que se puede revisar con un cuadro por segundo sin bajar el
+# muestreo. Es una CONSTANTE DE PRODUCTO: subir VIDEO_VISION_MAX_FRAMES no la
+# amplía (un video más largo se bloquea, no se muestrea más espaciado). Bajar
+# el tope de cuadros por debajo de 30 sí reduce la ventana efectiva, porque no
+# hay cuadros para cubrirla (decisión de la dueña, 2026-10-24).
+_MAX_COVERED_SECONDS = 30.0
+# Tolerancia numérica al validar que el último cuadro cubre el final.
+_COVERAGE_EPSILON_S = 1e-6
+# Tope por defecto de cuadros (lo fija VIDEO_VISION_MAX_FRAMES en producción).
+_DEFAULT_MAX_FRAMES = int(_MAX_COVERED_SECONDS * _FRAMES_PER_SECOND)
 # Los instantes se piden en segundos exactos: ffmpeg entrega el cuadro que
 # empieza en ese segundo, así que pedir 0, 1, 2… recorre el video completo. Con
 # medio segundo de más se saltaría el primer cuadro de cada segundo.
@@ -39,6 +56,19 @@ _UNKNOWN_DURATION_FRAMES = 10
 
 class FrameExtractionError(RuntimeError):
     """No se pudo obtener ningún fotograma del video."""
+
+
+class FrameReviewIncompleteError(FrameExtractionError):
+    """La cobertura del video no se puede garantizar.
+
+    ``reason`` viaja al llamador para el texto/reporte:
+    ``too_long`` (dura más de la ventana cubierta) o ``coverage_unknown``
+    (duración desconocida / ffprobe ausente). En ambos casos el video no sale.
+    """
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +91,7 @@ class FfmpegFrameExtractor:
     def __init__(
         self,
         *,
-        max_frames: int = 30,
+        max_frames: int = _DEFAULT_MAX_FRAMES,
         timeout_s: float = _DEFAULT_TIMEOUT_S,
         ffmpeg_bin: str = "ffmpeg",
         ffprobe_bin: str = "ffprobe",
@@ -70,15 +100,28 @@ class FfmpegFrameExtractor:
         self._timeout_s = float(timeout_s)
         self._ffmpeg = ffmpeg_bin
         self._ffprobe = ffprobe_bin
+        # La ventana es la constante de producto, salvo que el tope de cuadros
+        # configurado sea menor: con menos cuadros no se puede cubrir más
+        # segundos a un cuadro por segundo.
+        self._max_covered_seconds = min(
+            _MAX_COVERED_SECONDS, self._max_frames / _FRAMES_PER_SECOND
+        )
 
     def extract_frames(self, video_bytes: bytes) -> tuple[VideoFrame, ...]:
-        """Devuelve los fotogramas obtenidos (al menos uno) o levanta error."""
+        """Devuelve los fotogramas obtenidos (al menos uno) o levanta error.
+
+        Antes de extraer exige una duración conocida y cubrible: si dura más
+        de la ventana que se puede revisar a un cuadro por segundo, o si
+        ffprobe no la informa, levanta ``FrameReviewIncompleteError`` y el
+        llamador cierra (el video no sale del servidor).
+        """
         if not video_bytes:
             raise FrameExtractionError("video vacío")
         with tempfile.TemporaryDirectory(prefix="diana-video-") as tmp:
             source = Path(tmp) / "entrada.bin"
             source.write_bytes(video_bytes)
             duration = self._probe_duration(source)
+            self._ensure_coverage(duration)
             frames = self._grab_in_one_pass(source, Path(tmp), duration)
             if not frames:
                 # Si el filtro no dio nada se prueba cuadro por cuadro (video
@@ -91,7 +134,60 @@ class FfmpegFrameExtractor:
                 extra={"max_frames": self._max_frames},
             )
             raise FrameExtractionError("ffmpeg no produjo ningún fotograma")
+        self._ensure_last_frame_covers_end(frames, duration)
         return tuple(frames)
+
+    def _ensure_coverage(self, duration_s: float | None) -> None:
+        """Cierra cuando no se puede garantizar la revisión de todo el video."""
+        if duration_s is None:
+            logger.warning("video_frames_duration_unknown")
+            raise FrameReviewIncompleteError(
+                "duración desconocida: no se puede garantizar la cobertura",
+                reason="coverage_unknown",
+            )
+        if duration_s > self._max_covered_seconds:
+            logger.warning(
+                "video_frames_too_long",
+                extra={
+                    "duration_s": duration_s,
+                    "max_covered_s": self._max_covered_seconds,
+                },
+            )
+            raise FrameReviewIncompleteError(
+                f"video de {duration_s:.1f}s excede la ventana cubierta "
+                f"({self._max_covered_seconds:.1f}s)",
+                reason="too_long",
+            )
+
+    def _ensure_last_frame_covers_end(
+        self, frames: list[VideoFrame], duration_s: float | None
+    ) -> None:
+        """Cierra si el último cuadro no llega al final del video.
+
+        La ventana y la duración pueden ser válidas y, aun así, la extracción
+        quedarse corta (metadatos raros, cuadros descartados). Sin esta
+        comprobación, el tramo final del video viajaría sin revisar. Un cuadro
+        por segundo cubre el último segundo del video, así que el último
+        instante debe quedar a menos de un intervalo del final.
+        """
+        if duration_s is None or not frames:
+            return
+        last = max(frame.timestamp_s for frame in frames)
+        if last >= duration_s - _FRAMES_PER_SECOND - _COVERAGE_EPSILON_S:
+            return
+        logger.warning(
+            "video_frames_last_frame_short",
+            extra={
+                "duration_s": duration_s,
+                "last_timestamp_s": last,
+                "max_frames": self._max_frames,
+            },
+        )
+        raise FrameReviewIncompleteError(
+            f"el último cuadro ({last:.2f}s) no cubre el final del video "
+            f"({duration_s:.2f}s)",
+            reason="coverage_gap",
+        )
 
     def _grab_in_one_pass(
         self, source: Path, tmp: Path, duration_s: float | None
@@ -174,7 +270,9 @@ class FfmpegFrameExtractor:
                 for i in range(min(self._max_frames, _UNKNOWN_DURATION_FRAMES))
             )
         if duration_s <= self._max_frames:
-            wanted = min(self._max_frames, max(1, int(duration_s)))
+            # ceil: un video de 12.5 s necesita muestras en 0…12 para que el
+            # último cuadro cubra el tramo final.
+            wanted = min(self._max_frames, max(1, math.ceil(duration_s)))
             stamps = tuple(
                 _FIRST_SAMPLE_S + i / _FRAMES_PER_SECOND for i in range(wanted)
             )
@@ -255,5 +353,6 @@ __all__ = [
     "FfmpegFrameExtractor",
     "FrameExtractionError",
     "FrameExtractor",
+    "FrameReviewIncompleteError",
     "VideoFrame",
 ]

@@ -18,10 +18,15 @@ Lo que se asierta son bytes capturados en el borde y estado persistido
 (``message_history`` / ``pending_approvals`` / ``turns``), nunca "se llamó a
 X" ni objetos internos simulados.
 
-Los casos 2, 3, 5 y 6 registran el COMPORTAMIENTO REAL observado, que
-contradice el texto de la promesa (ver ``audit/contracts/C-PRV-01.md``,
-Puntos ciegos 1–4). Cada uno lo dice en su docstring; no se corrige
-producción aquí.
+Los casos 2, 3, 5 y 6 fijaban el COMPORTAMIENTO VIEJO que la auditoría midió
+(ver ``audit/contracts/C-PRV-01.md``, Puntos ciegos 1–4). Tras las decisiones
+de la dueña del 2026-10-24 ahora exigen la conducta nueva:
+
+* documento de identidad gana SIEMPRE sobre una tarjeta (no sale);
+* una foto solo se bloquea cuando no se pudo verificar (texto ilegible,
+  borrosa o sin contraste); una foto normal sin texto se describe;
+* los separadores de tarjeta cubren punto, espacio duro, tabulador y salto;
+* las corridas de 16 dígitos pasan por Luhn (una que falla NO se enmascara).
 """
 
 from __future__ import annotations
@@ -76,6 +81,12 @@ CHAT_FACTURA = 999100107
 CHAT_BANDERA_OFF = 999100108
 CHAT_PROVEEDOR_CAIDO = 999100109
 CHAT_PERSISTENCIA = 999100110
+CHAT_FOTO_SIN_TEXTO = 999100111
+CHAT_FOTO_BORROSA = 999100112
+CHAT_TARJETA_AMEX_PUNTOS = 999100113
+CHAT_TARJETA_GRUPOS_6_10 = 999100114
+CHAT_TARJETA_GRUPOS_2_14 = 999100115
+CHAT_TARJETA_4X4X4X3 = 999100116
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +99,7 @@ def _image_bytes(
     *,
     width: int = 900,
     font_size: int = 40,
-    blur_radius: int = 0,
+    blur_radius: float = 0,
 ) -> bytes:
     """Una foto JPEG sintética con las líneas pedidas (texto negro, fondo blanco)."""
     height = 60 + len(lines) * (font_size + 25)
@@ -99,6 +110,21 @@ def _image_bytes(
     for line in lines:
         draw.text((30, y), line, font=font, fill="black")
         y += font_size + 25
+    if blur_radius:
+        image = image.filter(ImageFilter.GaussianBlur(blur_radius))
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=85)
+    return buffer.getvalue()
+
+
+def _photo_without_text(*, blur_radius: float = 0) -> bytes:
+    """Foto normal sin texto (paisaje/persona): formas de color, nada que leer."""
+    image = Image.new("RGB", (800, 600), (30, 90, 160))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([100, 100, 400, 350], fill=(250, 200, 40))
+    draw.ellipse([420, 220, 720, 520], fill=(220, 40, 60))
+    draw.polygon([(80, 560), (300, 300), (520, 560)], fill=(20, 180, 90))
+    draw.line([(0, 0), (800, 600)], fill="white", width=12)
     if blur_radius:
         image = image.filter(ImageFilter.GaussianBlur(blur_radius))
     buffer = io.BytesIO()
@@ -569,22 +595,20 @@ async def test_documento_de_identidad_no_sale_y_queda_marcado_sensible(
 
 
 # ---------------------------------------------------------------------------
-# 2. Documento + número de 16 dígitos → COMPORTAMIENTO REAL: viaja tapado
-#    (contradice la promesa; Punto ciego 1 del rastreo)
+# 2. Documento + número de 16 dígitos → la identidad GANA: no sale
+#    (arreglo del Punto ciego 1)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.db
-async def test_documento_con_numero_de_16_digitos_viaja_enmascarado(
+async def test_documento_con_numero_de_16_digitos_no_sale(
     engine, session_factory, monkeypatch, chats
 ) -> None:
-    """COMPORTAMIENTO REAL (defecto ALTO, no se corrige aquí).
+    """Conducta nueva: un documento de identidad no sale NUNCA, ni tapado.
 
-    ``scan_sensitive`` devuelve "tarjeta" antes de buscar palabras de
-    identidad (``image_vision_service.py:142-147``). La línea del número se
-    tapa, la verificación pasa y la imagen viaja a Gemini con el documento de
-    identidad todavía legible. La promesa dice que un documento de identidad
-    no sale NUNCA, ni tapado.
+    Antes ``scan_sensitive`` devolvía "tarjeta" antes de buscar identidad y la
+    imagen viajaba con el documento legible. Ahora la identidad se clasifica
+    primero (decisión de la dueña, 2026-10-24): cero bytes al proveedor.
     """
     chats.append(CHAT_DOC_MAS_TARJETA)
     image = _image_bytes(
@@ -604,40 +628,32 @@ async def test_documento_con_numero_de_16_digitos_viaja_enmascarado(
             message_id=2,
             image=image,
         ) as outcome:
-            assert outcome.history_text == f"[imagen: {CAPTION}]", (
-                f"el turno no se marcó sensible (defecto registrado): "
-                f"{outcome.history_text!r}"
+            assert outcome.history_text == (
+                "[imagen] ⚠️ contiene información sensible (no analizada)"
+            ), f"el turno no se marcó sensible: {outcome.history_text!r}"
+            assert gemini.request_count == 0, (
+                "la imagen del documento viajó al proveedor "
+                f"{gemini.request_count} vez/veces"
             )
-            assert gemini.request_count == 1, (
-                "se esperaba exactamente un envío (el defecto es que sale)"
-            )
-            sent = outcome.sent_images
-            assert len(sent) == 1
-            assert sent[0] != image, "la imagen salió sin enmascarar"
-            # Lo que llegó al proveedor TODAVÍA muestra el documento legible.
-            texto_que_salio = OcrEngine().extract_text(sent[0])
-            assert "DNI" in texto_que_salio and "IDENTIDAD" in texto_que_salio, (
-                "el documento no quedó legible en lo enviado: "
-                f"{texto_que_salio!r}"
-            )
+            assert outcome.sent_images == []
             _assert_turno_completo(outcome)
+            assert outcome.approval["photo_file_id"] == PHOTO_FILE_ID
 
 
 # ---------------------------------------------------------------------------
-# 3. OCR vacío (documento borroso) → COMPORTAMIENTO REAL: viaja limpio
-#    (Punto ciego 2 del rastreo)
+# 3. Documento borroso sin texto legible → no verificable: no sale
+#    (arreglo del Punto ciego 2)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.db
-async def test_documento_borroso_con_ocr_vacio_viaja_sin_revisar(
+async def test_documento_borroso_con_ocr_vacio_no_sale(
     engine, session_factory, monkeypatch, chats
 ) -> None:
-    """COMPORTAMIENTO REAL (defecto ALTO, no se corrige aquí).
+    """Conducta nueva: si no se puede verificar, no sale.
 
-    ``ocr.py:178,190`` devuelve cadena vacía y ``image_vision_service.py:230``
-    la escanea como limpia: la imagen viaja sin verificar. Solo el OCR que
-    LANZA excepción se considera "no verificable".
+    El OCR real devuelve "" y la evidencia local (nitidez/contraste) dice que
+    la imagen está borrosa: se marca sensible en lugar de viajar sin revisar.
     """
     chats.append(CHAT_OCR_VACIO)
     image = _image_bytes(
@@ -657,14 +673,12 @@ async def test_documento_borroso_con_ocr_vacio_viaja_sin_revisar(
             message_id=3,
             image=image,
         ) as outcome:
-            assert outcome.history_text == f"[imagen: {CAPTION}]", (
-                f"el turno no se marcó sensible (defecto registrado): "
-                f"{outcome.history_text!r}"
+            assert outcome.history_text == (
+                "[imagen] ⚠️ contiene información sensible (no analizada)"
+            ), f"el turno no se marcó sensible: {outcome.history_text!r}"
+            assert gemini.request_count == 0, (
+                "una imagen no verificable viajó al proveedor"
             )
-            assert gemini.request_count == 1
-            sent = outcome.sent_images
-            assert len(sent) == 1
-            assert sent[0] == image, "la imagen se envió modificada; se esperaba limpia"
             _assert_turno_completo(outcome)
 
 
@@ -708,20 +722,19 @@ async def test_tarjeta_valida_agrupada_sale_enmascarada(
 
 
 # ---------------------------------------------------------------------------
-# 5. Tarjeta con puntos → COMPORTAMIENTO REAL: viaja limpia
-#    (Punto ciego 3 del rastreo)
+# 5. Tarjeta con puntos → se detecta y se tapa (arreglo del Punto ciego 3)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.db
-async def test_tarjeta_con_separadores_de_punto_viaja_limpia(
+async def test_tarjeta_con_separadores_de_punto_sale_enmascarada(
     engine, session_factory, monkeypatch, chats
 ) -> None:
-    """COMPORTAMIENTO REAL (defecto ALTO/MEDIO, no se corrige aquí).
+    """Conducta nueva: ``4111.1111.1111.1111`` se detecta y se tapa.
 
-    Los patrones de ``image_vision_service.py:51-53`` solo admiten espacio o
-    guion entre grupos: ``4111.1111.1111.1111`` no coincide y la imagen sale
-    tal cual al proveedor.
+    Los patrones ahora cubren punto, espacio duro, tabulador y salto de línea
+    (decisión de la dueña, 2026-10-24). El enmascarado sigue usando las cajas
+    reales del OCR.
     """
     chats.append(CHAT_TARJETA_CON_PUNTOS)
     image = _image_bytes(["4111.1111.1111.1111", "VENCE 12/29"])
@@ -744,32 +757,99 @@ async def test_tarjeta_con_separadores_de_punto_viaja_limpia(
             assert gemini.request_count == 1
             sent = outcome.sent_images
             assert len(sent) == 1
-            assert sent[0] == image, (
-                "la imagen se enmascaró; el defecto registrado era que viajaba limpia"
-            )
+            assert sent[0] != image, "viajaron los bytes originales sin tapar"
             texto_que_salio = OcrEngine().extract_text(sent[0])
-            assert "4111.1111.1111.1111" in texto_que_salio, (
-                f"el número no quedó legible en lo enviado: {texto_que_salio!r}"
+            assert "4111" not in texto_que_salio, (
+                f"el número de tarjeta sigue legible en lo enviado: "
+                f"{texto_que_salio!r}"
+            )
+            assert "VENCE" in texto_que_salio, (
+                "se tapó de más: el resto de la imagen debía viajar"
             )
             _assert_turno_completo(outcome)
 
 
 # ---------------------------------------------------------------------------
-# 6. 16 dígitos que fallan Luhn → COMPORTAMIENTO REAL: igual se enmascara
-#    (Punto ciego 4 del rastreo)
+# 5b. Formatos de tarjeta del hallazgo H2 → se detectan y se tapan
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.db
-async def test_diez6_digitos_sin_luhn_igual_se_enmascara(
+@pytest.mark.parametrize(
+    ("chat_id", "linea", "prohibido", "message_id"),
+    [
+        (CHAT_TARJETA_AMEX_PUNTOS, "3782.822463.10005", "3782", 13),
+        (CHAT_TARJETA_GRUPOS_6_10, "411111 1111111111", "411111", 14),
+        (CHAT_TARJETA_GRUPOS_2_14, "41 11111111111111", "41111", 15),
+        (CHAT_TARJETA_4X4X4X3, "4111 1111 1111 1111 123", "4111", 16),
+    ],
+    ids=["amex-con-puntos", "grupos-6-10", "grupos-2-14", "diecinueve-4-4-4-4-3"],
+)
+async def test_formatos_de_tarjeta_del_hallazgo_se_tapan(
+    engine,
+    session_factory,
+    monkeypatch,
+    chats,
+    chat_id,
+    linea,
+    prohibido,
+    message_id,
+) -> None:
+    """H2: Amex con puntos, 6-10, 2-14 y 4-4-4-4-3 nunca salen legibles.
+
+    Los tres formatos viajaban limpios porque la visión tenía sus propios
+    patrones (solo espacio y guion). Ahora comparte la detección del
+    enmascarador de texto: separadores completos y Luhn sobre el prefijo.
+    La imagen se tapa localmente y se comprueba que el número ya no se lea
+    en los bytes que llegaron al proveedor.
+    """
+    chats.append(chat_id)
+    image = _image_bytes([linea, "VENCE 12/29"])
+    assert linea in OcrEngine().extract_text(image), (
+        "el OCR no conservó el formato: el escenario no es el declarado"
+    )
+    with _gemini() as gemini:
+        async with _run_photo_case(
+            engine,
+            session_factory,
+            monkeypatch,
+            gemini,
+            chat_id=chat_id,
+            message_id=message_id,
+            image=image,
+        ) as outcome:
+            assert outcome.history_text == f"[imagen: {CAPTION}]", (
+                f"texto del turno inesperado: {outcome.history_text!r}"
+            )
+            assert gemini.request_count == 1
+            sent = outcome.sent_images
+            assert len(sent) == 1
+            assert sent[0] != image, "viajaron los bytes originales sin tapar"
+            texto_que_salio = OcrEngine().extract_text(sent[0])
+            assert prohibido not in texto_que_salio, (
+                f"el número de tarjeta sigue legible en lo enviado: "
+                f"{texto_que_salio!r}"
+            )
+            assert "VENCE" in texto_que_salio, (
+                "se tapó de más: el resto de la imagen debía viajar"
+            )
+            _assert_turno_completo(outcome)
+
+
+# ---------------------------------------------------------------------------
+# 6. 16 dígitos que fallan Luhn → NO se enmascaran (arreglo del Punto ciego 4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.db
+async def test_diez6_digitos_sin_luhn_viaja_sin_enmascarar(
     engine, session_factory, monkeypatch, chats
 ) -> None:
-    """COMPORTAMIENTO REAL (desviación MEDIA, no se corrige aquí).
+    """Conducta nueva: una corrida de 16 dígitos debe pasar Luhn para taparse.
 
-    El patrón agrupado tiene el separador opcional, así que cualquier corrida
-    de exactamente 16 dígitos coincide como "tarjeta" ANTES de llegar al
-    filtro Luhn (``image_vision_service.py:51,142-147``). El comentario de
-    ``:54`` sugiere lo contrario.
+    ``1234567890123456`` no es una tarjeta válida (número de pedido): la foto
+    viaja tal cual y se describe. Antes el patrón agrupado lo tomaba como
+    tarjeta antes de Luhn.
     """
     chats.append(CHAT_DIEZ6_SIN_LUHN)
     image = _image_bytes(["PEDIDO 1234567890123456", "GRACIAS"])
@@ -788,11 +868,11 @@ async def test_diez6_digitos_sin_luhn_igual_se_enmascara(
             assert gemini.request_count == 1
             sent = outcome.sent_images
             assert len(sent) == 1
-            assert sent[0] != image, (
-                "el número de 16 dígitos viajó limpio; se esperaba enmascarado"
+            assert sent[0] == image, (
+                "el número sin Luhn se enmascaró; no es una tarjeta"
             )
             texto_que_salio = OcrEngine().extract_text(sent[0])
-            assert "1234567890123456" not in texto_que_salio
+            assert "1234567890123456" in texto_que_salio
             assert "GRACIAS" in texto_que_salio
             _assert_turno_completo(outcome)
 
@@ -901,6 +981,71 @@ async def test_proveedor_caido_deja_etiqueta_plana_y_el_turno_sigue(
             assert outcome.approval["photo_file_id"] == PHOTO_FILE_ID, (
                 "la dueña perdió la foto cuando el proveedor falló"
             )
+
+
+# ---------------------------------------------------------------------------
+# 11. Foto normal sin texto → se describe (decisión (b) de la dueña)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.db
+async def test_foto_normal_sin_texto_se_describe(
+    engine, session_factory, monkeypatch, chats
+) -> None:
+    """Una foto sin texto (paisaje/persona) NO se bloquea: sigue su curso."""
+    chats.append(CHAT_FOTO_SIN_TEXTO)
+    image = _photo_without_text()
+    assert OcrEngine().extract_text(image) == "", (
+        "la foto de formas produjo texto: el escenario no es 'sin texto'"
+    )
+    with _gemini() as gemini:
+        async with _run_photo_case(
+            engine,
+            session_factory,
+            monkeypatch,
+            gemini,
+            chat_id=CHAT_FOTO_SIN_TEXTO,
+            message_id=11,
+            image=image,
+        ) as outcome:
+            assert outcome.history_text == f"[imagen: {CAPTION}]", (
+                f"una foto normal sin texto se bloqueó: {outcome.history_text!r}"
+            )
+            assert gemini.request_count == 1
+            sent = outcome.sent_images
+            assert len(sent) == 1
+            assert sent[0] == image, "la foto limpia no viajó tal cual"
+            _assert_turno_completo(outcome)
+
+
+# ---------------------------------------------------------------------------
+# 12. Foto borrosa sin texto legible → no verificable: no sale
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.db
+async def test_foto_borrosa_sin_texto_no_sale(
+    engine, session_factory, monkeypatch, chats
+) -> None:
+    """La nitidez/contraste local distingue una foto normal de una borrosa."""
+    chats.append(CHAT_FOTO_BORROSA)
+    image = _photo_without_text(blur_radius=14)
+    assert OcrEngine().extract_text(image) == ""
+    with _gemini() as gemini:
+        async with _run_photo_case(
+            engine,
+            session_factory,
+            monkeypatch,
+            gemini,
+            chat_id=CHAT_FOTO_BORROSA,
+            message_id=12,
+            image=image,
+        ) as outcome:
+            assert outcome.history_text == (
+                "[imagen] ⚠️ contiene información sensible (no analizada)"
+            ), f"una foto borrosa viajó sin verificar: {outcome.history_text!r}"
+            assert gemini.request_count == 0
+            _assert_turno_completo(outcome)
 
 
 # ---------------------------------------------------------------------------

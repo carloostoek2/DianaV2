@@ -6,16 +6,33 @@ documento de identidad, el video no sale. Estas pruebas fijan ese contrato.
 
 from __future__ import annotations
 
+import io
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from diana.application.video_vision_service import VideoVisionService
-from diana.infrastructure.vision.ocr import OcrUnavailableError
+from diana.infrastructure.vision.ocr import (
+    ImageEvidence,
+    OcrUnavailableError,
+)
 from diana.infrastructure.vision.video_frames import (
     FrameExtractionError,
+    FrameReviewIncompleteError,
     VideoFrame,
 )
+
+# Cuadro nítido y con contraste: un video limpio sin texto no se bloquea.
+_CLEAN_EVIDENCE = ImageEvidence(
+    text_marks=0, sharpness=250.0, contrast=40.0, width=40, height=30
+)
+
+
+def _png(width: int = 40, height: int = 30) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _frames(count: int = 3) -> tuple[VideoFrame, ...]:
@@ -41,9 +58,18 @@ class _FakeExtractor:
 class _FakeOcr:
     """Devuelve un texto por fotograma, en orden; el último se repite."""
 
-    def __init__(self, texts: list[str | Exception]) -> None:
+    def __init__(
+        self,
+        texts: list[str | Exception],
+        *,
+        evidence: ImageEvidence | None = None,
+        evidence_error: type[Exception] | None = None,
+    ) -> None:
         self._texts = texts
+        self._evidence = evidence if evidence is not None else _CLEAN_EVIDENCE
+        self._evidence_error = evidence_error
         self.calls = 0
+        self.probe_calls = 0
 
     def extract_text(self, image_bytes):
         index = min(self.calls, len(self._texts) - 1)
@@ -52,6 +78,12 @@ class _FakeOcr:
         if isinstance(value, type) and issubclass(value, Exception):
             raise value()
         return value
+
+    def probe_image(self, image_bytes):
+        self.probe_calls += 1
+        if self._evidence_error is not None:
+            raise self._evidence_error()
+        return self._evidence
 
 
 class _SpyDescriber:
@@ -62,6 +94,7 @@ class _SpyDescriber:
         self.seen_bytes: bytes | None = None
         self.seen_mime: str | None = None
         self.seen_frames: list[bytes] | None = None
+        self.seen_frames_mime: str | None = None
 
     async def describe(self, video_bytes, *, mime_type):
         self.calls += 1
@@ -72,6 +105,7 @@ class _SpyDescriber:
     async def describe_frames(self, frames, *, mime_type):
         self.frames_calls += 1
         self.seen_frames = list(frames)
+        self.seen_frames_mime = mime_type
         return self._text
 
 
@@ -84,9 +118,15 @@ def _service(
     describer=None,
     send_max_bytes=1024,
     frames_to_send=20,
+    evidence=None,
+    evidence_error=None,
 ):
     extractor = _FakeExtractor(frames=frames, error=error)
-    ocr = _FakeOcr(texts if texts is not None else [""])
+    ocr = _FakeOcr(
+        texts if texts is not None else [""],
+        evidence=evidence,
+        evidence_error=evidence_error,
+    )
     spy = describer if describer is not None else _SpyDescriber()
     service = VideoVisionService(
         frames=extractor,
@@ -155,6 +195,31 @@ async def test_frame_extraction_failure_is_fail_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_video_too_long_for_full_coverage_is_blocked_with_reason() -> None:
+    """Un video que excede la ventana cubierta no se describe ni sale."""
+    ctx = _service(
+        error=FrameReviewIncompleteError("demasiado largo", reason="too_long")
+    )
+    result = await ctx.service.analyze(b"mp4", mime_type="video/mp4")
+    assert result.sensitive is True
+    assert result.reason == "too_long"
+    assert ctx.spy.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_unknown_duration_is_blocked_with_reason() -> None:
+    ctx = _service(
+        error=FrameReviewIncompleteError(
+            "duración desconocida", reason="coverage_unknown"
+        )
+    )
+    result = await ctx.service.analyze(b"mp4", mime_type="video/mp4")
+    assert result.sensitive is True
+    assert result.reason == "coverage_unknown"
+    assert ctx.spy.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_no_frames_at_all_is_fail_closed() -> None:
     """Sin un solo fotograma no hay nada que revisar: el video no sale."""
     ctx = _service(frames=())
@@ -162,6 +227,40 @@ async def test_no_frames_at_all_is_fail_closed() -> None:
     assert result.sensitive is True
     assert result.reason == "no_verificable"
     assert ctx.spy.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_blurry_frame_without_text_blocks_the_video() -> None:
+    """M1: un cuadro sin texto que no se puede verificar no se asume limpio."""
+    blurry = ImageEvidence(text_marks=0, sharpness=1.5, contrast=40.0)
+    ctx = _service(texts=[""], frames=_frames(2), evidence=blurry)
+    result = await ctx.service.analyze(b"mp4", mime_type="video/mp4")
+    assert result.sensitive is True
+    assert result.reason == "no_verificable"
+    assert ctx.spy.calls == 0, "un cuadro no verificable viajó al proveedor"
+    assert ctx.ocr.probe_calls == 1, "la sonda no se ejecutó en el cuadro"
+
+
+@pytest.mark.asyncio
+async def test_frame_probe_unavailable_blocks_the_video() -> None:
+    """Si la sonda tampoco puede correr, el cuadro no se da por limpio."""
+    ctx = _service(
+        texts=[""], frames=_frames(2), evidence_error=OcrUnavailableError
+    )
+    result = await ctx.service.analyze(b"mp4", mime_type="video/mp4")
+    assert result.sensitive is True
+    assert result.reason == "no_verificable"
+    assert ctx.spy.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_clean_frames_without_text_are_probed_and_described() -> None:
+    """Un cuadro nítido sin texto (paisaje) sigue su curso."""
+    ctx = _service(texts=[""], frames=_frames(2), evidence=_CLEAN_EVIDENCE)
+    result = await ctx.service.analyze(b"mp4", mime_type="video/mp4")
+    assert result.sensitive is False
+    assert ctx.spy.calls == 1
+    assert ctx.ocr.probe_calls == 2, "la sonda debe mirar cada cuadro"
 
 
 @pytest.mark.asyncio
@@ -230,3 +329,22 @@ async def test_caption_failure_is_fail_open() -> None:
     assert result.enabled is True
     assert result.sensitive is False
     assert result.description is None
+
+
+@pytest.mark.asyncio
+async def test_frame_batch_mime_matches_the_bytes_sent() -> None:
+    """Un PNG rotulado JPEG fue el defecto: ahora el par siempre es coherente."""
+    frames = tuple(
+        VideoFrame(png_bytes=_png(), timestamp_s=float(i)) for i in range(3)
+    )
+    ctx = _service(frames=frames, send_max_bytes=2)
+    # The spy does not record the mime for frames; read it from the payloads:
+    # every frame under 1280px is re-encoded to JPEG.
+    result = await ctx.service.analyze(b"12345", mime_type="video/mp4")
+    assert result.sensitive is False
+    assert ctx.spy.seen_frames_mime == "image/jpeg"
+    assert ctx.spy.seen_frames
+    for payload in ctx.spy.seen_frames:
+        assert payload.startswith(b"\xff\xd8\xff"), "el cuadro enviado no es JPEG"
+        with Image.open(io.BytesIO(payload)) as img:
+            assert img.format == "JPEG"
