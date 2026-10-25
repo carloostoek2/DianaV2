@@ -49,6 +49,9 @@ build/
 .atl/
 reasonix.toml
 
+# Bundle local del harness de agentes (ECC): herramientas del entorno, no del producto.
+ECC/
+
 # Wiki knowledge graph — scratch intermedio (el knowledge-graph.json final SÍ se commitea)
 wiki/.ua/intermediate/
 
@@ -67,6 +70,10 @@ wiki/.ua/intermediate/
 
 # Supabase CLI local (config de desarrollo local, no del producto)
 supabase/
+
+# Exportación de trazas LLM: contiene datos personales. Por defecto cae fuera
+# del repo (~/diana-exports); este patrón protege un --out explícito adentro.
+docs/prompt-llm-turno-*.md
 
 # Paquete del kit de auditoría — lo mantiene la dueña por fuera del repo. El repo
 # es la fuente de verdad: del kit se versionan sus documentos (skill, agentes,
