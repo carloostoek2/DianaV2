@@ -138,6 +138,16 @@ CATALOGO: tuple[BanderaNucleo, ...] = (
     BanderaNucleo(
         campo="feature_recontact_enabled",
         que_se_pierde="Los VIP que se quedan callados no reciben recontacto.",
+        apagada_a_proposito=ApagadoDeclarado(
+            desde=date(2026, 10, 25),
+            motivo=(
+                "Decision de producto: el recontacto por silencio no se usa. No esta apagada "
+                "por un defecto ni por una condicion pendiente."
+            ),
+            condicion_para_reactivar=(
+                "Solo si la dueña decide volver a usarlo. No hay condicion tecnica pendiente."
+            ),
+        ),
     ),
     BanderaNucleo(
         campo="feature_contract_watchdog_enabled",

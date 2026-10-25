@@ -436,6 +436,88 @@ async def test_v7_descarta_turnos_de_sandbox(session_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
+# V4 — entregas VIP sin rastro en el historial del chat
+# ---------------------------------------------------------------------------
+async def _correr_vigilante(session_factory, vigilante_id: str) -> list[dict[str, Any]]:
+    """Corre el SQL de un vigilante que NO está activo, tal como está en el repo.
+
+    V4 sigue `no-activado`, así que el servicio no lo ejecuta: sus pruebas leen el
+    bloque real de `audit/vigilantes.sql` (la fuente única) y lo corren en solo
+    lectura, para que el ajuste quede probado antes de encenderlo.
+    """
+    bloque = next(v for v in leer_vigilantes() if v["id"] == vigilante_id)
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(text("SET TRANSACTION READ ONLY"))
+            filas = (await session.execute(text(bloque["sql"]))).mappings().all()
+    return [dict(fila) for fila in filas]
+
+
+async def _seed_owner_history(session_factory, *, chat_id: int, cuando: datetime) -> None:
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "insert into message_history (chat_id, role, text, timestamp) "
+                "values (:chat, 'owner', 'entrega de prueba', :cuando)"
+            ),
+            {"chat": chat_id, "cuando": cuando},
+        )
+        await session.commit()
+
+
+async def test_v4_avisa_de_una_entrega_vip_sin_historial(session_factory) -> None:
+    vip_id = await _seed_vip(session_factory, etiqueta="v4-hueco")
+    chat_id = 994000000 + (uuid.uuid4().int % 9_000_000)
+    turn_id = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered")
+
+    filas = await _correr_vigilante(session_factory, "V4")
+
+    assert turn_id in {fila["turno"] for fila in filas}, (
+        f"V4 no vio la entrega VIP que quedó sin historial: {filas}"
+    )
+
+
+async def test_v4_no_avisa_por_una_promocion_a_un_chat_que_no_es_vip(session_factory) -> None:
+    """El hueco por diseño: el camino de promoción entrega y no escribe historial."""
+    chat_id = 994100000 + (uuid.uuid4().int % 9_000_000)
+    turn_id = await _seed_turn(session_factory, vip_id=None, chat_id=chat_id, status="delivered")
+
+    filas = await _correr_vigilante(session_factory, "V4")
+
+    assert turn_id not in {fila["turno"] for fila in filas}, (
+        "V4 contó una promoción a un chat que no es VIP: ese hueco es diseño, "
+        f"y avisarlo todos los días entrena a ignorar el aviso: {filas}"
+    )
+
+
+async def test_v4_no_avisa_cuando_el_historial_si_quedo(session_factory) -> None:
+    vip_id = await _seed_vip(session_factory, etiqueta="v4-ok")
+    chat_id = 994200000 + (uuid.uuid4().int % 9_000_000)
+    turn_id = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered")
+    await _seed_owner_history(session_factory, chat_id=chat_id, cuando=datetime.now(UTC))
+
+    filas = await _correr_vigilante(session_factory, "V4")
+
+    assert turn_id not in {fila["turno"] for fila in filas}, (
+        "V4 avisó de un turno VIP que sí dejó su fila de historial"
+    )
+
+
+async def test_v4_descarta_los_turnos_de_sandbox(session_factory) -> None:
+    vip_id = await _seed_vip(session_factory, etiqueta="v4-sandbox")
+    chat_id = 994300000 + (uuid.uuid4().int % 9_000_000)
+    turn_id = await _seed_turn(
+        session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered", is_sandbox=True
+    )
+
+    filas = await _correr_vigilante(session_factory, "V4")
+
+    assert turn_id not in {fila["turno"] for fila in filas}, (
+        "V4 avisó de una sesión de prueba: no se guarda a propósito"
+    )
+
+
+# ---------------------------------------------------------------------------
 # El aviso y sus fallas propias
 # ---------------------------------------------------------------------------
 

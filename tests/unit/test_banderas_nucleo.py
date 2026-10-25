@@ -254,11 +254,32 @@ def test_bloque_de_health_cuenta_y_nombra() -> None:
     estado = estado_banderas(_valores(feature_memory_enabled=True))
     bloque = estado.para_health()
 
+    sin_declarar = [b.variable for b in estado.apagadas_sin_declarar]
+
     assert bloque["ok"] is False
     assert bloque["nucleo_total"] == len(CATALOGO)
     assert bloque["apagadas_sin_declarar"] == len(estado.apagadas_sin_declarar)
     assert isinstance(bloque["sin_declarar"], list)
-    assert "FEATURE_RECONTACT_ENABLED" in bloque["sin_declarar"]
+    assert bloque["sin_declarar"] == sin_declarar
+    assert sin_declarar, "la foto tiene que traer apagadas sin declarar que nombrar"
+    # Una apagada a proposito no es una advertencia: el bloque no la nombra.
+    assert "FEATURE_RECONTACT_ENABLED" not in bloque["sin_declarar"]
+    assert "FEATURE_HISTORY_REIMPORT_ENABLED" not in bloque["sin_declarar"]
+
+
+def test_el_recontacto_esta_declarado_como_apagado_a_proposito() -> None:
+    """Es una decision de producto: no tiene que generar advertencia al arrancar."""
+    estado = estado_banderas(_valores())
+
+    declaradas = {b.variable: b for b in estado.apagadas_declaradas}
+    assert "FEATURE_RECONTACT_ENABLED" in declaradas
+    assert "FEATURE_RECONTACT_ENABLED" not in {
+        b.variable for b in estado.apagadas_sin_declarar
+    }
+    declaracion = declaradas["FEATURE_RECONTACT_ENABLED"].declaracion
+    assert declaracion is not None
+    assert declaracion.motivo
+    assert declaracion.condicion_para_reactivar
 
 
 def test_bloque_de_health_no_lleva_secretos() -> None:

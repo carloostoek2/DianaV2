@@ -92,18 +92,27 @@ WHERE t.status IN ('delivered','escalated') AND o.owner_outcome IS NULL
   )
 ORDER BY t.created_at DESC;
 
--- V4 | no-activado | C-HIST-01 | entregas sin rastro en el historial del chat
--- NO se activa todavía: hoy devuelve 18 y la cláusula (a) del contrato sigue en E0
--- (nunca verificada con efecto real). Antes de encenderlo hay que separar el hueco
--- por diseño (sandbox) del hueco real, en la ronda de C-HIST-01. El sandbox ya se
--- descarta con `NOT t.is_sandbox` (migración 037); falta medir el resto.
-SELECT count(*) AS entregas_sin_historial, 0 AS alerta
+-- V4 | no-activado | C-HIST-01 | entregas VIP sin rastro en el historial del chat
+-- Ajustado el 2026-10-25. Medido contra la base real (14 días): las entregas sin
+-- historial eran 27 y TODAS eran promociones a chats que no son VIP (canal de
+-- Atención, `vip_id` nulo). Ese camino entrega sin escribir historial por diseño
+-- —`tests/audit/test_C_HIST_01_captura.py` (a4) lo prueba con efecto real—, así que
+-- contarlas convertía un diseño en una falla diaria. Con el filtro `vip_id IS NOT
+-- NULL` la consulta da 0 en 14 días: ningún turno VIP entregado quedó sin historial.
+-- El sandbox se descarta con `NOT t.is_sandbox` (migración 037), igual que V2/V3/V7.
+-- Sigue `no-activado` hasta que la dueña decida encenderlo.
+SELECT t.id::text AS turno, t.chat_id AS chat,
+       t.created_at AS cuando, 1 AS alerta
 FROM turns t
 WHERE t.status = 'delivered'
+  AND t.vip_id IS NOT NULL
   AND NOT t.is_sandbox
   AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '10 minutes'
-  AND NOT EXISTS (SELECT 1 FROM message_history m
-                  WHERE m.chat_id = t.chat_id AND m.role = 'owner' AND m.timestamp >= t.created_at);
+  AND NOT EXISTS (
+      SELECT 1 FROM message_history m
+      WHERE m.chat_id = t.chat_id AND m.role = 'owner' AND m.timestamp >= t.created_at
+  )
+ORDER BY t.created_at DESC;
 
 -- V5 | no-activado | C-HIST-01 | recarga de historial detenida
 -- NO se activa: la recarga de VIP existentes está apagada A PROPÓSITO desde el

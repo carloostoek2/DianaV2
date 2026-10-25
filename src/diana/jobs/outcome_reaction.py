@@ -27,6 +27,26 @@ logger = logging.getLogger("diana.jobs")
 __all__ = ["OutcomeReactionJob", "first_vip_followup_text", "run_outcome_reaction_cycle"]
 
 
+def _as_utc_datetime(value: Any) -> datetime | None:
+    """Normalize a history timestamp to an aware UTC datetime.
+
+    ``message_history.get_recent`` returns the timestamp as ISO text
+    (``rows_to_recent_messages`` serializes it with ``isoformat``), not a
+    ``datetime``. Requiring a ``datetime`` dropped every row, so the window
+    always closed as ``silence`` even when the VIP had answered. Accept both
+    shapes so a change in the history layer cannot re-break this silently.
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return None
+
+
 def first_vip_followup_text(
     history_rows: list[dict],
     *,
@@ -35,10 +55,12 @@ def first_vip_followup_text(
 ) -> str | None:
     """Earliest VIP message after ``after`` within ``window_seconds``.
 
-    ``history_rows`` is ``message_history.get_recent`` output (newest first).
-    Returns the text of the FIRST (oldest within the window) VIP message, or
-    None when the VIP stayed silent.
+    ``history_rows`` is ``message_history.get_recent`` output (chronological,
+    oldest first). Returns the text of the FIRST (oldest within the window) VIP
+    message, or None when the VIP stayed silent.
     """
+    if after.tzinfo is None:
+        after = after.replace(tzinfo=UTC)
     window_end = after + timedelta(seconds=max(0, window_seconds))
     candidates: list[tuple[datetime, str]] = []
     for row in history_rows:
@@ -49,8 +71,8 @@ def first_vip_followup_text(
         text = str(row.get("text") or "").strip()
         if not text:
             continue
-        ts = row.get("timestamp")
-        if not isinstance(ts, datetime):
+        ts = _as_utc_datetime(row.get("timestamp"))
+        if ts is None:
             continue
         if ts <= after or ts > window_end:
             continue

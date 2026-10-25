@@ -627,20 +627,6 @@ async def test_job_de_respaldo_marca_silencio_cuando_el_vip_no_contesta(
 # ---------------------------------------------------------------------------
 # (c3) reacción por el job de respaldo — respuesta que nunca pasó por el pipeline
 # ---------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "DEFECTO ABIERTO (medido 2026-10-10): la rama de clasificación del job de "
-        "respaldo no puede dispararse. `first_vip_followup_text` "
-        "(src/diana/jobs/outcome_reaction.py) descarta toda fila cuyo `timestamp` "
-        "no sea `datetime`, pero el historial real "
-        "(`rows_to_recent_messages`, src/diana/infrastructure/db/repositories/"
-        "history.py:33) entrega el timestamp como texto ISO. Resultado: la "
-        "respuesta del VIP nunca se clasifica y la fila se cierra como 'silence'. "
-        "Evidencia de producción: 7 días de `outcome_reaction_cycle_complete` dan "
-        "48 filas procesadas y 0 clasificaciones ('reactions': 0 en cada tick)."
-    ),
-)
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_job_de_respaldo_clasifica_la_respuesta_que_no_paso_por_el_pipeline(
@@ -694,10 +680,14 @@ async def test_job_de_respaldo_clasifica_la_respuesta_que_no_paso_por_el_pipelin
             "la respuesta sembrada no quedó visible para el job en el historial: "
             f"{visibles[:3]}"
         )
+        # El historial entrega la marca como texto ISO (`rows_to_recent_messages`),
+        # no como `datetime`: exigir un `datetime` era el defecto que dejaba esta
+        # rama inalcanzable (el job descartaba todas las filas y cerraba 'silence').
         marca = sembrada[0].get("timestamp")
-        assert isinstance(marca, datetime), f"marca de tiempo inservible: {marca!r}"
-        assert marca > ancla, (
-            f"la respuesta sembrada quedó ANTES de la entrega: {marca} <= {ancla}"
+        assert isinstance(marca, str), f"marca de tiempo inservible: {marca!r}"
+        marca_dt = datetime.fromisoformat(marca)
+        assert marca_dt > ancla, (
+            f"la respuesta sembrada quedó ANTES de la entrega: {marca_dt} <= {ancla}"
         )
 
         informe = await run_outcome_reaction_cycle(
