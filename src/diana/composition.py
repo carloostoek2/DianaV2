@@ -1445,6 +1445,7 @@ def build_app(
         trust_budget=vip_trust_budget_repo,
         vips=vips,
         decider=shadow_decider,
+        autonomous_master_on=settings.feature_autonomous_mode,
         thresholds=ShadowThresholds(
             trust_min=settings.trust_budget_threshold,
             classifier_confidence_min=settings.classifier_confidence_min,

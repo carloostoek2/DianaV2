@@ -1134,8 +1134,8 @@ MENU_CATEGORY_TEXT: dict[str, str] = {
         "puede empezar a responder sola con cada VIP: la coincidencia entre "
         "la simulación del Decisor y lo que tú aprobaste, la confianza por "
         "VIP y el botón para activar el envío autónomo cuando se cumplen "
-        "las condiciones. El interruptor maestro sigue apagado — activar "
-        "solo recomienda y habilita por VIP."
+        "las condiciones. Activar habilita a ese VIP; si el interruptor "
+        "maestro del sistema está apagado, nada se envía solo aunque actives."
     ),
     "config": "⚙️ Configuración\n\nControla el comportamiento del bot. Por ahora solo está disponible el Modo Entrenamiento.",
     "personalidad": (

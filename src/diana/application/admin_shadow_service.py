@@ -118,12 +118,14 @@ class AdminShadowService:
         vips: VipNameReader,
         thresholds: ShadowThresholds | None = None,
         decider: Any | None = None,
+        autonomous_master_on: bool = False,
     ) -> None:
         self._turn_categories = turn_categories
         self._trust_budget = trust_budget
         self._vips = vips
         self._thresholds = thresholds or ShadowThresholds()
         self._decider = decider
+        self._autonomous_master_on = autonomous_master_on
 
     async def render_summary(self) -> str:
         """Global view: totals, 7-day trend and thresholds."""
@@ -388,10 +390,17 @@ class AdminShadowService:
                 f"   Confianza {trust:.2f} vs {trust_min:.2f}: {mark} "
                 "(así se va abriendo la autonomía por VIP)"
             )
-        lines.append(
-            "   Nota: el interruptor maestro está apagado — nada se "
-            "envía sola hoy, solo se mide."
-        )
+        if self._autonomous_master_on:
+            note = (
+                "   Nota: el interruptor maestro está encendido — solo los VIP "
+                "activados en 🧭 Camino a la autonomía envían solos."
+            )
+        else:
+            note = (
+                "   Nota: el interruptor maestro está apagado — nada se "
+                "envía sola hoy, solo se mide."
+            )
+        lines.append(note)
         return lines
 
 

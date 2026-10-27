@@ -87,7 +87,8 @@ class Settings(BaseSettings):
     delivery_max_send_attempts: Annotated[int, Field(ge=1, le=10)] = 3
     delivery_retry_backoff_seconds: Annotated[float, Field(gt=0)] = 0.05
     # Human-like pre-send wait (REQ-HUM-01/04). Seconds.
-    # Supervised: fixed 2 min (min=max). Autonomous: randomized 3–8 min.
+    # Defaults: supervised fixed 2 min (min=max), autonomous randomized 3–8 min.
+    # The operating values are the ones written in the .env, not these.
     delivery_supervised_delay_min: Annotated[float, Field(gt=0)] = 120.0
     delivery_supervised_delay_max: Annotated[float, Field(gt=0)] = 120.0
     delivery_autonomous_delay_min: Annotated[float, Field(gt=0)] = 180.0

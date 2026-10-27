@@ -156,6 +156,7 @@ def _build(
     thresholds=None,
     fail=False,
     decider=None,
+    autonomous_master_on=False,
 ):
     return AdminShadowService(
         turn_categories=_FakeTurnCategories(
@@ -165,6 +166,7 @@ def _build(
         vips=_FakeVips(vips=vips),
         thresholds=thresholds,
         decider=decider or _shadow_decider(),
+        autonomous_master_on=autonomous_master_on,
     )
 
 
@@ -258,6 +260,21 @@ async def test_decisions_would_send_when_all_thresholds_met() -> None:
     assert "Confianza 0.95 vs 0.90: ✅ cumple" in body
     assert "el interruptor maestro está apagado" in body
     assert 'Borrador generado: "Hola, ¿en qué te ayudo?"' in body
+
+
+@pytest.mark.asyncio
+async def test_decisions_note_reflects_master_switch_on() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[_decision_row(vip_id)],
+        trust=[_trust(vip_id, category="fatico", score=0.95, auton=9)],
+        vips=[_vip(vip_id, name="Hug Vbs")],
+        autonomous_master_on=True,
+    )
+    body, _ = await service.render_decisions()
+    assert "el interruptor maestro está encendido" in body
+    assert "solo los VIP activados" in body
+    assert "el interruptor maestro está apagado" not in body
 
 
 @pytest.mark.asyncio
