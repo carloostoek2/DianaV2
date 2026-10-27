@@ -1269,6 +1269,110 @@ async def test_send_ams_supervised_without_auto_send_falls_back_to_approve() -> 
 
 
 @pytest.mark.asyncio
+async def test_per_vip_auto_send_raises_delay_mode_under_global_supervised() -> None:
+    """Product bug 2026-10-27: an activated VIP waited the supervised 2 min.
+
+    The owner activates autonomy per VIP from the panel, so GLOBAL_MODE stays
+    ``supervised``. The per-VIP auto_send must raise the pre-pipeline wait to
+    the autonomous range (6–10 min) — the initial send was going out at 120 s
+    while the Decisor had already decided ``send``/``autonomous_ok``.
+    """
+    store = InMemoryVipStore()
+    vip = await store.add(5300, display_name="Activado")
+    await store._upsert(vip.model_copy(update={"auto_send": True}))  # noqa: SLF001
+    g = _build(
+        FakeDirector(_mode_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+    )
+    mode = await g["orch"]._resolve_effective_mode(vip.id, "vip")  # noqa: SLF001
+    assert mode == "autonomous"
+
+
+@pytest.mark.asyncio
+async def test_per_vip_without_activation_keeps_supervised_delay() -> None:
+    """Non-activated VIP under global supervised keeps the 2 min wait."""
+    store = InMemoryVipStore()
+    vip = await store.add(5301, display_name="Sin activar")
+    g = _build(
+        FakeDirector(_mode_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+    )
+    mode = await g["orch"]._resolve_effective_mode(vip.id, "vip")  # noqa: SLF001
+    assert mode == "supervised"
+
+
+@pytest.mark.asyncio
+async def test_explicit_supervised_profile_blocks_per_vip_auto_send() -> None:
+    """REQ-ATN-05: an explicit profile ``supervised`` is final — AMS untouched."""
+    provider = _FakeCatalogProvider({"vip": {"delivery_mode": "supervised"}})
+    store = InMemoryVipStore()
+    vip = await store.add(5302, display_name="Perfil manda")
+    await store._upsert(vip.model_copy(update={"auto_send": True}))  # noqa: SLF001
+    g = _build(
+        FakeDirector(_mode_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+        persona_catalog_provider=provider,
+    )
+    g["ams"].is_autonomous_enabled = AsyncMock(
+        side_effect=AssertionError("AMS must not be consulted")
+    )
+    mode = await g["orch"]._resolve_effective_mode(vip.id, "vip")  # noqa: SLF001
+    assert mode == "supervised"
+    assert provider.calls == ["vip"]
+
+
+@pytest.mark.asyncio
+async def test_ams_lookup_error_keeps_short_wait_without_aborting() -> None:
+    """A store hiccup on the L2 check must not abort the turn."""
+    store = InMemoryVipStore()
+    vip = await store.add(5304, display_name="DB caída")
+    await store._upsert(vip.model_copy(update={"auto_send": True}))  # noqa: SLF001
+    g = _build(
+        FakeDirector(_mode_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+    )
+    g["ams"].is_autonomous_enabled = AsyncMock(side_effect=RuntimeError("db down"))
+    mode = await g["orch"]._resolve_effective_mode(vip.id, "vip")  # noqa: SLF001
+    assert mode == "supervised"
+
+
+@pytest.mark.asyncio
+async def test_activated_vip_pre_delay_uses_autonomous_wait() -> None:
+    """The wait actually handed to the delay policy is the autonomous one."""
+    store = InMemoryVipStore()
+    vip = await store.add(5303, display_name="Espera larga")
+    await store._upsert(vip.model_copy(update={"auto_send": True}))  # noqa: SLF001
+    policy = _ModeRecordingDelayPolicy()
+    g = _build(
+        FakeDirector(_mode_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+        delay_policy=policy,
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=vip.id))
+    assert policy.modes == ["autonomous"]
+
+
+@pytest.mark.asyncio
 async def test_send_supervised_with_auto_send_delivers() -> None:
     """SUG-1: L1 on + supervised + vip.auto_send → deliver path."""
     decision = Decision(
@@ -4187,6 +4291,18 @@ async def test_atencion_limit_day_boundary_resets() -> None:
 # ---------------------------------------------------------------------------
 # REQ-ATN-05 — per-channel delivery_mode profile config
 # ---------------------------------------------------------------------------
+
+
+class _ModeRecordingDelayPolicy(FixedDelayPolicy):
+    """Zero-wait delay policy that records the mode it was asked to wait for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.modes: list[str] = []
+
+    def initial_delay_seconds(self, mode: str = "supervised") -> float:
+        self.modes.append(mode)
+        return 0.0
 
 
 class _FakeCatalogProvider:

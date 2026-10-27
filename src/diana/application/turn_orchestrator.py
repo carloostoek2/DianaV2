@@ -367,24 +367,45 @@ class TurnOrchestrator:
         """Resolve the mode used for the pre-pipeline delay.
 
         Per-channel profile ``delivery_mode`` overrides the global mode when the
-        catalog is available and the field is present (REQ-ATN-05). Autonomous
-        mode must then pass both L1 (feature flag) and L2 (global mode or
+        catalog is available and the field is present (REQ-ATN-05); an explicit
+        profile value is final (a supervised profile beats a global autonomous
+        one). Without a profile value the global mode is only the floor: the
+        per-VIP auto_send activation raises it, because the owner turns
+        autonomy on per VIP from the panel and GLOBAL_MODE stays supervised.
+        Without that rule an activated VIP is answered on the supervised wait.
+
+        Autonomous mode must pass both L1 (feature flag) and L2 (global mode or
         per-VIP auto_send) gates. Falls back to supervised otherwise. The AMS
         ``vip_id=None → supervised`` guard stays the final safety net.
         """
         mode = self._delivery_mode
+        profile_mode: str | None = None
         if self._catalog_provider is not None:
             try:
                 catalog = await self._catalog_provider.get_catalog(channel_type)
             except Exception:
                 catalog = None
             if catalog is not None:
-                mode = catalog.get("delivery_mode", mode)
-        if mode != "autonomous":
+                profile_mode = catalog.get("delivery_mode")
+                if profile_mode is not None:
+                    mode = profile_mode
+        # Explicit profile wins outright (REQ-ATN-05) — never consult AMS.
+        if profile_mode is not None and profile_mode != "autonomous":
+            return mode
+        # fake_delivery is a delivery-only mode: no wait to resolve.
+        if mode not in ("autonomous", "supervised"):
             return mode
         if self._autonomous_mode is None:
-            return "supervised"
-        enabled = await self._autonomous_mode.is_autonomous_enabled(vip_id)
+            return "supervised" if mode == "autonomous" else mode
+        try:
+            enabled = await self._autonomous_mode.is_autonomous_enabled(vip_id)
+        except Exception:
+            # A store hiccup must not abort the turn: keep the shorter wait.
+            logger.exception(
+                "effective_mode_autonomous_check_failed",
+                extra={"vip_id": str(vip_id), "mode": mode},
+            )
+            return "supervised" if mode == "autonomous" else mode
         return "autonomous" if enabled else "supervised"
 
     def _should_enforce_daily_limit(self, incoming: VipInboundMessage) -> bool:
