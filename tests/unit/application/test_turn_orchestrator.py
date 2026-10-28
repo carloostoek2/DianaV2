@@ -1402,6 +1402,95 @@ async def test_send_supervised_with_auto_send_delivers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_media_unverified_never_auto_sends() -> None:
+    """Regla de producto 2026-10-27: media sin describir → decide la dueña.
+
+    El VIP está activado y el Decisor decide ``send``, pero la imagen llegó sin
+    descripción (Gemini sin respuesta / filtro de privacidad): el turno cae en
+    la cola de aprobación con la foto adjunta y el motivo explícito.
+    """
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="borrador sin ver la imagen",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(5400, display_name="Imagen sin ver")
+    await store._upsert(vip.model_copy(update={"auto_send": True}))  # noqa: SLF001
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=vip.id, media_unverified=True, photo_file_id="ph-1")
+    )
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    appr = await g["approvals"].get_by_turn(turn_id)
+    assert appr is not None
+    assert appr.cognitive_summary == "media_vision_unverified"
+    assert g["notifier"].drafts[0].reason == "media_vision_unverified"
+
+
+@pytest.mark.asyncio
+async def test_media_unverified_blocks_phatic_template_send() -> None:
+    """El carril de plantilla tampoco se salta la regla de media sin ver."""
+    decision = Decision(
+        action="send",
+        reason="phatic_auto_send",
+        evaluation=_eval(),
+        draft_text="Holaa",
+    )
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        feature_phatic_auto_send=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+    )
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(media_unverified=True, photo_file_id="ph-2")
+    )
+    assert g["actuator"].send_count() == 0
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert g["notifier"].drafts[0].reason == "media_vision_unverified"
+
+
+@pytest.mark.asyncio
+async def test_verified_media_still_auto_sends() -> None:
+    """Control: con la imagen descrita, el envío automático sigue igual."""
+    decision = Decision(
+        action="send",
+        reason="autonomous_ok",
+        evaluation=_eval(),
+        draft_text="comentario de la foto",
+    )
+    store = InMemoryVipStore()
+    vip = await store.add(5401, display_name="Imagen vista")
+    await store._upsert(vip.model_copy(update={"auto_send": True}))  # noqa: SLF001
+    g = _build(
+        FakeDirector(decision),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="supervised",
+        delivery_mode="supervised",
+        vip_store=store,
+    )
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=vip.id, media_unverified=False, photo_file_id="ph-3")
+    )
+    assert g["actuator"].send_count() >= 1
+
+
+@pytest.mark.asyncio
 async def test_send_frozen_after_prepare_no_deliver() -> None:
     """BUG-1: freeze between prepare and deliver fails closed, no VIP send."""
     decision = Decision(

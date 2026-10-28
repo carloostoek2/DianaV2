@@ -348,6 +348,11 @@ class VipInboundMessage(BaseModel):
     # Image vision: Telegram file_id of the inbound photo (largest size) so the
     # owner DM can attach the same photo to the approval. None = no photo.
     photo_file_id: str | None = None
+    # True when the message carried a photo/video that produced no description
+    # (vision off, local privacy filter marked it sensitive, or the provider
+    # failed). Such a turn is never auto-sent: the owner decides (product rule,
+    # 2026-10-27 — «si no se puede ver una imagen, que se escale»).
+    media_unverified: bool = False
     # F4: channel type ("vip" | "atencion"). Set by AuthMiddleware for the
     # general-mode path; default keeps the VIP pipeline unchanged.
     channel_type: Literal["vip", "atencion"] = "vip"

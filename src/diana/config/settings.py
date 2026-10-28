@@ -79,7 +79,10 @@ class Settings(BaseSettings):
     # gemini-2.5-flash is no longer available to new accounts (404 since
     # 2026-08); gemini-3.6-flash is Google's current flash vision model.
     gemini_vision_model: str = "gemini-3.6-flash"
-    gemini_vision_timeout_s: Annotated[float, Field(gt=0)] = 15.0
+    # Plazo por intento de descripción de una foto (el describer reintenta una
+    # vez). 15 s dejaba ~1 de cada 4 fotos sin describir; el servicio responde
+    # en 2-5 s cuando está sano.
+    gemini_vision_timeout_s: Annotated[float, Field(gt=0)] = 30.0
     # Plazo para describir un video: subir el archivo y recorrerlo tarda más
     # que una foto.
     gemini_video_timeout_s: Annotated[float, Field(gt=0)] = 45.0

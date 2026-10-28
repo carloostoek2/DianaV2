@@ -221,6 +221,8 @@ business_message
       - Si modo autónomo activo pero umbrales no superados → approve (fallback)
       - Si no → approve
   → Si action = "send":
+      → Si el turno trae media sin describir → NO se envía: cola de la dueña
+        (reason media_vision_unverified; ver §4.22)
       → BehaviorEngine.deliver() directamente
       → Notificación a la dueña (si alguna dimensión está cerca del umbral)
       → Learning post-turno (registra traza, Staging si corrección posterior)
@@ -645,6 +647,20 @@ FEATURE_IMAGE_VISION_ENABLED (flag OFF = sin descarga ni análisis; ver 4.23); e
 Decisor no interviene en esta decisión (el filtro es pre-pipeline, capa de
 aplicación + Telegram I/O).
 
+**Regla de media sin ver (decisión de producto, 2026-10-27):** si un mensaje
+trae una foto o un video y quedó SIN descripción — visión apagada, filtro local
+de privacidad (sensible/identidad) o el proveedor no respondió (fail-open) — el
+turno NUNCA se envía solo. `VipInboundMessage.media_unverified` viaja desde el
+handler de negocio y el orquestador degrada la decisión a la cola de la dueña
+(reason `media_vision_unverified`, con la foto adjunta cuando aplica), antes del
+gate de autonomía y también en el carril de plantilla de saludo. Motivo: el
+modelo respondería sin saber qué mostraba la media y el VIP recibiría una
+respuesta a ciegas, sin que la dueña lo viera. En supervisado no cambia nada
+(ya iba a su cola). La marca es del turno, no del texto: no se escribe en la DB
+ni alimenta memorias/ejemplos. Antes de darse por vencida, la descripción de una
+foto se reintenta UNA vez (plazo por intento `GEMINI_VISION_TIMEOUT_S`, 30 s):
+un tropiezo de red no debe costar la imagen.
+
 ---
 
 4.23 Tags de media inbound y álbum (sin flag)
@@ -756,7 +772,9 @@ enmascarado NO existe para video, por eso cualquier dato fuerte lo deja fuera
 del servidor; fail-closed ante ffmpeg ausente, fotogramas no extraíbles u OCR no
 disponible; la imagen de identidad NUNCA sale; el video y los fotogramas no se
 guardan en DB ni en disco (solo los bytes en memoria); el Decisor no interviene
-(el filtro es pre-pipeline, capa de aplicación + Telegram I/O).
+(el filtro es pre-pipeline, capa de aplicación + Telegram I/O); un video que
+quedó sin descripción sigue la misma regla que las fotos (§4.22): el turno
+nunca se envía solo.
 
 Límite conocido: el video todavía NO se adjunta al mensaje de aprobación de la
 dueña (`photo_file_id` sigue siendo solo para fotos), así que ella ve la

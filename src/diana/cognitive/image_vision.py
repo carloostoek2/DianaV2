@@ -38,6 +38,12 @@ _SYSTEM_PROMPT = (
 
 _MAX_CAPTION_CHARS = 400
 
+# Un tropiezo de red no debe dejar la foto sin describir: el primer intento se
+# repite una vez. Sin reintento, ~1 de cada 4 fotos reales llegaba al pipeline
+# como "[imagen]" (medido 2026-10-27: ReadTimeout con el servicio respondiendo
+# en 2–5 s en la siguiente llamada).
+_ATTEMPTS = 2
+
 
 class ImageDescriber:
     """Captions an image via the injected vision provider (fail-open)."""
@@ -51,20 +57,37 @@ class ImageDescriber:
         """Return a short caption, or None when the provider call fails.
 
         None is the fail-open signal: the caller keeps the plain media tag and
-        the turn continues exactly as before the vision feature.
+        the turn continues exactly as before the vision feature. The provider
+        is asked up to ``_ATTEMPTS`` times; a transient stall is retried once
+        instead of giving up on the image.
         """
-        try:
-            text = await self._vision.describe_image(
-                image_bytes,
-                mime_type=mime_type,
-                prompt=_SYSTEM_PROMPT,
-            )
-        except Exception as exc:
-            logger.warning(
-                "image_describer_failed_fail_open",
-                extra={"error_type": type(exc).__name__},
-            )
-            return None
+        text: str | None = None
+        for attempt in range(1, _ATTEMPTS + 1):
+            try:
+                text = await self._vision.describe_image(
+                    image_bytes,
+                    mime_type=mime_type,
+                    prompt=_SYSTEM_PROMPT,
+                )
+                break
+            except Exception as exc:
+                if attempt < _ATTEMPTS:
+                    logger.warning(
+                        "image_describer_retrying",
+                        extra={
+                            "error_type": type(exc).__name__,
+                            "attempt": attempt,
+                        },
+                    )
+                    continue
+                logger.warning(
+                    "image_describer_failed_fail_open",
+                    extra={
+                        "error_type": type(exc).__name__,
+                        "attempts": attempt,
+                    },
+                )
+                return None
         caption = (text or "").strip()
         if not caption:
             return None

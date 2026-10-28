@@ -19,6 +19,21 @@ from diana.application.video_vision_service import VideoVisionResult
 SENSITIVE_MARK = "⚠️ contiene información sensible (no analizada)"
 
 
+def media_without_description(
+    result: ImageVisionResult | VideoVisionResult,
+) -> bool:
+    """True cuando la media llegó sin descripción (nada que leer ni contar).
+
+    Cubre los tres caminos en que el modelo no puede saber qué mostraba la
+    media: la visión estaba apagada, el filtro local la marcó sensible (nunca
+    salió del servidor) o el proveedor no respondió (fail-open). Es la señal
+    que impide que un turno con media no verificada se envíe solo.
+    """
+    return not (
+        result.enabled and not result.sensitive and bool(result.description)
+    )
+
+
 def compose_media_text(
     result: ImageVisionResult | VideoVisionResult,
     *,
@@ -39,4 +54,4 @@ def compose_media_text(
     return text
 
 
-__all__ = ["SENSITIVE_MARK", "compose_media_text"]
+__all__ = ["SENSITIVE_MARK", "compose_media_text", "media_without_description"]

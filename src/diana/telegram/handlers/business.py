@@ -16,7 +16,11 @@ from diana.application.image_vision_service import (
     ImageVisionService,
     record_vision_activity,
 )
-from diana.application.media_text import SENSITIVE_MARK, compose_media_text
+from diana.application.media_text import (
+    SENSITIVE_MARK,
+    compose_media_text,
+    media_without_description,
+)
 from diana.application.ports import VipInboundMessage
 from diana.application.turn_orchestrator import TurnOrchestrator
 from diana.application.video_vision_service import VideoVisionService
@@ -54,8 +58,8 @@ async def _photo_text_and_id(
     tag: str,
     caption: str,
     plain: str,
-) -> tuple[str, str | None]:
-    """Describe la foto entrante → (texto, file_id para el mensaje a la dueña)."""
+) -> tuple[str, str | None, bool]:
+    """Describe la foto entrante → (texto, file_id para la dueña, sin describir)."""
     file_id = message.photo[-1].file_id  # type: ignore[index]
     try:
         image_bytes = await downloader(file_id)
@@ -80,8 +84,13 @@ async def _photo_text_and_id(
                 caption=caption,
             ),
             file_id,
+            True,
         )
-    return compose_media_text(result, tag=tag, caption=caption), file_id
+    return (
+        compose_media_text(result, tag=tag, caption=caption),
+        file_id,
+        media_without_description(result),
+    )
 
 
 async def _video_text(
@@ -92,18 +101,18 @@ async def _video_text(
     tag: str,
     caption: str,
     plain: str,
-) -> str:
-    """Describe el video entrante, o devuelve la etiqueta plana de media."""
+) -> tuple[str, bool]:
+    """Describe el video entrante → (texto, sin describir)."""
     video = message.video or message.video_note
     if video is None:
-        return plain
+        return plain, True
     declared = getattr(video, "file_size", None)
     if isinstance(declared, int) and declared > _MAX_VIDEO_BYTES:
         logger.info(
             "video_vision_skipped_too_large",
             extra={"file_size": declared},
         )
-        return plain
+        return plain, True
     try:
         video_bytes = await downloader(video.file_id)
         mime_type = (getattr(video, "mime_type", None) or _DEFAULT_VIDEO_MIME).strip()
@@ -115,8 +124,11 @@ async def _video_text(
             extra={"error_type": type(exc).__name__},
         )
         record_vision_activity("video", "failed")
-        return plain
-    return compose_media_text(result, tag=tag, caption=caption)
+        return plain, True
+    return (
+        compose_media_text(result, tag=tag, caption=caption),
+        media_without_description(result),
+    )
 
 
 async def _vision_text_and_media(
@@ -125,13 +137,17 @@ async def _vision_text_and_media(
     vision: ImageVisionService | None,
     video_vision: VideoVisionService | None,
     downloader: MediaDownloader,
-) -> tuple[str, str | None]:
-    """Describe la media entrante (o la marca sensible) → (texto, foto_file_id).
+) -> tuple[str, str | None, bool]:
+    """Describe la media entrante → (texto, foto_file_id, sin describir).
 
     Se llama solo cuando la visión correspondiente está encendida. Nunca
     levanta excepciones: cualquier fallo vuelve a la etiqueta plana de media.
     La foto viaja además a la dueña en el mensaje de aprobación
     (``photo_file_id``); el video todavía no. Los bytes nunca se guardan.
+
+    El tercer valor dice si la media quedó sin describir: la visión estaba
+    apagada, el filtro local la marcó sensible o el proveedor no respondió.
+    Ese turno nunca se envía solo (decisión de producto 2026-10-27).
     """
     caption = (message.caption or "").strip()
     # Etiqueta base consciente de álbum (``imagen`` / ``imagen parte de
@@ -149,7 +165,7 @@ async def _vision_text_and_media(
             plain=plain,
         )
     if (message.video or message.video_note) and video_vision is not None:
-        text = await _video_text(
+        text, unverified = await _video_text(
             message,
             video_vision=video_vision,
             downloader=downloader,
@@ -157,8 +173,10 @@ async def _vision_text_and_media(
             caption=caption,
             plain=plain,
         )
-        return text, None
-    return inbound_text(message), None
+        return text, None, unverified
+    # Visión apagada para este tipo de media: la etiqueta plana viaja igual,
+    # pero el turno no puede decidirse solo porque el modelo no vio nada.
+    return inbound_text(message), None, bool(media_tag(message))
 
 
 def build_business_router(
@@ -192,18 +210,22 @@ def build_business_router(
     ) -> VipInboundMessage:
         text = inbound_text(message)
         photo_file_id: str | None = None
+        media_unverified = False
         image_on = image_vision is not None and image_vision.enabled
         video_on = video_vision is not None and video_vision.enabled
         if media_downloader is not None and (image_on or video_on):
             # Camino de visión solo con la función encendida: apagada se
             # conserva la etiqueta de media, sin descarga ni análisis
             # (regla de oro AGENTS §1).
-            text, photo_file_id = await _vision_text_and_media(
+            text, photo_file_id, media_unverified = await _vision_text_and_media(
                 message,
                 vision=image_vision if image_on else None,
                 video_vision=video_vision if video_on else None,
                 downloader=media_downloader,
             )
+        else:
+            # Sin camino de visión: si hay media, nadie la pudo ver.
+            media_unverified = bool(media_tag(message))
         return VipInboundMessage(
             chat_id=message.chat.id,
             text=text,
@@ -214,6 +236,7 @@ def build_business_router(
             channel_type=channel_type,
             counts_toward_limit=atencion_limit_counted,
             photo_file_id=photo_file_id,
+            media_unverified=media_unverified,
         )
 
     @router.business_message()

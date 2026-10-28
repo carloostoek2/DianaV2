@@ -2574,7 +2574,11 @@ class TurnOrchestrator:
                 )
                 raise
         elif decision.action == "send":
-            if is_phatic_template_reason(decision.reason):
+            # Media sin describir nunca usa el carril de plantilla: el turno
+            # cae en la cola de la dueña con la foto adjunta.
+            if is_phatic_template_reason(decision.reason) and not (
+                incoming.media_unverified
+            ):
                 job = await self._prepare_phatic_template_send(
                     turn_id=turn_id,
                     turn_ctx=turn_ctx,
@@ -2868,6 +2872,35 @@ class TurnOrchestrator:
         incoming: VipInboundMessage,
     ) -> _AutonomousDeliverJob | None:
         """Gate AMS + frozen/empty; return deliver job or complete under lock."""
+        if incoming.media_unverified:
+            # Regla de producto (2026-10-27): si no se pudo ver la imagen o el
+            # video (visión apagada, filtro de privacidad o proveedor sin
+            # respuesta), el turno NUNCA se envía solo — la dueña decide,
+            # igual que en supervisado. Va antes del gate de autonomía para
+            # que la regla no dependa del cableado.
+            logger.info(
+                "autonomous_media_unverified_demoted",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": incoming.chat_id,
+                    "vip_id": str(incoming.vip_id) if incoming.vip_id else None,
+                },
+            )
+            demoted = decision.model_copy(
+                update={
+                    "action": "approve",
+                    "reason": "media_vision_unverified",
+                }
+            )
+            await self._coordinator.transition(
+                turn_id, TurnStatus.PENDING_APPROVAL
+            )
+            await self._admin.send_draft_for_approval(
+                turn_ctx, demoted, turn_id,
+                **(await self._doctrine_display_kwargs(turn_id)),
+            )
+            return None
+
         if self._autonomous_mode is None:
             logger.error(
                 "autonomous_not_wired",

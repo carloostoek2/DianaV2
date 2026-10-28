@@ -416,3 +416,104 @@ async def test_missing_video_mime_defaults_to_mp4() -> None:
     downloader = AsyncMock(return_value=b"mp4-bytes")
     await _run(_video_message(mime_type=None), None, downloader, video_vision)
     assert video_vision.analyze.await_args.kwargs["mime_type"] == "video/mp4"
+
+
+# --- Media sin describir: el turno nunca se envía solo (2026-10-27) ---------
+
+
+@pytest.mark.asyncio
+async def test_described_photo_is_verified_media() -> None:
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=False, description="un plato")
+    )
+    inbound = await _run(
+        _photo_message(), vision, AsyncMock(return_value=_png_bytes())
+    )
+    assert inbound.media_unverified is False
+
+
+@pytest.mark.asyncio
+async def test_fail_open_photo_is_unverified() -> None:
+    """Gemini sin respuesta (fail-open): la etiqueta plana no es "verificada"."""
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=False, description=None)
+    )
+    inbound = await _run(
+        _photo_message(), vision, AsyncMock(return_value=_png_bytes())
+    )
+    assert inbound.text == "[imagen]"
+    assert inbound.media_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_sensitive_photo_is_unverified() -> None:
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=True, reason="identidad")
+    )
+    inbound = await _run(
+        _photo_message(), vision, AsyncMock(return_value=_png_bytes())
+    )
+    assert inbound.media_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_vision_failure_is_unverified() -> None:
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=False, description="x")
+    )
+    vision.analyze = AsyncMock(side_effect=RuntimeError("boom"))
+    inbound = await _run(
+        _photo_message(), vision, AsyncMock(return_value=_png_bytes())
+    )
+    assert inbound.media_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_vision_disabled_photo_is_unverified() -> None:
+    vision = _FakeVision(ImageVisionResult(enabled=False), enabled=False)
+    inbound = await _run(
+        _photo_message(), vision, AsyncMock(return_value=_png_bytes())
+    )
+    assert inbound.media_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_no_vision_service_photo_is_unverified() -> None:
+    orch, on_business = _router(None, AsyncMock(return_value=_png_bytes()))
+    await on_business(_photo_message())
+    inbound = orch.handle_vip_message.await_args.args[0]
+    assert inbound.media_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_described_video_is_verified_media() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description="un perro")
+    )
+    inbound = await _run(
+        _video_message(), None, AsyncMock(return_value=b"mp4"), video_vision
+    )
+    assert inbound.media_unverified is False
+
+
+@pytest.mark.asyncio
+async def test_video_fail_open_is_unverified() -> None:
+    video_vision = _FakeVideoVision(
+        VideoVisionResult(enabled=True, sensitive=False, description=None)
+    )
+    inbound = await _run(
+        _video_message(), None, AsyncMock(return_value=b"mp4"), video_vision
+    )
+    assert inbound.text == "[video]"
+    assert inbound.media_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_text_message_is_not_unverified_media() -> None:
+    vision = _FakeVision(
+        ImageVisionResult(enabled=True, sensitive=False, description="x")
+    )
+    inbound = await _run(
+        _text_message(), vision, AsyncMock(return_value=_png_bytes())
+    )
+    assert inbound.media_unverified is False

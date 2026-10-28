@@ -60,3 +60,44 @@ async def test_caption_is_truncated_to_max_chars() -> None:
     caption = await describer.describe(b"img", mime_type="image/jpeg")
     assert caption is not None
     assert len(caption) == 400
+
+
+class _FlakyVision:
+    """Falla las primeras ``failures`` llamadas y después responde."""
+
+    def __init__(self, failures: int, text: str = "una taza") -> None:
+        self._failures = failures
+        self._text = text
+        self.calls = 0
+
+    async def describe_image(self, image_bytes, *, mime_type, prompt) -> str:
+        self.calls += 1
+        if self.calls <= self._failures:
+            raise TimeoutError("read timeout")
+        return self._text
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_is_retried_once() -> None:
+    """Un tropiezo de red no deja la foto sin describir."""
+    vision = _FlakyVision(failures=1)
+    describer = ImageDescriber(vision=vision)
+    caption = await describer.describe(b"img", mime_type="image/jpeg")
+    assert caption == "una taza"
+    assert vision.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_second_failure_gives_up_with_two_attempts() -> None:
+    vision = _FlakyVision(failures=99)
+    describer = ImageDescriber(vision=vision)
+    assert await describer.describe(b"img", mime_type="image/jpeg") is None
+    assert vision.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_success_first_time_is_not_retried() -> None:
+    vision = _FlakyVision(failures=0)
+    describer = ImageDescriber(vision=vision)
+    assert await describer.describe(b"img", mime_type="image/jpeg") == "una taza"
+    assert vision.calls == 1
