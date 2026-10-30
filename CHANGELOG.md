@@ -7,6 +7,20 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+El aviso de V3 dice qué chat revisar y a qué hora, y V7 deja de contar el sandbox — 2026-10-20
+
+El aviso diario de los vigilantes no le decía a la dueña qué hacer. V3 («Hay intercambios sin tu decision registrada») no decía en qué chat ni a qué hora había pasado, y la hora salía en UTC. Además, V1, V2, V3 y V7 cerraban con «avísame», pero el bot no procesa respuestas: contestarle no llegaba a nadie. Y V7 seguía contando los turnos de sandbox, que V2, V3 y V4 ya descartaban desde la migración 037.
+
+- **V3 ahora se puede accionar:** el título es «Mensajes que esperaban tu respuesta y nadie contestó» y cada caso dice el chat y la hora del mensaje en hora CDMX (por ejemplo, «chat 123456, mensaje del 19/10 20:00 (hora CDMX)»). La indicación es abrir ese chat: si ya se atendió por otro lado, se ignora el aviso; si no, se le contesta al cliente. La ventana no cambia: los últimos 2 días, sin contar las últimas 2 horas.
+- **Ningún aviso pide contestarle al bot:** V1, V2 y V7 cambian «Avísame» por «Pásale este aviso al equipo».
+- **V7 descarta el sandbox:** su consulta filtra `NOT t.is_sandbox`, igual que V2, V3 y V4.
+- **La hora se convierte en Python:** V2, V3 y V7 devuelven en `audit/vigilantes.sql` la fecha cruda y `contract_watchdog_service` la pasa a hora CDMX. Si llega un texto ya formateado (SQL viejo o una consulta a mano), se deja tal cual.
+- Sin migración y sin interruptor nuevo.
+- **Límites:** no se probó el envío real del aviso por Telegram.
+
+---
+
+
 El sandbox deja de contar en las métricas: la marca pasa al turno — 2026-10-19
 
 El sandbox solo existía en la memoria del proceso. No quedaba nada en la base que dijera "este turno fue una prueba", así que todo lo que lee `turns` y las trazas para medir —la coincidencia, la confianza, las señales, la síntesis del perfil, la calibración— contaba las pruebas de la dueña como tráfico real. En 14 días hubo 5 turnos de sandbox del VIP …3bdc, que también tiene tráfico real, enviados sin aprobación y contados como aciertos o conservadoras; además 5 filas en `turn_category_log`, 2 en `emotional_signal_log` y una resíntesis del perfil.
