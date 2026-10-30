@@ -125,6 +125,10 @@ class DraftNotification(BaseModel):
     show_quality_feedback: bool = False
     # Image vision: Telegram file_id to attach to the owner DM (None = text only).
     photo_file_id: str | None = None
+    # Cierre silencioso (AGENTS §4.26): el candado se activó y el turno es
+    # supervisado → el teclado ofrece "Cerrar sin responder" además de Aprobar.
+    # Booleano explícito (no se deriva de ``reason``, que en sandbox va prefijado).
+    show_close_without_reply: bool = False
 
 
 class LinkNotification(BaseModel):

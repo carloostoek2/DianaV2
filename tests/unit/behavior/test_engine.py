@@ -1264,3 +1264,95 @@ async def test_deliver_split_reports_sending_progress_with_fraction() -> None:
     for kind, index, total in seen:
         if kind != "sending":
             assert index is None and total is None
+
+
+# ── AGENTS §4.26: marcar leído sin escribir ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_mark_read_uses_business_read_and_sends_nothing(engine_bundle) -> None:
+    engine, actuator, _, _ = engine_bundle
+    ctx = DeliveryContext(
+        chat_id=7,
+        business_connection_id="bc-1",
+        telegram_message_id=99,
+    )
+
+    assert await engine.mark_read(ctx) is True
+
+    assert actuator.read_count() == 1
+    assert actuator.send_count() == 0
+    read_call = actuator.calls[0]
+    assert read_call["message_id"] == 99
+    assert read_call["business_connection_id"] == "bc-1"
+
+
+@pytest.mark.asyncio
+async def test_mark_read_fails_closed_when_frozen(engine_bundle) -> None:
+    engine, actuator, _, _ = engine_bundle
+    ctx = DeliveryContext(
+        chat_id=7,
+        business_connection_id="bc-1",
+        telegram_message_id=99,
+        is_frozen=True,
+    )
+
+    assert await engine.mark_read(ctx) is False
+    assert actuator.read_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_mark_read_returns_false_when_channel_refuses(engine_bundle) -> None:
+    engine, actuator, _, _ = engine_bundle
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("telegram down")
+
+    actuator.read_business_message = _boom  # type: ignore[method-assign]
+    ctx = DeliveryContext(
+        chat_id=7, business_connection_id="bc-1", telegram_message_id=99
+    )
+
+    assert await engine.mark_read(ctx) is False
+
+
+@pytest.mark.asyncio
+async def test_mark_read_is_record_only_in_fake_delivery(engine_bundle) -> None:
+    """fake_delivery promete no producir efectos reales: tampoco el acuse de leído."""
+    engine, actuator, _, _ = engine_bundle
+    ctx = DeliveryContext(
+        chat_id=7,
+        business_connection_id="bc-1",
+        telegram_message_id=99,
+        mode="fake_delivery",
+    )
+
+    assert await engine.mark_read(ctx) is True
+    assert actuator.read_count() == 0
+    assert actuator.calls == []
+
+
+@pytest.mark.asyncio
+async def test_mark_read_is_bounded_by_its_timeout() -> None:
+    """El leído corre bajo el lock del chat: un cuelgue no puede comerse el turno."""
+    import asyncio
+
+    actuator = FakeTelegramActuator()
+
+    async def _never_returns(*_args, **_kwargs):
+        await asyncio.sleep(3600)
+
+    actuator.read_business_message = _never_returns  # type: ignore[method-assign]
+    engine = BehaviorEngine(
+        actuator,
+        InMemoryPendingDeliveryStore(),
+        clock=ImmediateClock(),
+        delay_policy=FixedDelayPolicy(),
+        turn_status=AlwaysLiveTurnStatusReader(),
+        read_timeout_seconds=0.01,
+    )
+    ctx = DeliveryContext(
+        chat_id=7, business_connection_id="bc-1", telegram_message_id=99
+    )
+
+    assert await engine.mark_read(ctx) is False

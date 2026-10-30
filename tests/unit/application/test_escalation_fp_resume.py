@@ -147,6 +147,25 @@ def test_empty_generated_draft_blocks(action: str) -> None:
     )
 
 
+def test_generated_silent_close_goes_back_to_the_owner_queue() -> None:
+    """§4.26: un regen que decide cerrar NUNCA cierra solo: decide la dueña."""
+    plan = plan_from_generated_decision(
+        action="silent_close", reason="cierre_sin_respuesta", draft_text="que descanses"
+    )
+
+    assert plan.action == "closing_without_reply"
+    assert plan.reason == "cierre_sin_respuesta"
+    assert plan.draft_text == "que descanses"
+
+
+def test_generated_silent_close_with_empty_draft_still_blocks() -> None:
+    plan = plan_from_generated_decision(
+        action="silent_close", reason="cierre_sin_respuesta", draft_text="   "
+    )
+
+    assert plan.action == "blocked_no_text"
+
+
 def test_consult_doctrine_opens_gray_zone() -> None:
     plan = plan_from_generated_decision(
         action="consult_doctrine", reason="doctrine_not_found", draft_text="texto"

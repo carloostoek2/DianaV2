@@ -47,6 +47,14 @@ FROM (
 -- se descartan en la propia consulta con `NOT t.is_sandbox` (migración 037): ya no
 -- se cruza con el journal. Límite: tras un reinicio con el sandbox activo, la sesión
 -- en memoria se pierde y los turnos siguientes quedan como reales (is_sandbox false).
+-- Los cierres silenciosos (§4.26) tampoco dejan fila: la decisión fue no escribir, así
+-- que no hay nada que comparar ni puntuar. Se excluyen por DOS condiciones:
+--   a) el turno terminó cerrado (`closed_no_reply`, ya no volverá a escribirse);
+--   b) la decisión guardada fue `silent_close` y el turno sigue en la cola de la dueña.
+--      Ese borrador espera una resolución humana: si lo aprueba, el hook post-turno
+--      corre al entregarse y la fila se crea entonces; si lo cierra, nunca la tendrá
+--      (a propósito). Sin la condición (b) el vigilante avisaría todos los días de
+--      borradores que la dueña todavía no respondió, y el aviso se volvería ruido.
 SELECT t.chat_id AS chat, t.id::text AS turno, t.status AS estado,
        t.created_at AS cuando, 1 AS alerta
 FROM turns t
@@ -54,7 +62,8 @@ JOIN pipeline_traces p ON p.turn_id = t.id
 LEFT JOIN turn_outcome_log o ON o.turn_id = t.id
 WHERE t.vip_id IS NOT NULL
   AND NOT t.is_sandbox
-  AND t.status NOT IN ('superseded','failed')
+  AND t.status NOT IN ('superseded','failed','closed_no_reply')
+  AND COALESCE(p.decision->>'action', '') <> 'silent_close'
   AND p.evaluation IS NOT NULL
   AND o.id IS NULL
   AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '1 hour'

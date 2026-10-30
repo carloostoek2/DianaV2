@@ -614,3 +614,43 @@ async def test_phatic_fast_lane_vs_decider_block_labels() -> None:
 
     decisions, _ = await service.render_decisions()
     assert "Decisor: no habría enviado" in decisions
+
+
+# ---------------------------------------------------------------------------
+# Cierre silencioso (§4.26): el borrador sombra también puede cerrar
+# ---------------------------------------------------------------------------
+
+
+def _closing_decider() -> Decider:
+    return Decider(
+        feature_gray_zone_enabled=True,
+        feature_autonomous_mode=True,
+        feature_silent_close_enabled=True,
+        autonomous_thresholds={
+            "safety_min": 0.9,
+            "doctrine_min": 0.8,
+            "naturalness_min": 0.7,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_decisions_show_the_closing_verdict() -> None:
+    vip_id = uuid4()
+    service = _build(
+        rows=[
+            _decision_row(
+                vip_id,
+                comprehension={**_comp(), "closing_without_reply": True},
+                decision={"action": "silent_close", "reason": "cierre_sin_respuesta"},
+            )
+        ],
+        vips=[_vip(vip_id, name="Hugo")],
+        decider=_closing_decider(),
+    )
+    body, _ = await service.render_decisions()
+
+    assert "🤐 Decisor: habría cerrado sin responder" in body
+    assert "Decisión real: cerrar sin responder" in body
+    # No se confunde con "no llegó a los umbrales".
+    assert "umbrales no alcanzados" not in body

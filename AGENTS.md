@@ -74,7 +74,7 @@ Principios rectores (no negociables):
 6. Toda decisión es reconstruible a partir de objetos persistidos.
 7. El Turn Coordinator garantiza la serialización por chat (REQ-NFR-02).
 
-Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, FEATURE_IMAGE_VISION_ENABLED, FEATURE_VIDEO_VISION_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
+Regla de oro: Todos los nuevos comportamientos de Fase 3+ están envueltos en feature flags (FEATURE_AUTONOMOUS_MODE, FEATURE_RECONTACT_ENABLED, FEATURE_PROMO_ENABLED, FEATURE_CALIBRATION_ENABLED, FEATURE_ADVANCED_BEHAVIOR, FEATURE_GENERAL_MODE_ENABLED, FEATURE_LINK_ENABLED, FEATURE_QUALITY_FEEDBACK_ENABLED, FEATURE_SANDBOX_AUTO_SEND, FEATURE_GRAY_ZONE_PROPOSAL_ENABLED, FEATURE_AUTONOMY_READINESS_ENABLED con sus derivados FEATURE_AUTONOMY_COINCIDENCE_ENABLED, FEATURE_AUTONOMY_QUALITY_ENABLED, FEATURE_AUTONOMY_RECOMMENDATION_ENABLED, FEATURE_IMAGE_VISION_ENABLED, FEATURE_VIDEO_VISION_ENABLED, FEATURE_SILENT_CLOSE_ENABLED, y los flags de evolución de agente). Si un flag está desactivado, el sistema se comporta como en la fase anterior. Excepción documentada: los eventos temporales no tienen flag (siempre cableados).
 
 Regla de PRIORIDAD — feature flags en el .env real (fija desde 2026-09-02, obligatoria para toda implementación):
 
@@ -517,6 +517,9 @@ no entra a memories/examples/policies ni enseña nada al sistema. En sandbox,
 
 Tras el resume, el destino del Decisor regenerado es:
   - `approve` / `escalate` no-safety con borrador → cola de aprobación (igual que antes)
+  - `silent_close` con borrador (§4.26) → cola de aprobación **con** el botón
+    "🤐 Cerrar sin responder": el reanudado NUNCA cierra solo (`plan.action =
+    closing_without_reply`, la razón viaja como `cierre_sin_respuesta`)
   - `consult_doctrine` con borrador usable → **abre zona gris** (`create_query` +
     DM de doctrina + `reopen_from_escalated(..., status="gray_zone")`; notify
     ANTES del CAS, patrón BUG-3). Si `FEATURE_GRAY_ZONE_PROPOSAL_ENABLED`, también
@@ -828,6 +831,143 @@ aprobar.
 
 ---
 
+4.26 Cierre silencioso (FEATURE_SILENT_CLOSE_ENABLED)
+
+```
+business_message VIP o Atención
+  → Analyst (igual que hoy; el saludo puro y la media sin revisar siguen su carril)
+  → Director: candado determinista (cognitive/closing_gate.py, sin LLM) sobre el
+      texto coalescido de la ráfaga + comprehension + último mensaje saliente +
+      media_unverified → closing_without_reply (campo Director-only en Comprehension,
+      fuera del schema del Analyst). Se evalúa ANTES del guard de repetición (H4).
+  → Decisor (orden: seguridad → zona gris → risk alto → molesta →
+      CIERRE SILENCIOSO → send autónomo → approve)
+      → action = "silent_close", reason = "cierre_sin_respuesta",
+        draft_text = el borrador ya generado (lo usa el modo supervisado)
+  → Modo autónomo (doble puerta L1 + L2 activa para ese VIP):
+      → BehaviorEngine.mark_read(ctx): marca leído, sin texto, sin typing ni delay
+      → turno → TurnStatus.CLOSED_NO_REPLY (terminal)
+      → SIN fila en turn_outcome_log, SIN historial de la dueña, SIN ajuste de confianza
+  → Modo supervisado:
+      → turno → PENDING_APPROVAL con el borrador + botón "🤐 Cerrar sin responder"
+        (el botón solo aparece cuando el candado se activó)
+      → SIN fila en turn_outcome_log mientras espera (la escribe la entrega real)
+      → "cerrar sin responder" → cancela la aprobación → CLOSED_NO_REPLY, sin envío,
+        liberando el hold de zona gris si el borrador venía de un regen doctrinal
+```
+
+Candado (lista cerrada, coincidencia exacta sobre el texto completo normalizado):
+
+- **Despedidas:** adiós · bye · byebye · chao · chau · hasta luego · hasta pronto ·
+  hasta mañana · nos vemos · nos hablamos · cuídate · que descanses · un gusto · saludos
+- **Acuses:** ok · oki · okey · okay · va · vale · dale · de una · listo · perfecto · genial ·
+  excelente · gracias · mil gracias · muchas gracias · jaja · jeje · 👍 · ❤ · 🙏 · 😊 · 😘
+- **Puertas que rechazan** (cualquiera basta para ir al flujo normal): más de
+  `SILENT_CLOSE_MAX_WORDS` palabras; `?` o `¿` en el mensaje ENTRANTE (una pregunta nunca
+  se cierra, ni siquiera una despedida exacta: "ok?", "¿bye?" → flujo normal); verbo de
+  pedido (manda, envíame, pásame, avísame, dime, cuéntame, puedes, necesito, quiero);
+  promesa o futuro (mañana, luego, después, al rato, más tarde, ahorita — salvo despedida
+  exacta de la lista); dinero (pago, transferencia, depósito, tarjeta, precio, banco,
+  cuenta); emoción molesta/triste/ansiosa/urgente; `risk != bajo`; `media_unverified`;
+  ráfaga que no coincide exacta ("gracias, y otra cosa…" → flujo normal). Y una puerta
+  propia del ACUSE: si el último mensaje saliente termina en `?`, el acuse no cierra (un
+  "ok" que contesta una pregunta no es un cierre). Esa puerta NO aplica a la despedida:
+  la despedida gana sobre una pregunta nuestra abierta, porque el VIP se está yendo.
+
+Invariantes: el silencio deliberado **no es señal negativa** — no emite evento de confianza,
+no deja desacuerdo del borrador sombra, no abre la ventana de reacción del VIP y no entra en
+la tasa de autonomía; el turno silencioso **no escribe historial** (nunca un mensaje fantasma
+en la boca de Diana) y el vigilante V2 lo excluye; si falla el marcado de leído, el turno cae a
+la cola de la dueña (nunca silencio por accidente); en regen de doctrina, falso positivo y
+"Regenerar" un `silent_close` **nunca** se auto-aplica: la dueña decide (el regen del falso
+positivo y el de doctrina encolan el borrador con la razón `cierre_sin_respuesta`, así que el
+botón sigue disponible); la bandera apagada devuelve el comportamiento anterior byte a byte,
+incluido no marcar leído. Sin migraciones: `turns.status`, `pending_approvals.status` y
+`pipeline_traces.decision` no tienen CHECK.
+
+Un cierre supervisado NO es un cierre hasta que la dueña decide. Mientras el borrador espera
+en su cola (turno `pending_approval`, aprobación `waiting`) no se escribe fila en
+`turn_outcome_log`: escribirla dejaría una señal pendiente que el siguiente mensaje del VIP
+consumiría como reacción a un mensaje que nunca se envió. Si la dueña lo **aprueba, corrige,
+escala o la entrega falla**, el turno es un desenlace terminal normal: el hook post-turno corre
+entonces y puntúa el turno como cualquier otro (incluidos los hooks sombra que el candado había
+saltado). Si lo **cierra sin responder**, no queda fila, ni señal, ni evento de confianza: el
+turno no enseñó nada. El botón exige turno `pending_approval` + aprobación `waiting`; con la
+aprobación en `claimed` (entrega en vuelo) no cierra, y cerrar es un *discard*: libera también el
+hold de zona gris (cierra la consulta y descongela, conservando la policy viva).
+
+Tres precisiones del mismo contrato:
+
+- **El disparo no depende de la decisión ni del hecho: depende de la MARCA.** «🔄 Regenerar»
+  re-ejecuta el Director y reescribe tanto `pipeline_traces.decision` como
+  `comprehension.closing_without_reply` (una segunda pasada del Analista con `risk=alto` o
+  emoción molesta lo apaga). Lo que manda es la marca durable escrita al crear el borrador
+  (`pending_approvals.evaluation["_closing_hooks_skipped"]`): «a este turno se le saltaron los
+  hooks pre-decisión». Responde un hecho PASADO que ninguna regeneración puede cambiar, así que
+  un cierre regenerado a `escalate`/`safety_below_threshold` no pierde sus métricas. El turno se
+  puntúa **una sola vez**: la marca de "ya corrieron" es la fila de `turn_category_log` del
+  `turn_id` más una marca en proceso (un borrador normal regenerado a cierre no duplica mood ni
+  confianza).
+- **El mensaje que reciben los hooks es el del VIP**, nunca `pipeline_traces.prompt_text` (esa
+  columna lleva el prompt completo: persona, reglas, memorias, historial). Se toma el `vip_text`
+  guardado con el borrador y, si falta, el historial del chat por `trigger_message_id`
+  **filtrando por rol del VIP** (ese id también puede ser una fila de la dueña).
+- **La guarda del borrador en espera falla cerrada.** Si no se puede leer la marca, el turno se
+  trata como «podría ser un cierre»: no se escribe la fila que la invariante prohíbe y el fallo
+  queda en el log.
+
+Salidas fail-safe del puntaje (decisiones de producto, no deducidas del código): (1) **sin texto
+del VIP recuperable** no se puntúa el cierre (se loguea y se sigue); (2) **con la marca de
+idempotencia ilegible** no se puntúa (nunca dos veces el mismo turno); (3) con el **lector de
+traza NO cableado** (pre-feature, sólo tests) la fila del borrador en espera **sí** se escribe,
+porque no hay hecho que leer ni fallo que temer — es el comportamiento anterior a la bandera y
+ninguna instalación de producción lo usa (`composition` cablea siempre el lector).
+
+Medición: `silent_close_count` se agrega en las métricas semanales (columna
+`learning_metrics.metric_name`, sin CHECK) y **no** entra en `autonomous_send_rate`. El conteo
+es de DESENLACE, no de decisión: cuenta los turnos cuyo estado final es `closed_no_reply`; un
+`silent_close` que la dueña aprobó y se entregó cuenta como turno normal. El denominador son
+los turnos con respuesta (`total_turns − silent_close_count`) y el conteo de envíos se guarda
+exacto en `autonomous_send_count` (derivarlo de la tasa sobre el total lo sobreestimaría). El
+resumen de la dueña dice "% de los turnos con respuesta" solo cuando hubo cierres en la
+semana (sin cierres el texto es el de siempre, "% del total"), y la línea "Cierres sin
+responder" solo aparece si el dato existe. En la traza la acción se muestra como
+`silent_close (cerró sin responder)` cuando el turno terminó cerrado, y como
+`silent_close (no aplicado — ver Status)` cuando fue un borrador que la dueña resolvió de
+otra forma; en el modo sombra, "🤐 Decisor: habría cerrado sin responder", nunca como token
+crudo ni como "umbrales no alcanzados".
+
+Límites conocidos, deliberados: (a) el veredicto del candado (`is_closing`/`reason`/`kind`,
+p. ej. `too_long` u `open_question`) vive en la traza en memoria y en el log, no en la base —
+`SqlTraceStore` descarta las claves sin columna y lo que persiste es el hecho
+(`comprehension.closing_without_reply`), que es lo que lee `/traza`; abrir una columna exigiría
+migración y no aporta valor de producto hoy. (b) Si la dueña APRUEBA un cierre (decide contestar
+igual), el borrador sombra de ese turno se guarda como `blocked` —el vocabulario cerrado del
+§4.18 no tiene valor propio para el cierre— y la coincidencia sale `conservadora`, que no mueve
+la confianza; el panel sombra sí lo muestra como cierre. (c) El botón se re-deriva de la razón
+guardada del borrador, así que si una regeneración cambia la razón, la opción se ajusta con ella.
+(d) En el regen de doctrina y en el resume de falso positivo el turno se reconstruye sin el dato
+de media sin revisar: si el texto del VIP llegara a coincidir exacto con la lista cerrada, esa
+puerta del candado no vería la foto sin analizar. El riesgo es acotado — la etiqueta de media
+(`[imagen]`, `[imagen parte de álbum]`, `[video]`) viaja pegada al texto y el texto completo
+deja de coincidir con la lista, el resultado nunca se auto-aplica y la dueña ve la foto en su
+cola; derivarlo del `photo_file_id` de la aprobación sería incorrecto (esa columna se guarda
+también cuando la imagen SÍ se analizó).
+(e) **Coste LLM del cierre (residual declarado, no implementado).** El candado corre DESPUÉS del
+Analista, así que cada «bye»/«ok» paga generación + evaluación (y una segunda vuelta si la
+naturalidad no llega) para un borrador que en autónomo nunca se enviará. La optimización —cortar
+tras `_maybe_mark_closing` devolviendo `Decision(action="silent_close", draft_text=None)`— NO se
+hace hoy por dos motivos: (1) el carril supervisado NECESITA el borrador (es el que la dueña ve
+junto al botón), así que el corte sólo valdría con la doble puerta ya resuelta; y (2) resolver
+esa doble puerta dentro del Director (sandbox activo + `auto_send` por VIP) duplicaría en
+Cognitive Core un gate que vive en la capa de aplicación y que sólo el Decisor está autorizado a
+convertir en acción (§2.2/§4.1). El carril fático no sirve de precedente: aquél corta antes del
+Generador porque la plantilla ya existe. Condición para retomarlo: medir en producción (con la
+bandera viva) qué fracción del coste por turno son cierres y, si pesa, mover el corte a la capa
+de aplicación con un `Decision` ya emitido (sin tocar el pipeline cognitivo).
+
+---
+
 4. Contratos críticos que ningún agente puede romper
 
 4.1 Decisor (orden de prioridades actualizado)
@@ -839,11 +979,14 @@ Prioridad Condición Acción
 2 comprension.needs_policy == true Y policy_retrieval_result == vacío Y FEATURE_GRAY_ZONE_ENABLED Consultar doctrina
 3 comprension.risk == "alto" Escalar (risk_high)
 4 comprension.emotion == "molesta" Escalar (frustracion_directa)
+4b comprehension.closing_without_reply == true Y FEATURE_SILENT_CLOSE_ENABLED Cerrar sin responder (silent_close)
 5 (pre-Decisor) perfil.naturalidad < umbral_naturalidad → Director re-genera 1× + re-evalúa (MVP; sin Decision.action=regenerate). El Decisor no emite regenerate. Multi-retry / action regenerate = residual.
 6 Modo autónomo activo Y umbrales superados Enviar
 7 Ninguna de las anteriores Aprobar
 
-Notas sobre prioridad 5: la redraft de naturalidad es **secuenciación del Director** (pre-Decisor), no una acción del Decisor. El orden de **acciones** del Decisor sigue siendo seguridad → zona gris → escalate (risk o frustración) → send autónomo → approve; el paso 5 del Decisor es no-op (redraft ya ocurrió upstream si correspondía).
+Notas sobre prioridad 5: la redraft de naturalidad es **secuenciación del Director** (pre-Decisor), no una acción del Decisor. El orden de **acciones** del Decisor sigue siendo seguridad → zona gris → escalate (risk o frustración) → cierre silencioso → send autónomo → approve; el paso 5 del Decisor es no-op (redraft ya ocurrió upstream si correspondía).
+
+Nota sobre la prioridad 4b (`silent_close`, §4.26): el Director calcula el hecho determinista (`closing_without_reply`) y el Decisor emite la acción — el Decisor sigue sin ver el texto del turno. Se evalúa después de riesgo y frustración (seguridad manda) y antes del envío autónomo. El candado se evalúa **antes** del guard de repetición (H4) para que tres despedidas seguidas no escalen como `pregunta_repetida`.
 
 Nota de alineación (2026-08-21): la tabla coincide con `src/diana/cognitive/decider.py` — el código evalúa `risk=alto` (prioridad 3) antes que `emotion=molesta` (prioridad 4). Si ambas aplican, la acción sigue siendo Escalar y el `reason` queda `risk_high` (la severidad semántica gana sobre la señal de frustración; visible en `/traza`). `molesta` sola escala sin esperar acumulación de risk.
 

@@ -34,9 +34,12 @@ from diana.application.ports import (
 )
 from diana.application.draft_variants import (
     AUTONOMY_KEY,
+    CLOSING_HOOKS_SKIPPED_KEY,
+    CLOSING_REASON,
     DOCTRINE_NA_LABEL,
     DOCTRINE_RELEVANT_KEY,
     ensure_versions,
+    offers_closing_without_reply,
     resolve_vip_display_name,
 )
 from diana.application.escalation_fp_resume import (
@@ -348,6 +351,14 @@ class AdminService:
         )
         eval_dict = decision.evaluation.model_dump(mode="json")
         eval_dict[DOCTRINE_RELEVANT_KEY] = relevant
+        # AGENTS §4.26: durable record that this turn's pre-decision shadow
+        # hooks were skipped. The post-turn catch-up reads it back — it must not
+        # be derived from ``comprehension.closing_without_reply``, because
+        # "🔄 Regenerar" re-runs the Analyst and recomputes that field.
+        # ``update_draft`` preserves keys it does not know, so it survives.
+        eval_dict[CLOSING_HOOKS_SKIPPED_KEY] = offers_closing_without_reply(
+            decision.reason
+        )
         eval_dict = ensure_versions(
             eval_dict,
             draft_text=draft,
@@ -403,6 +414,10 @@ class AdminService:
                     and turn.vip_id is not None
                 ),
                 photo_file_id=turn.photo_file_id,
+                # §4.26: solo el cierre supervisado ofrece "Cerrar sin responder".
+                show_close_without_reply=offers_closing_without_reply(
+                    decision.reason
+                ),
             )
         )
         if owner_mid is not None:
@@ -441,6 +456,7 @@ class AdminService:
         query: GrayZoneQueryView,
         *,
         draft_override: str | None = None,
+        reason_override: str | None = None,
     ) -> bool:
         """Create a supervised PendingApproval from a resolved/expired gray zone draft.
 
@@ -569,7 +585,9 @@ class AdminService:
             )
             decision = Decision(
                 action="approve",
-                reason="gray_zone_resolved_by_doctrine",
+                # §4.26: un regen que decide cerrar sin responder conserva su
+                # razón para que la cola ofrezca el botón; nunca se aplica sola.
+                reason=reason_override or "gray_zone_resolved_by_doctrine",
                 evaluation=EvaluationProfile(
                     naturalness=0.5, precision=0.5, doctrine=0.5,
                     consistency=0.5, safety=0.5, coverage=0.5, empathy=0.5,
@@ -1452,6 +1470,20 @@ class AdminService:
             if isinstance(evaluation, EvaluationProfile)
             else evaluation_from_trace(fresh_trace or trace)
         )
+        if generated_plan.action == "closing_without_reply":
+            # §4.26: el regen pidió cierre. Nunca se aplica solo — vuelve a la
+            # cola como borrador normal y la dueña ve el botón de cerrar.
+            return (
+                Decision(
+                    action="approve",
+                    reason=generated_plan.reason or CLOSING_REASON,
+                    evaluation=eval_profile,
+                    draft_text=generated_plan.draft_text,
+                ),
+                comprehension,
+                retrieved,
+                False,
+            )
         if generated_plan.action == "open_gray_zone":
             # Keep consult_doctrine on the Decision so the doctrine DM shows the
             # real reason; do not rewrite to the FP-resume display token.
@@ -1989,6 +2021,99 @@ class AdminService:
             )
         logger.info(
             "owner_escalate",
+            extra={"turn_id": str(turn_id), "chat_id": chat_id},
+        )
+        return True
+
+    async def handle_close_without_reply(
+        self,
+        turn_id: UUID,
+        *,
+        actor_id: int | None = None,
+    ) -> bool:
+        """Owner taps "🤐 Cerrar sin responder" on a supervised closing turn.
+
+        Cancels the waiting approval and closes the turn as ``closed_no_reply``
+        (AGENTS §4.26). Deliberately writes nothing else: no owner history, no
+        ``owner_outcome``, no post-turn hook, no memory extraction and no trust
+        event — the silence is not a Diana message, so it must not score the
+        draft, re-open the VIP reaction window or feed the autonomy rate.
+
+        Closing IS a discard, so it also releases a gray-zone hold: the regen
+        of a doctrine rule produces exactly this draft (``awaiting_send`` with
+        the VIP frozen), and leaving the query open would keep the VIP frozen
+        forever (expiry only touches ``open``) and degrade every later turn.
+        The live policy is kept, like the escalate path.
+
+        Only a supervised turn that is really waiting for the owner can be
+        closed: ``pending_approval`` + an approval in ``waiting``. A ``claimed``
+        approval means a delivery is already in flight — closing then would
+        record a silence for a message that just went out.
+
+        Returns True when THIS call closed the turn; False on a no-op (missing
+        or already terminal turn), which the caller reports honestly.
+        """
+        self._assert_owner(actor_id)
+        turn = await self._turns.get(turn_id)
+        if turn is None:
+            logger.info(
+                "close_without_reply_missing_turn", extra={"turn_id": str(turn_id)}
+            )
+            return False
+        chat_id = turn.chat_id
+        async with self._coordinator.chat_scope(chat_id):
+            turn = await self._turns.get(turn_id)
+            if turn is None or is_turn_status_terminal(turn.status):
+                if turn is not None:
+                    # Terminal turn with a residual doctrine hold (e.g. a
+                    # superseded GRAY_ZONE): close it so the VIP is not left
+                    # frozen behind a dead turn. Best-effort, never raises.
+                    await self._discard_doctrine_hold_if_any(turn_id)
+                logger.info(
+                    "close_without_reply_terminal_noop",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "status": None if turn is None else turn.status,
+                    },
+                )
+                return False
+            if turn.status != TurnStatus.PENDING_APPROVAL.value:
+                logger.info(
+                    "close_without_reply_not_pending_approval",
+                    extra={"turn_id": str(turn_id), "status": turn.status},
+                )
+                return False
+            approval = await self._approvals.get_by_turn(turn_id)
+            if approval is None or approval.status != "waiting":
+                # ``claimed`` = a delivery is already in flight (the claim is
+                # taken under this same lock, the send happens outside it).
+                logger.info(
+                    "close_without_reply_no_waiting_approval",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "approval_status": None if approval is None else approval.status,
+                    },
+                )
+                return False
+            # Defense in depth: the button is only drawn on closing drafts, so a
+            # callback that reaches a draft with another reason is stale or
+            # misused — never close a normal turn on it.
+            if not offers_closing_without_reply(approval.cognitive_summary):
+                logger.info(
+                    "close_without_reply_not_a_closing_draft",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "reason": approval.cognitive_summary,
+                    },
+                )
+                return False
+            await self._approvals.mark_status(turn_id, "cancelled")
+            await self._coordinator.transition(turn_id, TurnStatus.CLOSED_NO_REPLY)
+            # The closing draft may be the regen of a doctrine rule: release
+            # the hold (close awaiting_send/open + unfreeze, keep live policy).
+            await self._release_doctrine_hold_on_escalate(turn_id)
+        logger.info(
+            "close_without_reply",
             extra={"turn_id": str(turn_id), "chat_id": chat_id},
         )
         return True
@@ -2613,12 +2738,26 @@ class AdminService:
                     "draft_chars": len(draft),
                 },
             )
+        if action == "silent_close":
+            # §4.26: la regla se aplicó y el regen pide cerrar. El turno NO se
+            # cierra solo: llega a la cola de la dueña con la opción de cerrar.
+            logger.info(
+                "doctrine_regen_silent_close_queued",
+                extra={
+                    "turn_id": str(turn_id),
+                    "query_id": str(query.id),
+                    "draft_chars": len(draft),
+                },
+            )
 
         from diana.application.turn_coordinator import ChatLockTimeoutError
 
         try:
             created = await self.create_supervised_delivery_from_gray_zone(
-                turn_id, query, draft_override=draft
+                turn_id,
+                query,
+                draft_override=draft,
+                reason_override=CLOSING_REASON if action == "silent_close" else None,
             )
         except ChatLockTimeoutError:
             try:

@@ -211,6 +211,13 @@ class Settings(BaseSettings):
     # (classifier) and feature_autonomous_mode (full AMS).
     feature_phatic_auto_send: bool = False
 
+    # Cierre silencioso (AGENTS §4.26): cuando el turno es una despedida o un
+    # acuse corto que no pide nada, el Decisor emite ``silent_close`` — se marca
+    # leido y no se escribe. OFF = comportamiento anterior byte a byte.
+    feature_silent_close_enabled: bool = False
+    # Techo de palabras del candado: un texto mas largo va al flujo normal.
+    silent_close_max_words: Annotated[int, Field(ge=1, le=30)] = 8
+
     # Evo-Agente Fase 3 (motor de mood, shadow) — env-driven, default off.
     feature_mood_engine: bool = False
     # Promedio móvil con retorno a base:

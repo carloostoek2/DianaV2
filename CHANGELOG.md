@@ -7,6 +7,23 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Diana deja de contestar los cierres y los acuses cortos — 2026-10-30
+
+Cuando el VIP cerraba la conversación («bye», «hasta luego») o solo acusaba recibo («ok», «gracias», «jaja», «👍»), Diana escribía igual. No era un error del modelo: contestar un cierre reabre una plática que el cliente ya había terminado, y se sentía forzado. Ahora, en esos turnos, Diana marca el mensaje como leído y no escribe. Nada de esto lo decide un modelo: un candado de lista cerrada, sin IA, reconoce el cierre, y el turno termina ahí.
+
+- **Solo se calla cuando no hay ninguna duda.** La lista es exacta y corta: despedidas («adiós», «bye», «chao», «hasta luego», «nos vemos», «cuídate», «que descanses», «saludos»…) y acuses («ok», «va», «dale», «listo», «perfecto», «gracias», «jaja», «👍»…). Cualquier otra cosa sigue el flujo normal: un texto más largo, una pregunta, un pedido («mándame», «avísame», «puedes»), una promesa («mañana», «luego»), dinero, media sin revisar, o un VIP molesto, triste, ansioso o con prisa. «Gracias, y otra cosa…» **no** es un cierre: se contesta como siempre.
+- **Un «ok» que responde una pregunta no es un cierre.** Si el último mensaje de Diana terminaba en «?», el acuse sigue el flujo normal: el VIP está confirmando, no despidiéndose. Y una pregunta del VIP nunca se cierra, ni siquiera con una despedida («ok?», «¿bye?»): ante la duda, se contesta.
+- **Ese silencio no cuenta como mala señal.** No baja la confianza, no deja un desacuerdo del borrador simulado, no abre la espera de reacción del VIP y no entra en la tasa de autonomía. Los cierres que **de verdad** quedaron sin respuesta se cuentan aparte, en una línea nueva de las métricas semanales (si apruebas el borrador y se envía, cuenta como un turno normal), y el porcentaje de envíos autónomos ahora se mide sobre los turnos que sí pedían respuesta — esa etiqueta solo cambia cuando en la semana hubo cierres.
+- **Nunca queda un mensaje fantasma.** El turno no se marca como «enviado» ni escribe en el historial del chat: no aparece un mensaje de Diana que nadie envió, y el vigilante de turnos sin sombra lo excluye.
+- **En supervisado decides tú.** El borrador llega a tu cola como siempre, con el motivo explicado y un botón nuevo: **🤐 Cerrar sin responder**. Solo aparece en esos turnos; en el resto la cola se ve igual que antes. Tocar el botón cancela el borrador y cierra el turno sin mandar nada; si el borrador venía de una regla de doctrina, además se descongela al VIP. Mientras el borrador espera, no se registra nada del turno: si lo apruebas y se envía, se puntúa como cualquier otro; si no lo contestas, no deja señal pendiente.
+- **Si algo falla, se te pide a ti.** Si el bot no logra marcar el mensaje como leído, el turno cae a tu cola en vez de quedarse en silencio por accidente.
+- **Regenerar, doctrina y falso positivo nunca cierran solos.** Si al regenerar sale un cierre, el borrador vuelve a tu cola con el botón: la decisión es tuya.
+- Interruptor nuevo `FEATURE_SILENT_CLOSE_ENABLED` (encendido en el `.env`, con su comentario de intención) y techo de palabras `SILENT_CLOSE_MAX_WORDS=8`. Apagado, Diana vuelve a contestar cada despedida y cada acuse, incluido no marcar leído.
+- Qué vigilar en los logs: `🤐 Cierre sin respuesta`, `silent_close_done`, `silent_close_mark_read_failed`. Sin migración. La regla vigente está en AGENTS.md §4.26 y §4.1 (fila 4b).
+
+---
+
+
 Una foto o un video que no se pudo ver nunca se envía solo — 2026-10-27
 
 En el turno de las 23:22 del 2026-10-27, Gemini no contestó en 15 s (ReadTimeout), la foto quedó como «[imagen]» y el envío automático le respondió al VIP a ciegas, sin que la dueña la viera. El modelo contestaba sin saber qué mostraba la media.

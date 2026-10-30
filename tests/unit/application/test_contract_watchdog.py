@@ -342,3 +342,18 @@ def test_el_parser_sigue_encontrando_v1_a_v7() -> None:
     assert ids == ["V1", "V2", "V3", "V4", "V5", "V6", "V7"]
     v7 = next(v for v in leer_vigilantes() if v["id"] == "V7")
     assert "NOT t.is_sandbox" in v7["sql"]
+
+
+def test_v2_silences_silent_closes() -> None:
+    """§4.26: el cierre silencioso no deja fila de sombra a propósito.
+
+    Esta guarda el TEXTO del SQL (las dos exclusiones: el estado final
+    ``closed_no_reply`` y la decisión ``silent_close`` de un borrador que
+    espera a la dueña). La prueba de efecto real, contra base, está en
+    ``tests/audit/test_vigilantes.py::test_v2_calla_un_cierre_silencioso``.
+    """
+    from diana.application.contract_watchdog_service import leer_vigilantes
+
+    v2 = next(v for v in leer_vigilantes() if v["id"] == "V2")
+    assert "closed_no_reply" in v2["sql"]
+    assert "silent_close" in v2["sql"]

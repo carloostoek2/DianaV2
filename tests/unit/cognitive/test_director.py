@@ -112,8 +112,18 @@ def _saludo_comprehension(**overrides) -> Comprehension:
     return _comprehension(**data)
 
 
-def _turn(*, chat_id: int = 42, text: str = "hola Diana") -> IncomingTurn:
-    return IncomingTurn(turn_id=uuid4(), chat_id=chat_id, text=text)
+def _turn(
+    *,
+    chat_id: int = 42,
+    text: str = "hola Diana",
+    media_unverified: bool = False,
+) -> IncomingTurn:
+    return IncomingTurn(
+        turn_id=uuid4(),
+        chat_id=chat_id,
+        text=text,
+        media_unverified=media_unverified,
+    )
 
 
 def make_director(
@@ -139,6 +149,8 @@ def make_director(
     checkin_cut: Any | None = None,
     phatic_context_provider: Any | None = None,
     persona_semantic_shadow: Any | None = None,
+    silent_close: bool = False,
+    silent_close_max_words: int = 8,
 ) -> tuple[CognitiveDirector, InMemoryTraceStore, InMemoryMessageHistory]:
     history = history_port or InMemoryMessageHistory()
     trace = InMemoryTraceStore()
@@ -160,6 +172,9 @@ def make_director(
         director_kwargs["phatic_context_provider"] = phatic_context_provider
     if persona_semantic_shadow is not None:
         director_kwargs["persona_semantic_shadow"] = persona_semantic_shadow
+    if silent_close:
+        director_kwargs["feature_silent_close_enabled"] = True
+        director_kwargs["silent_close_max_words"] = silent_close_max_words
     director = CognitiveDirector(
         analyst=Analyst(fake_llm),
         planner=Planner(),
@@ -167,7 +182,9 @@ def make_director(
         context_builder=context_builder,
         generator=Generator(fake_llm),
         evaluator=Evaluator(fake_llm),
-        decider=Decider(thresholds=thresholds),
+        decider=Decider(
+            thresholds=thresholds, feature_silent_close_enabled=silent_close
+        ),
         trace=trace,
         persona=persona,
         style_rules=style_rules,
@@ -2710,3 +2727,198 @@ async def test_turn_returns_before_shadow_task_finishes() -> None:
     gate.set()
     await asyncio.wait_for(task, 1.0)
     assert task.done() and task.exception() is None
+
+
+# ---------------------------------------------------------------------------
+# AGENTS §4.26 — closing gate (silent_close)
+# ---------------------------------------------------------------------------
+
+_FAREWELL = "bye"
+
+
+def test_decision_log_labels_cover_silent_close() -> None:
+    """El log de decisión nunca imprime el token crudo (§4.26)."""
+    from diana.cognitive.director import _DECISION_EMOJI, _DECISION_VERB
+
+    assert _DECISION_EMOJI["silent_close"] == "🤐"
+    assert _DECISION_VERB["silent_close"] == "cerró sin responder"
+
+
+@pytest.mark.asyncio
+async def test_closing_gate_emits_silent_close_for_farewell() -> None:
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="despedirse", emotion="positiva"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Que descanses, amor"],
+    )
+    director, trace, _ = make_director(llm, silent_close=True)
+    turn = _turn(text=_FAREWELL)
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "silent_close"
+    assert decision.reason == "cierre_sin_respuesta"
+    # The draft still exists: the supervised path shows it next to the button.
+    assert decision.draft_text == "Que descanses, amor"
+    assert trace.get(turn.turn_id, "comprehension")["closing_without_reply"] is True
+    assert trace.get(turn.turn_id, "closing_gate")["is_closing"] is True
+
+
+@pytest.mark.asyncio
+async def test_closing_gate_flag_off_keeps_supervised_approve() -> None:
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="despedirse", emotion="positiva"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Que descanses, amor"],
+    )
+    director, trace, _ = make_director(llm, silent_close=False)
+    turn = _turn(text=_FAREWELL)
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "approve"
+    assert trace.get(turn.turn_id, "comprehension")["closing_without_reply"] is False
+
+
+@pytest.mark.asyncio
+async def test_closing_gate_never_beats_safety_or_risk() -> None:
+    """Un cierre con riesgo alto escala: la seguridad manda sobre el silencio."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="despedirse", risk="alto"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Mejor hablamos mañana"],
+    )
+    director, trace, _ = make_director(llm, silent_close=True)
+    turn = _turn(text=_FAREWELL)
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "escalate"
+    assert decision.reason == "risk_high"
+    assert trace.get(turn.turn_id, "comprehension")["closing_without_reply"] is False
+
+
+@pytest.mark.asyncio
+async def test_ack_answering_an_open_question_keeps_the_normal_flow() -> None:
+    history = InMemoryMessageHistory()
+    history.seed(
+        42,
+        [
+            {
+                "role": "owner",
+                "text": "¿Te mando el video o lo dejas para mañana?",
+                "timestamp": "2026-10-30T10:00:00+00:00",
+            }
+        ],
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="otro"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Va, te lo mando"],
+    )
+    director, trace, _ = make_director(llm, history_port=history, silent_close=True)
+    turn = _turn(text="ok")
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action != "silent_close"
+    assert trace.get(turn.turn_id, "closing_gate")["reason"] == "open_question"
+
+
+@pytest.mark.asyncio
+async def test_ack_without_open_question_closes() -> None:
+    history = InMemoryMessageHistory()
+    history.seed(
+        42,
+        [
+            {
+                "role": "owner",
+                "text": "Que tengas un lindo día 💕",
+                "timestamp": "2026-10-30T10:00:00+00:00",
+            }
+        ],
+    )
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="agradecer", emotion="positiva"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Igualmente, amor"],
+    )
+    director, _, _ = make_director(llm, history_port=history, silent_close=True)
+
+    decision = await director.handle_turn(_turn(text="gracias"))
+
+    assert decision.action == "silent_close"
+
+
+@pytest.mark.asyncio
+async def test_ack_with_substance_keeps_the_normal_flow() -> None:
+    """"gracias, y otra cosa…" no coincide exacto: flujo normal."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="agradecer"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Cuéntame, ¿qué pasó?"],
+    )
+    director, _, _ = make_director(llm, silent_close=True)
+
+    decision = await director.handle_turn(
+        _turn(text="gracias, y otra cosa, ¿me ayudas con el pago?")
+    )
+
+    assert decision.action == "approve"
+
+
+@pytest.mark.asyncio
+async def test_unreviewed_media_never_closes() -> None:
+    """Una foto que nadie vio cae a la cola: el modelo respondería a ciegas."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="despedirse", emotion="positiva"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Que descanses, amor"],
+    )
+    director, trace, _ = make_director(llm, silent_close=True)
+    turn = _turn(text="bye", media_unverified=True)
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action != "silent_close"
+    assert trace.get(turn.turn_id, "comprehension")["closing_without_reply"] is False
+    assert trace.get(turn.turn_id, "closing_gate")["reason"] == "media_unverified"
+
+
+@pytest.mark.asyncio
+async def test_repeated_farewells_are_not_reported_as_repetition() -> None:
+    """Tres despedidas seguidas no son una pregunta repetida (H4)."""
+    intents = InMemoryRecentIntents()
+    intents.seed(42, ["despedirse", "despedirse"])  # la actual hace racha 3
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="despedirse", emotion="positiva"),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Que descanses, amor"],
+    )
+    director, _, _ = make_director(
+        llm,
+        recent_intents=intents,
+        repetition_guard=RepetitionGuard(threshold=3),
+        silent_close=True,
+    )
+
+    decision = await director.handle_turn(_turn(text="bye"))
+
+    assert decision.action == "silent_close"
+    assert decision.reason != "pregunta_repetida"

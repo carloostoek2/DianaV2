@@ -3478,6 +3478,26 @@ async def test_atencion_payment_policy_trigger_notifies_owner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_atencion_silent_close_does_not_send_the_payment_notice() -> None:
+    """§4.26: avisar de un pago en un turno que se cierra sin responder se contradice."""
+    g = _build(
+        FakeDirector(_silent_decision()),
+        feature_general_mode_enabled=True,
+        trace_reader=_FakeTraceReader(
+            {"retrieved": {"knowledge.policy": ["Trigger: datos_pago"]}}
+        ),
+    )
+
+    turn_id = await g["orch"].handle_vip_message(
+        _vip(vip_id=None, channel_type="atencion", chat_id=606)
+    )
+
+    turn = await g["turns"].get(turn_id)
+    assert turn is not None and turn.status == "pending_approval"
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
 async def test_atencion_payment_confirm_intent_notifies_owner() -> None:
     """REQ-ATN-12: confirmar_entrega + payment topic → informational DM."""
     g = _build(
@@ -4607,14 +4627,26 @@ class _FakeEmotionalSignalLog:
 
 
 class _FakeTurnCategoryLog:
-    """In-memory turn_category_log writer for the classifier hook."""
+    """In-memory turn_category_log writer for the classifier hook.
 
-    def __init__(self) -> None:
+    ``durable=True`` also models the read side (``get_by_turn_id``), the
+    cross-restart marker the closing catch-up consults.
+    """
+
+    def __init__(self, *, durable: bool = False) -> None:
         self.inserted: list[TurnCategoryLogRecord] = []
+        if durable:
+            self.get_by_turn_id = self._get_by_turn_id  # type: ignore[attr-defined]
 
     async def insert(self, record: TurnCategoryLogRecord) -> TurnCategoryLogRecord:
         self.inserted.append(record)
         return record
+
+    async def _get_by_turn_id(self, turn_id):
+        for record in self.inserted:
+            if record.turn_id == turn_id:
+                return record
+        return None
 
 
 class _FakeVipMoodState:
@@ -6705,3 +6737,629 @@ async def test_037_sandbox_writes_no_category_or_emotional_log(
     msgs = [r.message for r in caplog.records]
     assert "emotional_signal_skipped_sandbox" in msgs
     assert "turn_category_skipped_sandbox" in msgs
+
+
+# ── AGENTS §4.26: cierre silencioso (silent_close) ────────────────────────
+
+
+class _FakeOutcomeLogRecording:
+    """Outcome log double: records the shadow row and keeps the reaction inert."""
+
+    def __init__(self) -> None:
+        self.shadow_calls: list[object] = []
+
+    async def record_shadow(self, turn_id, *, vip_id, trace):
+        self.shadow_calls.append(turn_id)
+        return None
+
+    def reaction_window_seconds(self) -> int:
+        return 3600
+
+    async def find_pending_signal_for_chat(self, chat_id, *, since):
+        return None
+
+
+def _silent_decision() -> Decision:
+    return Decision(
+        action="silent_close",
+        reason="cierre_sin_respuesta",
+        evaluation=_eval(),
+        draft_text="Que descanses, amor",
+    )
+
+
+@pytest.mark.asyncio
+async def test_silent_close_autonomous_reads_and_closes_without_sending() -> None:
+    """Autónomo: marca leído, cierra el turno y no manda nada al VIP."""
+    g = _build(
+        FakeDirector(_silent_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "closed_no_reply"
+    assert g["actuator"].send_count() == 0
+    assert g["actuator"].read_count() == 1
+    assert await g["approvals"].get_by_turn(turn_id) is None
+    # El círculo de aprendizaje no puntúa un turno en el que Diana no escribió.
+    assert g["learning"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_silent_close_supervised_goes_to_owner_queue() -> None:
+    """Supervisado: no se cierra sola; el borrador llega a la cola de la dueña."""
+    g = _build(FakeDirector(_silent_decision()))
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert g["actuator"].send_count() == 0
+    assert g["actuator"].read_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_silent_close_read_refused_demotes_to_owner() -> None:
+    """Fail-closed: si no se puede marcar leído, decide la dueña.
+
+    Se usa el motor real con un actuador que falla (Telegram es el borde
+    externo): así se ejercita la cadena completa, no un motor sustituido.
+    """
+
+    class _ReadRefusingActuator(FakeTelegramActuator):
+        async def read_business_message(self, chat_id, message_id, *, business_connection_id):
+            raise RuntimeError("telegram down")
+
+    g = _build(
+        FakeDirector(_silent_decision()),
+        actuator=_ReadRefusingActuator(),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+    )
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert len(g["notifier"].drafts) == 1
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_silent_close_wired_but_autonomy_off_demotes_to_owner() -> None:
+    """Doble puerta L1/L2 inactiva: nunca hay silencio por accidente."""
+    g = _build(
+        FakeDirector(_silent_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=False,
+        global_mode="supervised",
+    )
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    # No se marca leído: el turno sigue siendo de la dueña.
+    assert g["actuator"].read_count() == 0
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_silent_close_supervised_draft_offers_the_closing_option() -> None:
+    """El borrador demotado conserva la razón: es lo que enciende el botón."""
+    g = _build(FakeDirector(_silent_decision()))
+
+    await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    draft = g["notifier"].drafts[0]
+    assert draft.reason == "cierre_sin_respuesta"
+    assert draft.show_close_without_reply is True
+
+
+@pytest.mark.asyncio
+async def test_silent_close_in_sandbox_reads_and_closes() -> None:
+    """Ventana de sandbox: el cierre también se resuelve en silencio."""
+    g = _build(FakeDirector(_silent_decision()), feature_sandbox_auto_send=True)
+    _wire_sandbox(g, _sandbox_auto_send_service(chat_id=100))
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "closed_no_reply"
+    assert g["actuator"].read_count() == 1
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_silent_close_skips_trust_classifier_and_emotional_hooks() -> None:
+    """El silencio no enseña nada: ni confianza, ni categoría, ni emoción."""
+    vip_id = uuid4()
+    trust = _FakeTrustBudget()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    detector = _FakeEmotionalDetector(_signal_detected())
+    signal_log = _FakeEmotionalSignalLog()
+    g = _build(
+        FakeDirector(_silent_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        trace_reader=_FakeEmotionalTraceReader(
+            {"comprehension": {"emotion": "neutral"}, "vip_id": str(vip_id)}
+        ),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+        trust_budget=trust,
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+    )
+
+    await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+
+    # El incremento de confianza corrió ANTES de decidir: si no se salta,
+    # un "bye" sube la confianza de un mensaje que nunca salió.
+    assert trust.autonomous_calls == []
+    assert classifier.calls == []
+    assert cat_log.inserted == []
+    assert detector.calls == []
+    assert signal_log.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_silent_close_writes_no_outcome_row_and_no_owner_history() -> None:
+    """Sin fila de sombra (ni ventana C3), sin memoria y sin mensaje fantasma."""
+    outcome = _FakeOutcomeLogRecording()
+    extraction = RecordingExtraction()
+    context_store = RecordingContextStore()
+    g = _build(
+        FakeDirector(_silent_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        memory_extraction=extraction,
+        context_store=context_store,
+    )
+    g["orch"]._outcome_log = outcome  # noqa: SLF001
+
+    await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    assert outcome.shadow_calls == []
+    assert extraction.calls == []
+    assert context_store.calls == []
+    # Solo el mensaje del VIP en el historial: Diana no escribió nada.
+    rows = await g["history"].get_recent(100)
+    assert [row["role"] for row in rows] == ["vip"]
+
+
+@pytest.mark.asyncio
+async def test_silent_close_carries_unverified_media_to_the_director() -> None:
+    """Una foto que nadie vio viaja marcada: el candado no puede cerrarla."""
+    g = _build(FakeDirector(_silent_decision()))
+
+    await g["orch"].handle_vip_message(
+        _vip(vip_id=uuid4(), media_unverified=True)
+    )
+
+    assert g["director"].calls[0].media_unverified is True
+
+
+@pytest.mark.asyncio
+async def test_silent_close_in_sandbox_needs_the_sandbox_auto_send_flag() -> None:
+    """§4.20: con FEATURE_SANDBOX_AUTO_SEND apagado el sandbox pide aprobación.
+
+    El sandbox no puede cerrar un turno por su cuenta si la ventana de prueba
+    sigue en modo supervisado: el comportamiento tiene que ser el anterior.
+    """
+    g = _build(FakeDirector(_silent_decision()), feature_sandbox_auto_send=False)
+    _wire_sandbox(g, _sandbox_auto_send_service(chat_id=100))
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert g["actuator"].read_count() == 0
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_silent_close_never_closes_a_frozen_vip() -> None:
+    """Un VIP congelado no recibe ni el acuse de leído: el turno cae a la cola."""
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    await vip_store.freeze_vip(rec.id, datetime(2999, 1, 1, tzinfo=UTC))
+    g = _build(
+        FakeDirector(_silent_decision()),
+        wire_autonomous=True,
+        feature_autonomous_mode=True,
+        global_mode="autonomous",
+        delivery_mode="autonomous",
+        vip_store=vip_store,
+    )
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert g["actuator"].read_count() == 0
+    assert len(g["notifier"].drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_silent_close_supervised_leaves_no_pending_signal_row() -> None:
+    """§4.26: mientras la dueña no decide, no hay fila de sombra pendiente.
+
+    Una fila con ``vip_signal`` NULL abriría la ventana C3: el siguiente
+    mensaje del VIP se clasificaría como reacción a un turno que nunca salió.
+    """
+    outcome = _FakeOutcomeLogRecording()
+    trace_reader = _FakeEmotionalTraceReader(_closing_trace())
+    g = _build(FakeDirector(_silent_decision()), trace_reader=trace_reader)
+    g["orch"]._outcome_log = outcome  # noqa: SLF001
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert outcome.shadow_calls == []
+
+
+#: ``pipeline_traces.prompt_text`` carries the WHOLE model prompt in
+#: production (persona + reglas + memorias + comprehension + historial), not
+#: the VIP message. The doubles must look like that: seeding "bye" here hid the
+#: bug where the catch-up fed the persona's own words to the classifier.
+_FULL_PROMPT = (
+    "PERSONA: Diana. Eres cálida. Nunca suenes triste ni molesta; si el VIP "
+    "está triste o molesta, baja el ritmo.\n"
+    "REGLAS: responde corto.\n"
+    "MEMORIAS: al VIP le gusta el café.\n"
+    "HISTORIAL:\nVIP: hola diana\nDIANA: hola amor"
+)
+
+
+def _closing_trace(vip_id: UUID | None = None) -> dict:
+    """Trace double shaped like production: fact stored, prompt_text = prompt."""
+    return {
+        "comprehension": {"emotion": "neutral", "closing_without_reply": True},
+        "prompt_text": _FULL_PROMPT,
+        "vip_id": str(vip_id) if vip_id is not None else None,
+        "decision": {"action": "silent_close", "reason": "cierre_sin_respuesta"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_answered_closing_draft_is_scored_like_any_other_turn() -> None:
+    """§4.26: si la dueña aprueba y el turno se entrega, se puntúa normal.
+
+    Los hooks sombra se saltan al decidir (el turno PODÍA terminar en silencio);
+    el cierre supervisado que se entrega los corre en el post-turno, para no
+    dejar un turno entregado sin categoría, sin emoción y sin confianza.
+    """
+    vip_id = uuid4()
+    trust = _FakeTrustBudget()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    from diana.application.ports import EmotionalSignalRecord
+
+    no_signal = EmotionalSignalRecord(
+        signal_detected=False,
+        signal_type=None,
+        intensity=0.0,
+        pipeline_would_have_escalated=None,
+    )
+    detector = _FakeEmotionalDetector(no_signal)
+    signal_log = _FakeEmotionalSignalLog()
+    synthesis = _FakeProfileSynthesisTrigger()
+    trace_reader = _FakeEmotionalTraceReader(_closing_trace(vip_id))
+    g = _build(
+        FakeDirector(_silent_decision()),
+        trace_reader=trace_reader,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+        trust_budget=trust,
+        emotional_detector=detector,
+        emotional_signal_log=signal_log,
+        profile_synthesis_trigger=synthesis,
+    )
+    g["admin"].set_post_turn_hook(g["orch"]._maybe_post_turn)  # noqa: SLF001
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    # Mientras espera: nada aprendido todavía.
+    assert trust.autonomous_calls == []
+    assert cat_log.inserted == []
+
+    await g["admin"].handle_approve(turn_id, actor_id=OWNER_ID)
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    assert g["actuator"].send_count() == 1
+    # Entregado de verdad → se puntúa como cualquier otro turno.
+    assert len(detector.calls) == 1
+    assert len(classifier.calls) == 1
+    assert [r.category for r in cat_log.inserted] == ["fatico"]
+    assert trust.autonomous_calls == [(UUID(str(vip_id)), "fatico")]
+    # Y lo que reciben los hooks es el MENSAJE DEL VIP, nunca el prompt.
+    assert classifier.calls[0][0] == "hola diana"
+    assert synthesis.calls[0][1] == "hola diana"
+    for texto in (classifier.calls[0][0], synthesis.calls[0][1]):
+        assert "PERSONA" not in texto and "triste" not in texto
+
+
+@pytest.mark.asyncio
+async def test_closing_catchup_never_uses_the_model_prompt() -> None:
+    """El prompt completo no es el mensaje del VIP (persona, reglas, memorias)."""
+    vip_id = uuid4()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    trace_reader = _FakeEmotionalTraceReader(_closing_trace(vip_id))
+    g = _build(
+        FakeDirector(_silent_decision()),
+        trace_reader=trace_reader,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    await g["coordinator"].transition(turn_id, "delivered")
+
+    await g["orch"]._run_answered_closing_hooks(turn_id, 100)  # noqa: SLF001
+
+    assert classifier.calls == [("hola diana", {"emotion": "neutral", "closing_without_reply": True})]
+
+
+@pytest.mark.asyncio
+async def test_closing_catchup_falls_back_to_history_without_a_vip_text() -> None:
+    """Sin ``vip_text`` en la aprobación, se lee el mensaje del historial."""
+    vip_id = uuid4()
+    review = _FakeEmotionalTraceReader(_closing_trace(vip_id))
+    g = _build(FakeDirector(_silent_decision()), trace_reader=review)
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    # El borrador existe pero sin el payload de versiones (fila legada).
+    await g["approvals"].update_draft(turn_id, draft_text="d", evaluation={})
+
+    text = await g["orch"]._closing_catchup_vip_text(turn_id, 100)  # noqa: SLF001
+
+    assert text == "hola diana"
+
+
+@pytest.mark.asyncio
+async def test_a_closing_turn_the_owner_closes_teaches_nothing() -> None:
+    """§4.26: cerrado por la dueña → sin fila, sin categoría y sin confianza."""
+    outcome = _FakeOutcomeLogRecording()
+    trust = _FakeTrustBudget()
+    cat_log = _FakeTurnCategoryLog()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    trace_reader = _FakeEmotionalTraceReader(_closing_trace())
+    g = _build(
+        FakeDirector(_silent_decision()),
+        trace_reader=trace_reader,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+        trust_budget=trust,
+    )
+    g["orch"]._outcome_log = outcome  # noqa: SLF001
+    g["admin"].set_post_turn_hook(g["orch"]._maybe_post_turn)  # noqa: SLF001
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    closed = await g["admin"].handle_close_without_reply(turn_id, actor_id=OWNER_ID)
+
+    assert closed is True
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "closed_no_reply"
+    assert outcome.shadow_calls == []
+    assert trust.autonomous_calls == []
+    assert cat_log.inserted == []
+    assert classifier.calls == []
+    assert g["actuator"].send_count() == 0
+
+
+# ── §4.26 (ronda 2): el disparo no depende de la decisión que el regen reescribe
+
+
+def _approve_decision() -> Decision:
+    return Decision(
+        action="approve",
+        reason="ok_for_human_review",
+        evaluation=_eval(),
+        draft_text="hola amor",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_regenerated_closing_still_gets_scored_after_escalate() -> None:
+    """cierre → "🔄 Regenerar" → escalate: el turno NO pierde sus métricas.
+
+    Caso REALMENTE alcanzable: la segunda pasada del Analista devuelve riesgo
+    alto/molestia, el candado pasa a decir "no es cierre" y la decisión nueva es
+    ``escalate`` por ``safety_below_threshold``. El hecho
+    (``closing_without_reply``) se recomputó a False, así que sólo la marca
+    durable («a este turno se le saltaron los hooks») puede sostener el puntaje.
+    """
+    vip_id = uuid4()
+    trust = _FakeTrustBudget()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    trace = _closing_trace(vip_id)
+    reader = _FakeEmotionalTraceReader(trace)
+    g = _build(
+        FakeDirector(_silent_decision()),
+        trace_reader=reader,
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+        trust_budget=trust,
+    )
+    g["admin"].set_post_turn_hook(g["orch"]._maybe_post_turn)  # noqa: SLF001
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert classifier.calls == []  # pre-decisión: saltado (podía callar)
+
+    # La dueña regenera: segunda pasada del Analista con riesgo alto/molestia.
+    # El candado recomputa el hecho a False y la decisión nueva ya no es cierre.
+    trace["comprehension"] = {
+        "emotion": "molesta",
+        "risk": "alto",
+        "closing_without_reply": False,
+    }
+    trace["decision"] = {
+        "action": "escalate",
+        "reason": "safety_below_threshold",
+    }
+    applied = await g["admin"].handle_owner_escalate(turn_id, actor_id=OWNER_ID)
+
+    assert applied is True
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "escalated"
+    # La marca de "hooks saltados" sobrevive al regen: se puntúa igual.
+    assert len(classifier.calls) == 1
+    assert classifier.calls[0][0] == "hola diana"
+    assert [r.category for r in cat_log.inserted] == ["fatico"]
+    assert trust.autonomous_calls == [(UUID(str(vip_id)), "fatico")]
+
+
+@pytest.mark.asyncio
+async def test_a_normal_turn_regenerated_into_a_closing_is_scored_once() -> None:
+    """normal → "🔄 Regenerar" → cierre: los hooks NO corren dos veces.
+
+    El ``upsert`` de mood no es idempotente por turno y un segundo incremento de
+    confianza movería dos veces la confianza de un turno ya puntuado.
+    """
+    vip_id = uuid4()
+    trust = _FakeTrustBudget()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog()
+    trace = {
+        "comprehension": {"emotion": "neutral", "closing_without_reply": False},
+        "prompt_text": _FULL_PROMPT,
+        "vip_id": str(vip_id),
+        "decision": {"action": "approve", "reason": "ok_for_human_review"},
+    }
+    g = _build(
+        FakeDirector(_approve_decision()),
+        trace_reader=_FakeEmotionalTraceReader(trace),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+        trust_budget=trust,
+    )
+    g["admin"].set_post_turn_hook(g["orch"]._maybe_post_turn)  # noqa: SLF001
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    assert len(classifier.calls) == 1  # pre-decisión: sí corrieron
+
+    # El regen convierte el turno en cierre (el LLM reclasificó la comprensión).
+    trace["comprehension"] = {"emotion": "neutral", "closing_without_reply": True}
+    trace["decision"] = {"action": "silent_close", "reason": "cierre_sin_respuesta"}
+    await g["admin"].handle_approve(turn_id, actor_id=OWNER_ID)
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "delivered"
+    # Se puntúa UNA vez, no dos.
+    assert len(classifier.calls) == 1
+    assert len(cat_log.inserted) == 1
+    assert trust.autonomous_calls == [(UUID(str(vip_id)), "fatico")]
+
+
+@pytest.mark.asyncio
+async def test_the_durable_marker_also_stops_a_second_scoring() -> None:
+    """Tras un reinicio, la fila de ``turn_category_log`` del turno manda."""
+    vip_id = uuid4()
+    classifier = _FakeTurnClassifier(_classification("fatico", 1.0))
+    cat_log = _FakeTurnCategoryLog(durable=True)
+    trace = {
+        "comprehension": {"emotion": "neutral", "closing_without_reply": True},
+        "prompt_text": _FULL_PROMPT,
+        "vip_id": str(vip_id),
+        "decision": {"action": "silent_close", "reason": "cierre_sin_respuesta"},
+    }
+    g = _build(
+        FakeDirector(_silent_decision()),
+        trace_reader=_FakeEmotionalTraceReader(trace),
+        turn_classifier=classifier,
+        turn_category_log=cat_log,
+    )
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=vip_id))
+    # Simula "los hooks ya corrieron en otro proceso": la fila existe.
+    from diana.application.ports import TurnCategoryLogRecord
+
+    await cat_log.insert(
+        TurnCategoryLogRecord(
+            turn_id=turn_id, category="fatico", chat_id=100, vip_id=vip_id
+        )
+    )
+
+    await g["orch"]._run_answered_closing_hooks(turn_id, 100)  # noqa: SLF001
+
+    assert classifier.calls == []
+    assert len(cat_log.inserted) == 1
+
+
+class _RaisingApprovalStore:
+    """Approval store that always faults (DB hiccup stand-in)."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.calls = 0
+
+    async def get_by_turn(self, turn_id):
+        self.calls += 1
+        raise RuntimeError("approval store down")
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+async def test_the_pending_row_gate_fails_closed_when_the_marker_cannot_be_read() -> None:
+    """§4.26: sin poder probar si los hooks se saltaron, no se escribe la fila.
+
+    La invariante es de producto: una fila pendiente se consumiría como reacción
+    a un turno que nunca salió. Un fallo de lectura de la marca se trata como
+    "podría ser un cierre" (no como "no lo es") y queda en el log.
+    """
+    outcome = _FakeOutcomeLogRecording()
+    g = _build(FakeDirector(_silent_decision()))
+    g["orch"]._outcome_log = outcome  # noqa: SLF001
+    g["admin"]._approvals = _RaisingApprovalStore(g["approvals"])  # noqa: SLF001
+
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+
+    stored = await g["turns"].get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert outcome.shadow_calls == []
+    assert g["learning"].calls == []
+
+    # El gate devuelve "desconocido" (None), nunca "no se saltaron" (False).
+    _status, hooks_skipped = await g["orch"]._post_turn_facts(turn_id)  # noqa: SLF001
+    assert hooks_skipped is None
+
+
+@pytest.mark.asyncio
+async def test_closing_catchup_ignores_a_non_vip_history_row() -> None:
+    """El mismo `telegram_message_id` puede ser una fila de la dueña, no del VIP."""
+    g = _build(FakeDirector(_silent_decision()))
+    turn_id = await g["orch"].handle_vip_message(_vip(vip_id=uuid4()))
+    await g["approvals"].update_draft(turn_id, draft_text="d", evaluation={})
+
+    class _OwnerOnlyHistory:
+        async def get_recent(self, chat_id, *, limit=40):
+            return [
+                {
+                    "role": "owner",
+                    "telegram_message_id": 11,
+                    "text": "hola, soy la dueña",
+                }
+            ]
+
+    g["orch"]._history = _OwnerOnlyHistory()  # noqa: SLF001
+
+    text = await g["orch"]._closing_catchup_vip_text(turn_id, 100)  # noqa: SLF001
+
+    assert text is None

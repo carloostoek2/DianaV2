@@ -346,6 +346,78 @@ async def test_resolve_doctrine_rule_passes_knowledge_overrides_and_regen_draft(
 
 
 @pytest.mark.asyncio
+async def test_regen_silent_close_queues_the_draft_with_the_closing_reason() -> None:
+    """§4.26: un regen que pide cerrar NO cierra solo: va a la cola con el botón."""
+    from diana.application.admin_service import AdminService
+    from diana.application.draft_variants import CLOSING_REASON
+
+    rule_text = "Despedirse con calidez cuando el cliente se va"
+    regen_draft = "Que descanses, amor"
+
+    gray_zone = AsyncMock()
+    query = _fake_query()
+    gray_zone.get_open_query_by_turn_id.return_value = query
+    gray_zone.persist_live_policy.return_value = SimpleNamespace(
+        id=uuid4(),
+        trigger_description=query.question,
+        rule=rule_text,
+        scope="all",
+        is_active=True,
+        vip_id=None,
+        source_query_id=query.id,
+    )
+    gray_zone.deactivate_policy = AsyncMock()
+
+    director = AsyncMock()
+    director.handle_turn.return_value = Decision(
+        action="silent_close",
+        reason="cierre_sin_respuesta",
+        evaluation=_profile(),
+        draft_text=regen_draft,
+    )
+
+    admin = object.__new__(AdminService)
+    admin._director = director  # type: ignore[attr-defined]
+    admin._gray_zone = gray_zone  # type: ignore[attr-defined]
+    admin._notifier = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns = AsyncMock()  # type: ignore[attr-defined]
+    admin._turns.get.return_value = SimpleNamespace(
+        id=query.turn_id,
+        chat_id=42,
+        vip_id=None,
+        trigger_message_id=7,
+        channel_type="vip",
+        status="gray_zone",
+    )
+    admin.create_supervised_delivery_from_gray_zone = AsyncMock(return_value=True)
+    gray_zone.policy_override_payload = lambda p: {
+        "trigger_description": query.question,
+        "rule": rule_text,
+        "scope": "all",
+        "is_active": True,
+    }
+
+    status = await AdminService.resolve_doctrine_rule_and_enqueue(
+        admin,
+        turn_id=query.turn_id,
+        rule_text=rule_text,
+        scope="all",
+        vip_id=None,
+        gray_zone=gray_zone,
+        actor_id=999001,
+    )
+
+    # La regla se aplicó: no es un fallo de regen, el borrador va a la cola.
+    assert status == "resolved"
+    gray_zone.deactivate_policy.assert_not_awaited()
+    _, kwargs = admin.create_supervised_delivery_from_gray_zone.await_args
+    assert kwargs.get("draft_override") == regen_draft
+    # La razón de cierre es lo que enciende "🤐 Cerrar sin responder".
+    assert kwargs.get("reason_override") == CLOSING_REASON
+    gray_zone.mark_awaiting_send.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_resolve_doctrine_terminal_turn_returns_stale() -> None:
     """Terminal turn guard: never persist a live policy / regen for a dead turn."""
     from diana.application.admin_service import AdminService

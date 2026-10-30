@@ -19,6 +19,7 @@ from diana.infrastructure.db.models import (
     PipelineTrace,
     PromoExecution,
     StagingCandidate,
+    Turn,
 )
 from diana.infrastructure.db.repositories.sandbox_filters import trace_not_sandbox
 
@@ -44,13 +45,20 @@ def trace_row_to_metrics_dict(
     decision: object,
     timings: object,
     created_at: datetime | None,
+    status: str | None = None,
 ) -> dict:
-    """Map a pipeline_traces row subset to the service dict shape."""
+    """Map a pipeline_traces row subset to the service dict shape.
+
+    ``status`` is the turn's FINAL state, not the stored decision: a
+    ``silent_close`` decision may be demoted to the owner and end delivered
+    (AGENTS §4.26), and the weekly metrics must count outcomes.
+    """
     return {
         "turn_id": turn_id,
         "decision": decision if isinstance(decision, dict) else decision,
         "timings": timings if isinstance(timings, dict) else timings,
         "created_at": created_at,
+        "status": status,
     }
 
 
@@ -71,7 +79,14 @@ class SqlMetricsDataSource:
                     PipelineTrace.decision,
                     PipelineTrace.timings,
                     PipelineTrace.created_at,
-                ).where(
+                    # §4.26: the weekly metrics count OUTCOMES, so they need the
+                    # turn's final state (a silent_close decision that the owner
+                    # answered was delivered, not a close). Outer join keeps a
+                    # trace whose turn row is gone (never expected: FK) as NULL.
+                    Turn.status,
+                )
+                .outerjoin(Turn, Turn.id == PipelineTrace.turn_id)
+                .where(
                     and_(
                         PipelineTrace.created_at >= start,
                         PipelineTrace.created_at < end,
@@ -88,8 +103,9 @@ class SqlMetricsDataSource:
                     decision=decision,
                     timings=timings,
                     created_at=created_at,
+                    status=turn_status,
                 )
-                for turn_id, decision, timings, created_at in result.all()
+                for turn_id, decision, timings, created_at, turn_status in result.all()
             ]
 
     async def corrected_turn_ids(self, turn_ids: list[UUID]) -> set[UUID]:

@@ -159,7 +159,10 @@ class TestFormatSummaryText:
         assert "- Repetición de zona gris: 3" in text
         assert "- Falsos positivos de escalación: 0" in text
         assert "- Drift de estilo: 0.03 (normal)" in text
-        assert "- Envíos reales autónomos (L1+L2+L3): 45 (32% del total)" in text
+        assert (
+            "- Envíos reales autónomos (L1+L2+L3): 45 "
+            "(32% del total)"
+        ) in text
         assert "- Promos enviadas: 12 (únicos: 10, repetidos: 2)" in text
         # No gray-zone trigger list (Item 2 stores count only)
         assert "mismos triggers" not in text
@@ -346,3 +349,66 @@ class TestP0FpCountCoherence:
         assert "Envíos reales autónomos (L1+L2+L3)" in text
         assert "No comparar estos tres números entre sí." in text
         assert text.startswith("📊")
+
+
+async def test_send_count_survives_a_week_with_closings(
+    svc: AdminMetricsService, store: FakeLearningMetricsStore
+) -> None:
+    """§4.26: la tasa excluye los cierres; el conteo se lee tal cual, no derivado."""
+    week = date(2026, 7, 20)
+    store.seed(
+        week,
+        _full_values(
+            total_turns=10.0,
+            autonomous_send_rate=0.5,
+            autonomous_send_count=3.0,
+            silent_close_count=4.0,
+        ),
+    )
+    summary = await svc.get_week_summary(week)
+    text = svc.format_summary_text(summary)
+    assert "Envíos reales autónomos (L1+L2+L3): 3 (50%" in text
+    # La etiqueta cambia SOLO porque hubo cierres: con la bandera apagada el
+    # texto que lee la dueña es el de siempre.
+    assert "(50% de los turnos con respuesta)" in text
+
+
+async def test_autonomy_label_is_unchanged_without_silent_closes(
+    svc: AdminMetricsService, store: FakeLearningMetricsStore
+) -> None:
+    """Sin cierres en la semana, el denominador ES el total: misma etiqueta."""
+    week = date(2026, 7, 20)
+    store.seed(
+        week,
+        _full_values(
+            total_turns=10.0,
+            autonomous_send_rate=0.5,
+            autonomous_send_count=5.0,
+            silent_close_count=0.0,
+        ),
+    )
+    summary = await svc.get_week_summary(week)
+    text = svc.format_summary_text(summary)
+    assert "(50% del total)" in text
+
+
+async def test_weekly_summary_shows_the_closing_count(
+    svc: AdminMetricsService, store: FakeLearningMetricsStore
+) -> None:
+    """§4.26: el conteo se guarda Y se ve; la dueña no lo busca en la base."""
+    week = date(2026, 7, 20)
+    store.seed(week, _full_values(silent_close_count=7.0))
+    summary = await svc.get_week_summary(week)
+    text = svc.format_summary_text(summary)
+    assert "- Cierres sin responder: 7" in text
+
+
+async def test_weeks_before_the_change_do_not_invent_a_closing_count(
+    svc: AdminMetricsService, store: FakeLearningMetricsStore
+) -> None:
+    """Una semana vieja no tiene el dato: mejor omitirlo que mostrar un 0 falso."""
+    week = date(2026, 7, 20)
+    store.seed(week, _full_values())
+    summary = await svc.get_week_summary(week)
+    text = svc.format_summary_text(summary)
+    assert "Cierres sin responder" not in text

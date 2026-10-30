@@ -47,6 +47,7 @@ merge; those seeds are **not** live overrides today.
 | **F6** Link Lucien→Diana | `feature_link_enabled` / `FEATURE_LINK_ENABLED` | **yes** | Coordinator chat receives `[LINK] vip_kicked` → dedup by `event_id` → owner DM (Expulsar/Desactivar/Mantener). Migration **028**. Active in `.env` |
 | **Feedback calidad** | `feature_quality_feedback_enabled` / `FEATURE_QUALITY_FEEDBACK_ENABLED` | **yes** | Destacar/Reprender on VIP drafts, gold/vip banks, gold-first retrieval (migration **029**). Active in `.env` |
 | **Saludo puro VIP** | `feature_phatic_auto_send` / `FEATURE_PHATIC_AUTO_SEND` | **yes** | Direct send of short pure-greeting turns (else approve) |
+| **Cierre silencioso** | `feature_silent_close_enabled` / `FEATURE_SILENT_CLOSE_ENABLED` (+ `silent_close_max_words` / `SILENT_CLOSE_MAX_WORDS`, default `8`) | **yes** | Farewells and bare acknowledgements are marked read and never answered (AGENTS §4.26). Closed turns write no history, no learning row, no trust event and stay out of the autonomy rate; supervised turns keep the owner queue with the "🤐 Cerrar sin responder" button. Flag off → Diana answers every farewell/ack exactly as before |
 | **Privacidad PII** | `feature_pii_masking_enabled` / `FEATURE_PII_MASKING_ENABLED` | **no** | Masks emails, phones, cards (Luhn), @handles, URLs at the LLM boundary and restores echoed placeholders on replies. Default **true** (privacy-first, transparent); disable only for debugging |
 
 **Freeze** is implemented on the gray-zone / freeze path (middleware + Behavior

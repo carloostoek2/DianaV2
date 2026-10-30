@@ -298,6 +298,49 @@ async def test_v2_funciona_sin_journal(session_factory) -> None:
     assert prueba not in _turnos(report, "V2")
 
 
+async def test_v2_calla_un_cierre_silencioso(session_factory) -> None:
+    """§4.26: el cierre silencioso no deja fila de sombra por diseño.
+
+    Cubre los DOS estados en que eso es correcto: el turno ya cerrado
+    (``closed_no_reply``) y el borrador de cierre esperando a la dueña
+    (``pending_approval``, cuya fila se crea si ella lo entrega y nunca si lo
+    cierra). Si se cae una de las dos exclusiones, V2 avisa todos los días de
+    turnos que está bien que no tengan fila.
+    """
+    vip_id = await _seed_vip(session_factory, etiqueta="v2-cierre")
+    chat_cerrado = 991300000 + (uuid.uuid4().int % 9_000_000)
+    cerrado = await _seed_turn(
+        session_factory, vip_id=vip_id, chat_id=chat_cerrado, status="closed_no_reply"
+    )
+    await _seed_trace(
+        session_factory,
+        turn_id=cerrado,
+        chat_id=chat_cerrado,
+        vip_id=vip_id,
+        decision={"action": "silent_close", "reason": "cierre_sin_respuesta"},
+    )
+    chat_cola = chat_cerrado + 1
+    en_cola = await _seed_turn(
+        session_factory, vip_id=vip_id, chat_id=chat_cola, status="pending_approval"
+    )
+    await _seed_trace(
+        session_factory,
+        turn_id=en_cola,
+        chat_id=chat_cola,
+        vip_id=vip_id,
+        decision={"action": "silent_close", "reason": "cierre_sin_respuesta"},
+    )
+
+    report = await _correr(session_factory)
+
+    assert cerrado not in _turnos(report, "V2"), (
+        f"V2 contó un cierre silencioso cerrado: {report.as_dict()}"
+    )
+    assert en_cola not in _turnos(report, "V2"), (
+        f"V2 contó un borrador de cierre esperando a la dueña: {report.as_dict()}"
+    )
+
+
 async def test_v3_descarta_escalaciones_de_sandbox(session_factory) -> None:
     """V3 tambien excluye turnos de sandbox (consistencia con V2); el gemelo real si avisa."""
     real = await _seed_v3(session_factory)

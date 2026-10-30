@@ -622,6 +622,7 @@ class FakeOwnerNotifier:
         turn_id: Any,
         chat_id: int,
         show_quality_feedback: bool = False,
+        show_close_without_reply: bool = False,
     ) -> None:
         self.infos.append((f"edit_draft:{owner_message_id}:{text[:40]}", chat_id))
         self.draft_edits.append(
@@ -630,6 +631,7 @@ class FakeOwnerNotifier:
                 "turn_id": turn_id,
                 "chat_id": chat_id,
                 "show_quality_feedback": show_quality_feedback,
+                "show_close_without_reply": show_close_without_reply,
             }
         )
 

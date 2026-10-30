@@ -59,6 +59,10 @@ class TurnStatus(StrEnum):
     ESCALATED = "escalated"
     SUPERSEDED = "superseded"
     DELIVERED = "delivered"
+    # AGENTS §4.26: the closing gate decided this turn needs no written reply.
+    # Terminal on purpose — it must NOT look like a delivery: no owner history,
+    # no learning row, no VIP reaction window, no trust adjustment.
+    CLOSED_NO_REPLY = "closed_no_reply"
     FAILED = "failed"
 
 
@@ -66,6 +70,7 @@ TERMINAL_TURN_STATUSES: frozenset[TurnStatus] = frozenset(
     {
         TurnStatus.SUPERSEDED,
         TurnStatus.DELIVERED,
+        TurnStatus.CLOSED_NO_REPLY,
         TurnStatus.FAILED,
         TurnStatus.ESCALATED,
     }
@@ -106,6 +111,10 @@ class IncomingTurn(BaseModel):
     # Image vision: Telegram file_id of the inbound photo, propagated to the
     # owner approval DM. Not used by any cognitive stage.
     photo_file_id: str | None = None
+    # AGENTS §4.22/§4.26: the media in this turn was never verified (vision off,
+    # privacy filter, provider failure). The closing gate must never close a
+    # turn nobody could read — the owner decides instead.
+    media_unverified: bool = False
 
 
 # Closed emotion enum (contrato_analista.md A.3). Free strings are forbidden.
@@ -194,6 +203,12 @@ class Comprehension(BaseModel):
     # LLM schema hint): True when a deterministic "operacion" alias matched the
     # turn text (FEATURE_PERSONA_OPERACION_ENABLED). Drives knowledge.operacion.
     needs_operacion: bool = False
+    # Director-only (never asked to / sent to the Analyst — excluded from the
+    # LLM schema hint): True when the deterministic closing gate decided this
+    # turn is a farewell or a bare acknowledgement (AGENTS §4.26). The Decider
+    # turns it into ``action="silent_close"``. Default False keeps historical
+    # JSONB rows and the shadow re-decision compatible.
+    closing_without_reply: bool = False
     raw_llm_output: dict | None = None
 
 
@@ -347,7 +362,8 @@ class Policy(BaseModel):
 
 
 class Decision(BaseModel):
-    """F3 decision type surface — approve | escalate | consult_doctrine | send.
+    """F3 decision type surface — approve | escalate | consult_doctrine | send
+    | silent_close.
 
     F1 actions: approve, escalate.
     F2 extension: consult_doctrine (gray zone doctrine query).
@@ -356,6 +372,10 @@ class Decision(BaseModel):
     autonomous mins (item2). TurnOrchestrator delivers ``action=="send"``
     when AMS L1/L2 enablement allows it (item3); AMS-off demotes to approve;
     unwired AMS marks failed (fail-closed defense).
+    AGENTS §4.26: ``silent_close`` = the turn is a farewell or a bare
+    acknowledgement and needs no written reply (FEATURE_SILENT_CLOSE_ENABLED).
+    The orchestrator marks the message read and closes the turn; it never
+    writes history, never opens the VIP reaction window and never scores trust.
 
     Maps Anexo F DecisorOutput: action←accion, reason←razon,
     mode_restriction_applied←restriccion_de_modo_aplicada.
@@ -364,7 +384,9 @@ class Decision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve", "escalate", "consult_doctrine", "send"]
+    action: Literal[
+        "approve", "escalate", "consult_doctrine", "send", "silent_close"
+    ]
     reason: str
     evaluation: EvaluationProfile
     draft_text: str | None = None

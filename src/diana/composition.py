@@ -708,6 +708,9 @@ def build_app(
     feature_autonomous_mode = settings.feature_autonomous_mode
     feature_staging_enabled = settings.feature_staging_enabled
     feature_general_mode_enabled = settings.feature_general_mode_enabled
+    # AGENTS §4.26: closing gate. Same value for the live and the shadow
+    # Decider so the shadow re-decision stays comparable.
+    feature_silent_close_enabled = settings.feature_silent_close_enabled
 
     # GrayZoneService — created only when the feature is enabled.
     # When disabled, TurnOrchestrator receives None (dead-code guard).
@@ -759,6 +762,7 @@ def build_app(
     decider = Decider(
         feature_gray_zone_enabled=feature_gray_zone_enabled,
         feature_autonomous_mode=feature_autonomous_mode,
+        feature_silent_close_enabled=feature_silent_close_enabled,
         runtime_thresholds=runtime_thresholds,
     )
 
@@ -768,6 +772,7 @@ def build_app(
     shadow_decider = Decider(
         feature_gray_zone_enabled=feature_gray_zone_enabled,
         feature_autonomous_mode=True,
+        feature_silent_close_enabled=feature_silent_close_enabled,
         runtime_thresholds=runtime_thresholds,
     )
 
@@ -1202,6 +1207,9 @@ def build_app(
         profiles_repo=profiles_repo,
         feature_persona_operacion_enabled=settings.feature_persona_operacion_enabled,
         persona_semantic_shadow=persona_semantic_shadow,
+        # AGENTS §4.26: deterministic closing gate (farewell / bare ack).
+        feature_silent_close_enabled=feature_silent_close_enabled,
+        silent_close_max_words=settings.silent_close_max_words,
     )
 
     learning = LearningService(traces)

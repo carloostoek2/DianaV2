@@ -21,6 +21,7 @@ from diana.application.ports import (
     TurnStore,
     VipStore,
 )
+from diana.cognitive.closing_gate import CLOSING_REASON as closing_gate_reason
 from diana.cognitive.models import (
     Decision,
     IncomingTurn,
@@ -61,6 +62,16 @@ DIMENSION_LABELS_ES: tuple[tuple[str, str], ...] = (
     ("empathy", "Empatía"),
 )
 
+# Decision.reason del cierre silencioso (AGENTS §4.26). El borrador llega a la
+# cola de la dueña SOLO en modo supervisado; el token es lo que enciende el
+# botón "🤐 Cerrar sin responder" — nunca el texto del turno.
+#
+# Single source of truth: Cognitive Core owns the token because the Decider is
+# the one that emits it (``closing_gate.CLOSING_REASON``). Re-exported here so
+# the application layer keeps one name to import and a rename on either side
+# cannot silently turn the button off.
+CLOSING_REASON = closing_gate_reason
+
 # Decision.reason tokens that can reach an approval draft → clear Spanish.
 # Machine tokens stay stable for stores/parsers (escalation_labels pattern).
 APPROVAL_REASON_LABELS: dict[str, str] = {
@@ -82,7 +93,35 @@ APPROVAL_REASON_LABELS: dict[str, str] = {
         "Marcaste la escalación como falso positivo: el turno volvió a tu cola."
     ),
     "startup_re_notify": "Recordatorio de un borrador pendiente de aprobación.",
+    CLOSING_REASON: (
+        "El VIP cerró o solo acusó recibo: puedes aprobar y contestar, "
+        "o cerrar sin responder."
+    ),
 }
+
+
+def offers_closing_without_reply(reason: str | None) -> bool:
+    """True when the draft came from the closing latch (AGENTS §4.26).
+
+    Machine token matching, not text: a regeneration or a doctrine rule that
+    changes the reason also removes the option from the keyboard.
+    """
+    return (reason or "").strip() == CLOSING_REASON
+
+
+#: Marca durable: a este turno se le SALTARON los hooks sombra pre-decisión
+#: (AGENTS §4.26). Vive en ``pending_approvals.evaluation`` porque ahí el
+#: borrador guarda su estado interno (``_draft_versions``, ``_doctrine_relevant``,
+#: ``_autonomy``) y ``update_draft`` conserva las claves que no conoce, así que
+#: sobrevive a "🔄 Regenerar".
+#:
+#: Por qué no se deriva del hecho ``comprehension.closing_without_reply``: la
+#: regeneración re-ejecuta el Analista y RECOMPUTA ese campo (un ``risk=alto`` o
+#: una emoción molesta en la segunda pasada lo apagan). El hecho responde "¿es un
+#: cierre?", que cambia; la marca responde "¿se saltaron los hooks?", que es el
+#: hecho pasado que el catch-up necesita y ya no puede cambiar.
+CLOSING_HOOKS_SKIPPED_KEY = "_closing_hooks_skipped"
+
 
 # Turn categories (stored ASCII) → Spanish for the non-technical Autonomía text.
 _TURN_CATEGORY_ES: dict[str, str] = {
@@ -987,6 +1026,9 @@ class DraftVariantService:
                     self._feature_quality_feedback_enabled
                     and approval.vip_id is not None
                 ),
+                show_close_without_reply=offers_closing_without_reply(
+                    approval.cognitive_summary
+                ),
             )
         except Exception:
             logger.exception(
@@ -998,6 +1040,9 @@ class DraftVariantService:
 __all__ = [
     "APPROVAL_REASON_LABELS",
     "AUTONOMY_KEY",
+    "CLOSING_HOOKS_SKIPPED_KEY",
+    "CLOSING_REASON",
+    "offers_closing_without_reply",
     "DOCTRINE_NA_LABEL",
     "DOCTRINE_RELEVANT_KEY",
     "DIMENSION_LABELS_ES",

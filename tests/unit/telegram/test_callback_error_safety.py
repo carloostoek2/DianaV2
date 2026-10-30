@@ -598,3 +598,48 @@ async def test_trace_detail_back_uses_parsed_page() -> None:
         if b.text == "🔙 Volver a turnos"
     )
     assert back.callback_data == encode_trace_page(2)
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_confirmation_escapes_the_draft_body() -> None:
+    """§4.26: el cuerpo del borrador viaja con parse_mode="HTML" — se escapa.
+
+    El texto del borrador es del VIP/modelo: un `<a href=...>` se mostraría como
+    enlace y un `<` suelto haría fallar el edit (y se lo tragaría el except).
+    """
+    turn_id = uuid4()
+    admin = MagicMock()
+    admin.handle_close_without_reply = AsyncMock(return_value=True)
+    router = build_callback_router(
+        admin=admin,
+        correct_sessions=CorrectSessionStore(),
+        owner_telegram_id=OWNER,
+    )
+    on_callback = router.callback_query.handlers[0].callback
+    msg = Message(
+        message_id=9,
+        date=0,
+        chat=Chat(id=OWNER, type="private"),
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        text="<a href='x'>ver esto</a> 1 < 2",
+    )
+    object.__setattr__(msg, "edit_text", AsyncMock(return_value=True))
+    cq = CallbackQuery(
+        id="cq-close",
+        from_user=User(id=OWNER, is_bot=False, first_name="Owner"),
+        chat_instance="inst",
+        data=encode_callback("close_no_reply", turn_id),
+        message=msg,
+    )
+    object.__setattr__(cq, "answer", AsyncMock(return_value=True))
+
+    await on_callback(cq)
+
+    msg.edit_text.assert_awaited_once()
+    args, kwargs = msg.edit_text.await_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert text.startswith("🤐 <b>Cerrado sin responder</b>\n\n")
+    assert "<a href" not in text
+    assert "&lt;a href" in text
+    assert "1 &lt; 2" in text
+    assert kwargs.get("parse_mode") == "HTML"

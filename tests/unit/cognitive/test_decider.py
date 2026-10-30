@@ -792,3 +792,68 @@ def test_safety_wins_over_molesta() -> None:
     assert decision.action == "escalate"
     assert decision.reason == "safety_below_threshold"
 
+
+# ---------------------------------------------------------------------------
+# AGENTS §4.26 — silent_close (closing gate)
+# ---------------------------------------------------------------------------
+
+
+def _closing(*, risk: str = "bajo", emotion: str = "neutral") -> Comprehension:
+    return _comprehension(risk=risk, emotion=emotion).model_copy(
+        update={"closing_without_reply": True}
+    )
+
+
+def test_closing_flag_on_emits_silent_close() -> None:
+    decision = Decider(feature_silent_close_enabled=True).decide(
+        _profile(), _closing()
+    )
+    assert decision.action == "silent_close"
+    assert decision.reason == "cierre_sin_respuesta"
+
+
+def test_closing_flag_off_is_f2_parity() -> None:
+    """Apagada = comportamiento anterior: el cierre cae en la cola."""
+    decision = Decider().decide(_profile(), _closing())
+    assert decision.action == "approve"
+
+
+def test_closing_beats_autonomous_send() -> None:
+    """El silencio se decide antes del envío autónomo."""
+    decision = Decider(
+        feature_autonomous_mode=True, feature_silent_close_enabled=True
+    ).decide(_high_profile(), _closing())
+    assert decision.action == "silent_close"
+
+
+def test_safety_wins_over_closing() -> None:
+    decision = Decider(feature_silent_close_enabled=True).decide(
+        _profile(safety=0.1), _closing()
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "safety_below_threshold"
+
+
+def test_risk_wins_over_closing() -> None:
+    decision = Decider(feature_silent_close_enabled=True).decide(
+        _profile(), _closing(risk="alto")
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "risk_high"
+
+
+def test_molesta_wins_over_closing() -> None:
+    decision = Decider(feature_silent_close_enabled=True).decide(
+        _profile(), _closing(emotion="molesta")
+    )
+    assert decision.action == "escalate"
+    assert decision.reason == "frustracion_directa"
+
+
+def test_closing_flag_is_the_only_unlock() -> None:
+    """Sin el flag no hay acción nueva, aunque el hecho esté marcado."""
+    decision = Decider(feature_autonomous_mode=True).decide(
+        _high_profile(), _closing()
+    )
+    assert decision.action == "send"
+

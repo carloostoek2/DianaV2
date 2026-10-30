@@ -194,6 +194,20 @@ class AdminMetricsService:
         promo_unique = _as_int(v.get("promo_unique_chats", 0))
         promo_repeat = _as_int(v.get("promo_repeat_count", 0))
 
+        # §4.26: los cierres silenciosos se informan aparte. Las semanas
+        # anteriores al cambio no tienen el dato y no se muestran como 0.
+        # Cuentan el DESENLACE (turnos que quedaron sin respuesta), así que la
+        # etiqueta del denominador sólo cambia si hubo cierres: con la bandera
+        # apagada el texto es exactamente el de antes.
+        silent_close = (
+            _as_int(v["silent_close_count"])
+            if "silent_close_count" in v
+            else None
+        )
+        autonomy_denominator = (
+            "de los turnos con respuesta" if silent_close else "del total"
+        )
+
         lines = [
             f"📊 Resumen de aprendizaje (semana del {start_lbl} al {end_lbl}):",
             f"- Turnos totales: {total}",
@@ -202,12 +216,13 @@ class AdminMetricsService:
             f"- Falsos positivos de escalación: {fp_count}{fp_delta}",
             f"- Drift de estilo: {drift:.2f} ({drift_lbl})",
             f"- Envíos reales autónomos (L1+L2+L3): {auto_count} "
-            f"({auto_pct}% del total)",
+            f"({auto_pct}% {autonomy_denominator})",
             f"- Promos enviadas: {promo_sent} (únicos: {promo_unique}, "
             f"repetidos: {promo_repeat})",
-            "",
-            "No comparar estos tres números entre sí.",
         ]
+        if silent_close is not None:
+            lines.append(f"- Cierres sin responder: {silent_close}")
+        lines += ["", "No comparar estos tres números entre sí."]
         return "\n".join(lines)
 
     async def export_week_json(self, week_start: date | None = None) -> str:

@@ -26,6 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from diana.application.draft_variants import CLOSING_REASON
 from diana.cognitive.models import EvaluationProfile
 
 __all__ = [
@@ -53,10 +54,15 @@ FpResumeAction = Literal[
     "blocked_safety",
     "blocked_no_text",
     "open_gray_zone",
+    "closing_without_reply",
 ]
 
 # Decider reason for a draft that failed the safety gate (fail closed).
 SAFETY_ESCALATION_REASON = "safety_below_threshold"
+# Decider action of the closing latch (AGENTS §4.26). A regeneration that
+# returns it NEVER closes on its own: the draft goes to the owner's queue with
+# the "Cerrar sin responder" option and she decides.
+_SILENT_CLOSE = "silent_close"
 # Synthetic decision reason for the resumed supervised draft (display-only).
 FP_RESUME_REASON = "escalation_false_positive_resume"
 
@@ -297,4 +303,12 @@ def plan_from_generated_decision(
         )
     if action == _ESCALATE and reason == SAFETY_ESCALATION_REASON:
         return FpResumePlan(action="blocked_safety", reason=reason)
+    if action == _SILENT_CLOSE:
+        # Nunca se aplica solo: el borrador vuelve a la cola CON la opción de
+        # cerrar, y la dueña decide (§4.26).
+        return FpResumePlan(
+            action="closing_without_reply",
+            reason=CLOSING_REASON,
+            draft_text=draft,
+        )
     return FpResumePlan(action="reuse_trace_draft", reason=reason, draft_text=draft)

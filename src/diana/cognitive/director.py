@@ -20,6 +20,7 @@ from typing import Any
 from uuid import UUID
 
 from diana.cognitive.album_collapse import collapse_album_runs
+from diana.cognitive.closing_gate import DEFAULT_MAX_WORDS, closing_verdict
 from diana.cognitive.analyst import Analyst
 from diana.cognitive.context_builder import ContextBuilder
 from diana.cognitive.decider import Decider
@@ -114,6 +115,7 @@ _DECISION_EMOJI: dict[str, str] = {
     "escalate": "🚨",
     "send": "📤",
     "consult_doctrine": "📚",
+    "silent_close": "🤐",
 }
 
 _DECISION_VERB: dict[str, str] = {
@@ -121,6 +123,7 @@ _DECISION_VERB: dict[str, str] = {
     "escalate": "escalar",
     "send": "enviar",
     "consult_doctrine": "consultar doctrina",
+    "silent_close": "cerró sin responder",
 }
 
 
@@ -254,6 +257,11 @@ class CognitiveDirector:
         # PersonaSemanticShadow; gets a snapshot of strings after retrieval and
         # runs in background. None (default) → no hook at all.
         persona_semantic_shadow: Any | None = None,
+        # FEATURE_SILENT_CLOSE_ENABLED (AGENTS §4.26): deterministic closing
+        # gate. Injected bool — never import Settings inside cognitive. False →
+        # the comprehension keeps ``closing_without_reply=False`` (byte-identical).
+        feature_silent_close_enabled: bool = False,
+        silent_close_max_words: int = DEFAULT_MAX_WORDS,
     ) -> None:
         self._analyst = analyst
         self._planner = planner
@@ -266,6 +274,8 @@ class CognitiveDirector:
         self._persona = persona
         self._style_rules = style_rules
         self._persona_catalog_provider = persona_catalog_provider
+        self._feature_silent_close_enabled = bool(feature_silent_close_enabled)
+        self._silent_close_max_words = int(silent_close_max_words)
         self._history = history
         self._analyst_history_limit = analyst_history_limit
         self._status = status_sink or NoOpTurnStatusSink()
@@ -435,7 +445,7 @@ class CognitiveDirector:
         timings: dict[str, float] = {}
 
         await self._status.transition(turn_id, TurnStatus.ANALYZING)
-        analyst_input = await self._build_analyst_input(turn)
+        analyst_input, last_outbound_text = await self._build_analyst_input(turn)
         # On AnalystSchemaInvalidError: do not store partial comprehension; re-raise.
         with TimingContext("analyst") as tc:
             comprehension = await self._analyst.analyze(analyst_input)
@@ -448,6 +458,12 @@ class CognitiveDirector:
         # before store/plan so the Planner stays 1:1 and the trace is honest.
         comprehension, operacion_hits = await self._maybe_force_operacion(
             turn, comprehension
+        )
+        # AGENTS §4.26: deterministic closing gate (no LLM). Sets the
+        # Director-only flag the Decider turns into ``silent_close``; stored
+        # with the comprehension so the shadow re-decision sees the same fact.
+        comprehension = await self._maybe_mark_closing(
+            turn, comprehension, last_outbound_text
         )
         await self._store(turn_id, "comprehension", comprehension)
         # operacion_match is traced right before EVERY exit below (early exits
@@ -545,6 +561,9 @@ class CognitiveDirector:
             not skip_repetition_guard
             and self._recent_intents is not None
             and self._repetition_guard is not None
+            # AGENTS §4.26: three farewells in a row are not a repetition bug.
+            # The closing gate already decided this turn needs no reply.
+            and not comprehension.closing_without_reply
         ):
             recent = await self._recent_intents.get_recent_intents(
                 turn.chat_id,
@@ -779,7 +798,9 @@ class CognitiveDirector:
         )
         return decision
 
-    async def _build_analyst_input(self, turn: IncomingTurn) -> AnalystInput:
+    async def _build_analyst_input(
+        self, turn: IncomingTurn
+    ) -> tuple[AnalystInput, str | None]:
         """Fetch chat-scoped history and map to contract historial_reciente (R1).
 
         - Over-fetches raw rows so bot/unknown filtering still yields up to
@@ -787,6 +808,8 @@ class CognitiveDirector:
         - Excludes the open trailing VIP burst (consecutive role=vip at the tail
           after the last owner/bot line). Orchestrator coalesces that burst into
           ``turno_actual`` so it must not also appear in historial.
+        - Returns the last outbound line (owner/bot) alongside, so the closing
+          gate can tell an "ok" that answers a question from a closing "ok".
         """
         limit = self._analyst_history_limit
         # Oversample raw rows; filter roles; then trim to limit human messages.
@@ -803,14 +826,30 @@ class CognitiveDirector:
         fact_topics, policy_topics, voice_tags = await self._catalog_vocabulary(
             turn.channel_type
         )
-        return AnalystInput(
-            turno_actual=turn.text,
-            historial_reciente=mapped,
-            channel_type=turn.channel_type,
-            catalog_topics=fact_topics,
-            policy_topics=policy_topics,
-            voice_tags=voice_tags,
+        return (
+            AnalystInput(
+                turno_actual=turn.text,
+                historial_reciente=mapped,
+                channel_type=turn.channel_type,
+                catalog_topics=fact_topics,
+                policy_topics=policy_topics,
+                voice_tags=voice_tags,
+            ),
+            self._last_outbound_text(raw),
         )
+
+    @staticmethod
+    def _last_outbound_text(raw: list[dict]) -> str | None:
+        """Last owner-side line (the bot writes as ``owner``), or None.
+
+        ``raw`` is already stripped of the open VIP burst, so scanning from the
+        tail finds the last message Diana (or the owner) sent.
+        """
+        for row in reversed(raw):
+            if isinstance(row, dict) and str(row.get("role") or "") == "owner":
+                text = row.get("text")
+                return None if text is None else str(text)
+        return None
 
     async def _catalog_vocabulary(
         self, channel_type: str
@@ -966,6 +1005,62 @@ class CognitiveDirector:
                 update={"needs_operacion": bool(hits)}
             )
         return comprehension, hits
+
+    async def _maybe_mark_closing(
+        self,
+        turn: IncomingTurn,
+        comprehension: Comprehension,
+        last_outbound_text: str | None,
+    ) -> Comprehension:
+        """Set ``closing_without_reply`` from the deterministic closing gate.
+
+        AGENTS §4.26. Flag off → the field is forced False (an older stored row
+        or a stray True must never leak into the matrix). Flag on → the gate
+        decides on the WHOLE coalesced turn text.
+
+        What persists is the FACT (``comprehension.closing_without_reply``,
+        read by ``/traza`` and by the shadow re-decision); the gate's own
+        verdict (``is_closing``/``reason``/``kind``, e.g. ``too_long`` or
+        ``open_question``) only lives in the in-memory trace and the log line,
+        because ``SqlTraceStore`` has no column for extra trace keys and drops
+        them. Adding one would need a migration; the product value does not
+        justify it today.
+        """
+        if not self._feature_silent_close_enabled:
+            if comprehension.closing_without_reply:
+                return comprehension.model_copy(
+                    update={"closing_without_reply": False}
+                )
+            return comprehension
+        verdict = closing_verdict(
+            turn.text,
+            intent=comprehension.intent,
+            emotion=comprehension.emotion,
+            risk=comprehension.risk,
+            media_unverified=bool(turn.media_unverified),
+            last_outbound_text=last_outbound_text,
+            max_words=self._silent_close_max_words,
+        )
+        await self._store(
+            turn.turn_id,
+            "closing_gate",
+            {
+                "is_closing": verdict.is_closing,
+                "reason": verdict.reason,
+                "kind": verdict.kind,
+            },
+        )
+        if verdict.is_closing:
+            logger.info(
+                "🤐 Cierre sin respuesta — %s (%s)",
+                "despedida" if verdict.kind == "farewell" else "acuse",
+                verdict.reason,
+            )
+        if bool(verdict.is_closing) == comprehension.closing_without_reply:
+            return comprehension
+        return comprehension.model_copy(
+            update={"closing_without_reply": bool(verdict.is_closing)}
+        )
 
     async def _store_operacion_match(
         self, turn: IncomingTurn, hits: list[Any], *, injected: bool

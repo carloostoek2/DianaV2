@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -12,6 +13,10 @@ from uuid import UUID, uuid4
 
 from diana.application.admin_service import AdminService
 from diana.application.autonomous_mode_service import AutonomousModeService
+from diana.application.draft_variants import (
+    CLOSING_HOOKS_SKIPPED_KEY,
+    read_versions,
+)
 from diana.application.gray_zone_service import GrayZoneService
 from diana.application.memory_extraction_service import (
     _POST_TURN_EXTRACTABLE_STATUSES,  # noqa: PLC2701 — extraction gate, single source (R4)
@@ -87,6 +92,10 @@ _PAYMENT_NOTIFY_TTL = timedelta(minutes=20)
 # VIP space is the allowlist (bounded cardinality) — so this ceiling is
 # defense-in-depth only, mirroring ``_prune_payment_notify`` (review round 2).
 _VIP_MOOD_ENGINE_CACHE_MAX = 1024
+# AGENTS §4.26: rolling window of turns whose shadow hooks already ran (see
+# ``_shadow_scored_turns``). Small on purpose: it only has to cover the gap
+# between the pipeline and an owner resolution of the same turn.
+_SHADOW_SCORED_TURNS_MAX = 2048
 
 
 def _detect_payment_intent(trace: dict | None) -> bool:
@@ -123,6 +132,22 @@ def _detect_payment_intent(trace: dict | None) -> bool:
         else set()
     )
     return bool(topics & _PAYMENT_TOPICS)
+
+
+def _decision_from_trace(trace: dict | None) -> Decision | None:
+    """Rebuild the stored ``Decision`` from a trace dump (best-effort).
+
+    Only used by the AGENTS §4.26 catch-up, where the in-memory decision is
+    gone and a hook wants the action it carried. A shape that does not
+    round-trip (legacy row) returns ``None`` — every hook tolerates it.
+    """
+    raw = (trace or {}).get("decision")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return Decision(**raw)
+    except Exception:
+        return None
 
 
 def trailing_vip_texts(history_rows: list[dict]) -> list[str]:
@@ -282,6 +307,12 @@ class TurnOrchestrator:
         # "would have sent" increment would double-count).
         self._outcome_log = outcome_log
         self._autonomy_readiness = bool(feature_autonomy_readiness_enabled)
+        # AGENTS §4.26: turns whose shadow hooks were already scored. Bounded
+        # (the VIP space is the allowlist, the turn space is not — this is a
+        # rolling window, same spirit as the per-VIP mood-engine cache). The
+        # durable cross-restart check is ``turn_category_log.get_by_turn_id``.
+        self._shadow_scored_turns: set[UUID] = set()
+        self._shadow_scored_order: deque[UUID] = deque()
         # Per-VIP mood engines forked from the injected prototype with a stable
         # seed per VIP (review round 1, S5) — deterministic bounded noise so the
         # same conversation reproduces the same mood trace across restarts.
@@ -314,6 +345,264 @@ class TurnOrchestrator:
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
+
+    async def _post_turn_facts(
+        self, turn_id: UUID
+    ) -> tuple[str | None, bool | None]:
+        """AGENTS §4.26 post-turn gates: (persisted status, were the hooks skipped?).
+
+        The second element answers "were this turn's PRE-DECISION shadow hooks
+        skipped?" — the past fact the post-turn catch-up needs. It is NOT
+        derived from ``comprehension.closing_without_reply``: "🔄 Regenerar"
+        re-runs the Analyst and RECOMPUTES that field, so a second pass with
+        ``risk=alto`` or a molesta emotion would flip it to False and the turn
+        would be delivered/escalated with no category, emotion, mood or trust
+        after its hooks were skipped. The answer comes from the marker written
+        when the draft was created (``CLOSING_HOOKS_SKIPPED_KEY`` in the
+        approval evaluation), which survives the regeneration.
+
+        ``None`` means "cannot be determined" (approval read failed): the caller
+        treats that as "maybe skipped", never as "not skipped" — the pending-row
+        invariant is a product rule, not a performance one.
+        """
+        get_turn = getattr(self._coordinator, "get_turn", None)
+        if not callable(get_turn):
+            return None, None
+        try:
+            turn = await get_turn(turn_id)
+        except Exception:
+            # A silent read fault must be visible: without it the learning
+            # circle would start scoring closed turns and nobody would know.
+            log_swallowed(
+                logger, "silent_close_turn_read_failed", turn_id=str(turn_id)
+            )
+            return None, None
+        if turn is None:
+            return None, None
+        status = getattr(turn, "status", None)
+        value = status.value if isinstance(status, TurnStatus) else str(status)
+        # Only these outcomes can care: a supervised closing draft
+        # (pending_approval) and a closing draft the owner answered
+        # (extractable). Anything else (superseded, gray_zone) never scores, so
+        # the approval read is skipped.
+        if (
+            value
+            not in _POST_TURN_EXTRACTABLE_STATUSES
+            | {TurnStatus.PENDING_APPROVAL.value}
+        ):
+            return value, False
+        return value, await self._closing_hooks_skipped(turn_id)
+
+    async def _closing_hooks_skipped(self, turn_id: UUID) -> bool | None:
+        """True/False/None (unknown) for "were the shadow hooks skipped?".
+
+        The marker is written by ``AdminService.send_draft_for_approval`` when
+        the closing draft is created and preserved by ``update_draft`` (regen).
+        A turn without an approval never skipped its hooks: the autonomous close
+        ends ``closed_no_reply`` (skipped before this point) and an autonomous
+        send runs them. ``None`` (read fault) is fail-closed for the caller.
+        """
+        get_approval = getattr(self._admin, "get_approval", None)
+        if not callable(get_approval):
+            return None
+        try:
+            approval = await get_approval(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "closing_hooks_marker_read_failed", turn_id=str(turn_id)
+            )
+            return None
+        if approval is None:
+            return False
+        evaluation = getattr(approval, "evaluation", None)
+        if not isinstance(evaluation, dict):
+            return False
+        return bool(evaluation.get(CLOSING_HOOKS_SKIPPED_KEY))
+
+    async def _shadow_hooks_already_ran(self, turn_id: UUID) -> bool:
+        """True when the pre-decision shadow hooks were already scored for this turn.
+
+        Two sources, because neither alone is enough:
+
+        - the in-process marker recorded at both write points. It is exact for
+          the realistic double-run (pipeline → owner regenerates → delivery,
+          all inside one process) and does not depend on the classifier flag;
+        - ``turn_category_log.get_by_turn_id`` (one row per VIP turn, written by
+          the classifier) as the durable cross-restart check.
+
+        A read failure returns True (never double-score): the mood upsert is not
+        idempotent and a second trust increment would move a confidence the
+        product forbids silence to move. The gap is logged, not silent.
+        """
+        if turn_id in self._shadow_scored_turns:
+            return True
+        reader = getattr(self._turn_category_log, "get_by_turn_id", None)
+        if not callable(reader):
+            return False
+        try:
+            return await reader(turn_id) is not None
+        except Exception:
+            log_swallowed(
+                logger, "closing_catchup_marker_read_failed", turn_id=str(turn_id)
+            )
+            return True
+
+    def _mark_shadow_hooks_ran(self, turn_id: UUID) -> None:
+        """Record that the shadow hooks were scored for ``turn_id`` (bounded)."""
+        if turn_id in self._shadow_scored_turns:
+            return
+        self._shadow_scored_turns.add(turn_id)
+        self._shadow_scored_order.append(turn_id)
+        while len(self._shadow_scored_order) > _SHADOW_SCORED_TURNS_MAX:
+            self._shadow_scored_turns.discard(self._shadow_scored_order.popleft())
+
+    async def _run_answered_closing_hooks(
+        self, turn_id: UUID, chat_id: int
+    ) -> None:
+        """Score a supervised closing draft the owner answered (AGENTS §4.26).
+
+        A ``silent_close`` decision is demoted to ``approve`` in supervised
+        mode, so the turn may still be delivered (or escalated) by the owner.
+        When that happens it is an ORDINARY turn and must be scored like one;
+        the pre-decision hooks skipped it only because it could still end in
+        silence. They run here, post-turn and exactly once, and never when the
+        turn really closed (the caller returns before reaching this).
+
+        ``allow_terminal=True`` bypasses the hooks' "terminal turns are never
+        logged" read-back gate: by design this runs AFTER the turn reached its
+        extractable terminal status. The stale-epoch gate is disabled for the
+        same reason (the owner may have resolved the draft minutes later).
+
+        The message text comes from the REAL VIP message, never from
+        ``trace["prompt_text"]`` — that column carries the whole model prompt
+        (persona + rules + memories + history), and feeding it to the hooks put
+        the persona's own words ("triste", "molesta") into the ambiguity
+        classifier and the strong-signal heuristic.
+        """
+        if self._trace_reader is None:
+            return
+        if await self._shadow_hooks_already_ran(turn_id):
+            # A regeneration may rewrite the stored decision into a closing one
+            # AFTER the pre-decision hooks already scored this turn. Scoring it
+            # again would double the mood nudge and the trust increment.
+            logger.info(
+                "post_turn_closing_hooks_already_scored",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
+        try:
+            trace = await self._trace_reader.get_full_trace(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "closing_catchup_trace_failed", turn_id=str(turn_id)
+            )
+            return
+        if not trace or not trace.get("comprehension"):
+            logger.info(
+                "closing_catchup_skipped_no_trace",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
+        vip_id = trace.get("vip_id")
+        if vip_id is None:
+            logger.info(
+                "closing_catchup_skipped_no_vip",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
+        vip_text = await self._closing_catchup_vip_text(turn_id, chat_id)
+        if not vip_text:
+            logger.info(
+                "closing_catchup_skipped_no_vip_text",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
+        incoming = VipInboundMessage(
+            chat_id=chat_id,
+            text=vip_text,
+            vip_id=vip_id,
+            channel_type=(
+                "atencion" if trace.get("channel_type") == "atencion" else "vip"
+            ),
+        )
+        decision = _decision_from_trace(trace)
+        signal = await self._run_emotional_detector(
+            turn_id, chat_id, decision, None, allow_terminal=True
+        )
+        category_log = await self._run_turn_classifier(
+            turn_id, chat_id, incoming, signal, None, allow_terminal=True
+        )
+        await self._run_mood_engine(
+            turn_id, chat_id, incoming, None, allow_terminal=True
+        )
+        await self._run_trust_budget(
+            turn_id, chat_id, incoming, category_log, None, allow_terminal=True
+        )
+        await self._run_profile_synthesis_trigger(
+            turn_id, chat_id, incoming, signal
+        )
+        self._mark_shadow_hooks_ran(turn_id)
+        logger.info(
+            "closing_catchup_scored",
+            extra={"turn_id": str(turn_id), "chat_id": chat_id},
+        )
+
+    async def _closing_catchup_vip_text(
+        self, turn_id: UUID, chat_id: int
+    ) -> str | None:
+        """The VIP message the Director saw, for the closing catch-up.
+
+        1. ``approval.evaluation["_draft_versions"]["vip_text"]`` — the exact
+           ``IncomingTurn.text`` stored when the draft was created (coalesced
+           burst included).
+        2. Chat history by the turn's ``trigger_message_id``, VIP rows only
+           (same rule as ``AdminService._resolve_trigger_text``), for a draft
+           without that payload.
+
+        ``None`` when nothing usable is found: the caller then skips the
+        catch-up instead of scoring the hooks with the wrong text. Never
+        ``trace["prompt_text"]`` (that is the whole model prompt) and never a
+        non-VIP history row.
+        """
+        approval = None
+        get_approval = getattr(self._admin, "get_approval", None)
+        if callable(get_approval):
+            try:
+                approval = await get_approval(turn_id)
+            except Exception:
+                log_swallowed(
+                    logger, "closing_catchup_approval_read_failed",
+                    turn_id=str(turn_id),
+                )
+        text = read_versions(getattr(approval, "evaluation", None)).get("vip_text")
+        if str(text or "").strip():
+            return str(text).strip()
+        trigger_id = getattr(approval, "trigger_message_id", None)
+        if trigger_id is None:
+            turn = await self._coordinator.get_turn(turn_id)
+            trigger_id = getattr(turn, "trigger_message_id", None)
+        if trigger_id is None:
+            return None
+        try:
+            recent = await self._history.get_recent(chat_id, limit=40)
+        except Exception:
+            log_swallowed(
+                logger, "closing_catchup_history_read_failed", turn_id=str(turn_id)
+            )
+            return None
+        # VIP rows only: the same telegram_message_id can also be an owner/bot
+        # row (an owner reply in the chat), and scoring the hooks with the
+        # owner's words would be as wrong as using the model prompt.
+        for row in recent:
+            if not isinstance(row, dict):
+                continue
+            if (
+                row.get("telegram_message_id") == trigger_id
+                and row.get("role") == "vip"
+            ):
+                text = str(row.get("text") or "").strip()
+                return text or None
+        return None
 
     async def _maybe_generate_gray_zone_proposal(
         self,
@@ -464,6 +753,44 @@ class TurnOrchestrator:
                 extra={"turn_id": str(turn_id), "chat_id": chat_id},
             )
             return
+        # AGENTS §4.26: a silent close is inert — no shadow verdict, no draft
+        # score, no memory extraction, no interpreted context. Writing a row
+        # here would open the C3 window and feed the coincidence rate with a
+        # turn that never reached the VIP.
+        status, hooks_skipped = await self._post_turn_facts(turn_id)
+        if status == TurnStatus.CLOSED_NO_REPLY.value:
+            logger.info(
+                "post_turn_skipped_silent_close",
+                extra={"turn_id": str(turn_id), "chat_id": chat_id},
+            )
+            return
+        if status == TurnStatus.PENDING_APPROVAL.value and hooks_skipped is not False:
+            # Supervised closing draft: its pre-decision hooks were skipped
+            # (the turn could still end in silence), but the OWNER still owns
+            # it. Writing a row now would leave a pending reaction signal for a
+            # turn that may never be sent (the next VIP message would be scored
+            # as its reaction). The row is created when she resolves it: this
+            # same hook runs again on delivery/escalation, i.e. only for turns
+            # that really happened.
+            #
+            # ``hooks_skipped is None`` (unreadable marker) takes the same
+            # branch: the invariant is a product rule, so an unprovable case
+            # never writes the row it forbids. The fault is logged, not
+            # swallowed.
+            logger.info(
+                "post_turn_deferred_closing_draft",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": chat_id,
+                    "hooks_marker_known": hooks_skipped is not None,
+                },
+            )
+            return
+        if hooks_skipped and status in _POST_TURN_EXTRACTABLE_STATUSES:
+            # The hooks were skipped and the owner answered the draft (approved
+            # / corrected / escalated / delivery failed): it is an ordinary
+            # turn and must be scored like one. The hook refuses to run twice.
+            await self._run_answered_closing_hooks(turn_id, chat_id)
         # Fila 4 (SPEC-AUTONOMIA-CALIBRACION §4): the SHADOW half of the
         # learning circle — re-decide the stored turn with the autonomy switch
         # ON and write shadow_verdict + draft_score to turn_outcome_log.
@@ -531,6 +858,8 @@ class TurnOrchestrator:
         chat_id: int,
         decision: Decision | None,
         vip_epoch: int | None = None,
+        *,
+        allow_terminal: bool = False,
     ) -> EmotionalSignalRecord | None:
         """Shadow detector hook: never propagates, flag-gated, writes
         emotional_signal_log only. Best-effort (pattern _maybe_post_turn_guarded).
@@ -548,6 +877,9 @@ class TurnOrchestrator:
         deterministic stale-epoch gap: a turn whose VIP epoch advanced since
         it was minted (a newer message superseded it via ``supersede_chat``)
         is never logged, even when the read-back below is not yet terminal.
+        ``allow_terminal`` is the AGENTS §4.26 catch-up escape hatch: a
+        supervised closing draft the owner answered is scored at post-turn
+        time, when the turn is already terminal by design.
         """
         if self._emotional_detector is None or self._emotional_signal_log is None:
             return
@@ -570,7 +902,11 @@ class TurnOrchestrator:
             # keeps the emotional_signal_log clean of stale-epoch superseded
             # and aborted turns (review round 1).
             turn = await self._coordinator.get_turn(turn_id)
-            if turn is not None and is_turn_status_terminal(turn.status):
+            if (
+                not allow_terminal
+                and turn is not None
+                and is_turn_status_terminal(turn.status)
+            ):
                 return
             # Deterministic stale-epoch gate (review round 2): the read-back
             # above only covers turns ALREADY terminal at hook time. A turn
@@ -670,6 +1006,8 @@ class TurnOrchestrator:
         incoming: VipInboundMessage,
         signal: EmotionalSignalRecord | None,
         vip_epoch: int | None = None,
+        *,
+        allow_terminal: bool = False,
     ) -> TurnCategoryLogRecord | None:
         """Shadow classifier hook: never propagates, flag-gated, best-effort.
 
@@ -711,7 +1049,11 @@ class TurnOrchestrator:
             # Read-back gates (pattern ``_run_emotional_detector``): terminal /
             # stale-epoch turns are never logged.
             turn = await self._coordinator.get_turn(turn_id)
-            if turn is not None and is_turn_status_terminal(turn.status):
+            if (
+                not allow_terminal
+                and turn is not None
+                and is_turn_status_terminal(turn.status)
+            ):
                 return
             if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
                 chat_id, vip_epoch
@@ -783,6 +1125,8 @@ class TurnOrchestrator:
         chat_id: int,
         incoming: VipInboundMessage,
         vip_epoch: int | None = None,
+        *,
+        allow_terminal: bool = False,
     ) -> None:
         """Shadow mood hook: never propagates, flag-gated, best-effort.
 
@@ -821,7 +1165,11 @@ class TurnOrchestrator:
             if trace is None or not trace.get("comprehension"):
                 return
             turn = await self._coordinator.get_turn(turn_id)
-            if turn is not None and is_turn_status_terminal(turn.status):
+            if (
+                not allow_terminal
+                and turn is not None
+                and is_turn_status_terminal(turn.status)
+            ):
                 return
             if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
                 chat_id, vip_epoch
@@ -884,6 +1232,8 @@ class TurnOrchestrator:
         incoming: VipInboundMessage,
         category_log: TurnCategoryLogRecord | None,
         vip_epoch: int | None = None,
+        *,
+        allow_terminal: bool = False,
     ) -> None:
         """Shadow trust-budget hook: never propagates, flag-gated, best-effort.
 
@@ -931,7 +1281,11 @@ class TurnOrchestrator:
             return
         try:
             turn = await self._coordinator.get_turn(turn_id)
-            if turn is not None and is_turn_status_terminal(turn.status):
+            if (
+                not allow_terminal
+                and turn is not None
+                and is_turn_status_terminal(turn.status)
+            ):
                 return
             if vip_epoch is not None and not self._coordinator.is_vip_epoch_current(
                 chat_id, vip_epoch
@@ -1184,9 +1538,11 @@ class TurnOrchestrator:
         The turn flow is never altered.
 
         Anti-amplification (F4): edited messages never notify (edits also do
-        not count toward the daily limit), per-chat 20-min cooldown, and
+        not count toward the daily limit), per-chat 20-min cooldown,
         ``consult_doctrine`` turns are skipped (the gray zone branch already
-        sends a doctrine DM — a payment DM would double-notify). Sandboxed
+        sends a doctrine DM — a payment DM would double-notify), and so are
+        ``silent_close`` turns (AGENTS §4.26: alerting about a turn that was
+        deliberately not answered would contradict the decision). Sandboxed
         chats are skipped (F16).
         """
         if turn_ctx.channel_type != "atencion":
@@ -1199,7 +1555,7 @@ class TurnOrchestrator:
             return
         if self._trace_reader is None:
             return
-        if decision.action == "consult_doctrine":
+        if decision.action in ("consult_doctrine", "silent_close"):
             return
         if self._sandbox_active(turn_ctx.chat_id):
             return
@@ -2028,6 +2384,9 @@ class TurnOrchestrator:
             business_connection_id=str(bc).strip(),
             channel_type=incoming.channel_type,
             photo_file_id=incoming.photo_file_id,
+            # AGENTS §4.26: the closing gate must not close a turn whose media
+            # nobody could read; the owner decides instead.
+            media_unverified=incoming.media_unverified,
         )
 
         try:
@@ -2155,25 +2514,53 @@ class TurnOrchestrator:
         # (``feature_trust_budget``); it increments only VIP turns classified
         # ``would_autonomous=True`` and never propagates. The matching decrement
         # arrives later via ``AdminService.handle_correct`` → ``record_correction``.
-        signal = await self._run_emotional_detector(
-            turn_id, incoming.chat_id, decision, vip_epoch
-        )
-        category_log = await self._run_turn_classifier(
-            turn_id, incoming.chat_id, incoming, signal, vip_epoch
-        )
-        await self._run_mood_engine(
-            turn_id, incoming.chat_id, incoming, vip_epoch
-        )
-        await self._run_trust_budget(
-            turn_id, incoming.chat_id, incoming, category_log, vip_epoch
-        )
+        # AGENTS §4.26: a closing turn may end in silence, and Diana never
+        # wrote, so nothing may be learned from it: no emotional signal, no
+        # category, no mood update and — critical — no trust increment. The
+        # trust hook below runs BEFORE the decision is applied and rewarded
+        # fático turns, so a silent "bye" would have raised confidence for a
+        # message that was never sent.
+        #
+        # The skip is provisional: a SUPERVISED closing draft is demoted to the
+        # owner and may still be delivered. ``_maybe_post_turn`` re-runs these
+        # same hooks once the outcome is known and it was not a silence
+        # (``_run_answered_closing_hooks``), so an answered draft is scored
+        # like any other turn and a turn the owner closes teaches nothing.
+        silent_close = decision.action == "silent_close"
+        signal = None
+        if silent_close:
+            logger.info(
+                "silent_close_post_hooks_skipped",
+                extra={"turn_id": str(turn_id), "chat_id": incoming.chat_id},
+            )
+        else:
+            signal = await self._run_emotional_detector(
+                turn_id, incoming.chat_id, decision, vip_epoch
+            )
+            category_log = await self._run_turn_classifier(
+                turn_id, incoming.chat_id, incoming, signal, vip_epoch
+            )
+            await self._run_mood_engine(
+                turn_id, incoming.chat_id, incoming, vip_epoch
+            )
+            await self._run_trust_budget(
+                turn_id, incoming.chat_id, incoming, category_log, vip_epoch
+            )
+            # Idempotency mark: a later "🔄 Regenerar" may rewrite the stored
+            # decision (even into a closing one) or the owner may resolve the
+            # draft minutes later. The post-turn catch-up must not score this
+            # turn a second time (the mood upsert is not idempotent and a
+            # second trust increment would move the confidence twice).
+            self._mark_shadow_hooks_ran(turn_id)
         # Fila 4 (C3 immediate): this VIP message may be the reaction to the
         # last delivered turn of the chat (within the reaction window). Flag-
-        # gated + best-effort; idempotent by signal value.
+        # gated + best-effort; idempotent by signal value. It scores the
+        # PREVIOUS turn, never this one, so a silent close keeps it.
         await self._run_outcome_reaction(turn_id, incoming.chat_id, incoming)
-        await self._run_profile_synthesis_trigger(
-            turn_id, incoming.chat_id, incoming, signal
-        )
+        if not silent_close:
+            await self._run_profile_synthesis_trigger(
+                turn_id, incoming.chat_id, incoming, signal
+            )
 
         # Route decision + transitions: owner/VIP cancel may raise on status_sink
         # when the Director stub never polled mid-pipeline (A2 clean abort).
@@ -2279,6 +2666,15 @@ class TurnOrchestrator:
                 **(await self._doctrine_display_kwargs(turn_id)),
             )
             # CRITICAL: never call behavior.deliver here (L2 / R1)
+        elif decision.action == "silent_close":
+            # AGENTS §4.26: farewell / bare acknowledgement. Read and close;
+            # never write, never score. Supervised demotes to the owner queue.
+            await self._close_without_reply(
+                turn_id=turn_id,
+                turn_ctx=turn_ctx,
+                decision=decision,
+                incoming=incoming,
+            )
         elif decision.action == "consult_doctrine":
             if (
                 turn_ctx.vip_id is None
@@ -3043,6 +3439,122 @@ class TurnOrchestrator:
             split_chars=4096,
         )
         return _AutonomousDeliverJob(text=draft, ctx=ctx, decision=decision)
+
+    async def _close_without_reply(
+        self,
+        *,
+        turn_id: UUID,
+        turn_ctx: IncomingTurn,
+        decision: Decision,
+        incoming: VipInboundMessage,
+    ) -> None:
+        """Mark the inbound message read and close the turn (AGENTS §4.26).
+
+        Writes nothing: no VIP text, no owner history, no learning row, no
+        reaction window, no trust event. Three paths:
+
+        - sandbox test window or autonomous fan-out for THIS VIP (L1 + L2):
+          read + ``CLOSED_NO_REPLY``.
+        - supervised: the owner keeps the decision — the draft reaches her queue
+          with the closing option (the reason rides on the decision).
+        - read refused / engine not wired: fail-closed to the owner queue.
+
+        Never calls ``deliver``.
+        """
+        sandbox = (
+            self._sandbox_active(incoming.chat_id)
+            if self._behavior is not None
+            else False
+        )
+        if not (
+            self._behavior is not None
+            and await self._silent_close_allowed(sandbox, incoming.vip_id)
+        ):
+            await self._demote_silent_close_to_owner(
+                turn_id=turn_id, turn_ctx=turn_ctx, decision=decision
+            )
+            return
+        ctx = DeliveryContext(
+            chat_id=incoming.chat_id,
+            business_connection_id=str(turn_ctx.business_connection_id).strip(),
+            vip_id=incoming.vip_id,
+            telegram_message_id=incoming.telegram_message_id,
+            mode=self._effective_delivery_mode(incoming.chat_id),
+            # A frozen VIP never gets the "read" receipt either: the engine
+            # returns False and the existing path degrades to the owner queue.
+            # Sandbox test window is exempt, exactly like the autonomous send
+            # path (the session is an explicit owner test surface; the freeze
+            # belongs to the real VIP).
+            is_frozen=(
+                await self._is_vip_frozen(incoming.vip_id)
+                and not (sandbox and self._feature_sandbox_auto_send)
+            ),
+        )
+        mark_read = getattr(self._behavior, "mark_read", None)
+        read_ok = bool(await mark_read(ctx)) if callable(mark_read) else False
+        if not read_ok:
+            logger.info(
+                "silent_close_mark_read_failed",
+                extra={
+                    "turn_id": str(turn_id),
+                    "chat_id": incoming.chat_id,
+                    "is_frozen": ctx.is_frozen,
+                },
+            )
+            await self._demote_silent_close_to_owner(
+                turn_id=turn_id, turn_ctx=turn_ctx, decision=decision
+            )
+            return
+        await self._coordinator.transition(turn_id, TurnStatus.CLOSED_NO_REPLY)
+        logger.info(
+            "silent_close_done",
+            extra={
+                "turn_id": str(turn_id),
+                "chat_id": incoming.chat_id,
+                "sandbox": sandbox,
+            },
+        )
+
+    async def _silent_close_allowed(
+        self, sandbox: bool, vip_id: UUID | None
+    ) -> bool:
+        """Both doors open for THIS turn: sandbox test window or L1 + L2.
+
+        Mirrors the autonomous send gate (AGENTS §4.19): the master switch
+        alone never closes a VIP; the per-VIP activation is the second door.
+
+        The sandbox door also needs ``FEATURE_SANDBOX_AUTO_SEND``: with that
+        flag off the test window keeps asking the owner for approval
+        (AGENTS §4.20, byte-identical to the pre-flag behavior), so it must not
+        close a turn on its own either.
+        """
+        if sandbox:
+            return self._feature_sandbox_auto_send
+        if self._autonomous_mode is None:
+            return False
+        return await self._autonomous_mode.is_autonomous_enabled(vip_id)
+
+    async def _demote_silent_close_to_owner(
+        self,
+        *,
+        turn_id: UUID,
+        turn_ctx: IncomingTurn,
+        decision: Decision,
+    ) -> None:
+        """Supervised fallback: the owner decides, the VIP gets nothing yet.
+
+        The decision keeps ``reason="cierre_sin_respuesta"`` so the owner DM can
+        offer the closing option; the action becomes ``approve`` because the
+        turn really is waiting for her.
+        """
+        demoted = decision.model_copy(update={"action": "approve"})
+        await self._coordinator.transition(turn_id, TurnStatus.PENDING_APPROVAL)
+        await self._admin.send_draft_for_approval(
+            turn_ctx,
+            demoted,
+            turn_id,
+            **(await self._doctrine_display_kwargs(turn_id)),
+        )
 
     async def _is_vip_frozen(self, vip_id: UUID | None) -> bool:
         """True if vip_store says frozen_until > now(UTC). Missing store/id → False."""
