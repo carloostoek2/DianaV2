@@ -7,6 +7,72 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Una foto o un video que no se pudo ver nunca se envía solo — 2026-10-27
+
+En el turno de las 23:22 del 2026-10-27, Gemini no contestó en 15 s (ReadTimeout), la foto quedó como «[imagen]» y el envío automático le respondió al VIP a ciegas, sin que la dueña la viera. El modelo contestaba sin saber qué mostraba la media.
+
+- **Regla de media sin ver:** si el mensaje trae foto o video y quedó sin descripción (visión apagada, filtro local de privacidad o proveedor sin respuesta), el turno va a la cola de la dueña con la foto adjunta y el motivo `media_vision_unverified`. Se aplica antes del gate de autonomía y también en el carril de plantilla de saludo. En supervisado no cambia nada: ya iba a su cola.
+- **La marca es del turno, no del texto:** viaja en `VipInboundMessage.media_unverified` desde el handler de negocio y no se escribe en la base ni alimenta memorias o ejemplos.
+- **Un tropiezo de red ya no cuesta la imagen:** la descripción de una foto se reintenta una vez antes de darse por vencida, y el plazo por intento (`GEMINI_VISION_TIMEOUT_S`) sube de 15 s a 30 s en el default de Settings. Con 15 s y sin reintento, cerca de 1 de cada 4 fotos reales llegaba como «[imagen]». El valor operativo vive en el `.env`.
+- Qué vigilar en los logs: `autonomous_media_unverified_demoted`, `image_describer_retrying` e `image_describer_failed_fail_open`.
+- Sin migración y sin interruptor nuevo. La regla vigente está en AGENTS.md §4.8 y §4.22 (commit directo `ec78385`).
+
+---
+
+
+El envío automático espera de 6 a 10 minutos, también para el VIP activado desde el panel — 2026-10-27
+
+Decisión de producto del 2026-10-27: el envío autónomo debía esperar más antes de contestar. Además, el VIP activado desde el panel (`vips.auto_send`) con el modo general en supervisado se enviaba a los 120 s, porque la espera previa se resolvía solo con el modo general del sistema. Producción lo mostraba en cada turno: `pre_delay_s=120 mode=supervised` en turnos que el Decisor había mandado como `send/autonomous_ok`. Y el panel decía «el interruptor maestro está apagado» aunque ya estuviera encendido.
+
+- **Espera del envío autónomo:** entre 6 y 10 minutos, variable en cada mensaje (`DELIVERY_AUTONOMOUS_DELAY_MIN=360` y `DELIVERY_AUTONOMOUS_DELAY_MAX=600` en el ejemplo del `.env`). El supervisado no cambia: el borrador llega a la cola de la dueña a los 2 minutos. Los valores operativos viven en el `.env`; los defaults de Settings (3–8 min) son solo la red de seguridad de un entorno fresco.
+- **El VIP activado también espera lo del autónomo:** sin perfil de canal explícito, el modo general es solo el piso y `auto_send` lo sube a autónomo. Un perfil de canal con `delivery_mode` explícito sigue siendo definitivo (REQ-ATN-05).
+- **Un fallo al leer el VIP no aborta el turno:** se conserva la espera corta (log `effective_mode_autonomous_check_failed`).
+- **Interruptor maestro (`FEATURE_AUTONOMOUS_MODE`) encendido:** habilita la activación por VIP desde el panel, pero el envío real sigue necesitando la segunda puerta (`GLOBAL_MODE` autónomo o `vips.auto_send`). Sin VIP activado nada se envía solo.
+- **Textos del panel al día:** el modo sombra lee el estado real de la bandera, y la sección 🧭 Camino a la autonomía explica la doble puerta sin afirmar un estado fijo.
+- Sin migración (commits directos `bd12c93` y `6d56844`).
+
+---
+
+
+Fotos y videos que no se pudieron revisar no salen del servidor — 2026-10-25
+
+Ronda 2 de la auditoría, contratos C-PRV-01 (fotos) y C-PRV-02 (video). Que el OCR no encontrara texto se tomaba como imagen limpia, aunque una foto borrosa, plana o con marcas ilegibles también devuelve poco o ningún texto. Un documento con un número de 16 dígitos podía viajar, una tarjeta escrita con puntos no se reconocía, los videos de más de 30 s se muestreaban de menos y, si la visión fallaba de forma imprevista, la imagen salía igual. La regla ahora es una sola: solo viaja lo que la revisión local dio por limpio.
+
+- **Texto escaso no es imagen limpia:** si el OCR lee muy poco, la sonda local (nitidez, contraste, cajas con texto) decide. Si la imagen es ilegible o no hay con qué verificarla, se queda para revisión manual de la dueña. Una foto normal sin texto sigue describiéndose.
+- **Identidad y tarjetas:** un documento de identidad gana sobre todo lo demás y no sale nunca, ni tapado. Las tarjetas se detectan con el mismo detector que el texto (con puntos, espacios duros y saltos).
+- **Video:** el muestreo tiene que cubrir el video entero. Si dura más de la ventana cubierta (30 s a un cuadro por segundo) o su duración es desconocida, no sale. Un cuadro que no se puede verificar bloquea el video completo, y los cuadros que viajan se re-codifican a JPEG con un MIME coherente con los bytes.
+- **Fallo imprevisto de la visión:** antes la imagen salía igual (fail-open); ahora no sale, se marca sensible (`vision_error`) y el fallo queda contado. La foto sigue llegando al mensaje de aprobación para que la dueña la revise.
+- **`/health` publica la visión:** bandera, si puede operar (clave de Gemini presente) y la actividad del proceso desde el arranque (analizadas, sensibles, descritas y fallidas, por foto y por video). Es informativo y no cambia `status`.
+- Sin migración y sin interruptor nuevo (commit directo `f4ce88a`).
+
+---
+
+
+Los datos personales se tapan en todos los formatos y no se cuelan en los logs — 2026-10-25
+
+Ronda 2 de la auditoría, contrato C-PII-01. Había cuatro huecos medidos: tarjetas que el detector no reconocía, registros de error que repetían texto personal, la clave de API en el log del cambio de proveedor y la exportación de trazas escrita dentro del repo.
+
+- **Tarjetas en cualquier formato:** con puntos, espacios duros (U+00A0), tabulaciones, saltos de línea o guiones, y una tarjeta pegada a su CVV. El detector vive en un solo lugar (el enmascarador de texto), valida Luhn en el borde del grupo, y las visiones de foto y video lo reutilizan.
+- **Registros de error sin contenido:** donde se registraba la excepción completa ahora se registra solo su tipo: memoria, extracción de memoria, síntesis de perfil, propuesta de zona gris y recontacto.
+- **Cambio de proveedor en caliente:** la clave de API ya no puede quedar en el log.
+- **Exportación de trazas (`scripts/export_llm_prompt.py`):** se niega a correr sin `--allow-pii` (una variable de entorno no cuenta como consentimiento), escribe por defecto fuera del repo (`~/diana-exports`) con permisos `0600` y deja una línea de auditoría con el turno y la hora, nunca el contenido. `.gitignore` protege `docs/prompt-llm-turno-*.md` si se usa un `--out` dentro del repo.
+- Sin migración y sin interruptor nuevo (commits directos `0daf6c3` y `c12a95a`).
+
+---
+
+
+La reacción del VIP se vuelve a clasificar, el recontacto queda declarado y V4 mide solo turnos VIP — 2026-10-25
+
+Los tres pendientes del índice de auditoría. El job de respaldo de la reacción del VIP (C-SHADOW-01) exigía un `datetime`, pero el historial entrega la marca de tiempo como texto ISO, así que descartaba todas las filas y cerraba la ventana como `silence` aunque el VIP hubiera contestado. El recontacto aparecía como bandera apagada sin declarar. Y V4 contaba como fallas las promociones a chats sin VIP.
+
+- **Reacción del VIP:** el job normaliza los dos formatos de fecha (texto ISO y `datetime`). La prueba E2 que estaba marcada como defecto conocido ya pasa, y el sabotaje que devuelve el código viejo la hace fallar con `reactions: 0`, el mismo síntoma que se vio en producción.
+- **Recontacto apagado a propósito:** el catálogo de banderas lo declara (desde el 2026-10-25, decisión de producto, se reactiva solo si la dueña decide volver a usarlo), así que el aviso de arranque deja de nombrarlo.
+- **Vigilante V4 (C-HIST-01):** mide solo turnos con VIP (`vip_id IS NOT NULL`). En 14 días los 27 huecos eran promociones a chats sin VIP, que no escriben historial por diseño, y ningún turno VIP quedó sin historial. Devuelve una fila por caso; antes forzaba la alerta en cero, así que no habría avisado nunca. Sigue `no-activado` hasta que la dueña decida encenderlo.
+- Sin migración (commit directo `863b157`).
+
+---
+
+
 El aviso de V3 dice qué chat revisar y a qué hora, y V7 deja de contar el sandbox — 2026-10-20
 
 El aviso diario de los vigilantes no le decía a la dueña qué hacer. V3 («Hay intercambios sin tu decision registrada») no decía en qué chat ni a qué hora había pasado, y la hora salía en UTC. Además, V1, V2, V3 y V7 cerraban con «avísame», pero el bot no procesa respuestas: contestarle no llegaba a nadie. Y V7 seguía contando los turnos de sandbox, que V2, V3 y V4 ya descartaban desde la migración 037.
