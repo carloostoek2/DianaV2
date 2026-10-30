@@ -75,6 +75,7 @@ class AiogramOwnerNotifier:
                 turn_id,
                 chat_id=payload.chat_id,
                 show_quality_feedback=payload.show_quality_feedback,
+                show_close_without_reply=payload.show_close_without_reply,
             ),
             parse_mode="HTML",
         )
@@ -88,8 +89,15 @@ class AiogramOwnerNotifier:
         turn_id: UUID,
         chat_id: int,
         show_quality_feedback: bool = False,
+        show_close_without_reply: bool = False,
     ) -> None:
-        """Update the existing owner draft message in place (regen / prev / next)."""
+        """Update the existing owner draft message in place (regen / prev / next).
+
+        ``show_close_without_reply`` comes from the approval's stored reason, so
+        the button tracks what the Decisor decided for the draft being shown:
+        a regeneration that is no longer a closing removes it, and the owner
+        never closes with a draft the latch did not justify.
+        """
         await self._bot.edit_message_text(
             chat_id=self._owner_id,
             message_id=owner_message_id,
@@ -98,6 +106,7 @@ class AiogramOwnerNotifier:
                 turn_id,
                 chat_id=chat_id,
                 show_quality_feedback=show_quality_feedback,
+                show_close_without_reply=show_close_without_reply,
             ),
             parse_mode="HTML",
         )

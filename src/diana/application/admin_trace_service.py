@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID
 
 from diana.application.ports import TraceabilityReader
+from diana.cognitive.models import TurnStatus
 
 logger = logging.getLogger("diana.application")
 
@@ -283,6 +284,14 @@ class AdminTraceService:
         decision_action = "N/A"
         if trace.decision:
             decision_action = trace.decision.get("action", "N/A")
+        # §4.26: la acción del cierre silencioso no se muestra como token crudo.
+        # Se rotula por DESENLACE: un cierre demotado que la dueña aprobó y se
+        # entregó no se puede mostrar como "cerró sin responder".
+        if decision_action == "silent_close":
+            if trace.status == TurnStatus.CLOSED_NO_REPLY.value:
+                decision_action = "silent_close (cerró sin responder)"
+            else:
+                decision_action = "silent_close (no aplicado — ver Status)"
         total_ms = _total_ms_from_timings(trace.timings)
         status = trace.status or "N/A"
         return "\n".join(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from html import escape as html_escape
 from typing import Any, Callable, Iterable, Literal
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from diana.application.admin_trace_service import AdminTraceService
 from diana.application.draft_variants import (
     RegeneratingCallback,
     build_owner_draft_text,
+    offers_closing_without_reply,
 )
 from diana.application.escalation_fp_resume import (
     FpResumeOutcome,
@@ -700,6 +702,16 @@ async def dispatch_owner_callback(
             if applied:
                 return "escalated"
             return await admin.classify_approve_noop(turn_id)
+        if action == "close_no_reply":
+            # §4.26: la dueña cierra el turno sin responder. Acción manual, no
+            # pasa por el Decisor (igual que Corregir/Escalar).
+            closed = await admin.handle_close_without_reply(
+                turn_id, actor_id=actor_id
+            )
+            correct_sessions.cancel_turn(turn_id)
+            if closed:
+                return "closed_no_reply"
+            return await admin.classify_approve_noop(turn_id)
         if action in {"regen", "prev", "next"}:
             if draft_variants is None:
                 return "ignored"
@@ -997,6 +1009,9 @@ def build_callback_router(
                             admin.quality_feedback_enabled
                             and approval.vip_id is not None
                         ),
+                        show_close_without_reply=offers_closing_without_reply(
+                            approval.cognitive_summary
+                        ),
                     )
                     if query.message:
                         await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -1250,6 +1265,12 @@ def build_callback_router(
                                 turn_id,
                                 chat_id=chat_id,
                                 show_quality_feedback=show_quality,
+                                show_close_without_reply=(
+                                    approval is not None
+                                    and offers_closing_without_reply(
+                                        approval.cognitive_summary
+                                    )
+                                ),
                             )
                         )
                     except Exception:
@@ -1309,6 +1330,22 @@ def build_callback_router(
                         )
                     except Exception:
                         logger.exception("Error al editar mensaje escalado")
+                return
+            if status == "closed_no_reply":
+                if query.message:
+                    try:
+                        # The draft body is VIP/model text rendered with
+                        # parse_mode="HTML": escape it (same rule as
+                        # ``format_draft_owner_text``) so a "<" or an "<a>"
+                        # inside the draft is shown, never interpreted.
+                        await query.message.edit_text(
+                            "🤐 <b>Cerrado sin responder</b>\n\n"
+                            f"{html_escape(draft_text)}",
+                            reply_markup=None,
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        logger.exception("Error al editar mensaje cerrado sin responder")
                 return
             if status in _APPROVE_NOOP_ALERTS:
                 await query.answer(

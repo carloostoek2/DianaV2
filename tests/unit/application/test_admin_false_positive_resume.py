@@ -267,6 +267,37 @@ async def test_resume_generated_safety_escalation_blocks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resume_generated_silent_close_goes_to_the_owner_queue() -> None:
+    """§4.26: el regen pide cierre → NO se cierra solo; la dueña ve el botón."""
+    from diana.application.draft_variants import CLOSING_REASON
+
+    g = _graph(history=InMemoryMessageHistoryWriter())
+    turn_id = await _escalated_turn(g, vip_text="bye")
+    g["admin"]._director = FakeDirector(  # noqa: SLF001
+        _decision(
+            action="silent_close",
+            draft="que descanses",
+            reason="cierre_sin_respuesta",
+        )
+    )
+
+    outcome = await g["admin"].mark_false_positive_and_resume(
+        turn_id, actor_id=OWNER_ID
+    )
+
+    assert outcome.status == RESUME_RESUMED
+    approval = await g["approvals"].get_by_turn(turn_id)
+    assert approval is not None
+    assert approval.draft_text == "que descanses"
+    # La razón viaja para que el DM ofrezca "Cerrar sin responder".
+    assert approval.cognitive_summary == CLOSING_REASON
+    assert g["notifier"].drafts[0].show_close_without_reply is True
+    # Nada se cerró ni se envió por su cuenta.
+    assert (await g["turns"].get(turn_id)).status == TurnStatus.PENDING_APPROVAL
+    assert g["actuator"].send_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_resume_superseded_while_generating_stays_marked_only() -> None:
     """The VIP wrote again: the pipeline supersede aborts the resume cleanly."""
     from diana.cognitive.exceptions import TurnSupersededError

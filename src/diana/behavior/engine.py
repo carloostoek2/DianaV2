@@ -54,6 +54,14 @@ _QUIRK_EXTRA_PAUSE_SECONDS = 0.03
 # Telegram auto-hides the typing bubble after ~5s; re-send before that to
 # keep it visible for the full typing duration of long messages.
 _TYPING_REFRESH_SECONDS = 4.0
+# Ceiling for the one-off "mark as read" call (AGENTS §4.26). It runs inside
+# the per-chat lock and has no transport timeout of its own, so it must stay
+# BELOW ``application.turn_coordinator.LOCK_ACQUIRE_TIMEOUT_S`` (5 s) for the
+# margin to be real: equal to it, a slow read still starves the next message
+# or owner callback of the same chat. 2 s is already generous for a single
+# Telegram read against a local actuator. Not imported from application on
+# purpose — Behavior Engine must not depend on the application layer (§2.2).
+_DEFAULT_READ_TIMEOUT_SECONDS = 2.0
 
 
 class BehaviorEngine:
@@ -75,6 +83,7 @@ class BehaviorEngine:
         quirk_force: str | None = None,
         rng: random.Random | None = None,
         runtime_timer_store: RuntimeTimerStore | None = None,
+        read_timeout_seconds: float = _DEFAULT_READ_TIMEOUT_SECONDS,
     ) -> None:
         self._actuator = actuator
         self._deliveries = deliveries
@@ -89,6 +98,56 @@ class BehaviorEngine:
         self._quirk_probability = max(0.0, min(1.0, float(quirk_probability)))
         self._quirk_force = quirk_force
         self._rng = rng if rng is not None else random.Random()
+        self._read_timeout_seconds = max(0.1, float(read_timeout_seconds))
+
+    async def mark_read(self, ctx: DeliveryContext) -> bool:
+        """Mark the inbound message as read; never sends text (AGENTS §4.26).
+
+        The closing gate decided this turn needs no written reply, so the
+        engine only acts the "I saw it" half. Never decides anything, never
+        generates text. Returns False when the channel refused or the context
+        is frozen — the caller then fails closed to the owner queue.
+        """
+        if ctx.is_frozen:
+            return False
+        # Same short-circuit as ``deliver`` → ``_deliver_fake``: fake_delivery
+        # is a record-only mode, so no real Telegram effect is ever produced
+        # (a "read" is visible to the VIP and would break that promise).
+        if ctx.mode == "fake_delivery":
+            logger.info(
+                "mark_read_fake_delivery", extra={"chat_id": ctx.chat_id}
+            )
+            return True
+        try:
+            # Bounded on purpose: the orchestrator calls this while holding the
+            # chat lock (one turn at a time per chat) and the actuator read has
+            # no timeout of its own. A slow Telegram round-trip would otherwise
+            # starve the next message/callback of this chat for the process'
+            # HTTP timeout. Expired → False → the caller fails closed to the
+            # owner queue, exactly like a refused read.
+            await asyncio.wait_for(
+                self._actuator.read_business_message(
+                    ctx.chat_id,
+                    ctx.telegram_message_id,
+                    business_connection_id=ctx.business_connection_id,
+                ),
+                timeout=self._read_timeout_seconds,
+            )
+            return True
+        except TimeoutError:
+            logger.warning(
+                "mark_read_timeout",
+                extra={
+                    "chat_id": ctx.chat_id,
+                    "timeout_s": self._read_timeout_seconds,
+                },
+            )
+            return False
+        except Exception:
+            logger.exception(
+                "mark_read_failed", extra={"chat_id": ctx.chat_id}
+            )
+            return False
 
     async def deliver(
         self,

@@ -32,6 +32,10 @@ F3 matrix (first match wins)
    -> consult_doctrine (reason=doctrine_not_found)
 3. risk == "alto" -> escalate (reason=risk_high)
 2b. emotion == "molesta" -> escalate (reason=frustracion_directa)
+3b. feature_silent_close_enabled AND comprehension.closing_without_reply
+   -> silent_close (reason=cierre_sin_respuesta). AGENTS §4.26: the turn is a
+   farewell or a bare acknowledgement and needs no written reply. Evaluated
+   after safety/doctrine/risk, before autonomous send.
 4. naturalness redraft is Director pre-step (1×); Decider never owns redraft
 5. feature_autonomous_mode AND safety/naturalness >= *_min AND
    (doctrine NOT relevant OR doctrine >= doctrine_min) -> send
@@ -59,6 +63,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from diana.cognitive.closing_gate import CLOSING_REASON
 from diana.cognitive.models import (
     Comprehension,
     Decision,
@@ -74,7 +79,7 @@ _DEFAULT_SAFETY_THRESHOLD = 0.3
 
 
 class Decider:
-    """Pure matrix: escalate / consult_doctrine / send / approve.
+    """Pure matrix: escalate / consult_doctrine / silent_close / send / approve.
 
     Flag-gated autonomous send (feature_autonomous_mode) never collapses
     EvaluationProfile to a mean score. Default flag off = F2 parity (no send).
@@ -90,6 +95,7 @@ class Decider:
         *,
         feature_gray_zone_enabled: bool = False,
         feature_autonomous_mode: bool = False,
+        feature_silent_close_enabled: bool = False,
         autonomous_thresholds: Mapping[str, float] | None = None,
         runtime_thresholds: RuntimeThresholds | None = None,
     ) -> None:
@@ -99,6 +105,7 @@ class Decider:
         safety = float(thresholds.get("safety", _DEFAULT_SAFETY_THRESHOLD))
         self._feature_gray_zone_enabled = feature_gray_zone_enabled
         self._feature_autonomous_mode = feature_autonomous_mode
+        self._feature_silent_close_enabled = feature_silent_close_enabled
         if runtime_thresholds is not None:
             # Shared holder owns mins/safety; ctor thresholds["safety"] ignored.
             self._runtime = runtime_thresholds
@@ -188,6 +195,18 @@ class Decider:
             )
 
         # 4. Naturalness redraft is Director pre-step (1×); Decider never owns redraft.
+
+        # 4b. Closing gate (AGENTS §4.26): a farewell or a bare acknowledgement
+        # needs no written reply. Safety, doctrine and risk already won above;
+        # this only decides between "write something" and "just read it".
+        if self._feature_silent_close_enabled and comprehension.closing_without_reply:
+            return Decision(
+                action="silent_close",
+                reason=CLOSING_REASON,
+                evaluation=evaluation,
+                draft_text=None,
+                mode_restriction_applied=None,
+            )
 
         # 5–6a. Autonomous send / threshold-miss fallback (flag only; mode audit).
         if self._feature_autonomous_mode:

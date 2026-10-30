@@ -1075,3 +1075,30 @@ async def test_renotify_sets_quality_flag_for_vip_when_enabled() -> None:
     )
     assert notifier.drafts
     assert notifier.drafts[-1].show_quality_feedback is True
+
+
+@pytest.mark.asyncio
+async def test_renotify_keeps_the_close_button_for_a_closing_draft() -> None:
+    """§4.26: un borrador de cierre reenviado tras un reinicio conserva el botón."""
+    deliveries = InMemoryPendingDeliveryStore()
+    approvals = InMemoryPendingApprovalStore()
+    notifier = FakeOwnerNotifier()
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    closing = _approval()
+    closing.cognitive_summary = "cierre_sin_respuesta"
+    await approvals.create_waiting(closing)
+    ordinary = _approval(chat_id=77)
+    ordinary.cognitive_summary = "ok_for_human_review"
+    await approvals.create_waiting(ordinary)
+
+    await run_startup_recovery(
+        deliveries=deliveries,
+        approvals=approvals,
+        notifier=notifier,
+        clock=ImmediateClock(now=now),
+    )
+
+    by_turn = {draft.turn_id: draft for draft in notifier.drafts}
+    assert by_turn[closing.turn_id].show_close_without_reply is True
+    assert by_turn[ordinary.turn_id].show_close_without_reply is False

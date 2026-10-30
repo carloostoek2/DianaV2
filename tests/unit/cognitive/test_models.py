@@ -81,6 +81,8 @@ def test_decision_action_literal_is_exactly_f3_public() -> None:
         "escalate",
         "consult_doctrine",
         "send",
+        # AGENTS §4.26 — closing gate (farewell / bare acknowledgement).
+        "silent_close",
     )
 
 
@@ -425,6 +427,8 @@ def test_turn_status_terminal_and_non_terminal_set() -> None:
     terminal = {
         TurnStatus.SUPERSEDED,
         TurnStatus.DELIVERED,
+        # AGENTS §4.26 — a closed-without-reply turn is finished, not sent.
+        TurnStatus.CLOSED_NO_REPLY,
         TurnStatus.FAILED,
         TurnStatus.ESCALATED,
     }
@@ -452,6 +456,7 @@ def test_turn_status_terminal_and_non_terminal_set() -> None:
         "escalated",
         "superseded",
         "delivered",
+        "closed_no_reply",
         "failed",
     }
     assert {s.value for s in TurnStatus} == expected_values

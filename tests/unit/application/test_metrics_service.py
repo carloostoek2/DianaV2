@@ -112,6 +112,7 @@ def _trace(
     action: str,
     turn_id: UUID | None = None,
     timings: Any = _TIMINGS_DEFAULT,
+    status: str | None = None,
 ) -> dict[str, Any]:
     if timings is _TIMINGS_DEFAULT:
         resolved_timings: dict[str, Any] | None = {"total_ms": 100.0}
@@ -122,6 +123,8 @@ def _trace(
         "decision": {"action": action},
         "timings": resolved_timings,
         "created_at": datetime(2026, 7, 14, 12, 0, tzinfo=UTC),
+        # §4.26: el conteo de cierres es de DESENLACE — necesita el estado final.
+        "status": status,
     }
 
 
@@ -490,3 +493,131 @@ async def test_false_positive_no_div_by_zero_when_escalate_zero() -> None:
     assert report.metrics.false_positive_escalation_rate == 0.0
     assert store.weeks[date(2026, 7, 13)]["false_positive_escalation_rate"] == 0.0
 
+
+
+# ---------------------------------------------------------------------------
+# Cierre silencioso (§4.26): se cuenta aparte y no entra en la tasa de autonomía
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_silent_close_count_is_reported_separately() -> None:
+    store = FakeStore()
+    traces = [
+        _trace(action="send"),
+        _trace(action="silent_close", status="closed_no_reply"),
+        _trace(action="silent_close", status="closed_no_reply"),
+        _trace(action="approve"),
+    ]
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource(traces),
+        sides=FakeSideSource(),
+        store=store,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.silent_close_count == 2
+    # Los 4 turnos siguen contando como turnos reales.
+    assert report.metrics.total_turns == 4
+
+
+@pytest.mark.asyncio
+async def test_silent_close_does_not_dilute_the_autonomy_rate() -> None:
+    """1 envío entre 4 turnos: la tasa se mide sobre los 2 que pedían respuesta."""
+    store = FakeStore()
+    traces = [
+        _trace(action="send"),
+        _trace(action="approve"),
+        _trace(action="silent_close", status="closed_no_reply"),
+        _trace(action="silent_close", status="closed_no_reply"),
+    ]
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource(traces),
+        sides=FakeSideSource(),
+        store=store,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.autonomous_send_rate == pytest.approx(0.5)
+
+
+@pytest.mark.asyncio
+async def test_week_of_only_closings_does_not_divide_by_zero() -> None:
+    store = FakeStore()
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource([_trace(action="silent_close", status="closed_no_reply")]),
+        sides=FakeSideSource(),
+        store=store,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.silent_close_count == 1
+    assert report.metrics.autonomous_send_rate == 0.0
+
+
+@pytest.mark.asyncio
+async def test_autonomous_send_count_is_stored_exactly() -> None:
+    """Con cierres excluidos de la tasa, derivar el conteo del total mentiría."""
+    store = FakeStore()
+    traces = [
+        _trace(action="send"),
+        _trace(action="approve"),
+        _trace(action="silent_close", status="closed_no_reply"),
+        _trace(action="silent_close", status="closed_no_reply"),
+    ]
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource(traces),
+        sides=FakeSideSource(),
+        store=store,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    await svc.aggregate_week(date(2026, 7, 13))
+    values = store.weeks[date(2026, 7, 13)]
+    assert values["autonomous_send_count"] == 1.0
+    assert values["autonomous_send_rate"] == pytest.approx(0.5)
+    assert values["silent_close_count"] == 2.0
+
+
+@pytest.mark.asyncio
+async def test_a_demoted_closing_that_was_delivered_is_not_a_silent_close() -> None:
+    """§4.26: el conteo es de DESENLACE, no de decisión.
+
+    Un borrador de cierre que la dueña aprobó se entregó: el turno fue normal,
+    así que cuenta en el denominador y NO se cuenta como cierre silencioso.
+    """
+    store = FakeStore()
+    traces = [
+        _trace(action="send"),
+        _trace(action="approve"),
+        _trace(action="silent_close", status="delivered"),
+    ]
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource(traces),
+        sides=FakeSideSource(),
+        store=store,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.silent_close_count == 0
+    # Tres turnos con respuesta: el enviado y los dos supervisados.
+    assert report.metrics.autonomous_send_rate == pytest.approx(1 / 3)
+
+
+@pytest.mark.asyncio
+async def test_a_closing_decision_without_final_status_is_not_counted() -> None:
+    """Sin estado final no se puede afirmar que hubo silencio: no se inventa."""
+    store = FakeStore()
+    svc = MetricsAggregationService(
+        traces=FakeTraceSource([_trace(action="silent_close")]),
+        sides=FakeSideSource(),
+        store=store,
+        clock=FakeClock(datetime(2026, 7, 22, 12, 0, tzinfo=UTC)),
+    )
+    report = await svc.aggregate_week(date(2026, 7, 13))
+    assert report.metrics is not None
+    assert report.metrics.silent_close_count == 0
+    assert report.metrics.autonomous_send_rate == 0.0

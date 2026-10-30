@@ -496,6 +496,43 @@ class TestFormatTraceSummaryText:
         # Bare Original: label must not appear (canonical uses Original intent:)
         assert not any(line.startswith('Original: "') for line in lines)
 
+    def test_silent_close_action_is_not_shown_as_a_raw_token(
+        self, svc: AdminTraceService
+    ) -> None:
+        """§4.26: la dueña lee qué pasó, no el token de la máquina."""
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=uuid4(),
+                chat_id=1,
+                created_at=FROZEN_NOW,
+                decision={"action": "silent_close", "reason": "cierre_sin_respuesta"},
+                status="closed_no_reply",
+            )
+        )
+        assert "Decision: silent_close (cerró sin responder)" in text
+        assert "Status: closed_no_reply" in text
+
+    def test_a_demoted_closing_is_not_reported_as_a_close(
+        self, svc: AdminTraceService
+    ) -> None:
+        """§4.26: la traza se rotula por desenlace, no por la acción guardada.
+
+        Un ``silent_close`` que la dueña aprobó y se entregó no "cerró sin
+        responder": decir eso sería mentir en el panel.
+        """
+        text = svc.format_trace_summary_text(
+            FullTrace(
+                turn_id=uuid4(),
+                chat_id=1,
+                created_at=FROZEN_NOW,
+                decision={"action": "silent_close", "reason": "cierre_sin_respuesta"},
+                status="delivered",
+            )
+        )
+        assert "Decision: silent_close (no aplicado — ver Status)" in text
+        assert "cerró sin responder" not in text
+        assert "Status: delivered" in text
+
     def test_missing_fields_use_na(self, svc: AdminTraceService) -> None:
         turn_id = uuid4()
         text = svc.format_trace_summary_text(

@@ -58,6 +58,9 @@ _ACTION_GOLD_CONFIRM = "gdc"
 _ACTION_REPRIMAND_CONFIRM = "rpc"
 # Correction severity picker (sv:<uuid>:<minor|moderate|major>) — SPEC-EA-07.
 _ACTION_SEVERITY = "sv"
+# Cierre silencioso desde la cola de la dueña (cn:<uuid>) — AGENTS §4.26.
+# Solo aparece cuando el candado determinista se activó (reason cierre_sin_respuesta).
+_ACTION_CLOSE_NO_REPLY = "cn"
 
 _GOLD_SCOPE = {"g": "global", "v": "vip"}
 _REPRIMAND_MODE = {"pol": "policy", "ex": "counter_example"}
@@ -74,6 +77,7 @@ def encode_callback(action: str, turn_id: UUID) -> str:
         "next": _ACTION_NEXT,
         "gold": _ACTION_GOLD,
         "reprimand": _ACTION_REPRIMAND,
+        "close_no_reply": _ACTION_CLOSE_NO_REPLY,
     }.get(action, action)
     data = f"{code}:{turn_id}"
     if len(data.encode("utf-8")) > 64:
@@ -147,6 +151,7 @@ def parse_callback(data: str) -> tuple[str, UUID] | None:
         _ACTION_NEXT: "next",
         _ACTION_GOLD: "gold",
         _ACTION_REPRIMAND: "reprimand",
+        _ACTION_CLOSE_NO_REPLY: "close_no_reply",
     }.get(code)
     if action is None:
         return None
@@ -827,10 +832,32 @@ _draft_base = draft_keyboard
 
 
 def draft_keyboard(
-    turn_id: UUID, chat_id: int | None = None, *, show_quality_feedback: bool = False
+    turn_id: UUID,
+    chat_id: int | None = None,
+    *,
+    show_quality_feedback: bool = False,
+    show_close_without_reply: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Aprobar / Corregir / Escalar + versiones + Traza / Nota."""
+    """Aprobar / Corregir / Escalar + versiones + Traza / Nota.
+
+    ``show_close_without_reply`` (AGENTS §4.26) adds the "🤐 Cerrar sin
+    responder" button — the owner's copy of the closing latch when the turn is
+    supervised. It is an alternative to "Aprobar" for this kind of turn, so it
+    gets its own row right below the primary actions (Aprobar / Corregir /
+    Escalar stay together, untouched). When the flag is off the layout is
+    byte-identical.
+    """
     base = _draft_base(turn_id, show_quality_feedback=show_quality_feedback)
+    if show_close_without_reply:
+        base.inline_keyboard.insert(
+            1,
+            [
+                InlineKeyboardButton(
+                    text="🤐 Cerrar sin responder",
+                    callback_data=encode_callback("close_no_reply", turn_id),
+                )
+            ],
+        )
     # Version nav row (v1 port): prev | regenerate | next
     base.inline_keyboard.append(
         [

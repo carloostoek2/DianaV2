@@ -14,6 +14,8 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
+from diana.cognitive.models import TurnStatus
+
 logger = logging.getLogger("diana.application")
 
 __all__ = [
@@ -38,10 +40,12 @@ METRIC_NAMES: tuple[str, ...] = (
     "false_positive_escalation_count",
     "style_drift_score",
     "autonomous_send_rate",
+    "autonomous_send_count",
     "average_latency_ms",
     "promo_sent_count",
     "promo_unique_chats",
     "promo_repeat_count",
+    "silent_close_count",
 )
 
 _APPROVE_OR_SEND = frozenset({"approve", "send"})
@@ -55,7 +59,7 @@ class MetricsTraceSource(Protocol):
     async def iter_week_traces(
         self, week_start: date, week_end: date
     ) -> list[dict]:
-        """Each dict: turn_id, decision, timings, created_at, ..."""
+        """Each dict: turn_id, decision, timings, created_at, status, ..."""
 
 
 class MetricsSideSource(Protocol):
@@ -95,6 +99,14 @@ class WeekMetrics:
     promo_sent_count: int = 0
     promo_unique_chats: int = 0
     promo_repeat_count: int = 0
+    # Cierres silenciosos (§4.26): turnos que TERMINARON cerrados sin escribir
+    # (estado final ``closed_no_reply``). Es un desenlace, no una decisión: un
+    # ``silent_close`` que la dueña aprobó fue un turno normal. Se informa
+    # aparte y NO entra en la tasa de autonomía.
+    silent_close_count: int = 0
+    # Conteo real de envíos (la tasa excluye los cierres, así que derivarlo de
+    # la tasa sobre el total sobreestimaría).
+    autonomous_send_count: int = 0
 
 
 @dataclass
@@ -143,6 +155,14 @@ def _trace_turn_id(trace: dict[str, Any]) -> UUID | None:
         return UUID(str(raw))
     except (ValueError, TypeError):
         return None
+
+
+def _trace_status(trace: dict[str, Any]) -> str | None:
+    """Final turn status carried by the trace dict (``None`` when unknown)."""
+    status = trace.get("status")
+    if status is None:
+        return None
+    return str(getattr(status, "value", status))
 
 
 def _latency_ms(timings: object) -> float | None:
@@ -206,6 +226,7 @@ class MetricsAggregationService:
         approve_send_ids: list[UUID] = []
         send_count = 0
         escalate_count = 0
+        silent_close_count = 0
         latencies: list[float] = []
 
         for tr in traces:
@@ -219,6 +240,14 @@ class MetricsAggregationService:
                 send_count += 1
             if action == "escalate":
                 escalate_count += 1
+            # §4.26: count the OUTCOME, not the decision. A ``silent_close``
+            # demoted to the owner that she then approved was a normal turn
+            # (Diana wrote) and must stay in the autonomy denominator; only a
+            # turn that really ended closed is a silent close.
+            if action == "silent_close" and _trace_status(tr) == (
+                TurnStatus.CLOSED_NO_REPLY.value
+            ):
+                silent_close_count += 1
             lat = _latency_ms(tr.get("timings"))
             if lat is not None:
                 latencies.append(lat)
@@ -254,7 +283,13 @@ class MetricsAggregationService:
 
         style_score = await self._style_drift_score()
 
-        auto_rate = (send_count / total_turns) if total_turns else 0.0
+        # §4.26: un cierre silencioso no es un turno que Diana "no se atrevió a
+        # mandar" — se decidió no escribir. Excluirlo del denominador evita que
+        # los cierres diluyan la tasa de autonomía; se cuenta aparte. Sólo se
+        # excluyen los turnos que de verdad terminaron cerrados (estado final
+        # ``closed_no_reply``), nunca la decisión cruda.
+        answerable_turns = max(total_turns - silent_close_count, 0)
+        auto_rate = (send_count / answerable_turns) if answerable_turns else 0.0
         avg_latency = (
             sum(latencies) / len(latencies) if latencies else 0.0
         )
@@ -276,6 +311,8 @@ class MetricsAggregationService:
             promo_sent_count=int(promo_sent),
             promo_unique_chats=int(promo_unique),
             promo_repeat_count=int(promo_repeat),
+            silent_close_count=int(silent_close_count),
+            autonomous_send_count=int(send_count),
         )
         values = week_metrics_to_eav(metrics)
         await self._store.replace_week(week_start, values)

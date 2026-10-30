@@ -102,6 +102,10 @@ class TestDeriveOwnerOutcome:
         assert derive_owner_outcome("superseded", None, False) is None
         assert derive_owner_outcome("failed", None, False) is None
 
+    def test_silent_close_is_none(self) -> None:
+        """§4.26: el silencio no se lee como acierto de la dueña."""
+        assert derive_owner_outcome("closed_no_reply", None, False) is None
+
 
 class TestComputeBlockedDims:
     def test_all_met_no_blocked(self) -> None:

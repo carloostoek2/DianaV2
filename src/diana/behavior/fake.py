@@ -72,6 +72,9 @@ class FakeTelegramActuator:
     def send_count(self) -> int:
         return sum(1 for c in self.calls if c["op"] == "send_message")
 
+    def read_count(self) -> int:
+        return sum(1 for c in self.calls if c["op"] == "read_business_message")
+
 
 class FlakySendActuator(FakeTelegramActuator):
     """Fails first N send_message with TransientSendError, then succeeds."""

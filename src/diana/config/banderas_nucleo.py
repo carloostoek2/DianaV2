@@ -173,6 +173,10 @@ CATALOGO: tuple[BanderaNucleo, ...] = (
         campo="feature_phatic_auto_send",
         que_se_pierde="Los saludos vuelven a la cola de aprobacion.",
     ),
+    BanderaNucleo(
+        campo="feature_silent_close_enabled",
+        que_se_pierde="Diana vuelve a contestar cada despedida y cada acuse.",
+    ),
 )
 
 

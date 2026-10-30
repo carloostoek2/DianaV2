@@ -993,3 +993,101 @@ async def test_persist_regen_hint_on_atencion_turn_keeps_channel_and_hint() -> N
     ephemeral = director.last_overrides["knowledge.ephemeral"]
     assert ephemeral["owner_regen_context"] == "responde como servicio"
     assert REGEN_HINT_KEY not in (r.approval.evaluation or {})
+
+
+# ---------------------------------------------------------------------------
+# Cierre silencioso (§4.26): regenerar NUNCA cierra solo
+# ---------------------------------------------------------------------------
+
+
+class _ClosingDirector(FakeDirector):
+    """Devuelve un cierre: el borrador vuelve a la cola, la dueña decide."""
+
+    async def handle_turn(self, turn: IncomingTurn, **kwargs) -> Decision:
+        self.calls += 1
+        self.last_turn = turn
+        return Decision(
+            action="silent_close",
+            reason="cierre_sin_respuesta",
+            evaluation=_eval(),
+            draft_text="que descanses",
+        )
+
+
+@pytest.mark.asyncio
+async def test_regenerated_closing_lands_in_the_queue_with_the_button() -> None:
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=_ClosingDirector([]),
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+    )
+
+    r = await svc.regenerate(turn_id, actor_id=OWNER)
+
+    assert r.ok
+    # El turno NO se cierra: sigue esperando la decisión de la dueña.
+    stored = await turns.get(turn_id)
+    assert stored is not None and stored.status == "pending_approval"
+    assert r.approval is not None
+    assert r.approval.status == "waiting"
+    assert r.approval.cognitive_summary == "cierre_sin_respuesta"
+    # Y el DM refrescado ofrece cerrar sin responder.
+    assert notifier.draft_edits[-1]["show_close_without_reply"] is True
+
+
+@pytest.mark.asyncio
+async def test_regenerated_normal_draft_hides_the_close_button() -> None:
+    """Si la nueva versión ya no es un cierre, la opción desaparece."""
+    OWNER, approvals, turns, turn_id = await _pending_approval_fixture()
+    approvals_row = await approvals.get_by_turn(turn_id)
+    assert approvals_row is not None
+    await approvals.update_draft(
+        turn_id,
+        draft_text=approvals_row.draft_text,
+        evaluation=approvals_row.evaluation,
+        cognitive_summary="cierre_sin_respuesta",
+    )
+    notifier = FakeOwnerNotifier()
+    svc = DraftVariantService(
+        approvals=approvals,
+        turns=turns,
+        director=FakeDirector(["otra cosa"]),
+        notifier=notifier,
+        owner_telegram_id=OWNER,
+    )
+
+    r = await svc.regenerate(turn_id, actor_id=OWNER)
+
+    assert r.ok
+    assert r.approval is not None
+    assert r.approval.cognitive_summary == "regen_ok"
+    assert notifier.draft_edits[-1]["show_close_without_reply"] is False
+
+
+def test_ensure_versions_preserves_the_closing_marker() -> None:
+    """§4.26: la marca de "hooks saltados" sobrevive a regenerar/navegar.
+
+    Vive en ``pending_approvals.evaluation`` junto a las demás claves internas
+    (``_draft_versions``, ``_doctrine_relevant``), así que reconstruir el bloque
+    de versiones no puede tirarla: es lo único que sostiene el puntaje de un
+    cierre regenerado a ``escalate``.
+    """
+    from diana.application.draft_variants import (
+        CLOSING_HOOKS_SKIPPED_KEY,
+        ensure_versions,
+    )
+
+    stored = {
+        CLOSING_HOOKS_SKIPPED_KEY: True,
+        "_draft_versions": {"items": [{"text": "que descanses"}], "selected": 0},
+    }
+
+    rebuilt = ensure_versions(
+        stored, draft_text="otra", reason="cierre_sin_respuesta", vip_text="bye"
+    )
+
+    assert rebuilt[CLOSING_HOOKS_SKIPPED_KEY] is True

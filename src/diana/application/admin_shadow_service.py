@@ -60,6 +60,8 @@ _REAL_DECISION_LABELS = {
     "approve": "aprobar (revisión de la dueña)",
     "escalate": "escalar",
     "consult_doctrine": "consultar doctrina",
+    # §4.26: el borrador sombra también puede decidir cerrar sin responder.
+    "silent_close": "cerrar sin responder",
 }
 
 
@@ -363,6 +365,13 @@ class AdminShadowService:
             lines.append(
                 "   ❌ Decisor: no habría enviado — doctrina "
                 "pendiente (zona gris)"
+            )
+        elif decision.action == "silent_close":
+            # §4.26: no es "no llegó a los umbrales" ni una negativa: es un
+            # cierre decidido. Mostrarlo aparte evita leerlo al revés.
+            lines.append(
+                "   🤐 Decisor: habría cerrado sin responder "
+                "(despedida o acuse que no pide nada)"
             )
         else:  # approve (autonomous_below_threshold)
             lines.append("   ❌ Decisor: no habría enviado — umbrales no alcanzados:")

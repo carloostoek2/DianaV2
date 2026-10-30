@@ -2422,3 +2422,212 @@ async def test_draft_snapshot_provider_error_does_not_break_flow() -> None:
     assert appr is not None and appr.status == "waiting"
     assert appr.evaluation is not None and AUTONOMY_KEY not in appr.evaluation
     assert len(g["notifier"].drafts) == 1
+
+
+# ---------------------------------------------------------------------------
+# Cierre silencioso desde la cola (AGENTS §4.26) — botón de la dueña
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_closing_turn_offers_the_close_button() -> None:
+    """Solo el borrador del candado enciende la opción de cerrar sin responder."""
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id),
+        _decision(draft="que descanses", reason="cierre_sin_respuesta"),
+        turn.id,
+    )
+    assert g["notifier"].drafts[0].show_close_without_reply is True
+
+
+@pytest.mark.asyncio
+async def test_normal_draft_never_offers_the_close_button() -> None:
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id), _decision(draft="hola", reason="ok_for_human_review"), turn.id
+    )
+    assert g["notifier"].drafts[0].show_close_without_reply is False
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_cancels_approval_and_closes_turn() -> None:
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id),
+        _decision(draft="que descanses", reason="cierre_sin_respuesta"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    closed = await g["admin"].handle_close_without_reply(turn.id, actor_id=OWNER_ID)
+
+    assert closed is True
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status == TurnStatus.CLOSED_NO_REPLY.value
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None and appr.status == "cancelled"
+    # Nada sale al VIP y nada se escribe en su nombre.
+    assert g["actuator"].send_count() == 0
+    assert g["notifier"].infos == []
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_requires_owner() -> None:
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    with pytest.raises(OwnerAuthError):
+        await g["admin"].handle_close_without_reply(turn.id, actor_id=OTHER_USER)
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_is_noop_on_terminal_turn() -> None:
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, TurnStatus.CLOSED_NO_REPLY)
+    closed = await g["admin"].handle_close_without_reply(turn.id, actor_id=OWNER_ID)
+    assert closed is False
+
+
+class _HoldGrayZone:
+    """Gray-zone double: one hold row, records what the close did to it."""
+
+    def __init__(self, *, status: str = "awaiting_send") -> None:
+        self.row = SimpleNamespace(id=uuid4(), status=status)
+        self.closed: list[tuple[UUID, bool]] = []
+        self.discarded: list[UUID] = []
+
+    async def get_hold_query_by_turn_id(self, turn_id):
+        return self.row
+
+    async def get_awaiting_send_by_turn_id(self, turn_id):
+        return self.row if self.row.status == "awaiting_send" else None
+
+    async def close_awaiting_send(self, query_id, *, unfreeze: bool = False):
+        self.closed.append((query_id, unfreeze))
+        return self.row
+
+    async def discard_and_close(self, query_id):
+        self.discarded.append(query_id)
+        return self.row
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_releases_the_gray_zone_hold() -> None:
+    """§4.5/§4.26: cerrar ES un discard — cierra la consulta y descongela.
+
+    El borrador del regen doctrinal vive en ``pending_approval`` con la query en
+    ``awaiting_send`` y el VIP congelado. Si el cierre no libera el hold, el VIP
+    queda congelado para siempre y los turnos siguientes se degradan.
+    """
+    g = _admin_graph()
+    gray = _HoldGrayZone()
+    g["admin"].set_gray_zone(gray)  # type: ignore[arg-type]
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id),
+        _decision(draft="que descanses", reason="cierre_sin_respuesta"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+
+    closed = await g["admin"].handle_close_without_reply(turn.id, actor_id=OWNER_ID)
+
+    assert closed is True
+    assert gray.closed == [(gray.row.id, True)]
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_cleans_a_residual_hold_on_a_terminal_turn() -> None:
+    """Un turno ya terminal con hold residual no deja al VIP congelado."""
+    g = _admin_graph()
+    gray = _HoldGrayZone(status="open")
+    g["admin"].set_gray_zone(gray)  # type: ignore[arg-type]
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, TurnStatus.CLOSED_NO_REPLY)
+
+    closed = await g["admin"].handle_close_without_reply(turn.id, actor_id=OWNER_ID)
+
+    assert closed is False
+    assert gray.discarded == [gray.row.id]
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_refuses_a_claimed_delivery() -> None:
+    """Entrega en vuelo: la aprobación está en ``claimed`` y no se cierra."""
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(turn.id),
+        _decision(draft="que descanses", reason="cierre_sin_respuesta"),
+        turn.id,
+    )
+    await g["coordinator"].transition(turn.id, "pending_approval")
+    await g["approvals"].mark_status(turn.id, "claimed")
+
+    closed = await g["admin"].handle_close_without_reply(turn.id, actor_id=OWNER_ID)
+
+    assert closed is False
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status == "pending_approval"
+    appr = await g["approvals"].get_by_turn(turn.id)
+    assert appr is not None and appr.status == "claimed"
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_refuses_a_turn_that_is_not_waiting() -> None:
+    """Sin aprobación en ``waiting`` no hay nada que cerrar."""
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["coordinator"].transition(turn.id, TurnStatus.ESCALATED)
+
+    closed = await g["admin"].handle_close_without_reply(turn.id, actor_id=OWNER_ID)
+
+    assert closed is False
+
+
+@pytest.mark.asyncio
+async def test_close_without_reply_refuses_a_status_without_approval() -> None:
+    """§4.26: sólo un turno ``pending_approval`` se cierra."""
+    g = _admin_graph()
+    turn = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+
+    closed = await g["admin"].handle_close_without_reply(turn.id, actor_id=OWNER_ID)
+
+    assert closed is False
+    stored = await g["turns"].get(turn.id)
+    assert stored is not None and stored.status != TurnStatus.CLOSED_NO_REPLY.value
+
+
+@pytest.mark.asyncio
+async def test_the_draft_records_whether_the_shadow_hooks_were_skipped() -> None:
+    """§4.26: la marca es durable y no se deriva de la comprensión del turno.
+
+    "🔄 Regenerar" re-ejecuta el Analista y recomputa ``closing_without_reply``;
+    la marca, en cambio, queda escrita cuando se crea el borrador.
+    """
+    from diana.application.draft_variants import CLOSING_HOOKS_SKIPPED_KEY
+
+    g = _admin_graph()
+    closing = await g["coordinator"].begin_turn(chat_id=42, trigger_message_id=7)
+    await g["admin"].send_draft_for_approval(
+        _incoming(closing.id),
+        _decision(draft="que descanses", reason="cierre_sin_respuesta"),
+        closing.id,
+    )
+    normal = await g["coordinator"].begin_turn(chat_id=43, trigger_message_id=8)
+    await g["admin"].send_draft_for_approval(
+        _incoming(normal.id, chat_id=43),
+        _decision(draft="hola", reason="ok_for_human_review"),
+        normal.id,
+    )
+
+    closing_appr = await g["approvals"].get_by_turn(closing.id)
+    normal_appr = await g["approvals"].get_by_turn(normal.id)
+    assert closing_appr is not None and closing_appr.evaluation is not None
+    assert closing_appr.evaluation[CLOSING_HOOKS_SKIPPED_KEY] is True
+    assert normal_appr is not None and normal_appr.evaluation is not None
+    assert normal_appr.evaluation[CLOSING_HOOKS_SKIPPED_KEY] is False

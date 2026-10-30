@@ -21,7 +21,9 @@ _FENCE_RE = re.compile(
     re.DOTALL,
 )
 # Internal/Director-only fields never shown to the model (schema stays stable).
-_INTERNAL_SCHEMA_FIELDS = frozenset({"raw_llm_output", "needs_operacion"})
+_INTERNAL_SCHEMA_FIELDS = frozenset(
+    {"raw_llm_output", "needs_operacion", "closing_without_reply"}
+)
 _METADATA_HOSTS = frozenset(
     {
         "metadata.google.internal",

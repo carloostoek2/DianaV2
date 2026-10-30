@@ -30,6 +30,7 @@ from diana.application.cognitive_recovery import (
     rematerialize_drafts,
 )
 from diana.application.draft_variants import (
+    offers_closing_without_reply,
     read_versions,
     resolve_vip_display_name,
 )
@@ -593,6 +594,11 @@ async def _renotify_approval(
             },
             show_quality_feedback=(
                 feature_quality_feedback_enabled and approval.vip_id is not None
+            ),
+            # §4.26: un borrador de cierre reenviado tras un reinicio conserva
+            # el botón; la razón persistida es la única fuente.
+            show_close_without_reply=offers_closing_without_reply(
+                approval.cognitive_summary
             ),
         )
     )
