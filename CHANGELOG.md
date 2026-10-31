@@ -7,6 +7,20 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+Las doctrinas guardadas se vuelven a encontrar por tema, y llega la regla de conocerse — 2026-10-31
+
+Las doctrinas que la dueña guardaba desde la zona gris casi nunca se volvían a leer. La búsqueda comparaba el mensaje del turno contra el texto exacto de la doctrina con un umbral de 0.80, y en producción una paráfrasis real del mismo caso («¿algún día se me haga conocerte?») daba 0.39, mientras que mensajes cariñosos sin relación daban entre 0.59 y 0.62. Bajar el umbral habría aplicado reglas equivocadas, así que el mismo caso volvía a pedir doctrina aunque ya estuviera resuelto.
+
+- **La doctrina hereda los temas del turno que la originó.** Los temas que el Analista asignó al turno de la consulta se guardan en `gray_zone_queries.topics` y pasan a `policies.temas` al guardar la regla viva, normalizados igual en ambos lados.
+- **Se busca por tema antes que por parecido.** Una doctrina aparece si comparte un tema con el turno (la misma regla que ya usaban las políticas del panel), siempre que además se parezca al turno al menos 0.30: sin ese piso, un tema genérico compartido («conexion», «rutina») traería una regla de otro asunto. La búsqueda por parecido literal (0.80) se queda como red para repeticiones casi exactas, y si falla ya no se pierde lo encontrado por tema.
+- **Las doctrinas anteriores no cambian.** Quedan sin temas y solo se encuentran por parecido, como antes.
+- **Regla nueva en el panel VIP: `conocerse_sin_confirmar`.** Si un VIP pregunta cuándo o cómo conocerse en persona, Diana no lo niega del todo ni lo confirma nunca: lo trata como un «tal vez», con calidez y sin prometer fecha ni lugar. Lleva el tema específico `conocerse`, que se añadió al vocabulario del Analista para pedidos de conocerse, vernos, encuentro o cita. El catálogo VIP quedó en la versión 58; `scripts/add_conocerse_policy.py` la agrega sin duplicarla y avisa que hay que reiniciar el bot.
+- Interruptor nuevo `FEATURE_DOCTRINE_TOPIC_MATCH_ENABLED` (encendido en el `.env` real). Apagado, la búsqueda vuelve a ser solo por parecido, igual que antes.
+- Migración `038` (aplicada en producción, `037 → 038`). El detalle de cómo se encuentra una doctrina está en `docs/ARCHITECTURE.md` §3 (PR [#32](https://github.com/carloostoek2/DianaV2/pull/32)).
+
+---
+
+
 Diana deja de contestar los cierres y los acuses cortos — 2026-10-30
 
 Cuando el VIP cerraba la conversación («bye», «hasta luego») o solo acusaba recibo («ok», «gracias», «jaja», «👍»), Diana escribía igual. No era un error del modelo: contestar un cierre reabre una plática que el cliente ya había terminado, y se sentía forzado. Ahora, en esos turnos, Diana marca el mensaje como leído y no escribe. Nada de esto lo decide un modelo: un candado de lista cerrada, sin IA, reconoce el cierre, y el turno termina ahí.
