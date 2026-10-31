@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import Text, bindparam, select, func
+from sqlalchemy.dialects.postgresql import ARRAY as PGARRAY
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from diana.infrastructure.db.models import Policy  # noqa: TCH001
@@ -32,6 +33,7 @@ def policy_to_dict(row: Policy) -> dict:
         "id": str(row.id),
         "trigger_description": row.trigger_description,
         "rule": row.rule,
+        "temas": list(getattr(row, "temas", None) or []),
         "scope": row.scope,
         "is_active": row.is_active,
         "valid_until": row.valid_until.isoformat() if row.valid_until and hasattr(row.valid_until, "isoformat") else str(row.valid_until) if row.valid_until else None,
@@ -57,12 +59,14 @@ class PoliciesRepo:
         source_query_id: UUID | None = None,
         embedding: list[float] | None = None,
         vip_id: UUID | None = None,
+        temas: list[str] | None = None,
     ) -> Policy:
         async with self._sf() as session:
             row = Policy(
                 embedding=embedding or list(ZERO_EMBEDDING),
                 trigger_description=trigger_description,
                 rule=rule,
+                temas=list(temas or []),
                 scope=scope,
                 is_active=is_active,
                 source_query_id=source_query_id,
@@ -103,6 +107,59 @@ class PoliciesRepo:
             )
             if scope is not None:
                 stmt = stmt.where((Policy.scope == "all") | (Policy.scope == scope))
+            result = await session.execute(stmt)
+            return [policy_to_dict(row) for row in result.scalars().all()]
+
+    async def find_active_by_topics(
+        self,
+        topics: list[str],
+        *,
+        scope: str | None = None,
+        limit: int = 3,
+        vip_id: UUID | None = None,
+        embedding: list[float] | None = None,
+        min_similarity: float | None = None,
+    ) -> list[dict]:
+        """Active policies whose stored ``temas`` overlap ``topics`` (deterministic).
+
+        Same matching rule the static panel catalog uses (``signals ∩ temas``),
+        applied to doctrines born in the gray zone: a doctrine inherits the
+        topics the Analyst assigned to the turn that needed it, so a later turn
+        tagged with one of those topics finds it without relying on literal
+        similarity. Newest first; ``scope``/``vip_id`` visibility is identical
+        to :meth:`find_active_by_similarity`. Empty ``topics`` → no hits.
+
+        ``embedding`` + ``min_similarity`` add a precision guard: a candidate
+        must also be at least ``min_similarity`` close to the turn, so a shared
+        generic topic does not surface an unrelated rule (finding 1).
+        """
+        normalized = [t for t in (topics or []) if isinstance(t, str) and t.strip()]
+        if not normalized:
+            return []
+        async with self._sf() as session:
+            stmt = (
+                select(Policy)
+                .where(
+                    Policy.is_active.is_(True),
+                    (Policy.valid_until.is_(None)) | (Policy.valid_until > func.now()),
+                    vip_id_visibility_clause(Policy.vip_id, vip_id),
+                    Policy.temas.op("?|")(
+                        bindparam(
+                            "policy_temas",
+                            value=normalized,
+                            type_=PGARRAY(Text),
+                        )
+                    ),
+                )
+                .order_by(Policy.created_at.desc())
+                .limit(limit)
+            )
+            if scope is not None:
+                stmt = stmt.where((Policy.scope == "all") | (Policy.scope == scope))
+            if embedding is not None and min_similarity is not None:
+                stmt = stmt.where(
+                    Policy.embedding.cosine_distance(embedding) < 1 - min_similarity
+                )
             result = await session.execute(stmt)
             return [policy_to_dict(row) for row in result.scalars().all()]
 

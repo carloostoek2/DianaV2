@@ -82,6 +82,7 @@ class _MemQueries:
         proposed_rule=None,
         proposed_reply=None,
         proposal_source=None,
+        topics=None,
     ):
         row = SimpleNamespace(
             id=uuid4(),
@@ -96,6 +97,7 @@ class _MemQueries:
             proposed_rule=proposed_rule,
             proposed_reply=proposed_reply,
             proposal_source=proposal_source,
+            topics=list(topics or []),
         )
         self._by_id[row.id] = row
         return row

@@ -79,3 +79,8 @@ docs/prompt-llm-turno-*.md
 # es la fuente de verdad: del kit se versionan sus documentos (skill, agentes,
 # fichas, índice), nunca el paquete.
 diana-contract-audit-kit-*.zip
+
+# Configuración local de agentes (Codex CLI y skills de agentes). No es parte
+# del producto: se genera en la máquina de quien opera y no debe versionarse.
+.codex/
+.agents/

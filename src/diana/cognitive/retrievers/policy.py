@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POLICY_THRESHOLD = 0.8
 DEFAULT_POLICY_LIMIT = 5
+# Doctrines born in the gray zone inherit the turn's topics (migración 038) and
+# are matched deterministically, exactly like the panel catalog. Capped low: a
+# doctrine is a business rule, not filler context.
+DEFAULT_POLICY_TOPIC_LIMIT = 3
+# Precision guard for the topic match (finding 1): a shared generic topic must
+# still be close enough to the rule, otherwise an unrelated doctrine would
+# suppress a legitimate gray-zone consult. Measured: same-subject paraphrases
+# 0.34–0.52, unrelated warm messages <0.17 — 0.30 sits cleanly between.
+DEFAULT_POLICY_TOPIC_MIN_SIMILARITY = 0.30
 
 
 def _norm(token: Any) -> str:
@@ -50,10 +59,12 @@ class PolicyRetriever:
         repo: Any = None,
         static_policies: list[dict] | None = None,
         persona_catalog_provider: PersonaCatalogProvider | None = None,
+        feature_topic_match_enabled: bool = False,
     ) -> None:
         self._embed = embedding_service
         self._repo = repo
         self._provider = persona_catalog_provider
+        self._feature_topic_match_enabled = bool(feature_topic_match_enabled)
         self._last_policies: dict[str, object] = {}
         # Empty list is treated as "no static catalog" (same as None) for stub
         # semantics. State is per-channel so atencion turns never load VIP policies.
@@ -124,12 +135,36 @@ class PolicyRetriever:
                 out.append(line)
 
         if has_db:
+            # Channel-scope the DB path: an atencion turn may only load
+            # ``scope='all'`` rows (never a VIP-scoped policy); a VIP turn
+            # keeps the unfiltered lookup (scope=None).
+            db_scope = "all" if turn.channel_type == "atencion" else None
+
             try:
                 embedding = await self._embed.embed(turn.text)
-                # Channel-scope the DB path: an atencion turn may only load
-                # ``scope='all'`` rows (never a VIP-scoped policy); a VIP turn
-                # keeps the unfiltered lookup (scope=None).
-                db_scope = "all" if turn.channel_type == "atencion" else None
+            except Exception:
+                logger.exception(
+                    "PolicyRetriever: embed failed; returning static results only"
+                )
+                return out if (out or has_static) else None
+
+            # Deterministic topic match first (same rule as the panel catalog:
+            # signals ∩ temas). A gray-zone doctrine inherits the topics of the
+            # turn that needed it, so a later turn on the same subject finds it
+            # without depending on near-literal wording.
+            try:
+                topic_rows = await self._find_by_topics(
+                    turn, comprehension, db_scope, embedding
+                )
+            except Exception:
+                logger.exception(
+                    "PolicyRetriever: topic match failed; continuing with similarity"
+                )
+                topic_rows = []
+            for row in topic_rows:
+                self._append_row(row, out, seen_rules)
+
+            try:
                 rows = await self._repo.find_active_by_similarity(
                     embedding,
                     threshold=DEFAULT_POLICY_THRESHOLD,
@@ -138,30 +173,75 @@ class PolicyRetriever:
                     vip_id=turn.vip_id,
                 )
                 for row in rows or []:
-                    if not isinstance(row, dict):
-                        continue
-                    trigger = row.get("trigger_description")
-                    rule = row.get("rule")
-                    if trigger is None or rule is None:
-                        logger.debug(
-                            "PolicyRetriever: skipping malformed DB row %r", row
-                        )
-                        continue
-                    line = f"Trigger: {trigger} | Rule: {rule}"
-                    rule_key = _rule_text_from_formatted(line)
-                    if rule_key in seen_rules:
-                        continue
-                    seen_rules.append(rule_key)
-                    out.append(line)
+                    self._append_row(row, out, seen_rules)
             except Exception:
                 logger.exception(
                     "PolicyRetriever: DB/embed/format path failed; "
                     "returning static results only"
                 )
-                return out if has_static else None
+                # Keep whatever was already found (static matches or topic
+                # hits): a similarity failure must not discard an independent
+                # successful lookup.
+                return out if (out or has_static) else None
 
         # Static present with no match → []; DB-only with no rows → []
         return out
+
+    async def _find_by_topics(
+        self,
+        turn: IncomingTurn,
+        comprehension: Comprehension,
+        db_scope: str | None,
+        embedding: list[float],
+    ) -> list[dict]:
+        """Active doctrines whose ``temas`` overlap the turn's signals.
+
+        Same deterministic rule the static catalog uses, gated by the
+        ``feature_doctrine_topic_match_enabled`` flag and by a low similarity
+        floor so a shared generic topic never pulls in an unrelated rule.
+        Repos without the topic lookup (older fakes) simply contribute nothing.
+        """
+        if not self._feature_topic_match_enabled:
+            return []
+        finder = getattr(self._repo, "find_active_by_topics", None)
+        if not callable(finder):
+            return []
+        signals = {_norm(t) for t in comprehension.topics} | {
+            _norm(comprehension.intent)
+        }
+        signals.discard("")
+        if not signals:
+            return []
+        rows = await finder(
+            sorted(signals),
+            scope=db_scope,
+            limit=DEFAULT_POLICY_TOPIC_LIMIT,
+            vip_id=turn.vip_id,
+            embedding=embedding,
+            min_similarity=DEFAULT_POLICY_TOPIC_MIN_SIMILARITY,
+        )
+        return [row for row in (rows or []) if isinstance(row, dict)]
+
+    @staticmethod
+    def _append_row(
+        row: Any,
+        out: list[str],
+        seen_rules: list[str],
+    ) -> None:
+        """Format one DB policy row, skipping malformed or duplicate rules."""
+        if not isinstance(row, dict):
+            return
+        trigger = row.get("trigger_description")
+        rule = row.get("rule")
+        if trigger is None or rule is None:
+            logger.debug("PolicyRetriever: skipping malformed DB row %r", row)
+            return
+        line = f"Trigger: {trigger} | Rule: {rule}"
+        rule_key = _rule_text_from_formatted(line)
+        if rule_key in seen_rules:
+            return
+        seen_rules.append(rule_key)
+        out.append(line)
 
 
 __all__ = ["PolicyRetriever"]

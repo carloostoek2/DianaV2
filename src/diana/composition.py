@@ -1037,6 +1037,7 @@ def build_app(
         persona_catalog_provider=persona_catalog_provider,
         persona_facts_max=settings.persona_facts_max_per_turn,
         operacion_max=settings.persona_operacion_max_per_turn,
+        feature_topic_match_enabled=settings.feature_doctrine_topic_match_enabled,
     )
     # Single TurnClassifier instance (Director pure-greeting cut + orchestrator shadow).
     classifier = TurnClassifier(confidence_min=settings.classifier_confidence_min)

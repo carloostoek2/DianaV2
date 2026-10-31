@@ -193,6 +193,7 @@ class FakeGrayZone:
             "proposed_rule": kwargs.get("proposed_rule"),
             "proposed_reply": kwargs.get("proposed_reply"),
             "proposal_source": kwargs.get("proposal_source"),
+            "topics": kwargs.get("topics"),
         })
         if vip_id is not None and self._vip_store is not None:
             await self._vip_store.freeze_vip(
@@ -3094,6 +3095,60 @@ async def test_consult_doctrine_happy_path() -> None:
     assert stored_vip.frozen_until is not None
     assert stored_vip.frozen_until > datetime.now(UTC)
     assert gz.discarded == []
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_captures_analyst_topics() -> None:
+    """Migración 038: la consulta guarda los temas del turno para que la
+    doctrina resultante se encuentre después por tema (match determinista)."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="need policy",
+    )
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    gz = FakeGrayZone(vip_store=vip_store)
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=gz,
+        feature_gray_zone_enabled=True,
+        vip_store=vip_store,
+        trace_reader=_FakeTraceReader(
+            {
+                "comprehension": {
+                    "intent": "preguntar_actividad",
+                    "topics": ["conexion", "reencuentro"],
+                }
+            }
+        ),
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
+    assert gz.queries[0]["topics"] == ["conexion", "reencuentro"]
+
+
+@pytest.mark.asyncio
+async def test_consult_doctrine_without_trace_opens_query_with_no_topics() -> None:
+    """Fail-soft: sin traza legible la consulta se abre igual, sin temas."""
+    decision = Decision(
+        action="consult_doctrine",
+        reason="doctrine_not_found",
+        evaluation=_eval(),
+        draft_text="need policy",
+    )
+    vip_store = InMemoryVipStore()
+    rec = await vip_store.add(100, display_name="Ana")
+    gz = FakeGrayZone(vip_store=vip_store)
+    g = _build(
+        FakeDirector(decision),
+        gray_zone=gz,
+        feature_gray_zone_enabled=True,
+        vip_store=vip_store,
+        trace_reader=_FakeTraceReader(None, error=True),
+    )
+    await g["orch"].handle_vip_message(_vip(vip_id=rec.id))
+    assert gz.queries[0]["topics"] == []
 
 
 @pytest.mark.asyncio

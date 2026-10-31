@@ -97,6 +97,7 @@ def build_default_registry(
     persona_catalog_provider: PersonaCatalogProvider | None = None,
     persona_facts_max: int = DEFAULT_MAX_PERSONA_FACTS,
     operacion_max: int = DEFAULT_MAX_OPERACION_FACTS,
+    feature_topic_match_enabled: bool = False,
 ) -> CapabilityRegistry:
     """Register capabilities and fail-fast for the planner universe.
 
@@ -168,6 +169,7 @@ def build_default_registry(
             repo=policy_repo,
             static_policies=static_policies,
             persona_catalog_provider=persona_catalog_provider,
+            feature_topic_match_enabled=feature_topic_match_enabled,
         ),
     )
     registry.register(

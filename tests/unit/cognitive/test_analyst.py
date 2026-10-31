@@ -299,3 +299,13 @@ def test_system_prompt_mentions_current_activity_needs_schedule() -> None:
     low = system.lower()
     assert "qué haces" in low or "que haces" in low
     assert "current" in low or "ahora" in low or "activity" in low
+
+
+def test_system_prompt_maps_meeting_requests_to_conocerse_tema() -> None:
+    """Panel policy 'conocerse' only fires if the Analyst emits that tema."""
+    from diana.cognitive import analyst as analyst_mod
+
+    system = analyst_mod._SYSTEM
+    assert "conocerse" in system
+    low = system.lower()
+    assert "invitacion" in low or "cita" in low or "encuentro" in low

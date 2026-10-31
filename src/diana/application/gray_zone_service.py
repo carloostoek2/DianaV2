@@ -22,6 +22,7 @@ from uuid import UUID
 from diana.application.policy_embedding import embed_policy_text, policy_embedding_text
 from diana.application.ports import VipStore
 from diana.cognitive.policy_distiller import PolicyDistiller
+from diana.cognitive.tags import normalize_tags
 from diana.infrastructure.db.repositories.gray_zone import GrayZoneQueryRepo
 from diana.infrastructure.db.repositories.policies import PoliciesRepo, policy_to_dict
 from diana.infrastructure.db.repositories.staging import StagingCandidateRepo
@@ -83,6 +84,7 @@ class GrayZoneService:
         proposed_rule: str | None = None,
         proposed_reply: str | None = None,
         proposal_source: str | None = None,
+        topics: list[str] | None = None,
     ) -> object:
         """Create an open gray zone query; freeze the VIP when present.
 
@@ -112,6 +114,7 @@ class GrayZoneService:
             proposed_rule=proposed_rule,
             proposed_reply=proposed_reply,
             proposal_source=proposal_source,
+            topics=topics,
         )
 
         logger.info(
@@ -182,6 +185,11 @@ class GrayZoneService:
                 },
             )
 
+        # Migración 038: la doctrina hereda los temas del turno que abrió la
+        # consulta, para que el retrieval determinista por tema (el mismo de las
+        # políticas del panel) la encuentre en turnos posteriores parecidos.
+        # normalize_tags iguala ambos lados (con/sin acentos, mayúsculas, etc.)
+        # antes de guardar, como ya hace el catálogo del panel (finding 2).
         policy = await self._policies.insert(
             trigger_description=trigger,
             rule=rule,
@@ -190,6 +198,7 @@ class GrayZoneService:
             source_query_id=query_id,
             embedding=embedding,
             vip_id=vip_id,
+            temas=normalize_tags(getattr(query, "topics", None)),
         )
         logger.info(
             "gray_zone_live_policy_persisted",

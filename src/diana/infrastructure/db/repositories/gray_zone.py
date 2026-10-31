@@ -33,6 +33,7 @@ class GrayZoneQueryRepo:
         proposed_rule: str | None = None,
         proposed_reply: str | None = None,
         proposal_source: str | None = None,
+        topics: list[str] | None = None,
     ) -> GrayZoneQuery:
         async with self._sf() as session:
             row = GrayZoneQuery(
@@ -47,6 +48,7 @@ class GrayZoneQueryRepo:
                 proposed_rule=proposed_rule,
                 proposed_reply=proposed_reply,
                 proposal_source=proposal_source,
+                topics=list(topics or []),
             )
             session.add(row)
             await session.commit()

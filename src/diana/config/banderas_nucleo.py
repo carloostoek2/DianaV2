@@ -83,6 +83,14 @@ CATALOGO: tuple[BanderaNucleo, ...] = (
         que_se_pierde="Cuando falta una regla, el caso no se consulta ni se congela.",
     ),
     BanderaNucleo(
+        campo="feature_doctrine_topic_match_enabled",
+        que_se_pierde=(
+            "Las doctrinas que guardaste solo se reencuentran por repeticion "
+            "casi literal; un mismo caso dicho de otra forma vuelve a pedir "
+            "doctrina."
+        ),
+    ),
+    BanderaNucleo(
         campo="feature_gray_zone_proposal_enabled",
         que_se_pierde="La consulta de doctrina llega sin propuesta de regla.",
     ),
