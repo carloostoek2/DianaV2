@@ -1586,3 +1586,174 @@ async def test_history_retriever_collapses_album_into_one_line() -> None:
     assert len(result) == 1
     assert result[0]["texto"] == "[imagen parte de álbum ×4]"
     assert result[0]["autor"] == "dueña"
+
+
+# --- Migración 038: doctrinas de zona gris por tema (match determinista) ---
+
+
+def _topic_comprehension(*topics: str, intent: str = "otro") -> Comprehension:
+    base = _comprehension()
+    return Comprehension(
+        intent=intent,
+        topics=list(topics),
+        emotion=base.emotion,
+        urgency=base.urgency,
+        risk=base.risk,
+        needs_memory=False,
+        needs_policy=True,
+        needs_schedule=False,
+        needs_examples=False,
+        needs_history=True,
+        needs_context=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_matches_db_doctrine_by_topics() -> None:
+    """A gray-zone doctrine tagged with the turn's topics is retrieved even
+    when the similarity search finds nothing (the case that kept asking for
+    doctrine again)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_similarity = AsyncMock(return_value=[])
+    repo.find_active_by_topics = AsyncMock(
+        return_value=[
+            {
+                "trigger_description": "invitación",
+                "rule": "no confirmar ni negar la invitación",
+                "temas": ["conexion", "reencuentro"],
+            }
+        ]
+    )
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, feature_topic_match_enabled=True
+    )
+    result = await retriever.fetch(
+        _turn(), _topic_comprehension("conexion", "reencuentro")
+    )
+    assert result == [
+        "Trigger: invitación | Rule: no confirmar ni negar la invitación"
+    ]
+    signals = repo.find_active_by_topics.await_args.args[0]
+    assert set(signals) == {"conexion", "reencuentro", "otro"}
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_topics_dedupe_against_similarity() -> None:
+    """The same doctrine reached by topics and by similarity is emitted once."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    row = {"trigger_description": "t", "rule": "r", "temas": ["conexion"]}
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_topics = AsyncMock(return_value=[row])
+    repo.find_active_by_similarity = AsyncMock(return_value=[row])
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, feature_topic_match_enabled=True
+    )
+    result = await retriever.fetch(_turn(), _topic_comprehension("conexion"))
+    assert result == ["Trigger: t | Rule: r"]
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_topic_lookup_failure_is_fail_soft() -> None:
+    """A broken topic lookup never drops the similarity results."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_topics = AsyncMock(side_effect=RuntimeError("boom"))
+    repo.find_active_by_similarity = AsyncMock(
+        return_value=[{"trigger_description": "t", "rule": "r"}]
+    )
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, feature_topic_match_enabled=True
+    )
+    result = await retriever.fetch(_turn(), _topic_comprehension("conexion"))
+    assert result == ["Trigger: t | Rule: r"]
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_skips_topic_lookup_without_signals() -> None:
+    """No topics and no intent → no topic query at all."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_topics = AsyncMock(return_value=[])
+    repo.find_active_by_similarity = AsyncMock(return_value=[])
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, feature_topic_match_enabled=True
+    )
+    await retriever.fetch(_turn(), _topic_comprehension(intent=""))
+    repo.find_active_by_topics.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_topic_match_off_skips_topic_lookup() -> None:
+    """FEATURE_DOCTRINE_TOPIC_MATCH_ENABLED off → similarity-only retrieval."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_topics = AsyncMock(return_value=[])
+    repo.find_active_by_similarity = AsyncMock(
+        return_value=[{"trigger_description": "t", "rule": "r"}]
+    )
+    retriever = PolicyRetriever(embedding_service=embed, repo=repo)  # flag off
+    result = await retriever.fetch(_turn(), _topic_comprehension("conexion"))
+    assert result == ["Trigger: t | Rule: r"]
+    repo.find_active_by_topics.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_topic_match_forwards_similarity_floor() -> None:
+    """The topic lookup gets the turn embedding + a low similarity floor, so a
+    shared generic topic never surfaces an unrelated rule."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.9] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_topics = AsyncMock(return_value=[])
+    repo.find_active_by_similarity = AsyncMock(return_value=[])
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, feature_topic_match_enabled=True
+    )
+    await retriever.fetch(_turn(), _topic_comprehension("conexion"))
+    kwargs = repo.find_active_by_topics.await_args.kwargs
+    assert kwargs["embedding"] == [0.9] * 384
+    assert 0.0 < kwargs["min_similarity"] < 0.8
+
+
+@pytest.mark.asyncio
+async def test_policy_retriever_keeps_topic_hits_when_similarity_fails() -> None:
+    """A similarity failure must not discard a doctrine already found by tema
+    (Astra finding: out was dropped when no static catalog was configured)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    embed = MagicMock()
+    embed.embed = AsyncMock(return_value=[0.1] * 384)
+    repo = AsyncMock()
+    repo.find_active_by_topics = AsyncMock(
+        return_value=[
+            {
+                "trigger_description": "conocerse",
+                "rule": "tratarlo como un tal vez",
+                "temas": ["conocerse"],
+            }
+        ]
+    )
+    repo.find_active_by_similarity = AsyncMock(side_effect=RuntimeError("db down"))
+    retriever = PolicyRetriever(
+        embedding_service=embed, repo=repo, feature_topic_match_enabled=True
+    )
+    result = await retriever.fetch(_turn(), _topic_comprehension("conocerse"))
+    assert result == ["Trigger: conocerse | Rule: tratarlo como un tal vez"]

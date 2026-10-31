@@ -1442,6 +1442,31 @@ class TurnOrchestrator:
             kwargs["retrieved"] = retr
         return kwargs
 
+    async def _comprehension_topics(self, turn_id: UUID) -> list[str]:
+        """Topics the Analyst assigned to this turn (doctrina retrieval, 038).
+
+        Read from the committed trace because the Decision carries no
+        comprehension. Fail-soft: any read failure means "no topics" and the
+        doctrine keeps the similarity-only retrieval of before.
+        """
+        reader = self._trace_reader
+        if reader is None:
+            return []
+        try:
+            trace = await reader.get_full_trace(turn_id)
+        except Exception:
+            log_swallowed(
+                logger, "doctrine_topics_trace_error", turn_id=str(turn_id)
+            )
+            return []
+        comp = (trace or {}).get("comprehension")
+        if not isinstance(comp, dict):
+            return []
+        topics = comp.get("topics")
+        if not isinstance(topics, list):
+            return []
+        return [t for t in topics if isinstance(t, str) and t.strip()]
+
     async def _maybe_post_turn_terminal(
         self, turn_id: UUID, chat_id: int
     ) -> None:
@@ -2772,6 +2797,7 @@ class TurnOrchestrator:
                         proposed_rule=prop_rule,
                         proposed_reply=prop_reply,
                         proposal_source=prop_source,
+                        topics=await self._comprehension_topics(turn_id),
                     )
                     try:
                         await self._admin.send_doctrine_query(
@@ -2888,6 +2914,7 @@ class TurnOrchestrator:
                     proposed_rule=prop_rule,
                     proposed_reply=prop_reply,
                     proposal_source=prop_source,
+                    topics=await self._comprehension_topics(turn_id),
                 )
                 try:
                     await self._admin.send_doctrine_query(

@@ -1659,6 +1659,11 @@ class AdminService:
                     "chat_busy", turn_id=turn_id, chat_id=chat_id
                 )
 
+            raw_topics = (
+                comprehension.get("topics")
+                if isinstance(comprehension, Mapping)
+                else None
+            )
             query = await gz.create_query(
                 vip_id=incoming.vip_id,
                 turn_id=turn_id,
@@ -1669,6 +1674,12 @@ class AdminService:
                 proposed_rule=prop_rule,
                 proposed_reply=prop_reply,
                 proposal_source=prop_source,
+                # Migración 038: la doctrina hereda los temas del turno.
+                topics=(
+                    [t for t in raw_topics if isinstance(t, str) and t.strip()]
+                    if isinstance(raw_topics, list)
+                    else []
+                ),
             )
             try:
                 await self.send_doctrine_query(

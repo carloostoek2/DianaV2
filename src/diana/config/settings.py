@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     # TTL (hours) for interpreted context snapshots (REQ-MEM-06 contexts table).
     context_ttl_hours: int = 24
     feature_gray_zone_enabled: bool = False
+    # Doctrinas de zona gris por tema (migración 038): una doctrina hereda los
+    # temas del turno que la originó y se recupera por coincidencia determinista
+    # (mismo mecanismo que las políticas del panel), con un piso bajo de
+    # similitud para no traer reglas de otro asunto. OFF = solo retrieval por
+    # similitud literal (comportamiento anterior byte a byte).
+    feature_doctrine_topic_match_enabled: bool = False
     # Gray-zone proposal: system-generated RULE proposal (with restricted
     # general-context loan) shown to the owner before she writes one from
     # scratch. OFF ⇒ current behavior byte-for-byte (regla de oro AGENTS §1).

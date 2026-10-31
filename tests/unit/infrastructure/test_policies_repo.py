@@ -81,3 +81,41 @@ def test_zero_embedding_constant_matches_insert_default() -> None:
     assert not any(policies_mod.ZERO_EMBEDDING)
     assert "ZERO_EMBEDDING" in policies_mod.__all__
     assert "zero_embedding_clause" in policies_mod.__all__
+
+
+def test_policy_to_dict_includes_temas() -> None:
+    row = SimpleNamespace(
+        id=uuid4(),
+        trigger_description="invitación",
+        rule="no confirmar ni negar",
+        temas=["conexion", "reencuentro"],
+        scope="all",
+        is_active=True,
+        valid_until=None,
+        source_query_id=None,
+        vip_id=None,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    assert policies_mod.policy_to_dict(row)["temas"] == [
+        "conexion",
+        "reencuentro",
+    ]
+
+    row.temas = None
+    assert policies_mod.policy_to_dict(row)["temas"] == []
+
+
+def test_policy_to_dict_tolerates_rows_without_temas() -> None:
+    """Rows/fakes created before migration 038 read as 'no topics'."""
+    row = SimpleNamespace(
+        id=uuid4(),
+        trigger_description="t",
+        rule="r",
+        scope="all",
+        is_active=True,
+        valid_until=None,
+        source_query_id=None,
+        vip_id=None,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    assert policies_mod.policy_to_dict(row)["temas"] == []

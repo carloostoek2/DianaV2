@@ -309,7 +309,10 @@ def test_fair_share_limits_invariants_and_determinism() -> None:
 # --- 5. addendum del Analyst: bloques por tipo, por canal, _SYSTEM intacto ---
 
 # sha256 de analyst._SYSTEM en la base 947cc42: el ítem 1 NO lo edita.
-_SYSTEM_SHA256_BASE = "4673ad282ea3bd47c7b62a2ae4ee3ab6bb7843a4b3130b3e427c6d0d46f4d368"
+# Actualizado a proposito (doctrinas por tema, 2026-10-31): la lista de Policy
+# temas gana "conocerse" para que el Analista etiquete los pedidos de verse en
+# persona, que es lo que activa la politica del panel.
+_SYSTEM_SHA256_BASE = "61b8946332e6abb5455340b71d0bea942ee38884845f37b1430f697e6915f5b9"
 
 
 def _system_for(channel: str, catalog: dict) -> str:

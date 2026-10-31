@@ -801,3 +801,107 @@ async def test_persist_live_policy_marks_pending_when_embed_keeps_failing(
     assert pending and pending[0].levelno == logging.WARNING
     assert pending[0].source == "gray_zone_live"
     assert pending[0].reason == "embed_failed"
+
+
+# --- Migración 038: la doctrina hereda los temas del turno ---
+
+
+@pytest.mark.asyncio
+async def test_persist_live_policy_inherits_query_topics(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+) -> None:
+    """Topics captured when the gray zone opened travel to ``policies.temas``."""
+    query_id = uuid4()
+    row = _fake_query_row(
+        query_id=query_id,
+        status="open",
+        vip_id=vip_record.id,
+        question="¿Crees que algún día se me haga conocerte?",
+    )
+    row.topics = ["conexion", "reencuentro"]
+    query_repo.get_by_id.return_value = row
+    policies_repo = AsyncMock()
+    policies_repo.find_active_by_source_query_id = AsyncMock(return_value=None)
+    policies_repo.insert.return_value = SimpleNamespace(id=uuid4())
+
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=policies_repo,
+    )
+    await service.persist_live_policy(query_id, "Tratar el conocerse como un tal vez")
+
+    assert policies_repo.insert.await_args.kwargs["temas"] == [
+        "conexion",
+        "reencuentro",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persist_live_policy_normalizes_inherited_topics(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+) -> None:
+    """Migración 038 (finding 2): accented/spaced topics are normalized on both
+    sides so a "Conexión" turn matches a stored "conexion" topic."""
+    query_id = uuid4()
+    row = _fake_query_row(
+        query_id=query_id, status="open", vip_id=vip_record.id
+    )
+    row.topics = ["Conexión", "  Reencuentro "]
+    query_repo.get_by_id.return_value = row
+    policies_repo = AsyncMock()
+    policies_repo.find_active_by_source_query_id = AsyncMock(return_value=None)
+    policies_repo.insert.return_value = SimpleNamespace(id=uuid4())
+
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=policies_repo,
+    )
+    await service.persist_live_policy(query_id, "regla")
+
+    assert policies_repo.insert.await_args.kwargs["temas"] == [
+        "conexion",
+        "reencuentro",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persist_live_policy_without_topics_writes_empty_list(
+    query_repo: AsyncMock,
+    vip_store: InMemoryVipStore,
+    staging_repo: AsyncMock,
+    distiller: PolicyDistiller,
+    vip_record: SimpleNamespace,
+) -> None:
+    """Legacy query rows (pre-038) keep the similarity-only retrieval."""
+    query_id = uuid4()
+    query_repo.get_by_id.return_value = _fake_query_row(
+        query_id=query_id, status="open", vip_id=vip_record.id
+    )
+    policies_repo = AsyncMock()
+    policies_repo.find_active_by_source_query_id = AsyncMock(return_value=None)
+    policies_repo.insert.return_value = SimpleNamespace(id=uuid4())
+
+    service = GrayZoneService(
+        query_repo=query_repo,
+        vip_store=vip_store,
+        staging_repo=staging_repo,
+        distiller=distiller,
+        policies_repo=policies_repo,
+    )
+    await service.persist_live_policy(query_id, "regla")
+
+    assert policies_repo.insert.await_args.kwargs["temas"] == []
