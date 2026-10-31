@@ -382,6 +382,80 @@ async def test_resume_generation_consult_doctrine_opens_gray_zone() -> None:
     assert stored is not None and stored.status == TurnStatus.GRAY_ZONE
 
 
+def _consult_doctrine_graph() -> tuple[dict, FakeGrayZone]:
+    """Grafo con FP → regen ``consult_doctrine`` (la traza la arma cada test)."""
+    g = _graph(history=InMemoryMessageHistoryWriter())
+    gz = FakeGrayZone()
+    g["admin"]._gray_zone = gz  # noqa: SLF001
+    g["admin"]._director = FakeDirector(  # noqa: SLF001
+        _decision(
+            action="consult_doctrine",
+            draft="borrador que la regla no respalda",
+            reason="doctrine_not_found",
+        )
+    )
+    return g, gz
+
+
+@pytest.mark.asyncio
+async def test_resume_consult_doctrine_saves_the_turn_topics_on_the_query() -> None:
+    """Migración 038: reabrir la zona gris desde un falso positivo guarda los
+    temas que el Analista asignó al turno, para que la doctrina los herede.
+
+    Solo se descartan valores que no son texto o están vacíos; la
+    normalización (acentos, mayúsculas) ocurre al guardar la regla viva.
+    """
+    g, gz = _consult_doctrine_graph()
+    turn_id = await _escalated_turn(g, vip_text="¿algún día nos conocemos?")
+    # Sin ``generated_text``: el FP regenera y el regen pide doctrina.
+    g["traces"].data[turn_id] = {
+        "decision": {"reason": "risk_high"},
+        "evaluation": _eval().model_dump(mode="json"),
+        "comprehension": {
+            "needs_policy": True,
+            "topics": ["conocerse", "  ", 7, None, "Conexión"],
+        },
+    }
+
+    outcome = await g["admin"].mark_false_positive_and_resume(
+        turn_id, actor_id=OWNER_ID
+    )
+
+    assert outcome.status == RESUME_OPENED_GRAY_ZONE
+    assert len(gz.queries) == 1
+    assert gz.queries[0]["topics"] == ["conocerse", "Conexión"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "comprehension",
+    [None, {"needs_policy": True}, {"topics": "conocerse"}],
+    ids=["sin_comprehension", "sin_topics", "topics_no_lista"],
+)
+async def test_resume_consult_doctrine_without_usable_topics_saves_empty_list(
+    comprehension: dict | None,
+) -> None:
+    """Sin temas utilizables la consulta se abre igual, con ``topics=[]``: la
+    doctrina conserva solo el camino por similitud (comportamiento previo)."""
+    g, gz = _consult_doctrine_graph()
+    turn_id = await _escalated_turn(g, vip_text="¿tienen garantía?")
+    trace: dict = {
+        "decision": {"reason": "risk_high"},
+        "evaluation": _eval().model_dump(mode="json"),
+    }
+    if comprehension is not None:
+        trace["comprehension"] = comprehension
+    g["traces"].data[turn_id] = trace
+
+    outcome = await g["admin"].mark_false_positive_and_resume(
+        turn_id, actor_id=OWNER_ID
+    )
+
+    assert outcome.status == RESUME_OPENED_GRAY_ZONE
+    assert len(gz.queries) == 1
+    assert gz.queries[0]["topics"] == []
+
+
 @pytest.mark.asyncio
 async def test_resume_consult_doctrine_without_gray_zone_fails_closed() -> None:
     """Gray zone not wired → honest mark-only, no crash."""

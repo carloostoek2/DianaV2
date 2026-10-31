@@ -61,5 +61,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Igual que en upgrade: DROP COLUMN también pide ACCESS EXCLUSIVE, así que
+    # fallar rápido en vez de quedar en cola detrás de una transacción larga.
+    op.execute("SET lock_timeout = '5s'")
     op.drop_column("gray_zone_queries", "topics")
     op.drop_column("policies", "temas")

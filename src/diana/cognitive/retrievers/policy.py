@@ -27,10 +27,33 @@ DEFAULT_POLICY_LIMIT = 5
 # are matched deterministically, exactly like the panel catalog. Capped low: a
 # doctrine is a business rule, not filler context.
 DEFAULT_POLICY_TOPIC_LIMIT = 3
-# Precision guard for the topic match (finding 1): a shared generic topic must
-# still be close enough to the rule, otherwise an unrelated doctrine would
-# suppress a legitimate gray-zone consult. Measured: same-subject paraphrases
-# 0.34–0.52, unrelated warm messages <0.17 — 0.30 sits cleanly between.
+# Piso de precisión del match por tema (finding 1): aunque compartan un tema
+# genérico, la doctrina tiene que parecerse al turno al menos esto; si no, una
+# regla de otro asunto taparía una consulta de zona gris legítima. El piso solo
+# se evalúa DESPUÉS de que coincida un tema: es un segundo filtro, no el
+# principal.
+#
+# Cifras (dos mediciones distintas, no comparables entre sí):
+# - Producción (PR #32, migración 038): una paráfrasis real del mismo caso
+#   dio 0.39 contra la doctrina guardada y mensajes cariñosos sin relación
+#   dieron 0.59–0.62. Esa medición es la que descarta bajar el umbral de
+#   similitud literal (0.80): sin filtro de tema, ~0.60 haría pasar doctrinas
+#   ajenas.
+# - Reproducción local con el mismo modelo
+#   (paraphrase-multilingual-MiniLM-L12-v2) contra dos redacciones de la
+#   doctrina de conocerse: paráfrasis 0.28–0.61 y mensajes cariñosos
+#   0.12–0.30, según cuánto texto tenga la doctrina. Este comentario decía
+#   "paráfrasis 0.34–0.52, cariñosos <0.17"; ese "<0.17" no se reprodujo. La
+#   separación NO es limpia y el piso de 0.30 es un filtro grueso: la
+#   precisión la da sobre todo el tema compartido.
+#
+# Doctrina sin embedding (marcador de vector cero, ``policy_embedding_pending``):
+# la similitud contra un vector cero no está definida (pgvector devuelve NaN) y
+# el piso la excluye. Es intencional: si no se puede medir el parecido, no se
+# aplica la regla y el caso vuelve a consultarse a la dueña (falla cerrada, lo
+# mismo que ya pasaba en el camino por similitud). El job de reparación
+# (``PolicyEmbeddingRepairService``, al arrancar y cada 30 min) le calcula el
+# embedding y desde ahí el match por tema la encuentra.
 DEFAULT_POLICY_TOPIC_MIN_SIMILARITY = 0.30
 
 
