@@ -943,3 +943,36 @@ def test_build_app_wires_persona_semantic_shadow_only_when_flag_on(
         assert isinstance(shadow, PersonaSemanticShadow)
         assert shadow._embedder is app.embedding_svc
         assert shadow._provider is app.orchestrator._catalog_provider
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_build_app_passes_doctrine_topic_match_flag_to_policy_retriever(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled: bool,
+) -> None:
+    """Migración 038: FEATURE_DOCTRINE_TOPIC_MATCH_ENABLED llega al PolicyRetriever.
+
+    El retriever es cognitivo y no lee Settings; si composition deja de pasar
+    la bandera, el camino por tema queda apagado en silencio aunque el ``.env``
+    la encienda. Sin la variable, el retriever arranca apagado (default OFF).
+    """
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234567890:test-token-not-real")
+    monkeypatch.setenv("OWNER_TELEGRAM_ID", "999001")
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql+asyncpg://diana:diana@localhost:5432/diana"
+    )
+    if enabled:
+        monkeypatch.setenv("FEATURE_DOCTRINE_TOPIC_MATCH_ENABLED", "true")
+
+    from diana.cognitive.retrievers.policy import PolicyRetriever
+    from diana.composition import build_app
+    from diana.config import Settings
+
+    app = build_app(Settings())
+    retriever = app.orchestrator._director._registry.resolve("knowledge.policy")  # noqa: SLF001
+    assert isinstance(retriever, PolicyRetriever)
+    assert retriever._feature_topic_match_enabled is enabled  # noqa: SLF001
+    # El camino por tema necesita el repo de políticas real y el embedder.
+    assert retriever._repo is app.policies_repo  # noqa: SLF001
+    assert retriever._embed is app.embedding_svc  # noqa: SLF001

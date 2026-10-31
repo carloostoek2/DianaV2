@@ -4,9 +4,12 @@ The VIP catalog had no policy about a VIP asking to meet in person. The only
 similar rule ("no existe el contacto personal ni las citas") lives in the
 ATENCION catalog, so every "¿cuándo nos conocemos?" landed in the gray zone.
 
-Panel policies are matched deterministically by tema (``signals ∩ temas``), and
-the Analyst already emits ``conexion`` / ``reencuentro`` for these turns, so
-tagging the rule with them makes it findable without relying on embeddings.
+Las políticas del panel se resuelven de forma determinista por tema
+(``signals ∩ temas``). La regla lleva un solo tema específico, ``conocerse``,
+que se añadió al vocabulario de políticas del Analista (``analyst._SYSTEM``)
+para los pedidos de conocerse, vernos, encuentro o cita; así se encuentra sin
+depender de embeddings. No se usan temas generales como ``conexion`` o
+``reencuentro``: activarían la regla en turnos que necesitan otra doctrina.
 
 Idempotent: re-running with the policy already present leaves the catalog
 untouched. Writes a NEW persona version through the same service the owner's

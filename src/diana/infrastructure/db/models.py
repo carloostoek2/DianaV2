@@ -407,8 +407,8 @@ class Policy(Base):
     # Migración 038: temas heredados del turno que originó la doctrina (los
     # mismos que emite el Analista). Permiten el match determinista por tema,
     # igual que las políticas del panel — el embedding solo acierta con
-    # repeticiones casi literales. Vacío = doctrina previa a la migración
-    # (solo retrieval por similitud).
+    # repeticiones casi literales. Vacío = doctrina previa a la migración o
+    # nacida de un turno sin temas (solo retrieval por similitud).
     temas: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb"),
     )
@@ -516,8 +516,10 @@ class GrayZoneQuery(Base):
     proposed_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
     proposed_reply: Mapped[str | None] = mapped_column(Text, nullable=True)
     proposal_source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Migración 038: temas/intención que el Analista asignó al turno que abrió
-    # la consulta. Se copian a `policies.temas` al guardar la regla viva.
+    # Migración 038: temas (`comprehension.topics`, sin la intención) que el
+    # Analista asignó al turno que abrió la consulta, sin normalizar. Al
+    # guardar la regla viva se copian a `policies.temas` pasados por
+    # `normalize_tags`.
     topics: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb"),
     )

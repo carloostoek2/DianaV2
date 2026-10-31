@@ -282,6 +282,39 @@ def test_settings_feature_flag_defaults_are_false(
     assert settings.feature_phatic_auto_send is False
 
 
+def test_settings_doctrine_topic_match_flag_defaults_off(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FEATURE_DOCTRINE_TOPIC_MATCH_ENABLED (migración 038) nace apagada.
+
+    Regla de oro (AGENTS §1): sin la variable en el entorno, la búsqueda de
+    doctrinas es solo por similitud, igual que antes de la 038. Este test fija
+    ese default para que nadie lo encienda en código por accidente; el valor
+    operativo vive en el ``.env`` real.
+    """
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    settings = Settings()
+    assert settings.feature_doctrine_topic_match_enabled is False
+
+
+def test_settings_doctrine_topic_match_flag_env_true(
+    clear_settings_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """La variable de entorno enciende solo esta bandera."""
+    from diana.config import Settings
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("FEATURE_DOCTRINE_TOPIC_MATCH_ENABLED", "true")
+    settings = Settings()
+    assert settings.feature_doctrine_topic_match_enabled is True
+    assert settings.feature_gray_zone_enabled is False
+    assert settings.feature_gray_zone_proposal_enabled is False
+
+
 def test_settings_feature_phatic_auto_send_env_true(
     clear_settings_env: None,
     monkeypatch: pytest.MonkeyPatch,

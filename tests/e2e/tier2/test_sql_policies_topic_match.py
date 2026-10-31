@@ -208,3 +208,43 @@ async def test_topic_match_applies_similarity_floor(session_factory):
         assert str(far) not in ids
     finally:
         await _cleanup(session_factory, [close, far])
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_topic_match_floor_excludes_pending_embedding_until_repaired(
+    session_factory,
+):
+    """Doctrina guardada sin embedding (marcador de vector cero).
+
+    Con piso, el parecido contra un vector cero es NaN en pgvector y la regla
+    no aparece: si no se puede medir el parecido, no se aplica y el caso vuelve
+    a consultarse (falla cerrada, intencional). Sin piso el tema sí la
+    encuentra, y en cuanto el job de reparación le pone embedding, el camino
+    con piso también la devuelve.
+    """
+    from diana.infrastructure.db.repositories.policies import ZERO_EMBEDDING
+
+    repo = PoliciesRepo(session_factory)
+    pending = await _insert_policy(
+        session_factory, temas=["conocerse"], embedding=list(ZERO_EMBEDDING)
+    )
+    try:
+        with_floor = await repo.find_active_by_topics(
+            ["conocerse"], embedding=_unit(0), min_similarity=0.30
+        )
+        assert str(pending) not in {row["id"] for row in with_floor}
+
+        without_floor = await repo.find_active_by_topics(["conocerse"])
+        assert str(pending) in {row["id"] for row in without_floor}
+
+        zero_ids = {row.id for row in await repo.list_active_zero_embedding()}
+        assert pending in zero_ids
+
+        await repo.set_embedding(pending, _seed(1, scale=0.95))
+        repaired = await repo.find_active_by_topics(
+            ["conocerse"], embedding=_unit(0), min_similarity=0.30
+        )
+        assert str(pending) in {row["id"] for row in repaired}
+    finally:
+        await _cleanup(session_factory, [pending])

@@ -132,6 +132,13 @@ class PoliciesRepo:
         ``embedding`` + ``min_similarity`` add a precision guard: a candidate
         must also be at least ``min_similarity`` close to the turn, so a shared
         generic topic does not surface an unrelated rule (finding 1).
+
+        Con piso, una doctrina que aún tiene el marcador de vector cero
+        (``ZERO_EMBEDDING``, embedding pendiente) NO aparece: la distancia
+        coseno contra un vector cero es NaN en pgvector y ``NaN < x`` es falso.
+        Es intencional (falla cerrada: sin parecido medible no se aplica la
+        regla y el caso se vuelve a consultar); ``PolicyEmbeddingRepairService``
+        la repara y desde ahí se encuentra. Ver ``DEFAULT_POLICY_TOPIC_MIN_SIMILARITY``.
         """
         normalized = [t for t in (topics or []) if isinstance(t, str) and t.strip()]
         if not normalized:
