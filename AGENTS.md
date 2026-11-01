@@ -859,7 +859,11 @@ business_message VIP o Atención
 Candado (lista cerrada, coincidencia exacta sobre el texto completo normalizado):
 
 - **Despedidas:** adiós · bye · byebye · chao · chau · hasta luego · hasta pronto ·
-  hasta mañana · nos vemos · nos hablamos · cuídate · que descanses · un gusto · saludos
+  hasta mañana · nos vemos · nos hablamos · cuídate · que descanses · que descanses bien ·
+  descansa · buenas noches · pasa buena noche · pasa linda noche · dulces sueños ·
+  un gusto · saludos
+  (las de noche se añadieron el 2026-11-01: «Pasa buena noche» es el cierre más común del
+  chat nocturno y no estaba en la lista, así que Diana contestaba cada despedida)
 - **Acuses:** ok · oki · okey · okay · va · vale · dale · de una · listo · perfecto · genial ·
   excelente · gracias · mil gracias · muchas gracias · jaja · jeje · 👍 · ❤ · 🙏 · 😊 · 😘
 - **Puertas que rechazan** (cualquiera basta para ir al flujo normal): más de

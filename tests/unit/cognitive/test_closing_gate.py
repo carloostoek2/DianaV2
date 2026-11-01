@@ -67,6 +67,34 @@ def test_farewell_with_promise_keeps_normal_flow() -> None:
     assert _close("mañana te transfiero").is_closing is False
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "buenas noches",
+        "Pasa buena noche",
+        "PASA BUENA NOCHE!!",
+        "pasa linda noche",
+        "descansa",
+        "que descanses bien",
+        "dulces sueños",
+    ],
+)
+def test_night_farewells_close_the_turn(text: str) -> None:
+    """Despedidas nocturnas (2026-11-01).
+
+    Caso real: el VIP escribió "Pasa buena noche", el candado no la reconocía,
+    "pasa" leía como verbo de pedido y Diana contestó una despedida.
+    """
+    verdict = _close(text)
+    assert verdict.is_closing is True
+    assert verdict.kind == "farewell"
+
+
+def test_night_farewell_mixed_with_other_business_stays_normal() -> None:
+    """"Pasa buena noche, mañana hablamos" no es solo una despedida."""
+    assert _close("Pasa buena noche, mañana hablamos").is_closing is False
+
+
 # ---------------------------------------------------------------------------
 # Acuses
 # ---------------------------------------------------------------------------
@@ -100,7 +128,10 @@ def test_open_question_check_reads_the_last_line_only() -> None:
         "gracias, y otra cosa…",
         "gracias, ¿me pasas el video?",
         "ok, pero mañana hablamos del pago",
-        "buenas noches",
+        # "buenas noches" salió de esta lista el 2026-11-01: es despedida
+        # nocturna (ver test_night_farewells_close_the_turn). Un saludo de
+        # llegada sigue el flujo normal.
+        "buenas tardes",
         "hola",
         "sí",
         "si",

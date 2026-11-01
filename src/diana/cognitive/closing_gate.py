@@ -92,6 +92,15 @@ FAREWELL_PHRASES: frozenset[str] = frozenset(
         "un gusto",
         "saludos",
         "que descanses",
+        "que descanses bien",
+        "descansa",
+        # Despedidas de noche al uso en México (2026-11-01): "Pasa buena noche"
+        # y "buenas noches" son el cierre más común del chat nocturno y no
+        # estaban en la lista, así que Diana contestaba cada despedida.
+        "buenas noches",
+        "pasa buena noche",
+        "pasa linda noche",
+        "dulces suenos",
     }
     | _with_enclitic(("cuida",), ("te",))
 )
