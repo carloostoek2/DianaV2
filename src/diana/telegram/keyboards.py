@@ -2067,9 +2067,63 @@ def menu_config_keyboard(enabled: bool) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text=toggle_text, callback_data=encode_menu("config", "toggle"))],
             [InlineKeyboardButton(text="🤖 Modelo de IA", callback_data=encode_menu("config", "llm"))],
+            [
+                InlineKeyboardButton(
+                    text="🕒 Horario de atención",
+                    callback_data=encode_menu("config", "hours"),
+                )
+            ],
             _menu_back_row(),
         ]
     )
+
+
+def menu_horario_keyboard(
+    *,
+    activo: bool,
+    pausado: bool,
+    ventana: str,
+) -> InlineKeyboardMarkup:
+    """Horario de atención: encendido/apagado, ventana y pausa temporal."""
+    toggle = (
+        f"Horario: ON ✅ ({ventana})"
+        if activo
+        else "Horario: OFF ❌ (responde 24 h)"
+    )
+    filas: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=toggle, callback_data=encode_menu("config", "hours_toggle")
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✏️ Cambiar horas",
+                callback_data=encode_menu("config", "hours_set"),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🌙 Responder 1 h más",
+                callback_data=encode_menu("config", "hours_pause_60"),
+            ),
+            InlineKeyboardButton(
+                text="🌙 3 h más",
+                callback_data=encode_menu("config", "hours_pause_180"),
+            ),
+        ],
+    ]
+    if pausado:
+        filas.append(
+            [
+                InlineKeyboardButton(
+                    text="☀️ Quitar la pausa",
+                    callback_data=encode_menu("config", "hours_pause_off"),
+                )
+            ]
+        )
+    filas.append(_menu_back_row())
+    return InlineKeyboardMarkup(inline_keyboard=filas)
 
 
 def menu_llm_keyboard() -> InlineKeyboardMarkup:

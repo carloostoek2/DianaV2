@@ -69,6 +69,7 @@ from diana.telegram.keyboards import (
     menu_autonomy_vip_keyboard,
     menu_back_keyboard,
     menu_config_keyboard,
+    menu_horario_keyboard,
     menu_confirm_delete_keyboard,
     menu_event_confirm_delete_keyboard,
     menu_event_confirm_keyboard,
@@ -115,6 +116,7 @@ MenuSessionKind = Literal[
     "event_body", "event_duration", "event_custom_start", "event_custom_end",
     "event_edit_body",
     "regen_hint",
+    "horario_ventana",
 ]
 
 
@@ -568,6 +570,9 @@ def build_menu_router(
     history_seed: object | None = None,
     backfill_queue: object | None = None,
     ephemeral_event_service: EphemeralEventService | None = None,
+    # Horario de atencion (AGENTS §4.27): servicio con lectura/escritura del
+    # ajuste. None = seccion no disponible.
+    horario: Any | None = None,
 ) -> Router:
     """Build the router serving /start, /menu, m:* callbacks, and menu-session text."""
     router = Router(name="menu")
@@ -838,6 +843,10 @@ def build_menu_router(
             await _handle_event_edit_body_text(
                 message, bot, session, ephemeral_event_service, sessions
             )
+        elif session.kind == "horario_ventana":
+            await _handle_horario_text(
+                message, bot, session, horario, sessions
+            )
         elif session.kind == "llm_model":
             # ADM-03: owner types the new model name → saved to system_config.
             model = (message.text or "").strip()
@@ -891,6 +900,138 @@ def build_menu_router(
 # ---------------------------------------------------------------------------
 # Action dispatcher
 # ---------------------------------------------------------------------------
+
+
+def _texto_horario(estado: Any, ahora: datetime) -> str:
+    """Resumen del horario en lenguaje de negocio."""
+    ventana = f"{estado.a_config()['apertura']} a {estado.a_config()['cierre']}"
+    if not estado.activo:
+        return (
+            "🕒 Horario de atención\n\n"
+            "Está APAGADO: Diana responde a cualquier hora, también de madrugada.\n\n"
+            "Enciéndelo para que solo conteste dentro de una ventana."
+        )
+    estado_ahora = "ABIERTO ✅" if estado.esta_abierto(ahora) else "CERRADO 🌙"
+    texto = (
+        "🕒 Horario de atención\n\n"
+        f"Ahora mismo: {estado_ahora}\n"
+        f"Ventana: {ventana} ({estado.zona_horaria})\n\n"
+        "Fuera de la ventana Diana no contesta: los mensajes quedan guardados y "
+        "los retoma al abrir. Esos mensajes no cuentan en las métricas."
+    )
+    if estado.en_pausa_manual(ahora):
+        local = estado.pausa_manual_hasta.astimezone(estado.zona)
+        texto += (
+            "\n\n🌙 Pausa activa: responde fuera de horario hasta "
+            f"{local.strftime('%H:%M')} (hora local)."
+        )
+    return texto
+
+
+def _teclado_horario(estado: Any, ahora: datetime):
+    return menu_horario_keyboard(
+        activo=estado.activo,
+        pausado=estado.en_pausa_manual(ahora),
+        ventana=f"{estado.a_config()['apertura']} a {estado.a_config()['cierre']}",
+    )
+
+
+async def _dispatch_horario(
+    message: Message,
+    *,
+    action: str,
+    horario: Any | None,
+    sessions: MenuSessionStore,
+    actor_id: int,
+) -> None:
+    """Submenú 🕒 Horario de atención (AGENTS §4.27)."""
+    volver = menu_back_keyboard(encode_menu("config"))
+    if horario is None:
+        await _show(message, "El horario de atención no está disponible.", volver)
+        return
+
+    try:
+        estado = await horario.estado()
+        if action == "hours_toggle":
+            estado = await horario.guardar({"activo": not estado.activo})
+        elif action == "hours_pause_off":
+            estado = await horario.guardar({"pausa_manual_hasta": None})
+        elif action.startswith("hours_pause_"):
+            minutos = int(action.rsplit("_", 1)[1])
+            hasta = datetime.now(UTC) + timedelta(minutes=minutos)
+            estado = await horario.guardar(
+                {"pausa_manual_hasta": hasta.isoformat()}
+            )
+        elif action == "hours_set":
+            sessions.start(actor_id, "horario_ventana")
+            await _show(
+                message,
+                "✏️ Escribe la ventana así: 09:00-23:00\n\n"
+                "También sirve una que cruce la medianoche (21:00-03:00).\n\n"
+                "Usa /cancelar para abortar.",
+                volver,
+            )
+            return
+    except ValueError as exc:
+        await _show(message, f"No pude guardar el horario: {exc}", volver)
+        return
+    except Exception:
+        logger.exception("horario_panel_failed", extra={"action": action})
+        await _show(message, "Error al guardar el horario. Reintenta más tarde.", volver)
+        return
+
+    ahora = datetime.now(UTC)
+    await _show(message, _texto_horario(estado, ahora), _teclado_horario(estado, ahora))
+
+
+async def _handle_horario_text(
+    message: Message,
+    bot: Bot,
+    session: MenuSession,
+    horario: Any | None,
+    sessions: MenuSessionStore,
+) -> None:
+    """Wizard de texto: ``09:00-23:00`` → guarda y enciende el horario."""
+    if horario is None:
+        await _edit_or_answer(
+            bot,
+            "El horario de atención no está disponible.",
+            session=session,
+            fallback=message,
+        )
+        return
+    crudo = (message.text or "").strip().replace(" ", "")
+    partes = crudo.split("-")
+    if len(partes) != 2:
+        await _edit_or_answer(
+            bot,
+            "No entendí. Escribe dos horas separadas por un guion, por ejemplo "
+            "09:00-23:00.\n\nUsa /cancelar para abortar.",
+            session=session,
+            fallback=message,
+        )
+        return
+    try:
+        estado = await horario.guardar(
+            {"apertura": partes[0], "cierre": partes[1], "activo": True}
+        )
+    except ValueError as exc:
+        await _edit_or_answer(
+            bot,
+            f"No pude guardar el horario: {exc}\n\nReintenta o usa /cancelar.",
+            session=session,
+            fallback=message,
+        )
+        return
+
+    ahora = datetime.now(UTC)
+    await _edit_or_answer(
+        bot,
+        _texto_horario(estado, ahora),
+        session=session,
+        fallback=message,
+        keyboard=_teclado_horario(estado, ahora),
+    )
 
 
 async def _dispatch_action(
@@ -1690,6 +1831,17 @@ async def _dispatch_action(
     # ==================================================================
     # Config — LLM admin (ADM-03): model hot-swap without restart
     # ==================================================================
+    # §4.27: horario de atencion (encendido/apagado, ventana y pausa temporal).
+    if category == "config" and action.startswith("hours"):
+        await _dispatch_horario(
+            message,
+            action=action,
+            horario=horario,
+            sessions=sessions,
+            actor_id=actor_id,
+        )
+        return
+
     if category == "config" and action in ("llm", "llm_set", "llm_reset"):
         if llm_config_store is None:
             await _show(

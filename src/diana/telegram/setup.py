@@ -282,6 +282,7 @@ def build_dispatcher(
             feature_persona_admin_enabled=feature_persona_admin_enabled,
             menu_sessions=menu_sessions,
             config_store=config_store,
+            horario=horario,
             history_seed=history_seed,
             backfill_queue=backfill_queue,
             ephemeral_event_service=ephemeral_event_service,

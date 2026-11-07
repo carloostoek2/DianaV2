@@ -183,7 +183,7 @@ def validar_horario(raw: Mapping[str, Any] | None) -> str | None:
     """
     if raw is None or not isinstance(raw, Mapping):
         return "No se recibió un horario."
-    for campo, etiqueta in (("apertura", "la hora de apertura"), ("cierre", "la hora de cierre")):
+    for campo, etiqueta in (("apertura", "hora de apertura"), ("cierre", "hora de cierre")):
         valor = raw.get(campo)
         if valor in (None, ""):
             continue
