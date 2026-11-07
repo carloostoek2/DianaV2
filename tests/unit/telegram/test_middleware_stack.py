@@ -36,6 +36,9 @@ def test_f2_middleware_order_constant() -> None:
         "OwnerDetectionMiddleware",
         "FreezeCheckMiddleware",
         "AuthMiddleware",
+        # §4.27: el horario corre antes de la escalacion deterministica, que SI
+        # responde al VIP (fuera de horario no debe salir nada).
+        "HorarioAtencionMiddleware",
         "ForbiddenKeywordsMiddleware",
     )
 

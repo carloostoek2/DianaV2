@@ -53,6 +53,7 @@ from diana.telegram.middlewares.business_connection import BusinessConnectionMid
 from diana.telegram.middlewares.dedup import DedupMiddleware
 from diana.telegram.middlewares.error_handler import ErrorHandlerMiddleware
 from diana.telegram.middlewares.forbidden import ForbiddenKeywordsMiddleware
+from diana.telegram.middlewares.horario import HorarioAtencionMiddleware
 from diana.telegram.middlewares.link import LinkCoordinatorMiddleware
 from diana.telegram.middlewares.logging import LoggingMiddleware
 from diana.telegram.middlewares.owner import OwnerDetectionMiddleware
@@ -147,6 +148,10 @@ def build_dispatcher(
     # short-circuit remembers the VIP message so the owner's triage can later
     # generate a draft for it. OFF ⇒ no history write at all.
     feature_escalation_fp_draft_enabled: bool = False,
+    # Horario de atencion (AGENTS §4.27): servicio que decide si la ventana esta
+    # abierta. Sin servicio la compuerta queda inerte (comportamiento previo).
+    horario: Any | None = None,
+    feature_business_hours_enabled: bool = False,
 ) -> TelegramWiring:
     """Register F1 middleware order and thin routers."""
     dp = Dispatcher()
@@ -208,6 +213,13 @@ def build_dispatcher(
             sandbox=sandbox,
             training_mode=training_mode,
             atencion_cycles=atencion_cycles,
+        ),
+        # §4.27: fuera de la ventana de atencion no sale nada al VIP. Inerte
+        # cuando la bandera esta apagada o no hay servicio cableado.
+        HorarioAtencionMiddleware(
+            horario=horario,  # type: ignore[arg-type]
+            history=history,  # type: ignore[arg-type]
+            enabled=bool(feature_business_hours_enabled and horario is not None),
         ),
         forbidden_mw,
     ]

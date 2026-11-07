@@ -105,6 +105,6 @@ def test_bc_middleware_does_not_affect_main_chain() -> None:
     )
 
     live_msg = extract_observer_middleware_names(wiring.dispatcher.message)
-    assert len(live_msg) == 10
+    assert len(live_msg) == 11
     assert live_msg[0] == "ErrorHandlerMiddleware"
     assert live_msg[7] == "FreezeCheckMiddleware"

@@ -97,6 +97,20 @@ class SqlSystemConfigStore:
         value = await self.get("promo")
         return dict(value) if isinstance(value, dict) else {}
 
+    async def get_horario_atencion(self) -> dict[str, Any]:
+        """Read the business-hours JSON blob from system_config (AGENTS §4.27).
+
+        Returns ``{}`` when missing or non-dict; the caller applies pure
+        defaults, which mean "24 hours" (the schedule is inactive until the
+        owner configures it).
+        """
+        value = await self.get("horario_atencion")
+        return dict(value) if isinstance(value, dict) else {}
+
+    async def set_horario_atencion(self, value: dict[str, Any]) -> None:
+        """Persist the business-hours JSON blob (upsert)."""
+        await self.set("horario_atencion", dict(value))
+
     async def get_training_mode_enabled(self) -> bool:
         """Read training_mode_enabled flag from system_config.
 

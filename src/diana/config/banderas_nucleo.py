@@ -185,6 +185,13 @@ CATALOGO: tuple[BanderaNucleo, ...] = (
         campo="feature_silent_close_enabled",
         que_se_pierde="Diana vuelve a contestar cada despedida y cada acuse.",
     ),
+    BanderaNucleo(
+        campo="feature_business_hours_enabled",
+        que_se_pierde=(
+            "El horario de atencion deja de respetarse: Diana vuelve a "
+            "contestar a cualquier hora, tambien de madrugada."
+        ),
+    ),
 )
 
 

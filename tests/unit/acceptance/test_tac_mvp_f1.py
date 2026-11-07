@@ -322,7 +322,9 @@ def test_f1_middleware_order_acceptance() -> None:
     names = registered_middleware_names()
     assert names[0] == "ErrorHandlerMiddleware"
     assert names[7] == "FreezeCheckMiddleware"
-    assert names[-2] == "AuthMiddleware"
+    # §4.27: el horario se interpone entre Auth y la escalacion deterministica.
+    assert names[-3] == "AuthMiddleware"
+    assert names[-2] == "HorarioAtencionMiddleware"
     assert names[-1] == "ForbiddenKeywordsMiddleware"
 
     deliveries = InMemoryPendingDeliveryStore()

@@ -1596,6 +1596,15 @@ def build_app(
         feature_quality_feedback_enabled=settings.feature_quality_feedback_enabled,
     )
 
+    # Horario de atencion (AGENTS §4.27): ventana configurable desde el panel.
+    # La bandera apagada deja todo como estaba; el horario nace `activo=false`.
+    from diana.application.horario_atencion import HorarioAtencionService
+
+    horario_atencion = HorarioAtencionService(
+        config_store,
+        enabled=settings.feature_business_hours_enabled,
+    )
+
     wiring = build_dispatcher(
         orchestrator=orchestrator,
         admin=admin,
@@ -1629,6 +1638,9 @@ def build_app(
         sandbox=sandbox,
         training_mode=config_store,
         config_store=config_store,
+        # Horario de atencion (AGENTS §4.27): lee system_config con cache corta.
+        horario=horario_atencion,
+        feature_business_hours_enabled=settings.feature_business_hours_enabled,
         atencion_cycles=atencion_cycles,
         rate_limit_max_events=settings.rate_limit_max_events,
         rate_limit_window_s=settings.rate_limit_window_s,

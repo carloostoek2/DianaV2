@@ -161,6 +161,13 @@ class Settings(BaseSettings):
     # F4 general mode (non-VIP atencion channel) — env-driven, default off.
     feature_general_mode_enabled: bool = False
 
+    # Horario de atencion (2026-11-07): fuera de la ventana configurada Diana
+    # no responde a los VIP ni dispara recontactos, y esos mensajes NO crean
+    # turno (cero metricas, cero confianza). El horario nace desactivado
+    # (``activo = false`` en system_config), asi que encender la bandera no
+    # cambia el comportamiento hasta que la dueña configure la ventana.
+    feature_business_hours_enabled: bool = False
+
     # Quality feedback (Destacar / Reprender). Writes are gated; retrieval
     # always uses quality/vip_id columns (defaults match pre-flag behavior).
     feature_quality_feedback_enabled: bool = False

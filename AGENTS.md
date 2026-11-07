@@ -972,6 +972,66 @@ de aplicación con un `Decision` ya emitido (sin tocar el pipeline cognitivo).
 
 ---
 
+4.27 Horario de atención (FEATURE_BUSINESS_HOURS_ENABLED)
+
+```
+business_message de un VIP, dentro de la cadena de middlewares
+  → Owner → Freeze → Auth → [HORARIO] → Forbidden → handler
+  → HorarioAtencionMiddleware (entre Auth y Forbidden):
+      - horario apagado (`activo=false`) / pausa manual vigente / dentro de la ventana
+        → sigue el camino normal, byte a byte como antes
+      - fuera de la ventana:
+          → guarda el mensaje en el historial del chat (rol `vip`, con la etiqueta
+            de media de `telegram/media_tags.py`; NO descarga ni analiza la media)
+          → NO crea turno, NO escribe pipeline_traces, NO toca ninguna métrica ni
+            la confianza, NO marca leído
+          → el VIP no recibe nada
+  → por qué ANTES de Forbidden: ese middleware manda plantilla y escala de
+    inmediato (precio/pago/identidad). Fuera de horario no debe salir nada al VIP,
+    ni siquiera una escalación determinística.
+
+al abrir la ventana (job periódico)
+  → HorarioAperturaService: por cada VIP con mensajes suyos sin responder
+      - se salta: congelado, pausado, sin conexión de negocios vigente, o chat con
+        turno vivo (incluida una aprobación esperando)
+      - arma UN turno normal con la ráfaga pendiente (el mismo formato de ráfaga)
+      - lleva el `telegram_message_id` del último mensaje pendiente para que el
+        historial se ACTUALICE (upsert) en vez de duplicarse
+      - si la ráfaga trae una etiqueta de media sin descripción (`[imagen]`,
+        `[video]`) → media_unverified: ese turno nunca se envía solo (§4.22)
+      - si la ráfaga coincide con una palabra prohibida → escalación determinística
+        de siempre (no el pipeline normal)
+  → ese turno SÍ es un turno real: cuenta como cualquier otro
+
+segunda línea, al enviar
+  → si el envío automático cae fuera de la ventana → se degrada a la cola de la
+    dueña (razón `fuera_de_horario`)
+  → recontacto con la ventana cerrada → no dispara; el tick siguiente lo retoma
+  → recuperación tras reinicio → revalida antes de reenviar
+  → la acción MANUAL de la dueña (Aprobar / Responder al VIP) siempre envía:
+    el horario gobierna lo que hace el bot solo, no lo que ella decide
+```
+
+Invariantes: fuera de horario **no se crea turno**, y por eso no hay fila en
+`turns`, ni traza, ni evaluación, ni `turn_outcome_log`, ni `turn_category_log`, ni
+`vip_mood_state`, ni `vip_trust_budget`: la confianza no se mueve porque no hay fila
+de la que dependa (`trust_budget_service` sin fila = no-op); el historial del VIP
+**sí** se escribe (no es métrica) porque es lo que permite retomar al abrir; el
+horario nace `activo=false` (24 h) para que encender la bandera no cambie nada
+hasta que la dueña configure la ventana; la lectura del ajuste es **fail-open** (si
+la base no responde, se atiende) porque un hipo de datos no puede dejar a todos los
+VIP sin respuesta; el alcance es chats VIP y recontactos — el canal de Atención y
+las respuestas de promo NO se ven afectados; el Decisor, el Director y el catálogo
+de persona no se tocan (el `schedule` del catálogo es la agenda que se le cuenta al
+modelo, no una compuerta: no se mezclan); la ventana admite cruce de medianoche
+(`apertura > cierre`), cosa que la validación de la agenda de persona prohíbe.
+
+Efecto lateral declarado: la reacción del VIP (`_run_outcome_reaction`) se puntúa con
+el **siguiente** mensaje del chat; si ese mensaje cae fuera de horario, la medición
+se pierde y el job de respaldo la clasifica como silencio, que no suma ni resta.
+
+---
+
 4. Contratos críticos que ningún agente puede romper
 
 4.1 Decisor (orden de prioridades actualizado)
