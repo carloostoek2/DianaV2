@@ -27,6 +27,7 @@ from diana.jobs.calibration import CalibrationJob
 from diana.jobs.contract_watchdog import DEFAULT_INTERVAL_SECONDS, ContractWatchdogJob
 from diana.jobs.embedding_warmup import EmbeddingWarmupJob
 from diana.jobs.gray_zone_expiration import GrayZoneExpirationJob
+from diana.jobs.horario_apertura import HorarioAperturaJob
 from diana.jobs.metrics import MetricsJob
 from diana.jobs.outcome_reaction import OutcomeReactionJob
 from diana.jobs.profile_synthesis_job import ProfileSynthesisJob
@@ -119,6 +120,8 @@ async def async_main() -> None:
     purge_job = _setup_purge_job(app)
     agent_purge_job = _setup_agent_data_purge_job(app)
     recontact_job = _setup_recontact_job(app)
+    # §4.27: al abrir la ventana de atencion, retoma lo que quedo pendiente.
+    horario_job = _setup_horario_apertura_job(app)
     # F3 Pool 3: observational metrics always; calibration only if flag on.
     metrics_job = _setup_metrics_job(app)
     calibration_job = _setup_calibration_job(app)
@@ -180,6 +183,7 @@ async def async_main() -> None:
         await _cancel_job(outcome_reaction_job, "outcome_reaction_job")
         await _cancel_job(metrics_job, "metrics_job")
         await _cancel_job(recontact_job, "recontact_job")
+        await _cancel_job(horario_job, "horario_job")
         await _cancel_job(purge_job, "purge_job")
         await _cancel_job(agent_purge_job, "agent_purge_job")
         await _cancel_job(expiration_job, "expiration_job")
@@ -278,13 +282,33 @@ def _setup_agent_data_purge_job(app: AppContainer) -> asyncio.Task | None:
     return task
 
 
+def _setup_horario_apertura_job(app: AppContainer) -> asyncio.Task | None:
+    """Arranca el barrido de apertura del horario de atencion (§4.27)."""
+    if (
+        not app.settings.feature_business_hours_enabled
+        or app.horario_apertura is None
+    ):
+        logger.info("horario_apertura_job_skipped_flag_off")
+        return None
+
+    intervalo = int(app.settings.business_hours_sweep_interval_seconds)
+    job = HorarioAperturaJob(app.horario_apertura, interval_seconds=intervalo)
+    task = asyncio.create_task(job.start())
+    logger.info("horario_apertura_job_started", extra={"interval_seconds": intervalo})
+    return task
+
+
 def _setup_recontact_job(app: AppContainer) -> asyncio.Task | None:
     """Start the recontact background job when feature flag is on."""
     if not app.settings.feature_recontact_enabled or app.recontact is None:
         logger.info("recontact_job_skipped_flag_off")
         return None
 
-    job = RecontactJob(app.recontact, interval_seconds=3600)
+    job = RecontactJob(
+        app.recontact,
+        interval_seconds=3600,
+        horario=app.horario_atencion,
+    )
     task = asyncio.create_task(job.start())
     logger.info("recontact_job_started", extra={"interval_seconds": 3600})
     return task

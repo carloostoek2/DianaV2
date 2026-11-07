@@ -167,6 +167,8 @@ class Settings(BaseSettings):
     # (``activo = false`` en system_config), asi que encender la bandera no
     # cambia el comportamiento hasta que la dueña configure la ventana.
     feature_business_hours_enabled: bool = False
+    # Cada cuanto el barrido revisa si hay mensajes que retomar al abrir.
+    business_hours_sweep_interval_seconds: Annotated[int, Field(ge=30, le=3600)] = 300
 
     # Quality feedback (Destacar / Reprender). Writes are gated; retrieval
     # always uses quality/vip_id columns (defaults match pre-flag behavior).

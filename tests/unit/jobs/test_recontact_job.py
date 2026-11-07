@@ -107,3 +107,50 @@ async def test_job_handles_run_errors_and_continues() -> None:
 
     # Must not raise
     await asyncio.gather(job.start(), _stop_soon())
+
+
+# --------------------------------------------------------------------------
+# Horario de atencion (§4.27): fuera de ventana no se dispara nada
+# --------------------------------------------------------------------------
+
+
+class _Horario:
+    def __init__(self, abierto: bool) -> None:
+        self.abierto = abierto
+
+    async def esta_abierto(self, ahora):
+        return self.abierto
+
+
+class _HorarioRoto:
+    async def esta_abierto(self, ahora):
+        raise RuntimeError("ajuste roto")
+
+
+@pytest.mark.asyncio
+async def test_fuera_de_horario_no_dispara_recontactos() -> None:
+    svc = FakeRecontactService()
+    svc.set_due(uuid4(), uuid4())
+    counts = await run_due_recontacts(svc, horario=_Horario(False))
+    assert counts["suppressed"] == 1
+    assert svc.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_dentro_de_horario_recontacta_normal() -> None:
+    svc = FakeRecontactService()
+    vip = uuid4()
+    svc.set_due(vip)
+    counts = await run_due_recontacts(svc, horario=_Horario(True))
+    assert counts["total"] == 1
+    assert svc.execute_calls == [vip]
+
+
+@pytest.mark.asyncio
+async def test_si_el_ajuste_falla_el_recontacto_sigue() -> None:
+    svc = FakeRecontactService()
+    vip = uuid4()
+    svc.set_due(vip)
+    counts = await run_due_recontacts(svc, horario=_HorarioRoto())
+    assert counts["total"] == 1
+    assert svc.execute_calls == [vip]

@@ -257,6 +257,9 @@ class TurnOrchestrator:
         # layer is ON, trust adjustments come ONLY from resolved outcomes).
         outcome_log: object | None = None,
         feature_autonomy_readiness_enabled: bool = False,
+        # Horario de atencion (AGENTS §4.27): si el envio automatico cae fuera de
+        # la ventana, se degrada a la cola de la dueña en vez de salir solo.
+        horario: object | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._director = director
@@ -306,6 +309,7 @@ class TurnOrchestrator:
         # driven via ``TrustBudgetService.record_outcome``; the per-turn
         # "would have sent" increment would double-count).
         self._outcome_log = outcome_log
+        self._horario = horario
         self._autonomy_readiness = bool(feature_autonomy_readiness_enabled)
         # AGENTS §4.26: turns whose shadow hooks were already scored. Bounded
         # (the VIP space is the allowlist, the turn space is not — this is a
@@ -345,6 +349,21 @@ class TurnOrchestrator:
 
     def _sandbox_active(self, chat_id: int) -> bool:
         return self._sandbox is not None and self._sandbox.is_active(chat_id)  # type: ignore[union-attr]
+
+    async def _fuera_de_horario(self, chat_id: int) -> bool:
+        """True si el envío automático NO corresponde en este instante (§4.27).
+
+        Fail-open: si el ajuste no se puede leer, se deja enviar. El sandbox es
+        superficie de prueba de la dueña y no respeta la ventana.
+        """
+        if self._horario is None or self._sandbox_active(chat_id):
+            return False
+        try:
+            abierto = await self._horario.esta_abierto(datetime.now(UTC))  # type: ignore[union-attr]
+        except Exception:
+            logger.exception("horario_delivery_check_failed")
+            return False
+        return not abierto
 
     async def _post_turn_facts(
         self, turn_id: UUID
@@ -2997,6 +3016,26 @@ class TurnOrchestrator:
                 )
                 raise
         elif decision.action == "send":
+            # §4.27: si la ventana de atención se cerró mientras el turno
+            # esperaba (pre-delay humano), el envío automático NO sale: el
+            # borrador va a la cola de la dueña, igual que cualquier aprobado.
+            if await self._fuera_de_horario(incoming.chat_id):
+                logger.info(
+                    "envio_fuera_de_horario_degradado_a_cola",
+                    extra={
+                        "turn_id": str(turn_id),
+                        "chat_id": incoming.chat_id,
+                        "reason": decision.reason,
+                    },
+                )
+                await self._coordinator.transition(
+                    turn_id, TurnStatus.PENDING_APPROVAL
+                )
+                await self._admin.send_draft_for_approval(
+                    turn_ctx, decision, turn_id,
+                    **(await self._doctrine_display_kwargs(turn_id)),
+                )
+                return turn_id, None
             # Media sin describir nunca usa el carril de plantilla: el turno
             # cae en la cola de la dueña con la foto adjunta.
             if is_phatic_template_reason(decision.reason) and not (

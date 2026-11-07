@@ -476,6 +476,10 @@ class AppContainer:
     trust_budget: object | None = None
     trust_budget_wired: bool = False
     vip_trust_budget_repo: SqlVipTrustBudgetRepo | None = None
+    # Horario de atención (AGENTS §4.27): servicio de la ventana + barrido de
+    # apertura. Ambos quedan en None cuando la bandera está apagada.
+    horario_atencion: Any | None = None
+    horario_apertura: Any | None = None
     # Fase 6 (vínculo Lucien→Diana): link coordinator (built ALWAYS — consumed
     # via dispatcher gated by feature_link_enabled).
     link_coordinator: LinkCoordinator | None = None
@@ -512,6 +516,14 @@ def build_app(
     admin_trace = AdminTraceService(traces=traces, trace_ttl_days=settings.trace_ttl_days)
     vips = SqlVipStore(sf)
     config_store = SqlSystemConfigStore(sf)
+    # Horario de atencion (AGENTS §4.27): ventana configurable desde el panel.
+    # Bandera apagada ⇒ servicio inerte; el horario nace `activo=false` (24 h).
+    from diana.application.horario_atencion import HorarioAtencionService
+
+    horario_atencion = HorarioAtencionService(
+        config_store,
+        enabled=settings.feature_business_hours_enabled,
+    )
 
     # Evo-Agente Fase 0: repos for the agent-evolution tables (schema-first).
     # Wired here because the detector (shadow writer) and the purge job need them.
@@ -1301,6 +1313,7 @@ def build_app(
         admin=admin,
         learning=learning,
         history=history,
+        horario=horario_atencion,
         gray_zone=gray_zone,
         feature_gray_zone_enabled=feature_gray_zone_enabled,
         feature_gray_zone_proposal_enabled=feature_gray_zone_proposal_enabled,
@@ -1596,14 +1609,26 @@ def build_app(
         feature_quality_feedback_enabled=settings.feature_quality_feedback_enabled,
     )
 
-    # Horario de atencion (AGENTS §4.27): ventana configurable desde el panel.
-    # La bandera apagada deja todo como estaba; el horario nace `activo=false`.
-    from diana.application.horario_atencion import HorarioAtencionService
+    horario_apertura: Any | None = None
+    if settings.feature_business_hours_enabled:
+        from diana.application.horario_apertura_service import (
+            HorarioAperturaService,
+        )
+        from diana.telegram.middlewares.forbidden import match_forbidden_keywords
 
-    horario_atencion = HorarioAtencionService(
-        config_store,
-        enabled=settings.feature_business_hours_enabled,
-    )
+        horario_apertura = HorarioAperturaService(
+            horario=horario_atencion,
+            runner=orchestrator,
+            history=history,
+            vips=vips,
+            connections=bc_store,
+            coordinator=coordinator,
+            # Mismo criterio que la escalación determinística: una ráfaga con
+            # palabra prohibida NO se contesta por el pipeline normal.
+            matcher_prohibidas=lambda texto: match_forbidden_keywords(
+                texto, forbidden_keywords
+            ),
+        )
 
     wiring = build_dispatcher(
         orchestrator=orchestrator,
@@ -1707,6 +1732,8 @@ def build_app(
         turns=turns,
         runtime_timers=runtime_timers_store,
         business_connections=bc_store,
+        horario_atencion=horario_atencion,
+        horario_apertura=horario_apertura,
         ephemeral_event_service=ephemeral_event_service,
         backfill_queue=backfill_queue,
         backfill_wake=backfill_wake,

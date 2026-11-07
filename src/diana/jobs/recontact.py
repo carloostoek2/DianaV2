@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 from diana.application.recontact_service import RecontactService
@@ -12,9 +13,24 @@ from diana.application.recontact_service import RecontactService
 logger = logging.getLogger("diana.jobs")
 
 
-async def run_due_recontacts(service: RecontactService) -> dict[str, int]:
-    """One-shot: get_due_vips → execute each; return counts by status. Never raises out."""
+async def run_due_recontacts(
+    service: RecontactService, *, horario: Any | None = None
+) -> dict[str, int]:
+    """One-shot: get_due_vips → execute each; return counts by status. Never raises out.
+
+    ``horario`` (§4.27): con la ventana de atención cerrada no se dispara nada.
+    Los vencidos siguen debidos, así que el tick siguiente los retoma sin
+    reprogramar ni perder ninguno.
+    """
     counts: dict[str, int] = {"total": 0}
+    if horario is not None:
+        try:
+            if not await horario.esta_abierto(datetime.now(UTC)):
+                logger.info("recontact_skipped_fuera_de_horario")
+                return {"total": 0, "suppressed": 1}
+        except Exception:
+            # Fail-open: un problema del ajuste no debe apagar el recontacto.
+            logger.exception("recontact_horario_check_failed")
     try:
         due = await service.get_due_vips()
     except Exception:
@@ -53,9 +69,11 @@ class RecontactJob:
         service: RecontactService,
         *,
         interval_seconds: int = 3600,
+        horario: Any | None = None,
     ) -> None:
         self._service = service
         self._interval = interval_seconds
+        self._horario = horario
         self._stop_event = asyncio.Event()
 
     async def start(self) -> None:
@@ -68,7 +86,7 @@ class RecontactJob:
             t0 = time.monotonic()
             try:
                 counts = await asyncio.wait_for(
-                    run_due_recontacts(self._service),
+                    run_due_recontacts(self._service, horario=self._horario),
                     timeout=self._interval,
                 )
                 elapsed = time.monotonic() - t0
