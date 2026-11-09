@@ -18,6 +18,11 @@ from diana.application.horario_apertura_service import (
 
 logger = logging.getLogger("diana.jobs")
 
+# Presupuesto extra por pasada para que un turno retomado termine su espera
+# humana y su pipeline en vez de ser cancelado a mitad: 480 s (máximo de la
+# espera autónoma) + margen para la generación y la entrega.
+_PRESUPUESTO_TURNO_S = 600
+
 
 async def run_una_pasada(service: HorarioAperturaService) -> ResultadoBarrido:
     """Una pasada del barrido. Nunca lanza."""
@@ -55,7 +60,14 @@ class HorarioAperturaJob:
             try:
                 resultado = await asyncio.wait_for(
                     run_una_pasada(self._service),
-                    timeout=self._interval,
+                    # El turno retomado corre DENTRO de la pasada y su espera
+                    # humana previa es de hasta 480 s en modo autónomo
+                    # (RandomDelayPolicy: 180–480 s). Con el presupuesto igual
+                    # al intervalo (300 s) la pasada cancelaba el turno a mitad
+                    # de la espera: quedaba `waiting_delay`, el chat pasaba a
+                    # "chat_ocupado" y la conversación no se retomaba hasta el
+                    # siguiente reinicio (04:32:38 y 04:42:38 del 2026-11-09).
+                    timeout=self._interval + _PRESUPUESTO_TURNO_S,
                 )
                 if resultado.abiertos:
                     logger.info(
