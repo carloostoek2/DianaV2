@@ -191,3 +191,63 @@ async def test_hora_fuera_de_rango_no_guarda(respondido):
     )
     assert servicio.guardados == []
     assert "No pude guardar" in respondido["texto"]
+
+
+# --------------------------------------------------------------------------
+# Regresión F6: el callback real debe llegar al submenú sin romperse.
+#
+# El botón «🕒 Horario de atención» respondía con
+# `NameError: name 'horario' is not defined` porque el despachador no recibía
+# el servicio. Las pruebas de arriba llaman a la función interna y no veían el
+# fallo: esta pasa por el mismo camino que recorre el callback de Telegram.
+# --------------------------------------------------------------------------
+
+
+def _dispatch_kwargs(**extra):
+    base = dict(
+        actor_id=1,
+        vips=MagicMock(),
+        admin_trace=None,
+        admin_metrics=None,
+        sandbox=None,
+        staging=None,
+        coordinator=None,
+        profile_admin=None,
+        sessions=_sesiones(),
+    )
+    base.update(extra)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_callback_hours_llega_al_submenu(mostrado):
+    await menu._dispatch_action(
+        MagicMock(),
+        parsed=menu.MenuCallback(category="config", action="hours"),
+        horario=_Servicio(HorarioAtencion(activo=True)),
+        **_dispatch_kwargs(),
+    )
+    assert "Horario de atención" in mostrado["texto"]
+
+
+@pytest.mark.asyncio
+async def test_callback_toggle_cambia_el_estado(mostrado):
+    servicio = _Servicio(HorarioAtencion(activo=False))
+    await menu._dispatch_action(
+        MagicMock(),
+        parsed=menu.MenuCallback(category="config", action="hours_toggle"),
+        horario=servicio,
+        **_dispatch_kwargs(),
+    )
+    assert servicio.guardados[-1] == {"activo": True}
+
+
+@pytest.mark.asyncio
+async def test_callback_hours_sin_servicio_avisa(mostrado):
+    await menu._dispatch_action(
+        MagicMock(),
+        parsed=menu.MenuCallback(category="config", action="hours"),
+        horario=None,
+        **_dispatch_kwargs(),
+    )
+    assert "no está disponible" in mostrado["texto"]

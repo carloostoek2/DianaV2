@@ -736,6 +736,7 @@ def build_menu_router(
             history_seed=history_seed,
             backfill_queue=backfill_queue,
             ephemeral_event_service=ephemeral_event_service,
+            horario=horario,
         )
         if result == "confirm_expired":
             # A3-style late alert: the early empty answer already cleared the
@@ -1057,6 +1058,7 @@ async def _dispatch_action(
     history_seed: object | None = None,
     backfill_queue: object | None = None,
     ephemeral_event_service: EphemeralEventService | None = None,
+    horario: Any | None = None,
 ) -> None:
     category = parsed.category
     action = parsed.action
