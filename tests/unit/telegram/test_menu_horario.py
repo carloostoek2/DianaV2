@@ -251,3 +251,33 @@ async def test_callback_hours_sin_servicio_avisa(mostrado):
         **_dispatch_kwargs(),
     )
     assert "no está disponible" in mostrado["texto"]
+
+
+# --------------------------------------------------------------------------
+# F6: cableado real del router del panel.
+#
+# El fallo del `NameError` fue de CABLEADO: el servicio existía, pero no
+# llegaba al callback. Esta prueba mira el router que se construye de verdad y
+# exige que el servicio quede capturado por el manejador del panel.
+# --------------------------------------------------------------------------
+
+
+def test_el_router_del_panel_captura_el_servicio_horario():
+    from inspect import getclosurevars
+
+    servicio = _Servicio()
+    router = menu.build_menu_router(
+        owner_telegram_id=1, vips=MagicMock(), horario=servicio
+    )
+    callbacks = [h.callback for h in router.callback_query.handlers]
+    manejador = next(f for f in callbacks if f.__name__ == "on_menu_callback")
+    assert getclosurevars(manejador).nonlocals.get("horario") is servicio
+
+
+def test_sin_servicio_el_router_sigue_construyendose():
+    router = menu.build_menu_router(owner_telegram_id=1, vips=MagicMock())
+    callbacks = [h.callback for h in router.callback_query.handlers]
+    manejador = next(f for f in callbacks if f.__name__ == "on_menu_callback")
+    from inspect import getclosurevars
+
+    assert getclosurevars(manejador).nonlocals.get("horario") is None
