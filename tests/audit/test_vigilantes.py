@@ -478,6 +478,48 @@ async def test_v7_descarta_turnos_de_sandbox(session_factory) -> None:
     assert prueba not in _turnos(report, "V7")
 
 
+async def test_v7_no_avisa_por_un_envio_automatico(session_factory) -> None:
+    """Un envío que decidió Diana sola no tiene resolución de la dueña que perder.
+
+    Sin esta exclusión el aviso sonaba todos los días: medido en producción, las 20
+    filas de la ventana de 2 días eran envíos automáticos (`autonomous_ok`).
+    """
+    vip_id = await _seed_vip(session_factory, etiqueta="v7-auto")
+    chat_id = 993300000 + (uuid.uuid4().int % 9_000_000)
+    turn_id = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered")
+    await _seed_trace(
+        session_factory,
+        turn_id=turn_id,
+        chat_id=chat_id,
+        vip_id=vip_id,
+        decision={"action": "send", "reason": "autonomous_ok"},
+    )
+    await _seed_outcome(session_factory, turn_id=turn_id, vip_id=vip_id, draft_score=0.4)
+
+    report = await _correr(session_factory)
+
+    assert turn_id not in _turnos(report, "V7"), "V7 conto un envio automatico, que no decide la duena"
+
+
+async def test_v7_avisa_por_una_aprobacion_que_no_quedo_registrada(session_factory) -> None:
+    """La firma real del defecto de septiembre: la dueña aprobó y no quedó su decisión."""
+    vip_id = await _seed_vip(session_factory, etiqueta="v7-aprobado")
+    chat_id = 993400000 + (uuid.uuid4().int % 9_000_000)
+    turn_id = await _seed_turn(session_factory, vip_id=vip_id, chat_id=chat_id, status="delivered")
+    await _seed_trace(
+        session_factory,
+        turn_id=turn_id,
+        chat_id=chat_id,
+        vip_id=vip_id,
+        decision={"action": "approve", "reason": "autonomous_below_threshold"},
+    )
+    await _seed_outcome(session_factory, turn_id=turn_id, vip_id=vip_id, draft_score=0.4)
+
+    report = await _correr(session_factory)
+
+    assert turn_id in _turnos(report, "V7"), "V7 dejo pasar una aprobacion sin resolucion registrada"
+
+
 # ---------------------------------------------------------------------------
 # V4 — entregas VIP sin rastro en el historial del chat
 # ---------------------------------------------------------------------------

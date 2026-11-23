@@ -143,13 +143,23 @@ WHERE v.is_active AND p.vip_id IS NULL;
 -- V7 | activo | C-SHADOW-01 | recaída del defecto del 10-sep: la dueña aprobó y su decisión no quedó
 -- Es el caso real de "el efecto dejó de ocurrir" para la mitad de la dueña, con
 -- la firma exacta del defecto (fila con nota y sin resolución, en un turno entregado).
+-- Calibración (2026-11-23): se excluyen los envíos automáticos (`action = 'send'`),
+-- la misma exclusión que ya tiene V3. Ahí la decisión la tomó el sistema, no la
+-- dueña, así que no hay resolución suya que se haya podido perder. Medido contra
+-- la base real: 174 de las 226 filas históricas eran de ese camino, y en la ventana
+-- de 2 días eran TODAS las filas — el aviso sonaba todos los días por turnos que
+-- Diana respondió sola. La firma del defecto de septiembre (una aprobación resuelta
+-- sin `owner_outcome`) sigue avisando: se verificó con las 52 filas reales del
+-- tramo 23-ago→18-nov, que conservan `action = approve`.
 -- Los turnos de sandbox se descartan con `NOT t.is_sandbox`, igual que V2/V3/V4.
 -- `cuando` sale como timestamptz crudo (V2/V3/V7): el servicio lo pasa a hora CDMX.
 SELECT t.id::text AS turno, t.chat_id AS chat,
        t.created_at AS cuando, 1 AS alerta
 FROM turn_outcome_log o JOIN turns t ON t.id = o.turn_id
+LEFT JOIN pipeline_traces p ON p.turn_id = t.id
 WHERE o.draft_score IS NOT NULL AND o.owner_outcome IS NULL
   AND t.status = 'delivered'
   AND NOT t.is_sandbox
+  AND coalesce(p.decision->>'action', '') <> 'send'
   AND t.created_at BETWEEN now() - interval '2 days' AND now() - interval '2 hours'
 ORDER BY t.created_at DESC;

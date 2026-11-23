@@ -127,6 +127,15 @@ Tres mecanismos, y ninguno escribe en la base:
 3. **Silencio cuando está todo bien.** Avisar todos los días de "todo bien" entrena a ignorar el
    aviso; por eso el mensaje solo existe si hay algo que revisar.
 
+**Calibración de V7 (2026-11-23).** El aviso de V7 —"lo que decides no quedó guardado"— sonaba
+todos los días con 17 a 20 casos. Medido contra la base real, **todas** las filas de la ventana de
+2 días eran envíos automáticos (`decision.action = 'send'`, razón `autonomous_ok`): turnos que
+Diana respondió sola y en los que la dueña nunca decidió nada, así que no había resolución suya
+que se hubiera podido perder. De las 226 filas históricas, 174 eran de ese camino y 52 conservaban
+la firma real del defecto (una aprobación resuelta sin `owner_outcome`). V7 ahora excluye los
+envíos automáticos con la misma condición que ya usaba V3; la firma del defecto sigue avisando
+(probado por partida doble y por sabotaje).
+
 ## 5. Los contadores de fallos internos
 
 El bot se traga fallos a propósito en 46 lugares para no romper un turno (por ejemplo, si el aviso
@@ -217,7 +226,9 @@ no se asertó "se llamó a tal función".
 | V3 avisa | escalación con traza y sin resolución, sin respuesta en el chat | el turno aparece en alerta |
 | V3 no avisa (×3) | la misma escalación, con plantilla / con autoenvío / con respuesta de la dueña en el chat | no aparece en ninguno de los tres |
 | V7 avisa | turno entregado con nota del borrador y sin la decisión | el turno aparece en alerta |
+| V7 avisa (firma del defecto) | turno entregado, con decisión `approve` y sin resolución registrada | el turno aparece en alerta |
 | V7 no avisa | el mismo turno, con la decisión guardada | no aparece |
+| V7 no avisa (autoenvío) | turno entregado por Diana sola (`action = send`) | no aparece: no hay resolución de la dueña que perder |
 | Vigilante roto | una consulta rota a propósito | sale como falla y el mensaje dice "no pude revisar" |
 | Copia | una alerta real | el mensaje **no** nombra ninguna tabla, y dice qué pasó / desde cuándo / qué hacer |
 | Sin nada roto | — | no hay mensaje (silencio) |
@@ -252,6 +263,7 @@ anteriores. Cada caso rompe **una** condición con anclas exactas (verificando q
 | V3_exclusion_autoenvio | la exclusión de envíos automáticos | `test_v3_no_avisa_por_un_envio_automatico` |
 | V3_exclusion_duena_respondio | la exclusión de escalaciones ya respondidas en el chat | `test_v3_no_avisa_cuando_la_duena_ya_respondio_en_el_chat` |
 | V7_condicion_de_la_duena | la condición de resolución de la dueña | `test_v7_no_avisa_cuando_la_decision_si_quedo` |
+| V7_exclusion_autoenvio | la exclusión de envíos automáticos (calibración 2026-11-23) | `test_v7_no_avisa_por_un_envio_automatico` |
 | V7_deteccion_desconectada | la detección de V7 (devuelve 0 alertas) | `test_v7_avisa_por_una_decision_no_guardada` |
 | no_repite_lo_ya_avisado | el filtro de lo ya avisado | `test_el_job_deja_latido_y_no_repite_lo_ya_avisado` |
 | latido_no_se_escribe | el latido | `test_si_el_vigilante_no_puede_correr_igual_avisa` |

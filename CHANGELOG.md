@@ -7,6 +7,18 @@ La idea no es listar cada modificación del código, sino dejar constancia de la
 ---
 
 
+La vigilancia dejó de avisar de lo que Diana contestó sola — 2026-11-23
+
+La vigilancia diaria mandaba todos los días un aviso de "lo que decides no quedó guardado" (C-SHADOW-01, vigilante V7), con 17 a 20 casos por corrida y la instrucción de pasarlo al equipo "hoy". Revisado contra la base real, el aviso no tenía nada que revisar: **todas** las filas de esos dos días eran mensajes que Diana contestó sola en modo automático. En esos turnos la dueña no decidió nada, así que no había ninguna decisión suya que se hubiera podido perder.
+
+- **Qué cambia para ti:** el aviso solo va a aparecer si de verdad se pierde una decisión tuya sobre un borrador (aprobar o corregir y que eso no quede guardado). Cuando todo va bien, la vigilancia vuelve a callarse.
+- **Por qué pasaba:** el chequeo buscaba "turno entregado con nota del borrador y sin tu decisión guardada". Un envío automático cumple eso por definición: la decisión la tomó el sistema. Se mide contra la base real: de 226 filas históricas, 174 eran autoenvíos; las 52 restantes sí tienen la firma del defecto de septiembre (una aprobación resuelta sin su decisión registrada) y siguen avisando.
+- La corrección es la misma que ya tenía el vigilante de escalaciones sin resolver (V3): se excluyen los turnos que decidió el sistema. Sin migración, sin banderas nuevas y sin cambios en lo que Diana hace con los VIP.
+- Qué vigilar en los logs: `contract_watchdog_checked vigilante=V7 alertas=0`. La próxima corrida diaria ya no debe mandar el aviso; si volviera a salir con casos `approve`, sería un hallazgo real.
+
+---
+
+
 Las doctrinas guardadas se vuelven a encontrar por tema, y llega la regla de conocerse — 2026-10-31
 
 Las doctrinas que la dueña guardaba desde la zona gris casi nunca se volvían a leer. La búsqueda comparaba el mensaje del turno contra el texto exacto de la doctrina con un umbral de 0.80, y en producción una paráfrasis real del mismo caso («¿algún día se me haga conocerte?») daba 0.39, mientras que mensajes cariñosos sin relación daban entre 0.59 y 0.62. Bajar el umbral habría aplicado reglas equivocadas, así que el mismo caso volvía a pedir doctrina aunque ya estuviera resuelto.
