@@ -196,9 +196,41 @@ def test_empty_text_never_closes() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_coalesced_burst_must_match_exactly() -> None:
-    """"ok" + "bye" juntos no son ni acuse ni despedida: flujo normal."""
-    assert _close("ok\nbye").is_closing is False
+def test_burst_closes_when_every_message_is_a_closing() -> None:
+    """Una ráfaga de cierres es un cierre: los dos mensajes se miran por separado.
+
+    Hasta 2026-11-10 se comparaba el bloque entero contra la lista, así que una
+    ráfaga no podía cerrar nunca (más de la mitad de los turnos).
+    """
+    assert _close("ok\nbye").is_closing is True
+
+
+@pytest.mark.parametrize(
+    "burst",
+    [
+        "Me quedé esperando el video\nDescansa",
+        "(el VIP envió 2 mensajes seguidos)\n[1/2] Me quedé esperando el video\n[2/2] Descansa",
+        "(el VIP envió 2 mensajes seguidos)\n[1/2] gracias\n[2/2] y otra cosa, mándame el enlace",
+    ],
+)
+def test_burst_with_any_open_message_keeps_the_normal_flow(burst: str) -> None:
+    """Si UN mensaje de la ráfaga pide algo, el turno se contesta.
+
+    El contrato de producto no cambió: "gracias, y otra cosa…" sigue yendo al
+    flujo normal, aunque llegue partido en dos burbujas.
+    """
+    assert _close(burst).is_closing is False
+
+
+def test_nested_burst_headers_are_flattened() -> None:
+    """Una fila guardada puede traer ráfagas anidadas: se aplanan todas."""
+    nested = (
+        "(el VIP envió 2 mensajes seguidos)\n"
+        "[1/2] (el VIP envió 2 mensajes seguidos)\n"
+        "[1/2] ok\n[2/2] gracias\n"
+        "[2/2] listo"
+    )
+    assert _close(nested).is_closing is True
 
 
 @pytest.mark.parametrize(
@@ -301,3 +333,108 @@ def _evaluation():
         coverage=0.9,
         empathy=0.9,
     )
+
+
+# ---------------------------------------------------------------------------
+# Vocativos y saludos (2026-11-10)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Pasa buena noche hermosa",
+        "Pasa buen día",
+        "Pasa buen dia Dianita hermosa",
+        "Que tengas buen día",
+        "Que tengas bonita semana",
+        "Hola amor.. buenas noches",
+        "Gracias mi vida",
+        "Gracias amor..",
+        "Que bueno",
+        "Muy bien",
+        "De nada",
+    ],
+)
+def test_vocatives_and_greetings_no_longer_block_the_closing(text: str) -> None:
+    """Caso real (Hugo, 2026-11-10): el cliente agrega apodos a TODO.
+
+    Sin quitar el vocativo o el saludo inicial, la lista exacta nunca coincidía
+    y el bot contestaba cada despedida y cada acuse.
+    """
+    assert _close(text).is_closing is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Hola bella",
+        "Hola hermosa, ¿cómo estás?",
+        "Buen día",
+        "Buenas tardes",
+    ],
+)
+def test_a_greeting_is_not_a_closing(text: str) -> None:
+    """Un saludo espera su saludo de vuelta: que se quede sin respuesta es peor."""
+    assert _close(text).is_closing is False
+
+
+def test_stripping_never_invents_a_closing_from_content() -> None:
+    """Quitar vocativos no convierte una frase cualquiera en despedida."""
+    assert _close("no te preocupes linda").is_closing is False
+    assert _close("me gustas mucho mi amor").is_closing is False
+    assert _close("gracias por escucharme, lo aprecio mucho").is_closing is False
+
+
+# ---------------------------------------------------------------------------
+# Camino del Analyst (`suggested_no_reply`, 2026-11-10)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no te preocupes",
+        "si ya mucho mejor gracias",
+        "pues por hoy cenaré y descansaré un poco",
+    ],
+)
+def test_analyst_signal_closes_what_no_list_reaches(text: str) -> None:
+    verdict = _close(text, model_says_no_reply=True)
+    assert verdict.is_closing is True
+    assert verdict.kind == "model"
+
+
+def test_analyst_signal_is_off_by_default() -> None:
+    assert _close("no te preocupes").is_closing is False
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "reason"),
+    [
+        ({"media_unverified": True}, "media_unverified"),
+        ({"emotion": "molesta"}, "emotion"),
+        ({"risk": "alto"}, "risk"),
+        ({"intent": "saludar"}, "greeting"),
+        ({"intent": "solicitar_contenido"}, "intent"),
+        ({"last_outbound_text": "¿Te mando el video?"}, "open_question"),
+    ],
+)
+def test_analyst_signal_never_skips_a_door(kwargs: dict, reason: str) -> None:
+    """La lectura del modelo amplía cobertura, nunca salta una puerta."""
+    verdict = _close("no te preocupes", model_says_no_reply=True, **kwargs)
+    assert verdict.is_closing is False
+    assert verdict.reason == reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no te preocupes por el pago",
+        "ya te hice la transferencia",
+        "¿me mandas el video?",
+    ],
+)
+def test_analyst_signal_keeps_money_and_questions_in_the_flow(text: str) -> None:
+    verdict = _close(text, model_says_no_reply=True)
+    assert verdict.is_closing is False

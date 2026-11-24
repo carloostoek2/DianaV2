@@ -204,11 +204,20 @@ class Comprehension(BaseModel):
     # turn text (FEATURE_PERSONA_OPERACION_ENABLED). Drives knowledge.operacion.
     needs_operacion: bool = False
     # Director-only (never asked to / sent to the Analyst — excluded from the
-    # LLM schema hint): True when the deterministic closing gate decided this
-    # turn is a farewell or a bare acknowledgement (AGENTS §4.26). The Decider
-    # turns it into ``action="silent_close"``. Default False keeps historical
-    # JSONB rows and the shadow re-decision compatible.
+    # LLM schema hint): True when the closing gate decided this turn is a
+    # farewell or a bare acknowledgement (AGENTS §4.26). The Decider turns it
+    # into ``action="silent_close"``. Default False keeps historical JSONB
+    # rows and the shadow re-decision compatible.
     closing_without_reply: bool = False
+    # Analyst's own read of the same question (AGENTS §4.26, 2026-11-10): the
+    # turn expects no written reply. It is a SUGGESTION — the Director accepts
+    # it only when every deterministic door of ``closing_gate`` passes (no
+    # question, no money, no blocking intent, non-greeting, low risk, calm
+    # emotion, media reviewed). It exists because the closed list can never
+    # cover real phrasing ("no te preocupes", "si ya mucho mejor gracias") and
+    # half the turns arrive as bursts the list could not match. Default False
+    # keeps historical JSONB rows and the shadow re-decision compatible.
+    suggested_no_reply: bool = False
     raw_llm_output: dict | None = None
 
 

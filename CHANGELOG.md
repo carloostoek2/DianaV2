@@ -19,6 +19,22 @@ La vigilancia diaria mandaba todos los días un aviso de "lo que decides no qued
 ---
 
 
+Diana por fin se calla en los cierres: el candado reconoce a la gente real — 2026-11-10
+
+El candado para no contestar despedidas y acuses estaba encendido desde el 2026-10-30, pero **nunca se activó ni una vez**: en 168 turnos no hubo un solo cierre silencioso. La causa no era el interruptor, era que el candado exigía que el mensaje llegara **igual a la lista, completo y solo**. Con la gente real eso no pasa: el chat con Hugo de los últimos días lo muestra entero — «Pasa buen día» (la lista tenía las despedidas de la noche, no las del día) y «Que bueno» (no estaba entre los acuses) se contestaron con un mensaje largo; «Pasa buena noche hermosa» tampoco cerraba, porque el apodo «hermosa» bastaba para que no coincidiera.
+
+- **Los apodos y el saludo ya no estorban.** Antes de comparar se reconoce la despedida o el acuse aunque venga acompañado («Pasa buena noche hermosa», «Gracias mi vida», «Hola amor, buenas noches»). Lo único que se descarta es el vocativo y el saludo inicial; el resto del mensaje tiene que seguir siendo una frase de la lista, así que «no te preocupes, linda» o «me gustas mucho, mi amor» siguen el flujo normal.
+- **La mitad de los turnos llegaban como ráfaga y no podían cerrar.** Cuando el VIP manda dos o más mensajes seguidos, el sistema los junta en un solo bloque; comparar ese bloque contra la lista hacía imposible que coincidiera. Ahora cada mensaje de la ráfaga se mira por separado: la ráfaga cierra solo si **todos** son despedida o acuse. «Me quedé esperando el video / Descansa» sigue el flujo normal, porque el primero pide algo.
+- **Faltaban las frases comunes.** Se agregaron las despedidas del día («pasa buen día», «pasa buena tarde», «que tengas buen día», «que tengas bonita semana», «feliz noche»…) y los acuses que la gente usa para asentir sin pedir nada («que bueno», «que bien», «muy bien», «de nada», «con gusto»…). Los ambiguos («sí», «no», «claro») se dejaron fuera a propósito: también pueden ser la respuesta a una pregunta nuestra.
+- **Y lo que ninguna lista va a alcanzar lo lee el Analista.** El Analista ya lee cada mensaje completo, así que ahora también responde una pregunta más: ¿el turno todavía espera respuesta escrita? Esa señal cierra casos como «no te preocupes» o «si ya mucho mejor gracias», que ninguna lista cerrada iba a cubrir. **No cuesta una llamada extra al modelo** (el Analista ya corría) y **nunca se salta una puerta**: si hay pregunta, dinero, un pedido, un saludo, riesgo alto, enojo o una foto sin analizar, el turno se contesta como siempre. Ante la duda, el Analista dice que no: un cierre que se escapó lo corriges tú después, pero un silencio equivocado deja al VIP esperando.
+- **Un saludo no es un cierre.** «Hola», «buen día» o «hola bella» esperan su saludo de vuelta; quedarse callada ahí sería peor que contestar.
+- Medido contra los mensajes reales de los últimos 12 días, el candado solo (sin la lectura del Analista) pasa de cerrar el 3 % al 7 %, y **incluye los dos casos de Hugo** del 10 de noviembre («Pasa buen día» a las 15:03 y «Que bueno» a las 18:31).
+- Sin interruptor nuevo: todo sigue colgando de `FEATURE_SILENT_CLOSE_ENABLED` (encendido en el `.env`). Apagado, Diana vuelve a contestar cada despedida y cada acuse. Sin migración.
+- Qué vigilar en los logs: `🤐 Cierre sin respuesta — despedida …`, `… — acuse …` y, la vía nueva, `… — lectura del modelo (model)`. La regla vigente está en AGENTS.md §4.26 y §4.1 (fila 4b).
+
+---
+
+
 Las doctrinas guardadas se vuelven a encontrar por tema, y llega la regla de conocerse — 2026-10-31
 
 Las doctrinas que la dueña guardaba desde la zona gris casi nunca se volvían a leer. La búsqueda comparaba el mensaje del turno contra el texto exacto de la doctrina con un umbral de 0.80, y en producción una paráfrasis real del mismo caso («¿algún día se me haga conocerte?») daba 0.39, mientras que mensajes cariñosos sin relación daban entre 0.59 y 0.62. Bajar el umbral habría aplicado reglas equivocadas, así que el mismo caso volvía a pedir doctrina aunque ya estuviera resuelto.

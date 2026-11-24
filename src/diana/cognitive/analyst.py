@@ -82,7 +82,18 @@ _SYSTEM = (
     "needs_examples=true when a similar past VIP exchange (same situation/register, e.g. "
     "flirty request, playful tease, mundane chat, emotional check-in) would help match "
     "how Diana actually replied before — not for purely factual/policy-governed turns "
-    "(payment terms, schedule, biography) where those other fields already cover it."
+    "(payment terms, schedule, biography) where those other fields already cover it. "
+    # AGENTS §4.26: the Analyst is the only stage that reads the whole turn, so
+    # it also answers whether the turn still expects an answer.
+    "suggested_no_reply: set true ONLY when the turn as a whole expects no written "
+    "reply — a farewell (adiós, bye, hasta luego, buenas noches, pasa buen día, que "
+    "descanses), a bare acknowledgement or thanks (ok, va, listo, gracias, qué bueno, "
+    "muy bien), or a closing line that asks for nothing. With a numbered burst, judge "
+    "the UNION: if any message asks for something, set false. Set FALSE whenever the "
+    "turn asks a question, requests content/information/attention, mentions money or "
+    "payment, expresses discomfort, anger or urgency, or greets Diana expecting a "
+    "greeting back. When unsure, false — a missed closing is corrected by the owner "
+    "later, a wrong silence leaves the VIP waiting."
 )
 
 # Channel/catalog addendum (appended to _SYSTEM per turn). The base prompt

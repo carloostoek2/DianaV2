@@ -309,3 +309,35 @@ def test_system_prompt_maps_meeting_requests_to_conocerse_tema() -> None:
     assert "conocerse" in system
     low = system.lower()
     assert "invitacion" in low or "cita" in low or "encuentro" in low
+
+
+# ---------------------------------------------------------------------------
+# AGENTS §4.26 — el Analyst también dice si el turno ya no espera respuesta
+# ---------------------------------------------------------------------------
+
+
+def test_system_prompt_asks_for_the_no_reply_signal() -> None:
+    from diana.cognitive.analyst import _SYSTEM
+
+    assert "suggested_no_reply" in _SYSTEM
+    assert "When unsure, false" in _SYSTEM
+
+
+def test_no_reply_signal_reaches_the_model_but_stays_a_suggestion() -> None:
+    """El campo viaja al modelo; el hecho Director-only sigue oculto."""
+    from diana.llm.deepseek import schema_hint_for_llm
+
+    hint = schema_hint_for_llm(Comprehension)
+    assert "suggested_no_reply" in hint["properties"]
+    assert "closing_without_reply" not in hint["properties"]
+    assert hint["properties"]["suggested_no_reply"]["default"] is False
+
+
+@pytest.mark.asyncio
+async def test_analyst_no_reply_signal_survives_the_round_trip() -> None:
+    expected = _valid_comprehension(intent="despedirse", suggested_no_reply=True)
+    llm = FakeLLM(structured_responses=[expected])
+    analyst = Analyst(llm)
+    result = await analyst.analyze(_input("Pasa buen día, hermosa"))
+    assert result.suggested_no_reply is True
+    assert result.closing_without_reply is False

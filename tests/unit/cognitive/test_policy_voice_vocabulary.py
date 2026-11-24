@@ -311,9 +311,12 @@ def test_fair_share_limits_invariants_and_determinism() -> None:
 # sha256 vigente de analyst._SYSTEM. El hash original (base 947cc42) cambió a
 # propósito en el PR #32 (doctrinas por tema, 2026-10-31): la lista de Policy
 # temas ganó "conocerse" para que el Analista etiquete los pedidos de verse en
-# persona, que es lo que activa la política del panel. Cualquier otro cambio a
-# _SYSTEM debe actualizar este hash a propósito y explicar por qué aquí.
-_SYSTEM_SHA256_BASE = "61b8946332e6abb5455340b71d0bea942ee38884845f37b1430f697e6915f5b9"
+# persona, que es lo que activa la política del panel. Cambió de nuevo el
+# 2026-11-10 (AGENTS §4.26): el Analista emite `suggested_no_reply`, su lectura
+# de si el turno ya no espera respuesta escrita; es la señal que cubre las
+# frases que la lista cerrada del candado nunca va a alcanzar. Cualquier otro
+# cambio a _SYSTEM debe actualizar este hash a propósito y explicar por qué aquí.
+_SYSTEM_SHA256_BASE = "0491cc2a1f9666081e123295cd79a4d1a85f7d0700013d42df4e4c72d45abd0e"
 
 
 def _system_for(channel: str, catalog: dict) -> str:

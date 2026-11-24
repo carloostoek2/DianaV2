@@ -1012,11 +1012,13 @@ class CognitiveDirector:
         comprehension: Comprehension,
         last_outbound_text: str | None,
     ) -> Comprehension:
-        """Set ``closing_without_reply`` from the deterministic closing gate.
+        """Set ``closing_without_reply`` from the closing gate.
 
         AGENTS §4.26. Flag off → the field is forced False (an older stored row
         or a stray True must never leak into the matrix). Flag on → the gate
-        decides on the WHOLE coalesced turn text.
+        decides on the whole coalesced turn text, per burst message, from two
+        signals: the closed list and the Analyst's own ``suggested_no_reply``
+        (a suggestion the gate only accepts when every safety door passes).
 
         What persists is the FACT (``comprehension.closing_without_reply``,
         read by ``/traza`` and by the shadow re-decision); the gate's own
@@ -1040,6 +1042,7 @@ class CognitiveDirector:
             media_unverified=bool(turn.media_unverified),
             last_outbound_text=last_outbound_text,
             max_words=self._silent_close_max_words,
+            model_says_no_reply=bool(comprehension.suggested_no_reply),
         )
         await self._store(
             turn.turn_id,
@@ -1053,7 +1056,10 @@ class CognitiveDirector:
         if verdict.is_closing:
             logger.info(
                 "🤐 Cierre sin respuesta — %s (%s)",
-                "despedida" if verdict.kind == "farewell" else "acuse",
+                {
+                    "farewell": "despedida",
+                    "ack": "acuse",
+                }.get(str(verdict.kind), "lectura del modelo"),
                 verdict.reason,
             )
         if bool(verdict.is_closing) == comprehension.closing_without_reply:

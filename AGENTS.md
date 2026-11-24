@@ -835,11 +835,19 @@ aprobar.
 
 ```
 business_message VIP o Atención
-  → Analyst (igual que hoy; el saludo puro y la media sin revisar siguen su carril)
-  → Director: candado determinista (cognitive/closing_gate.py, sin LLM) sobre el
-      texto coalescido de la ráfaga + comprehension + último mensaje saliente +
-      media_unverified → closing_without_reply (campo Director-only en Comprehension,
-      fuera del schema del Analyst). Se evalúa ANTES del guard de repetición (H4).
+  → Analyst (igual que hoy; el saludo puro y la media sin revisar siguen su carril).
+      Desde 2026-11-10 el Analyst emite además `suggested_no_reply`: su lectura
+      semántica de si el turno ya no espera respuesta escrita (despedida, acuse,
+      cierre sin pedido). Ya lee el texto, así que no cuesta una llamada más.
+  → Director: candado (cognitive/closing_gate.py) sobre el texto coalescido de la
+      ráfaga + comprehension + último mensaje saliente + media_unverified →
+      closing_without_reply (campo Director-only en Comprehension). Se evalúa ANTES
+      del guard de repetición (H4). El candado cierra por DOS caminos:
+        a) la lista cerrada coincide, o
+        b) el Analyst dijo `suggested_no_reply` Y todas las puertas deterministas
+           de seguridad pasan (pregunta, dinero, riesgo, emoción, media, intent).
+      La lectura del Analyst nunca salta una puerta: solo puede ampliar la
+      cobertura cuando el candado ya descartó el riesgo.
   → Decisor (orden: seguridad → zona gris → risk alto → molesta →
       CIERRE SILENCIOSO → send autónomo → approve)
       → action = "silent_close", reason = "cierre_sin_respuesta",
@@ -856,27 +864,52 @@ business_message VIP o Atención
         liberando el hold de zona gris si el borrador venía de un regen doctrinal
 ```
 
-Candado (lista cerrada, coincidencia exacta sobre el texto completo normalizado):
+Candado — dos caminos, con las mismas puertas de seguridad:
+
+**Camino 1 — lista cerrada (determinista, sin LLM).** Cada mensaje de la ráfaga se compara
+por separado (un mensaje suelto es una ráfaga de uno) **después de quitarle los vocativos**
+(hermosa · mi bella · amor · mi vida · Dianita · preciosa · muñequita…) **y el saludo
+inicial** (hola · buenos días). Sin eso, el cliente real nunca coincide: escribe «Pasa buena
+noche **hermosa**» y la lista no lo veía. Una ráfaga cierra solo si **todos** sus mensajes
+son despedida o acuse — «Me quedé esperando el video / Descansa» NO cierra, porque el
+primero pide algo.
 
 - **Despedidas:** adiós · bye · byebye · chao · chau · hasta luego · hasta pronto ·
   hasta mañana · nos vemos · nos hablamos · cuídate · que descanses · que descanses bien ·
   descansa · buenas noches · pasa buena noche · pasa linda noche · dulces sueños ·
   un gusto · saludos
   (las de noche se añadieron el 2026-11-01: «Pasa buena noche» es el cierre más común del
-  chat nocturno y no estaba en la lista, así que Diana contestaba cada despedida)
+  chat nocturno y no estaba en la lista, así que Diana contestaba cada despedida).
+  El 2026-11-10 se completaron las del DÍA, que faltaban por completo y por eso el bot
+  contestaba cada «Pasa buen día»: pasa buen día · pasa buena tarde · pasa un buen día ·
+  buen día · buena tarde · buena noche · lindo día · bonito día · excelente día · buen fin ·
+  buena semana · bonita semana · que tengas buen día · que tengas lindo día · que tengas
+  bonita semana · que tengas buena noche · que tengas buen fin · pasa buena semana.
 - **Acuses:** ok · oki · okey · okay · va · vale · dale · de una · listo · perfecto · genial ·
   excelente · gracias · mil gracias · muchas gracias · jaja · jeje · 👍 · ❤ · 🙏 · 😊 · 😘
-- **Puertas que rechazan** (cualquiera basta para ir al flujo normal): más de
-  `SILENT_CLOSE_MAX_WORDS` palabras; `?` o `¿` en el mensaje ENTRANTE (una pregunta nunca
-  se cierra, ni siquiera una despedida exacta: "ok?", "¿bye?" → flujo normal); verbo de
-  pedido (manda, envíame, pásame, avísame, dime, cuéntame, puedes, necesito, quiero);
-  promesa o futuro (mañana, luego, después, al rato, más tarde, ahorita — salvo despedida
-  exacta de la lista); dinero (pago, transferencia, depósito, tarjeta, precio, banco,
-  cuenta); emoción molesta/triste/ansiosa/urgente; `risk != bajo`; `media_unverified`;
-  ráfaga que no coincide exacta ("gracias, y otra cosa…" → flujo normal). Y una puerta
-  propia del ACUSE: si el último mensaje saliente termina en `?`, el acuse no cierra (un
-  "ok" que contesta una pregunta no es un cierre). Esa puerta NO aplica a la despedida:
-  la despedida gana sobre una pregunta nuestra abierta, porque el VIP se está yendo.
+  (2026-11-10: que bueno · que bien · muy bien · que rico · igual · si · no · claro ·
+  de nada · con gusto · me alegra · que gusto · va va · ok gracias · bien)
+
+**Camino 2 — lectura del Analyst (`suggested_no_reply`).** Cubre lo que ninguna lista
+alcanza — «no te preocupes», «si ya mucho mejor gracias», «qué bueno mi Dianita hermosa». El
+Analyst ya lee el turno completo, así que la señal no cuesta una llamada más; el Director la
+acepta **solo si todas las puertas de abajo pasan**. No hay tope de palabras en este camino:
+el tope existe para el camino 1, que no entiende el texto, y aquí el Analyst leyó la ráfaga
+entera.
+
+- **Puertas que rechazan** (cualquiera basta para ir al flujo normal, y valen para los DOS
+  caminos): `?` o `¿` en el mensaje ENTRANTE (una pregunta nunca se cierra, ni siquiera una
+  despedida exacta: "ok?", "¿bye?" → flujo normal); verbo de pedido (manda, envíame, pásame,
+  avísame, dime, cuéntame, puedes, necesito, quiero); promesa o futuro (mañana, luego,
+  después, al rato, más tarde, ahorita — salvo despedida exacta de la lista); dinero (pago,
+  transferencia, depósito, tarjeta, precio, banco, cuenta); emoción
+  molesta/triste/ansiosa/urgente; `risk != bajo`; `media_unverified`; intent que pide algo
+  (preguntar_actividad, recordar_evento, solicitar_contenido, consultar_politica,
+  confirmar_entrega, pedir_consejo, queja). Y una puerta del ACUSE que también vale para el
+  camino 2: si el último mensaje saliente termina en `?`, no se cierra (un "ok" que contesta
+  una pregunta no es un cierre). Esa puerta NO aplica a la despedida del camino 1: la
+  despedida gana sobre una pregunta nuestra abierta, porque el VIP se está yendo.
+- **Solo camino 1:** más de `SILENT_CLOSE_MAX_WORDS` palabras por mensaje.
 
 Invariantes: el silencio deliberado **no es señal negativa** — no emite evento de confianza,
 no deja desacuerdo del borrador sombra, no abre la ventana de reacción del VIP y no entra en
@@ -1050,7 +1083,7 @@ Prioridad Condición Acción
 
 Notas sobre prioridad 5: la redraft de naturalidad es **secuenciación del Director** (pre-Decisor), no una acción del Decisor. El orden de **acciones** del Decisor sigue siendo seguridad → zona gris → escalate (risk o frustración) → cierre silencioso → send autónomo → approve; el paso 5 del Decisor es no-op (redraft ya ocurrió upstream si correspondía).
 
-Nota sobre la prioridad 4b (`silent_close`, §4.26): el Director calcula el hecho determinista (`closing_without_reply`) y el Decisor emite la acción — el Decisor sigue sin ver el texto del turno. Se evalúa después de riesgo y frustración (seguridad manda) y antes del envío autónomo. El candado se evalúa **antes** del guard de repetición (H4) para que tres despedidas seguidas no escalen como `pregunta_repetida`.
+Nota sobre la prioridad 4b (`silent_close`, §4.26): el Director calcula el hecho (`closing_without_reply`) combinando la lista cerrada con la señal `suggested_no_reply` que emite el Analyst, y el Decisor emite la acción — el Decisor sigue sin ver el texto del turno. Se evalúa después de riesgo y frustración (seguridad manda) y antes del envío autónomo. El candado se evalúa **antes** del guard de repetición (H4) para que tres despedidas seguidas no escalen como `pregunta_repetida`.
 
 Nota de alineación (2026-08-21): la tabla coincide con `src/diana/cognitive/decider.py` — el código evalúa `risk=alto` (prioridad 3) antes que `emotion=molesta` (prioridad 4). Si ambas aplican, la acción sigue siendo Escalar y el `reason` queda `risk_high` (la severidad semántica gana sobre la señal de frustración; visible en `/traza`). `molesta` sola escala sin esperar acumulación de risk.
 

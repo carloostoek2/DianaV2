@@ -2805,6 +2805,69 @@ async def test_closing_gate_never_beats_safety_or_risk() -> None:
 
 
 @pytest.mark.asyncio
+async def test_analyst_no_reply_signal_closes_a_phrase_no_list_reaches() -> None:
+    """Camino 2 (2026-11-10): la lectura del Analyst cierra lo que la lista no ve.
+
+    "No te preocupes" no está en ninguna lista y el bot lo contestaba; el
+    Analista ya leyó el turno, así que su señal basta — con las puertas del
+    candado intactas.
+    """
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="otro", suggested_no_reply=True),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Ay, gracias amor"],
+    )
+    director, trace, _ = make_director(llm, silent_close=True)
+    turn = _turn(text="No te preocupes")
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action == "silent_close"
+    assert trace.get(turn.turn_id, "comprehension")["closing_without_reply"] is True
+    assert trace.get(turn.turn_id, "closing_gate")["reason"] == "model"
+
+
+@pytest.mark.asyncio
+async def test_analyst_no_reply_signal_never_beats_an_explicit_request() -> None:
+    """La señal del Analista no puede saltarse el intent que pide algo."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="solicitar_contenido", suggested_no_reply=True),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Ya te mando algo, amor"],
+    )
+    director, trace, _ = make_director(llm, silent_close=True)
+    turn = _turn(text="No te preocupes")
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action != "silent_close"
+    assert trace.get(turn.turn_id, "comprehension")["closing_without_reply"] is False
+
+
+@pytest.mark.asyncio
+async def test_analyst_no_reply_signal_never_closes_money() -> None:
+    """Dinero siempre merece respuesta, aunque el Analista diga que no."""
+    llm = FakeLLM(
+        structured_responses=[
+            _comprehension(intent="otro", suggested_no_reply=True),
+            _profile(safety=0.9),
+        ],
+        text_responses=["Gracias amor"],
+    )
+    director, trace, _ = make_director(llm, silent_close=True)
+    turn = _turn(text="No te preocupes por la transferencia")
+
+    decision = await director.handle_turn(turn)
+
+    assert decision.action != "silent_close"
+    assert trace.get(turn.turn_id, "comprehension")["closing_without_reply"] is False
+
+
+@pytest.mark.asyncio
 async def test_ack_answering_an_open_question_keeps_the_normal_flow() -> None:
     history = InMemoryMessageHistory()
     history.seed(
